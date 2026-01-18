@@ -164,7 +164,12 @@ def start_mlflow_ui():
     print()
     
     try:
-        subprocess.run([sys.executable, '-m', 'mlflow', 'ui'])
+        # Construct URI
+        db_path = Path(__file__).parent / "mlflow.db"
+        db_uri = f"sqlite:///{db_path.as_posix()}"
+        
+        cmd = [sys.executable, '-m', 'mlflow', 'ui', '--backend-store-uri', db_uri]
+        subprocess.run(cmd)
     except KeyboardInterrupt:
         print("\n")
         print_info("MLflow UI stopped")
