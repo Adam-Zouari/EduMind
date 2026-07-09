@@ -1,0 +1,44 @@
+# Core dependencies
+tika
+python-magic
+
+# PDF Processing
+PyMuPDF
+pdfplumber
+
+# Document Processing
+python-docx
+
+# OCR
+pytesseract
+paddleocr
+paddlepaddle
+
+# Web Scraping
+trafilatura
+newspaper3k
+lxml
+lxml_html_clean
+beautifulsoup4
+
+# Media Processing
+openai-whisper
+ffmpeg-python
+pyannote.audio
+
+# Image Processing
+opencv-python
+Pillow
+
+# Text Processing
+regex
+ftfy
+unidecode
+
+# Utilities
+python-dotenv
+tqdm
+loguru
+uvicorn
+fastapi
+python-multipart

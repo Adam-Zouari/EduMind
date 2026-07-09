@@ -1,207 +1,154 @@
-# MLOps Project
+# EduMind-AI
 
-This repository contains multiple components for the MLOps project.
+EduMind-AI is a package-first OCR + RAG monorepo for document ingestion, semantic retrieval, and MLflow-backed experimentation.
 
-## 📁 Project Structure
+The repository is organized for portfolio-quality maintainability:
 
-```
-Project/
-├── pipeline/              # 🚀 UNIFIED OCR-RAG PIPELINE (RECOMMENDED)
-│   ├── orchestrator.py    # Orchestrates OCR + RAG
-│   ├── app.py             # Streamlit web interface
-│   ├── requirements.txt   # All dependencies
-│   ├── run_app.bat        # Windows launcher
-│   └── README.md          # Pipeline documentation
-│
-├── OCR/                   # OCR Extraction System
-│   ├── core/              # Core pipeline and extractors
-│   ├── extractors/        # Format-specific extractors (PDF, DOCX, etc.)
-│   ├── processors/        # Text cleaning and processing
-│   ├── utils/             # Utilities and logging
-│   ├── examples/          # Example files
-│   └── requirements.txt   # OCR dependencies
-│
-├── RAG/                   # RAG System (Standalone)
-│   ├── src/               # Source code (embedder, vector store, etc.)
-│   ├── config/            # Configuration files
-│   ├── data/              # Data storage (raw, processed, vectordb)
-│   ├── app.py             # Streamlit web interface
-│   ├── requirements.txt   # RAG dependencies
-│   ├── README.md          # Full RAG documentation
-│   ├── run_app.bat        # Windows launcher
-│   └── run_app.sh         # Linux/Mac launcher
-│
-├── venv/                  # Python virtual environment (shared)
-└── tests/                 # Test files
+- reusable Python code lives under `src/edumind/`
+- apps and APIs are thin entrypoints
+- experiments are isolated from product code
+- generated state is routed into gitignored `artifacts/`
+- setup, architecture, and historical notes are separated under `docs/`
 
+## Repository map
+
+```text
+.
+|-- apps/                  Streamlit entrypoints
+|-- artifacts/             Local runtime outputs, caches, vector stores, MLflow state
+|-- config/                Shared YAML configuration
+|-- data/                  Curated fixtures and evaluation inputs
+|-- docs/                  Current documentation plus archived legacy notes
+|-- experiments/mlflow/    Experiment runners and analysis utilities
+|-- scripts/               Cross-platform helper scripts
+|-- services/              FastAPI service entrypoints
+|-- src/edumind/
+|   |-- common/            Shared paths, config loaders, schemas
+|   |-- ocr/               Extraction pipeline and format-specific extractors
+|   |-- pipeline/          OCR-to-RAG orchestration layer
+|   `-- rag/               Chunking, embeddings, retrieval, and answer generation
+`-- tests/                 Unit, integration, and experiment tests
 ```
 
-## 🚀 Quick Start
+## Quick start
 
-### 🎯 Unified Pipeline (Recommended)
+EduMind-AI targets Python 3.10. The full local product workflow usually needs:
 
-The **pipeline** folder combines OCR extraction and RAG into a single, easy-to-use interface.
+- Python 3.10
+- Ollama for local LLM inference
+- Tesseract for image OCR
+- FFmpeg for audio and video extraction
 
-**Run the complete pipeline:**
+Create one environment at the repo root:
+
 ```bash
-# Windows
-cd pipeline
-run_app.bat
-
-# Or directly
-streamlit run pipeline/app.py
+python -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -e .[dev,ui,api,rag,experiments,ocr]
 ```
 
-**Features:**
-- 📤 Upload any file format (PDF, DOCX, Images, Audio, Video, HTML)
-- 🔍 Automatic text extraction with OCR
-- 💬 Ask questions and get AI-powered answers
-- 📊 Track processed files and chat history
+Windows:
 
-### Individual Components
-
-#### OCR System (`/OCR`)
-Extract text from various file formats:
-```python
-from OCR.core.pipeline import DataIngestionPipeline
-
-pipeline = DataIngestionPipeline()
-result = pipeline.process_file("document.pdf")
-print(result.text)
+```powershell
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install --upgrade pip
+pip install -e .[dev,ui,api,rag,experiments,ocr]
 ```
 
-#### RAG System (`/RAG`)
-Standalone RAG for pre-extracted text:
+For lighter workflows you can install only the extras you need:
+
+- `.[ui,rag]` for RAG-only UI work
+- `.[api,rag]` for service work without OCR
+- `.[experiments]` for experiment analysis
+- `.[ocr]` to add the heavier extraction stack
+
+Copy environment defaults before running locally:
+
 ```bash
-cd RAG
-run_app.bat  # Windows
+cp .env.example .env
 ```
 
-## 📚 Components
+Windows:
 
-### 1. Unified Pipeline (`/pipeline`) ⭐ RECOMMENDED
-- **Purpose:** Complete OCR-to-RAG solution with web interface
-- **Tech Stack:** Python, Streamlit, OCR Pipeline, ChromaDB, Ollama (Qwen)
-- **Features:**
-  - Multi-format file upload (PDF, DOCX, Images, Audio, Video, HTML)
-  - Automatic text extraction and cleaning
-  - Semantic search and AI-powered Q&A
-  - Batch processing
-  - Chat history and source attribution
+```powershell
+Copy-Item .env.example .env
+```
 
-**Key Features:**
-- ✅ Upload and process any file format
-- ✅ Automatic OCR extraction
-- ✅ Intelligent text chunking and embedding
-- ✅ Vector database storage
-- ✅ Natural language queries
-- ✅ AI-generated answers with sources
+## Run the product
 
-### 2. OCR System (`/OCR`)
-- **Purpose:** Extract text from various file formats
-- **Tech Stack:** PyMuPDF, python-docx, Tesseract, Whisper, BeautifulSoup
-- **Supported Formats:**
-  - PDF (PyMuPDF)
-  - DOCX (python-docx)
-  - Images (Tesseract OCR)
-  - Audio (Whisper)
-  - Video (Whisper + FFmpeg)
-  - HTML (BeautifulSoup)
+The default demo path is the direct package UI. It calls the internal package layer without requiring separate services.
 
-### 3. RAG System (`/RAG`)
-- **Purpose:** Standalone RAG for pre-extracted text
-- **Tech Stack:** Python, ChromaDB, Sentence Transformers, Ollama (Qwen)
-- **Features:**
-  - Load OCR JSON files
-  - Semantic search
-  - AI-powered Q&A
-
-## 🛠️ Setup
-
-### Prerequisites
-- Python 3.10+
-- Ollama (for RAG system)
-
-### Installation
-
-1. **Clone the repository**
 ```bash
-git clone <repository-url>
-cd Project
+python -m edumind.cli ui
 ```
 
-2. **Create virtual environment** (if not exists)
+Optional microservices mode:
+
 ```bash
-python -m venv venv
+python -m edumind.cli ocr-api
+python -m edumind.cli rag-api
+python -m edumind.cli ui-microservices
 ```
 
-3. **Activate virtual environment**
+Windows convenience launcher:
+
+```powershell
+scripts\windows\start_all_services.bat
+```
+
+Standalone RAG-only Streamlit app:
+
 ```bash
-# Windows
-.\venv\Scripts\activate
-
-# Linux/Mac
-source venv/bin/activate
+python -m edumind.cli rag-ui
 ```
 
-4. **Install dependencies**
+## Experiments
+
+Run the bundled experiment suite:
+
 ```bash
-# For unified pipeline (recommended)
-cd pipeline
-pip install -r requirements.txt
-
-# Or for individual components
-cd OCR
-pip install -r requirements.txt
-
-cd ../RAG
-pip install -r requirements.txt
+python -m edumind.cli experiments
 ```
 
-5. **Install Ollama (for AI features)**
-- Download from: https://ollama.ai/download
-- Start Ollama: `ollama serve`
-- Pull model: `ollama pull qwen3:1.7b`
+For advanced experiment flags:
 
-6. **Run the pipeline**
 ```bash
-# Unified pipeline
-streamlit run pipeline/app.py
-
-# Or use the launcher
-cd pipeline
-run_app.bat  # Windows
+python experiments/mlflow/run_all_experiments.py --full --ui
 ```
 
-## 📖 Documentation
+Curated evaluation inputs live in `data/evaluation/`. The experiment suite writes local MLflow state into `artifacts/mlflow/`.
 
-Each component has its own detailed README:
-- **Unified Pipeline:** `pipeline/README.md` ⭐
-- **OCR System:** `OCR/README.md` (coming soon)
-- **RAG System:** `RAG/README.md`
+## Configuration
 
-## 🎯 Use Cases
+- `config/base.yaml` is the shared runtime config.
+- `.env.example` shows supported environment overrides.
+- vector store data persists in `artifacts/rag/vector_store/`
+- `EDUMIND_MLFLOW_TRACKING_URI` can point runtime logging at the shared MLflow store in `artifacts/mlflow/`
 
-### Use the Unified Pipeline when:
-- You want to upload files and ask questions immediately
-- You need to process multiple file formats
-- You want a complete end-to-end solution
+The repo keeps source code and curated fixtures in Git, while local runtime state stays outside the tracked tree.
 
-### Use OCR System standalone when:
-- You only need text extraction
-- You want to integrate OCR into your own pipeline
-- You need programmatic access to extraction
+## Development workflow
 
-### Use RAG System standalone when:
-- You already have extracted text
-- You want to work with JSON files from OCR
-- You need a lightweight Q&A system
+Quality checks:
 
-## 🤝 Contributing
+```bash
+ruff check .
+mypy src
+pytest
+```
 
-Please read the individual component documentation before contributing.
+CI runs the same core checks on pull requests with GitHub Actions.
 
-## 📄 License
+## Documentation
 
-[Add your license here]
+- `docs/README.md` - documentation index
+- `docs/setup/` - onboarding, commands, and environment guidance
+- `docs/architecture/` - system design and package/module docs
+- `docs/experiments/` - experiment workflow notes
+- `docs/archive/` - legacy reports, screenshots, and historical notes
 
+## License
+
+MIT

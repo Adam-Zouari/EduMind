@@ -1,0 +1,6 @@
+# Streamlit App Requirements (Lightweight!)
+# This is all you need for the Streamlit app when using microservices
+
+streamlit>=1.28.0
+requests>=2.31.0
+
