@@ -1,91 +1,65 @@
-# Virtual Environments
+# Virtual environments
+.venv/
 venv/
 venv_*/
 env/
 ENV/
-.venv/
 
-# Data
-data/
-datasets/
-models/
+# Runtime artifacts
+artifacts/
+uploads/
+tmp/
+temp/
+cache/
+mlruns/
+mlartifacts/
+experiments/mlflow/.mlflow_config
 
-# Python Cache
+# Python cache
 __pycache__/
 *.py[cod]
-*.pyc
-*.pyo
-*.pyd
-.Python
-
-# Logs
-*.log
-logs/
-OCR/logs/
-
-# Cache
-cache/
-OCR/cache/
-.cache/
-
-# Batch scripts (local only)
-*.bat
-
-# Database files
-*.db
-*.sqlite
-*.sqlite3
-chroma_db/
-vector_store/
-RAG/chroma_db/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Temporary files
-temp/
-tmp/
-*.tmp
-*.bak
-
-# Environment files
-.env
-.env.local
-
-# Temporary documentation (delete these)
-FIXES_APPLIED.md
-INSTALLATION_COMPLETE.md
-OCR_SERVICE_READY.md
-QUICK_START.txt
-RUN_INSTRUCTIONS.md
-START_HERE.md
-
-# Temporary pipeline file
-run_pipeline.py
-
-# Test files
-OCR/test_image.png
-OCR/paddle_test.png
-*_test.png
-*_test.jpg
-
-# Testing
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 
-# Distribution
+# Build output
 build/
 dist/
 *.egg-info/
 
+# Databases and vector stores
+*.db
+*.sqlite
+*.sqlite3
+*.npy
+*.pkl
+bm25_index.pkl
+**/vectordb/
 
-#????
-2.7.0.3
+# Logs
+*.log
+
+# Local environment files
+.env
+.env.local
+config/local.yaml
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Temporary files
+*.tmp
+*.bak
+Screenshot *.png
+data/evaluation/ocr_extraction_result.json
+docs/archive/2.7.0.3
+
+# Archived screenshots should not grow further
+docs/archive/screenshots/
