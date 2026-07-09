@@ -1,0 +1,32 @@
+embedding:
+  model_name: "sentence-transformers/all-MiniLM-L6-v2"
+  embedding_dim: 384
+  device: "cpu"
+
+chunking:
+  chunk_size: 1000
+  chunk_overlap: 200
+  separators:
+    - "\n\n"
+    - "\n"
+    - " "
+    - ""
+
+vectordb:
+  collection_name: "ocr_documents"
+  persist_directory: "artifacts/rag/vector_store"
+  distance_metric: "cosine"
+
+rag:
+  top_k: 5
+  score_threshold: 0.5
+
+llm:
+  model_name: "qwen3:1.7b"
+  base_url: "http://localhost:11434"
+  temperature: 0.7
+  max_tokens: 2048
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

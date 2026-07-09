@@ -1,6 +1,0 @@
-System: You are a helpful AI assistant. Answer the question based on the provided context.
-Be concise, accurate, and faithful to the context.
-
-Context: {context}
-Question: {query}
-Answer:

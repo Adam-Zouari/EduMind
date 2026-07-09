@@ -1,0 +1,9 @@
+embedding:
+  device: "cpu"
+
+vectordb:
+  persist_directory: "artifacts/rag/vector_store.local"
+
+llm:
+  model_name: "qwen3:1.7b"
+  base_url: "http://localhost:11434"
