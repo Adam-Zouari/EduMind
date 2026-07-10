@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 import json
-import logging
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any
 
 import requests
 
 from .errors import OllamaConnectionError, OllamaRequestError
 from .types import DEFAULT_OLLAMA_TIMEOUT, LLMSettings, RetrievalHit
-
-logger = logging.getLogger(__name__)
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a helpful AI assistant. Answer the user's question using the provided context. "
@@ -52,9 +49,7 @@ class OllamaGenerator:
         """Return whether the Ollama service is reachable."""
         try:
             self.list_models()
-        except OllamaConnectionError:
-            return False
-        except OllamaRequestError:
+        except (OllamaConnectionError, OllamaRequestError):
             return False
         return True
 
@@ -90,8 +85,7 @@ class OllamaGenerator:
             json=payload,
             timeout=self.request_timeout,
         )
-        body = response.json()
-        return str(body.get("response", "")).strip()
+        return _parse_generate_response(response.json())
 
     def stream_generate(
         self,
@@ -114,19 +108,7 @@ class OllamaGenerator:
             timeout=self.request_timeout,
             stream=True,
         )
-        for line in response.iter_lines():
-            if not line:
-                continue
-            try:
-                chunk = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-
-            text = str(chunk.get("response", ""))
-            if text:
-                yield text
-            if chunk.get("done", False):
-                break
+        yield from _iter_stream_text(response, extractor=_extract_generate_chunk_text)
 
     def generate_with_results(
         self,
@@ -155,15 +137,7 @@ class OllamaGenerator:
         stream: bool = False,
     ) -> str:
         """Send chat-style messages to Ollama."""
-        payload = {
-            "model": self.model_name,
-            "messages": messages,
-            "stream": stream,
-            "options": {
-                "temperature": self.temperature,
-                "num_predict": self.max_tokens,
-            },
-        }
+        payload = self._build_chat_payload(messages, stream=stream)
         if stream:
             return "".join(self.stream_chat(messages))
 
@@ -173,21 +147,11 @@ class OllamaGenerator:
             json=payload,
             timeout=self.request_timeout,
         )
-        body = response.json()
-        message = body.get("message", {})
-        return str(message.get("content", "")).strip()
+        return _parse_chat_response(response.json())
 
     def stream_chat(self, messages: list[dict[str, str]]) -> Iterator[str]:
         """Yield chat chunks from Ollama."""
-        payload = {
-            "model": self.model_name,
-            "messages": messages,
-            "stream": True,
-            "options": {
-                "temperature": self.temperature,
-                "num_predict": self.max_tokens,
-            },
-        }
+        payload = self._build_chat_payload(messages, stream=True)
         response = self._request(
             "POST",
             "/api/chat",
@@ -195,20 +159,7 @@ class OllamaGenerator:
             timeout=self.request_timeout,
             stream=True,
         )
-        for line in response.iter_lines():
-            if not line:
-                continue
-            try:
-                chunk = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-
-            message = chunk.get("message", {})
-            text = str(message.get("content", ""))
-            if text:
-                yield text
-            if chunk.get("done", False):
-                break
+        yield from _iter_stream_text(response, extractor=_extract_chat_chunk_text)
 
     def _build_generate_payload(
         self,
@@ -217,13 +168,30 @@ class OllamaGenerator:
         context: str,
         system_prompt: str | None,
         stream: bool,
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         """Build the Ollama generate payload."""
         prompt = f"Context:\n{context}\n\nQuestion: {query}\n\nAnswer:"
         return {
             "model": self.model_name,
             "prompt": prompt,
             "system": system_prompt or DEFAULT_SYSTEM_PROMPT,
+            "stream": stream,
+            "options": {
+                "temperature": self.temperature,
+                "num_predict": self.max_tokens,
+            },
+        }
+
+    def _build_chat_payload(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        stream: bool,
+    ) -> dict[str, object]:
+        """Build the Ollama chat payload."""
+        return {
+            "model": self.model_name,
+            "messages": messages,
             "stream": stream,
             "options": {
                 "temperature": self.temperature,
@@ -260,4 +228,57 @@ class OllamaGenerator:
                 f"Ollama API request failed ({response.status_code}): {response.text}"
             )
         return response
+
+
+def _parse_generate_response(payload: Mapping[str, object]) -> str:
+    """Decode a non-streaming generate response body."""
+    return str(payload.get("response", "")).strip()
+
+
+def _parse_chat_response(payload: Mapping[str, object]) -> str:
+    """Decode a non-streaming chat response body."""
+    message = payload.get("message", {})
+    if not isinstance(message, Mapping):
+        return ""
+    return str(message.get("content", "")).strip()
+
+
+def _iter_stream_text(
+    response: requests.Response,
+    *,
+    extractor: Callable[[Mapping[str, object]], str],
+) -> Iterator[str]:
+    """Yield decoded text chunks from Ollama's JSON-lines stream."""
+    for payload in _iter_stream_payloads(response):
+        text = extractor(payload)
+        if text:
+            yield text
+        if payload.get("done", False):
+            break
+
+
+def _iter_stream_payloads(response: requests.Response) -> Iterator[Mapping[str, object]]:
+    """Yield decoded JSON objects from an Ollama streaming response."""
+    for line in response.iter_lines():
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, Mapping):
+            yield payload
+
+
+def _extract_generate_chunk_text(payload: Mapping[str, object]) -> str:
+    """Extract text from one generate stream payload."""
+    return str(payload.get("response", ""))
+
+
+def _extract_chat_chunk_text(payload: Mapping[str, object]) -> str:
+    """Extract text from one chat stream payload."""
+    message = payload.get("message", {})
+    if not isinstance(message, Mapping):
+        return ""
+    return str(message.get("content", ""))
 

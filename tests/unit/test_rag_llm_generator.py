@@ -94,6 +94,20 @@ def test_stream_chat_yields_incremental_text() -> None:
     assert chunks == ["Hello ", "world"]
 
 
+def test_stream_generate_ignores_bad_json_and_yields_incremental_text() -> None:
+    lines = [
+        b"{bad",
+        json.dumps({"response": "chunk-1"}).encode("utf-8"),
+        json.dumps({"response": "chunk-2", "done": True}).encode("utf-8"),
+    ]
+    session = FakeSession(responses=[FakeResponse(lines=lines)])
+    generator = OllamaGenerator(session=session)
+
+    chunks = list(generator.stream_generate("How do I study?", "Context block"))
+
+    assert chunks == ["chunk-1", "chunk-2"]
+
+
 def test_connection_errors_raise_typed_error() -> None:
     session = FakeSession(exc=requests.ConnectionError("offline"))
     generator = OllamaGenerator(session=session)
@@ -101,3 +115,14 @@ def test_connection_errors_raise_typed_error() -> None:
     assert generator.health_check() is False
     with pytest.raises(OllamaConnectionError):
         generator.list_models()
+
+
+def test_chat_returns_non_streaming_message_content() -> None:
+    session = FakeSession(
+        responses=[FakeResponse(json_data={"message": {"content": "Use spaced repetition."}})]
+    )
+    generator = OllamaGenerator(session=session)
+
+    answer = generator.chat([{"role": "user", "content": "How should I revise?"}])
+
+    assert answer == "Use spaced repetition."

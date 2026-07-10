@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 try:
     import mlflow
-except Exception:  # pragma: no cover - optional runtime dependency
+except ImportError:  # pragma: no cover - optional runtime dependency
     mlflow = None
 
 

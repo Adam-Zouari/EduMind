@@ -138,6 +138,7 @@ The dense store and lexical store now have a clearer relationship:
 - Chroma is the source of dense retrieval
 - the lexical manifest is the canonical persisted source for BM25 rebuild
 - reset clears both layers together
+- `lexical_index.json` is the only supported lexical persistence format
 
 ## `llm_generator.py`
 

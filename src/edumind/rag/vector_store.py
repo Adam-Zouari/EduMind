@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
@@ -26,7 +25,6 @@ from .types import (
 logger = logging.getLogger(__name__)
 
 LEXICAL_MANIFEST_FILENAME = "lexical_index.json"
-LEGACY_BM25_FILENAME = "bm25_index.pkl"
 RESERVED_RAW_METADATA_KEY = "__raw_metadata"
 RESERVED_SOURCE_ID_KEY = "__source_id"
 RESERVED_CHUNK_INDEX_KEY = "__chunk_index"
@@ -78,7 +76,6 @@ class VectorStore:
         )
 
         self.lexical_manifest_path = self.persist_directory / LEXICAL_MANIFEST_FILENAME
-        self.legacy_bm25_path = self.persist_directory / LEGACY_BM25_FILENAME
         self.lexical_entries: list[LexicalEntry] = self._load_lexical_entries()
         self.bm25: Any | None = None
         self.doc_map: list[str] = []
@@ -146,42 +143,7 @@ class VectorStore:
             top_k=top_k,
             filter_metadata=validated_filter,
         )
-
-        all_ids = set(dense_hits) | set(lexical_scores)
-        combined_hits: list[RetrievalHit] = []
-        for doc_id in all_ids:
-            dense_hit = dense_hits.get(doc_id)
-            dense_score = dense_hit.score if dense_hit is not None else 0.0
-            lexical_score = lexical_scores.get(doc_id, 0.0)
-            final_score = (
-                (1.0 - self.bm25_alpha) * dense_score
-            ) + (self.bm25_alpha * lexical_score)
-
-            if dense_hit is not None:
-                combined_hits.append(
-                    RetrievalHit(
-                        id=dense_hit.id,
-                        document=dense_hit.document,
-                        metadata=dense_hit.metadata,
-                        score=final_score,
-                    )
-                )
-                continue
-
-            fetched_hit = self._fetch_hit_by_id(doc_id)
-            if fetched_hit is None:
-                continue
-            combined_hits.append(
-                RetrievalHit(
-                    id=fetched_hit.id,
-                    document=fetched_hit.document,
-                    metadata=fetched_hit.metadata,
-                    score=final_score,
-                )
-            )
-
-        combined_hits.sort(key=lambda hit: hit.score, reverse=True)
-        return combined_hits[:top_k]
+        return self._merge_hits(dense_hits, lexical_scores, top_k=top_k)
 
     def get_collection_count(self) -> int:
         """Return the number of indexed chunks."""
@@ -194,9 +156,8 @@ class VectorStore:
         except Exception as exc:
             logger.warning("Could not delete Chroma collection %s: %s", self.collection_name, exc)
 
-        for path in (self.lexical_manifest_path, self.legacy_bm25_path):
-            if path.exists():
-                os.remove(path)
+        if self.lexical_manifest_path.exists():
+            self.lexical_manifest_path.unlink()
 
         self.lexical_entries = []
         self.bm25 = None
@@ -282,16 +243,13 @@ class VectorStore:
 
     def _load_lexical_entries(self) -> list[LexicalEntry]:
         """Load the lexical manifest from disk."""
-        if self.legacy_bm25_path.exists() and not self.lexical_manifest_path.exists():
-            logger.info("Ignoring legacy BM25 pickle in favor of the new lexical manifest format")
-
         if not self.lexical_manifest_path.exists():
             return []
 
         try:
             with self.lexical_manifest_path.open(encoding="utf-8") as handle:
                 payload = json.load(handle)
-        except Exception as exc:
+        except (OSError, json.JSONDecodeError) as exc:
             logger.warning("Failed to load lexical manifest: %s", exc)
             return []
 
@@ -402,6 +360,49 @@ class VectorStore:
         if max_score <= 0:
             return {doc_id: 0.0 for doc_id, _ in top_scored_entries}
         return {doc_id: score / max_score for doc_id, score in top_scored_entries}
+
+    def _merge_hits(
+        self,
+        dense_hits: Mapping[str, RetrievalHit],
+        lexical_scores: Mapping[str, float],
+        *,
+        top_k: int,
+    ) -> list[RetrievalHit]:
+        """Merge dense and lexical scores into one ordered hit list."""
+        combined_hits: list[RetrievalHit] = []
+        for doc_id in set(dense_hits) | set(lexical_scores):
+            dense_hit = dense_hits.get(doc_id)
+            dense_score = dense_hit.score if dense_hit is not None else 0.0
+            lexical_score = lexical_scores.get(doc_id, 0.0)
+            final_score = ((1.0 - self.bm25_alpha) * dense_score) + (
+                self.bm25_alpha * lexical_score
+            )
+
+            if dense_hit is not None:
+                combined_hits.append(
+                    RetrievalHit(
+                        id=dense_hit.id,
+                        document=dense_hit.document,
+                        metadata=dense_hit.metadata,
+                        score=final_score,
+                    )
+                )
+                continue
+
+            fetched_hit = self._fetch_hit_by_id(doc_id)
+            if fetched_hit is None:
+                continue
+            combined_hits.append(
+                RetrievalHit(
+                    id=fetched_hit.id,
+                    document=fetched_hit.document,
+                    metadata=fetched_hit.metadata,
+                    score=final_score,
+                )
+            )
+
+        combined_hits.sort(key=lambda hit: hit.score, reverse=True)
+        return combined_hits[:top_k]
 
     def _fetch_hit_by_id(self, doc_id: str) -> RetrievalHit | None:
         """Fetch one stored chunk by id from Chroma."""

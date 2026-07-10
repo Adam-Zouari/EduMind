@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -150,6 +151,7 @@ def test_upsert_query_filter_and_reset(monkeypatch, tmp_path: Path) -> None:
     store.reset_collection()
     assert store.get_collection_count() == 0
     assert store.lexical_entries == []
+    assert not (tmp_path / "lexical_index.json").exists()
 
 
 def test_query_rejects_non_scalar_filters(monkeypatch, tmp_path: Path) -> None:
@@ -168,6 +170,27 @@ def test_query_rejects_non_scalar_filters(monkeypatch, tmp_path: Path) -> None:
 
     with pytest.raises(MetadataFilterError, match="Only scalar top-level metadata filters"):
         store.query_hybrid("alpha", [0.1, 0.2], filter_metadata={"nested": {"bad": True}})
+
+
+def test_malformed_lexical_manifest_is_ignored(monkeypatch, tmp_path: Path, caplog) -> None:
+    monkeypatch.setattr(
+        "edumind.rag.vector_store._load_runtime_dependencies",
+        lambda: (FakePersistentClient, FakeSettings, FakeBM25Okapi),
+    )
+    manifest_path = tmp_path / "lexical_index.json"
+    manifest_path.write_text("{bad json", encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING):
+        store = VectorStore(
+            settings=VectorStoreSettings(
+                collection_name="test-collection",
+                persist_directory=tmp_path,
+                distance_metric="cosine",
+            )
+        )
+
+    assert store.lexical_entries == []
+    assert "Failed to load lexical manifest" in caplog.text
 
 
 class FakeSettings:

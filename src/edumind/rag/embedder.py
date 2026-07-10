@@ -95,7 +95,7 @@ class Embedder:
 
         try:
             import torch
-        except Exception:  # pragma: no cover - optional runtime dependency
+        except ImportError:  # pragma: no cover - optional runtime dependency
             logger.warning("CUDA requested but torch is unavailable. Falling back to CPU.")
             return "cpu"
 
