@@ -139,6 +139,42 @@ mypy src
 pytest
 ```
 
+## OCR self-test
+
+For OCR-only stabilization work, the official validation path is:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -e .[dev,ocr,api]
+ruff check .
+mypy src
+pytest -q
+```
+
+From outside the repo root, confirm the editable install works:
+
+```bash
+python -c "from edumind.ocr import DataIngestionPipeline; print(DataIngestionPipeline)"
+```
+
+Manual OCR smoke checks:
+
+- run a small PDF through `DataIngestionPipeline`
+- run a scanned PDF with `pdf_ocr_mode="force"` and compare it to `pdf_ocr_mode="off"`
+- run a small DOCX through `DataIngestionPipeline`
+- run an image twice and confirm `artifacts/ocr/cache/` is populated and the second pass uses cache
+- optionally test short audio and video files if Whisper and FFmpeg are installed locally
+
+To benchmark the refined OCR path locally:
+
+```bash
+python scripts/ocr_benchmark.py
+```
+
+The benchmark runner writes JSON and CSV output into `artifacts/ocr/benchmarks/`.
+
 CI runs the same core checks on pull requests with GitHub Actions.
 
 ## Documentation
