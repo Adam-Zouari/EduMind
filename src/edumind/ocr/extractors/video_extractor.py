@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from fractions import Fraction
+from pathlib import Path
 import tempfile
 import time
-from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import ffmpeg
 
@@ -26,29 +26,33 @@ class VideoExtractor(BaseExtractor):
         if self.model is None and self.runtime_error:
             self.logger.error(self.runtime_error)
 
-    def extract(self, file_path: Path, **kwargs: Any) -> ExtractionResult:
+    def extract(self, file_path: Path, **kwargs: object) -> ExtractionResult:
         start_time = time.time()
         self.logger.info(f"Extracting from video: {file_path}")
 
         if self.model is None:
             return self._create_error_result(
                 file_path,
-                self.runtime_error or "Whisper model not available. Install optional video dependencies.",
+                (
+                    self.runtime_error
+                    or "Whisper model not available. Install optional video dependencies."
+                ),
             )
 
         audio_path: Path | None = None
         try:
             audio_path = self._extract_audio(file_path)
-            transcribe_kwargs = {"verbose": False}
+            transcribe_kwargs: dict[str, object] = {"verbose": False}
             language = kwargs.get("language")
-            if language is None and kwargs.get("languages"):
-                language = kwargs["languages"][0]
+            raw_languages = kwargs.get("languages")
+            if language is None and isinstance(raw_languages, list) and raw_languages:
+                language = raw_languages[0]
             if language is None:
                 language = WHISPER_LANGUAGE
-            if language:
+            if isinstance(language, str) and language:
                 transcribe_kwargs["language"] = language
 
-            result = self.model.transcribe(str(audio_path), **transcribe_kwargs)
+            result = cast(Any, self.model).transcribe(str(audio_path), **transcribe_kwargs)
             segments = [
                 {"start": segment["start"], "end": segment["end"], "text": segment["text"]}
                 for segment in result.get("segments", [])
@@ -101,7 +105,7 @@ class VideoExtractor(BaseExtractor):
 
         return audio_path
 
-    def _get_video_info(self, video_path: Path) -> dict[str, Any]:
+    def _get_video_info(self, video_path: Path) -> dict[str, object]:
         try:
             probe = ffmpeg.probe(str(video_path))
             video_stream = next(

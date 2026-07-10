@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 from PIL import Image
 
 from edumind.ocr.core.base_extractor import ExtractionResult
@@ -130,16 +129,20 @@ def test_batch_strategy_auto_routes_media_sequentially_and_keeps_order(
     threaded_calls: list[str] = []
     direct_calls: list[str] = []
 
-    def _thread_wrapper(*, file_path: Path, format_info, **kwargs):
-        threaded_calls.append(format_info["format_type"])
+    def _thread_wrapper(detected_file, options, image_limiter):
+        threaded_calls.append(detected_file.format_info.format_type)
+        return ExtractionResult(
+            text=detected_file.file_path.name,
+            file_path=str(detected_file.file_path),
+            success=True,
+        )
+
+    def _direct_wrapper(file_path: Path, format_info, format_detection_time, total_start, batch_options):
+        direct_calls.append(format_info.format_type)
         return ExtractionResult(text=file_path.name, file_path=str(file_path), success=True)
 
-    def _direct_wrapper(*, file_path: Path, format_info, **kwargs):
-        direct_calls.append(format_info["format_type"])
-        return ExtractionResult(text=file_path.name, file_path=str(file_path), success=True)
-
-    monkeypatch.setattr(pipeline, "_process_detected_file_with_optional_limiter", _thread_wrapper)
-    monkeypatch.setattr(pipeline, "_process_detected_file", _direct_wrapper)
+    monkeypatch.setattr(pipeline.batch_coordinator, "_process_with_optional_image_limit", _thread_wrapper)
+    monkeypatch.setattr(pipeline.batch_coordinator, "process_detected_file", _direct_wrapper)
 
     results = pipeline.process_batch([image_path, audio_path], batch_strategy="auto")
 

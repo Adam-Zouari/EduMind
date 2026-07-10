@@ -6,8 +6,8 @@ import fitz
 import numpy as np
 
 from edumind.ocr.core.base_extractor import ExtractionResult
-from edumind.ocr.extractors.ocr_extractor import OCRExtractor
-from edumind.ocr.extractors.pdf_extractor import PDFExtractor
+from edumind.ocr.extractors._image_backends import ImageOCRBackends, OCRRunResult
+from edumind.ocr.extractors.pdf_extractor import NativePdfPage, PDFExtractor
 
 
 def _create_mixed_pdf(path: Path) -> None:
@@ -35,19 +35,27 @@ def test_pdf_auto_fallback_ocrs_only_low_text_pages(tmp_path: Path, monkeypatch)
         extractor,
         "_extract_native_pages",
         lambda doc: (
-                [
-                    {
-                        "page_index": 0,
-                        "text": " ".join(["Long native study text"] * 20),
-                        "native_extraction_time": 0.05,
-                    },
-                {
-                    "page_index": 1,
-                    "text": "",
-                    "native_extraction_time": 0.01,
-                },
+            [
+                NativePdfPage(
+                    page_index=0,
+                    text=" ".join(["Long native study text"] * 20),
+                    native_extraction_time=0.05,
+                ),
+                NativePdfPage(
+                    page_index=1,
+                    text="",
+                    native_extraction_time=0.01,
+                ),
             ],
-            {"num_pages": 2, "title": "", "author": "", "subject": "", "creator": "", "producer": "", "creation_date": ""},
+            {
+                "num_pages": 2,
+                "title": "",
+                "author": "",
+                "subject": "",
+                "creator": "",
+                "producer": "",
+                "creation_date": "",
+            },
         ),
     )
 
@@ -102,12 +110,15 @@ def test_pdf_page_cache_is_reused_on_second_run(tmp_path: Path, monkeypatch) -> 
     pdf_path = tmp_path / "cached.pdf"
     _create_mixed_pdf(pdf_path)
 
-    def _fake_run_ocr_engine(self, image: np.ndarray, **kwargs):
-        return "Cached OCR text", 95.0, None
+    def _fake_extract(self, image: np.ndarray, **kwargs) -> OCRRunResult:
+        return OCRRunResult(
+            text="Cached OCR text",
+            confidence=95.0,
+            attempts=["standard (conf: 95.00)"],
+            ocr_data=None,
+        )
 
-    monkeypatch.setattr(OCRExtractor, "_run_ocr_engine", _fake_run_ocr_engine)
-    monkeypatch.setattr(OCRExtractor, "_validate_extraction", lambda self, *_: (True, "ok"))
-    monkeypatch.setattr(OCRExtractor, "_log_optional_mlflow_metrics", lambda self, **_: None)
+    monkeypatch.setattr(ImageOCRBackends, "extract", _fake_extract)
 
     extractor = PDFExtractor()
     first = extractor.extract(pdf_path, pdf_ocr_mode="force")

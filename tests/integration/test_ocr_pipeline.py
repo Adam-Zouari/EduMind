@@ -8,6 +8,7 @@ from PIL import Image
 
 from edumind.ocr.core.base_extractor import ExtractionResult
 from edumind.ocr.core.pipeline import DataIngestionPipeline
+from edumind.ocr.extractors._image_backends import ImageOCRBackends, OCRRunResult
 
 
 def _create_pdf(path: Path) -> None:
@@ -122,18 +123,15 @@ def test_scanned_pdf_second_run_hits_page_cache(tmp_path: Path, monkeypatch) -> 
     scanned_pdf = tmp_path / "scanned.pdf"
     _create_scanned_pdf(scanned_pdf)
 
-    def _fake_run_ocr_engine(self, image, **kwargs):
-        return "Recovered scanned PDF text", 95.0, None
+    def _fake_extract(self, image, **kwargs) -> OCRRunResult:
+        return OCRRunResult(
+            text="Recovered scanned PDF text",
+            confidence=95.0,
+            attempts=["standard (conf: 95.00)"],
+            ocr_data=None,
+        )
 
-    monkeypatch.setattr("edumind.ocr.extractors.ocr_extractor.OCRExtractor._run_ocr_engine", _fake_run_ocr_engine)
-    monkeypatch.setattr(
-        "edumind.ocr.extractors.ocr_extractor.OCRExtractor._validate_extraction",
-        lambda self, *_: (True, "ok"),
-    )
-    monkeypatch.setattr(
-        "edumind.ocr.extractors.ocr_extractor.OCRExtractor._log_optional_mlflow_metrics",
-        lambda self, **_: None,
-    )
+    monkeypatch.setattr(ImageOCRBackends, "extract", _fake_extract)
 
     pipeline = DataIngestionPipeline()
     first = pipeline.process_file(scanned_pdf, pdf_ocr_mode="force")
