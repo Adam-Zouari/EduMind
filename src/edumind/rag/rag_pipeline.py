@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
 
 from edumind.common.config import load_yaml_config
 from edumind.common.paths import resolve_config_path
@@ -14,6 +14,7 @@ from .embedder import Embedder
 from .llm_generator import OllamaGenerator
 from .ocr_processor import OCRProcessor
 from .text_chunker import TextChunker
+from .types import AnswerResult, IngestDocument, IngestReport, RAGConfig, RetrievalHit
 from .vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -27,33 +28,129 @@ except Exception:  # pragma: no cover - optional runtime dependency
 class RAGPipeline:
     """Process text into a vector store and answer questions with local LLMs."""
 
-    def __init__(self, config_path: str | None = None, use_llm: bool = False):
-        self.config_path = str(resolve_config_path(config_path))
-        self.config = load_yaml_config(self.config_path)
+    def __init__(self, config_path: str | None = None, use_llm: bool = False) -> None:
+        self.config_path = resolve_config_path(config_path)
+        raw_config = load_yaml_config(self.config_path)
+        self.config = RAGConfig.from_mapping(raw_config)
         self._configure_mlflow()
 
         self.ocr_processor = OCRProcessor()
-        self.text_chunker = TextChunker(self.config_path)
-        self.embedder = Embedder(self.config_path)
-        self.vector_store = VectorStore(self.config_path)
+        self.embedder = Embedder(settings=self.config.embedding)
+        self.text_chunker = TextChunker(settings=self.config.chunking, embedder=self.embedder)
+        self.vector_store = VectorStore(settings=self.config.vector_store)
 
-        self.rag_config = self.config["rag"]
-        self.top_k = self.rag_config["top_k"]
-        self.score_threshold = self.rag_config["score_threshold"]
+        self.top_k = self.config.rag.top_k
+        self.score_threshold = self.config.rag.score_threshold
+        self.llm_generator = OllamaGenerator(settings=self.config.llm) if use_llm else None
 
-        self.llm_generator = None
-        if use_llm:
-            llm_config = self.config.get("llm", {})
-            self.llm_generator = OllamaGenerator(
-                model_name=llm_config.get("model_name", "qwen3:1.7b"),
-                base_url=llm_config.get("base_url", "http://localhost:11434"),
-                temperature=llm_config.get("temperature", 0.7),
-                max_tokens=llm_config.get("max_tokens", 2048),
+    def ingest_document(self, document: IngestDocument | Mapping[str, object]) -> IngestReport:
+        """Normalize, chunk, embed, and upsert one document into the retrieval store."""
+        normalized_document = self._normalize_document(document)
+        chunks = self.text_chunker.chunk_document(normalized_document)
+        embedded_chunks = self.embedder.embed_chunks(chunks)
+        self.vector_store.upsert_chunks(embedded_chunks)
+        self._log_active_mlflow_ingest(normalized_document, len(embedded_chunks))
+        return IngestReport(
+            source_id=normalized_document.source_id,
+            source=normalized_document.source,
+            chunks_created=len(embedded_chunks),
+        )
+
+    def ingest_documents(
+        self,
+        documents: Sequence[IngestDocument | Mapping[str, object]],
+    ) -> list[IngestReport]:
+        """Ingest many documents and return one report per document."""
+        return [self.ingest_document(document) for document in documents]
+
+    def ingest_from_json(self, json_path: str | Path) -> list[IngestReport]:
+        """Load OCR JSON and ingest all normalized documents."""
+        documents = self.ocr_processor.load_from_json(json_path)
+        return self.ingest_documents(documents)
+
+    def query(
+        self,
+        query_text: str,
+        top_k: int | None = None,
+        filter_metadata: Mapping[str, object] | None = None,
+    ) -> list[RetrievalHit]:
+        """Run retrieval and enforce the configured score threshold."""
+        limit = top_k or self.top_k
+        results = self.vector_store.query_by_text(
+            query_text,
+            self.embedder,
+            top_k=limit,
+            filter_metadata=filter_metadata,
+        )
+        return [result for result in results if result.score >= self.score_threshold]
+
+    def generate_context(self, results: Sequence[RetrievalHit]) -> str:
+        """Build display context from one already-computed result set."""
+        return "\n\n".join(
+            f"[Document {index}]\n{result.document}\nSource: {result.source}, Page: {result.page}"
+            for index, result in enumerate(results, start=1)
+        )
+
+    def generate_answer(
+        self,
+        query: str,
+        top_k: int | None = None,
+        filter_metadata: Mapping[str, object] | None = None,
+        stream: bool = False,
+        system_prompt: str | None = None,
+    ) -> AnswerResult:
+        """Retrieve once and reuse that result set for answer, context, and sources."""
+        if self.llm_generator is None:
+            raise ValueError("LLM generator not initialized. Use RAGPipeline(use_llm=True).")
+
+        results = self.query(query, top_k=top_k, filter_metadata=filter_metadata)
+        if not results:
+            return AnswerResult(
+                answer="I couldn't find any relevant information to answer your question.",
+                sources=[],
+                context="",
             )
 
-        self._log_initialization()
+        context = self.generate_context(results)
+        answer = self.llm_generator.generate_with_results(
+            query=query,
+            results=results,
+            system_prompt=system_prompt,
+            stream=stream,
+        )
+        self._log_active_mlflow_query(query, results, answer)
+        return AnswerResult(answer=answer, sources=list(results), context=context)
+
+    def get_stats(self) -> dict[str, object]:
+        """Return lightweight RAG runtime statistics."""
+        total_chunks = self.vector_store.get_collection_count()
+        return {
+            "total_chunks": total_chunks,
+            "embedding_model": self.embedder.model_name,
+            "embedding_dimension": self.embedder.embedding_dim,
+            "chunk_size": self.text_chunker.chunk_size,
+            "chunk_overlap": self.text_chunker.chunk_overlap,
+            "collection_name": self.vector_store.collection_name,
+            "persist_directory": str(self.vector_store.persist_directory),
+            "model_loaded": self.embedder.model_loaded,
+            "llm_enabled": self.llm_generator is not None,
+        }
+
+    def reset(self) -> None:
+        """Clear the dense and lexical retrieval stores."""
+        self.vector_store.reset_collection()
+
+    def _normalize_document(
+        self,
+        document: IngestDocument | Mapping[str, object],
+    ) -> IngestDocument:
+        """Normalize one supported ingest input into an IngestDocument."""
+        if isinstance(document, IngestDocument):
+            return document
+        return self.ocr_processor.normalize_document(document)
 
     def _configure_mlflow(self) -> None:
+        """Configure the MLflow tracking target without forcing logging side effects."""
         if mlflow is None:
             return
         tracking_uri = os.getenv("EDUMIND_MLFLOW_TRACKING_URI")
@@ -62,119 +159,23 @@ class RAGPipeline:
         experiment_name = os.getenv("EDUMIND_MLFLOW_EXPERIMENT", "EduMind-AI-RAG")
         mlflow.set_experiment(experiment_name)
 
-    def _log_initialization(self) -> None:
-        if mlflow is None:
+    def _log_active_mlflow_ingest(self, document: IngestDocument, chunk_count: int) -> None:
+        """Log ingest metrics only when an MLflow run is already active."""
+        if mlflow is None or mlflow.active_run() is None:
             return
-        try:
-            with mlflow.start_run(run_name="pipeline_initialization"):
-                mlflow.log_params(
-                    {
-                        "embedding_model": self.embedder.model_name,
-                        "chunk_size": self.text_chunker.chunk_size,
-                        "top_k": self.top_k,
-                        "score_threshold": self.score_threshold,
-                        "llm_model": self.llm_generator.model_name if self.llm_generator else "None",
-                    }
-                )
-        except Exception as exc:
-            logger.warning(f"Failed to log initialization to MLflow: {exc}")
+        mlflow.log_params({"rag_source": document.source, "rag_source_id": document.source_id})
+        mlflow.log_metric("chunks_created", chunk_count)
+        mlflow.log_metric("source_text_length", len(document.text))
 
-    def ingest_document(self, document: dict[str, Any]) -> int:
-        text = document.get("text", "")
-        metadata = {key: value for key, value in document.items() if key != "text"}
-        source = metadata.get("source", "unknown")
-
-        if mlflow is None:
-            return self._ingest_document_chunks(text, metadata)
-
-        with mlflow.start_run(run_name=f"ingest_{Path(source).name}", nested=True):
-            return self._ingest_document_chunks(text, metadata)
-
-    def _ingest_document_chunks(self, text: str, metadata: dict[str, Any]) -> int:
-        chunks = self.text_chunker.chunk_text(text, metadata)
-        if mlflow is not None:
-            mlflow.log_metric("chunks_created", len(chunks))
-            mlflow.log_metric("source_text_length", len(text))
-        chunks_with_embeddings = self.embedder.embed_chunks(chunks)
-        self.vector_store.add_documents(chunks_with_embeddings)
-        return len(chunks)
-
-    def ingest_documents(self, documents: list[dict[str, Any]]) -> int:
-        return sum(self.ingest_document(document) for document in documents)
-
-    def ingest_from_json(self, json_path: str) -> int:
-        return self.ingest_documents(self.ocr_processor.load_from_json(json_path))
-
-    def query(self, query_text: str, top_k: int | None = None, filter_metadata: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        limit = top_k or self.top_k
-        results = self.vector_store.query_by_text(query_text, self.embedder, top_k=limit, filter_metadata=filter_metadata)
-        if results and "distance" in results[0]:
-            results = [result for result in results if result["distance"] <= (1 - self.score_threshold)]
-        return results
-
-    def generate_context(self, query_text: str, top_k: int | None = None) -> str:
-        results = self.query(query_text, top_k)
-        return "\n".join(f"[Document {index + 1}]\n{result['document']}\n" for index, result in enumerate(results))
-
-    def generate_answer(
+    def _log_active_mlflow_query(
         self,
         query: str,
-        top_k: int | None = None,
-        filter_metadata: dict[str, Any] | None = None,
-        stream: bool = False,
-        system_prompt: str | None = None,
-    ) -> dict[str, Any]:
-        if self.llm_generator is None:
-            raise ValueError("LLM generator not initialized. Use RAGPipeline(use_llm=True).")
-
-        limit = top_k or self.top_k
-        results = self.query(query, limit, filter_metadata)
-        if not results:
-            return {
-                "answer": "I couldn't find any relevant information to answer your question.",
-                "sources": [],
-                "context": "",
-            }
-
-        answer = self.llm_generator.generate_with_results(
-            query=query,
-            results=results,
-            system_prompt=system_prompt,
-            stream=stream,
-        )
-
-        if mlflow is not None:
-            try:
-                with mlflow.start_run(run_name="query_generation", nested=True):
-                    mlflow.log_params({"query": query, "top_k": limit})
-                    mlflow.log_metric("retrieved_documents", len(results))
-                    mlflow.log_text(answer, "generated_answer.txt")
-            except Exception as exc:
-                logger.warning(f"Failed to log query generation to MLflow: {exc}")
-
-        return {
-            "answer": answer,
-            "sources": [
-                {
-                    "source": result.get("metadata", {}).get("source", "Unknown"),
-                    "page": result.get("metadata", {}).get("page", "N/A"),
-                    "similarity": f"{(1 - result.get('distance', 1)) * 100:.1f}%",
-                    "text": result.get("document", ""),
-                }
-                for result in results
-            ],
-            "context": self.generate_context(query, limit),
-        }
-
-    def get_stats(self) -> dict[str, Any]:
-        return {
-            "total_documents": self.vector_store.get_collection_count(),
-            "embedding_model": self.embedder.model_name,
-            "embedding_dimension": self.embedder.embedding_dim,
-            "chunk_size": self.text_chunker.chunk_size,
-            "collection_name": self.vector_store.collection_name,
-            "persist_directory": str(self.vector_store.persist_directory),
-        }
-
-    def reset(self) -> None:
-        self.vector_store.reset_collection()
+        results: Sequence[RetrievalHit],
+        answer: str,
+    ) -> None:
+        """Log query metrics only when an MLflow run is already active."""
+        if mlflow is None or mlflow.active_run() is None:
+            return
+        mlflow.log_params({"query": query, "top_k": len(results)})
+        mlflow.log_metric("retrieved_documents", len(results))
+        mlflow.log_text(answer, "generated_answer.txt")

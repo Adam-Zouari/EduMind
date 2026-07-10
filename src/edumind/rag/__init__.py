@@ -9,7 +9,11 @@ __all__ = [
     "TextChunker",
     "Embedder",
     "VectorStore",
+    "OllamaGenerator",
     "RAGPipeline",
+    "IngestDocument",
+    "RetrievalHit",
+    "AnswerResult",
 ]
 
 
@@ -30,8 +34,24 @@ def __getattr__(name: str):
         from .vector_store import VectorStore
 
         return VectorStore
+    if name == "OllamaGenerator":
+        from .llm_generator import OllamaGenerator
+
+        return OllamaGenerator
     if name == "RAGPipeline":
         from .rag_pipeline import RAGPipeline
 
         return RAGPipeline
+    if name == "IngestDocument":
+        from .types import IngestDocument
+
+        return IngestDocument
+    if name == "RetrievalHit":
+        from .types import RetrievalHit
+
+        return RetrievalHit
+    if name == "AnswerResult":
+        from .types import AnswerResult
+
+        return AnswerResult
     raise AttributeError(name)
