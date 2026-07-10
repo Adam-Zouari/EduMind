@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
-from pathlib import Path
 
 from edumind.common.paths import PROJECT_ROOT
 
@@ -15,15 +14,39 @@ def _run(command: list[str]) -> int:
 
 
 def run_ui() -> int:
-    return _run([sys.executable, "-m", "streamlit", "run", str(PROJECT_ROOT / "apps" / "streamlit_app.py")])
+    return _run(
+        [
+            sys.executable,
+            "-m",
+            "streamlit",
+            "run",
+            str(PROJECT_ROOT / "apps" / "streamlit_app.py"),
+        ]
+    )
 
 
 def run_microservices_ui() -> int:
-    return _run([sys.executable, "-m", "streamlit", "run", str(PROJECT_ROOT / "apps" / "streamlit_microservices.py")])
+    return _run(
+        [
+            sys.executable,
+            "-m",
+            "streamlit",
+            "run",
+            str(PROJECT_ROOT / "apps" / "streamlit_microservices.py"),
+        ]
+    )
 
 
 def run_rag_ui() -> int:
-    return _run([sys.executable, "-m", "streamlit", "run", str(PROJECT_ROOT / "apps" / "rag_standalone.py")])
+    return _run(
+        [
+            sys.executable,
+            "-m",
+            "streamlit",
+            "run",
+            str(PROJECT_ROOT / "apps" / "rag_standalone.py"),
+        ]
+    )
 
 
 def run_ocr_api() -> int:
@@ -61,7 +84,12 @@ def run_rag_api() -> int:
 
 
 def run_experiments() -> int:
-    return _run([sys.executable, str(PROJECT_ROOT / "experiments" / "mlflow" / "run_all_experiments.py")])
+    return _run(
+        [
+            sys.executable,
+            str(PROJECT_ROOT / "experiments" / "mlflow" / "run_all_experiments.py"),
+        ]
+    )
 
 
 def main() -> int:
@@ -69,7 +97,7 @@ def main() -> int:
     parser.add_argument(
         "target",
         choices=["ui", "ui-microservices", "rag-ui", "ocr-api", "rag-api", "experiments"],
-        help="Runtime target to launch.",
+        help="Runtime target to launch. `ui-microservices` and `rag-ui` are legacy notice pages.",
     )
     args = parser.parse_args()
 
