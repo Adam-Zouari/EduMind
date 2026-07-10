@@ -1,4 +1,3 @@
-from pathlib import Path
 
 from edumind.common.paths import CONFIG_DIR, PROJECT_ROOT, artifact_path, resolve_config_path
 

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
 from ..config import SUPPORTED_FORMATS
 from ..utils.logger import get_logger
+from .types import FormatInfo
 
 logger = get_logger(__name__)
 
@@ -15,7 +16,7 @@ try:
 
     MAGIC_AVAILABLE = True
 except (ImportError, OSError) as exc:
-    magic = None
+    magic: Any | None = None
     MAGIC_AVAILABLE = False
     logger.warning("python-magic not available ({}). Using extension-based detection.", exc)
 
@@ -24,7 +25,7 @@ try:
 
     TIKA_AVAILABLE = True
 except ImportError:
-    detector = None
+    detector: Any | None = None
     TIKA_AVAILABLE = False
     logger.warning("tika not available. Using extension-based detection.")
 
@@ -33,6 +34,7 @@ class FormatDetector:
     """Detect file format using optional MIME libraries plus extension fallback."""
 
     def __init__(self) -> None:
+        self.magic: Any | None
         if MAGIC_AVAILABLE and magic is not None:
             try:
                 self.magic = magic.Magic(mime=True)
@@ -42,19 +44,19 @@ class FormatDetector:
         else:
             self.magic = None
 
-    def detect(self, file_path: Path, strict: bool = False) -> dict[str, str | None]:
+    def detect(self, file_path: Path, strict: bool = False) -> FormatInfo:
         """Detect file format and return OCR pipeline format metadata."""
         logger.info(f"Detecting format for: {file_path}")
         extension = file_path.suffix.lower()
         mapped_extension_type = self._map_extension_to_format_type(extension)
 
         if mapped_extension_type and not strict:
-            result = {
-                "format_type": mapped_extension_type,
-                "mime_type": None,
-                "extension": extension,
-            }
-            logger.info(f"Detected format from extension: {result}")
+            result = FormatInfo(
+                format_type=mapped_extension_type,
+                mime_type=None,
+                extension=extension,
+            )
+            logger.info(f"Detected format from extension: {result.to_metadata_dict()}")
             return result
 
         mime_type = self._detect_with_magic(file_path)
@@ -62,15 +64,15 @@ class FormatDetector:
         final_mime = tika_mime or mime_type
         format_type = mapped_extension_type or self._map_mime_to_format_type(final_mime)
 
-        result = {
-            "format_type": format_type,
-            "mime_type": final_mime,
-            "extension": extension,
-        }
-        logger.info(f"Detected format: {result}")
+        result = FormatInfo(
+            format_type=format_type,
+            mime_type=final_mime,
+            extension=extension,
+        )
+        logger.info(f"Detected format: {result.to_metadata_dict()}")
         return result
 
-    def _detect_with_magic(self, file_path: Path) -> Optional[str]:
+    def _detect_with_magic(self, file_path: Path) -> str | None:
         """Detect MIME type using python-magic."""
         if not self.magic:
             return None
@@ -82,7 +84,7 @@ class FormatDetector:
             logger.warning("Magic detection failed: {}", exc)
             return None
 
-    def _detect_with_tika(self, file_path: Path) -> Optional[str]:
+    def _detect_with_tika(self, file_path: Path) -> str | None:
         """Detect MIME type using Apache Tika."""
         if not TIKA_AVAILABLE or detector is None:
             return None

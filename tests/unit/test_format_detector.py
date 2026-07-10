@@ -15,9 +15,9 @@ def test_detect_uses_extension_when_available(tmp_path: Path, monkeypatch) -> No
 
     result = detector.detect(file_path)
 
-    assert result["format_type"] == "pdf"
-    assert result["extension"] == ".pdf"
-    assert result["mime_type"] is None
+    assert result.format_type == "pdf"
+    assert result.extension == ".pdf"
+    assert result.mime_type is None
 
 
 def test_detect_short_circuits_mime_probes_for_known_extensions(tmp_path: Path, monkeypatch) -> None:
@@ -39,7 +39,7 @@ def test_detect_short_circuits_mime_probes_for_known_extensions(tmp_path: Path, 
 
     result = detector.detect(file_path)
 
-    assert result["format_type"] == "pdf"
+    assert result.format_type == "pdf"
     assert calls == {"magic": 0, "tika": 0}
 
 
@@ -62,7 +62,7 @@ def test_detect_uses_mime_probes_when_strict_is_enabled(tmp_path: Path, monkeypa
 
     result = detector.detect(file_path, strict=True)
 
-    assert result["format_type"] == "pdf"
+    assert result.format_type == "pdf"
     assert calls == {"magic": 1, "tika": 1}
 
 
@@ -79,8 +79,8 @@ def test_detect_falls_back_to_mime_when_extension_is_unknown(
 
     result = detector.detect(file_path)
 
-    assert result["format_type"] == "web"
-    assert result["mime_type"] == "text/html"
+    assert result.format_type == "web"
+    assert result.mime_type == "text/html"
 
 
 def test_detect_prefers_tika_mime_when_both_detectors_return_values(
@@ -96,5 +96,5 @@ def test_detect_prefers_tika_mime_when_both_detectors_return_values(
 
     result = detector.detect(file_path)
 
-    assert result["format_type"] == "audio"
-    assert result["mime_type"] == "audio/mpeg"
+    assert result.format_type == "audio"
+    assert result.mime_type == "audio/mpeg"

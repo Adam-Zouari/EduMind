@@ -1,47 +1,61 @@
-"""
-File handling utilities
-"""
+"""File handling utilities."""
+
+from __future__ import annotations
+
+import hashlib
 import os
 import shutil
 from pathlib import Path
-from typing import Optional
-import hashlib
+
 from .logger import get_logger
 
 logger = get_logger(__name__)
 
+
 class FileHandler:
-    """Utility class for file operations"""
-    
+    """Utility class for filesystem-related OCR helpers."""
+
     @staticmethod
     def get_file_hash(file_path: Path) -> str:
-        """Generate MD5 hash of file"""
+        """Generate the MD5 hash of a file."""
         hash_md5 = hashlib.md5()
-        with open(file_path, "rb") as f:
-            for chunk in iter(lambda: f.read(4096), b""):
+        with file_path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(4096), b""):
                 hash_md5.update(chunk)
         return hash_md5.hexdigest()
-    
+
     @staticmethod
     def get_file_size(file_path: Path) -> int:
-        """Get file size in bytes"""
-        return os.path.getsize(file_path)
-    
+        """Return the size of a file in bytes."""
+        return file_path.stat().st_size
+
+    @staticmethod
+    def get_file_identity_string(file_path: Path) -> str:
+        """Return a stable identity string for cache-key generation."""
+        stat = file_path.stat()
+        return "|".join(
+            [
+                str(file_path.resolve()),
+                str(stat.st_mtime),
+                str(stat.st_size),
+            ]
+        )
+
     @staticmethod
     def ensure_directory(directory: Path) -> None:
-        """Create directory if it doesn't exist"""
+        """Create a directory if it does not already exist."""
         directory.mkdir(parents=True, exist_ok=True)
-    
+
     @staticmethod
     def clean_temp_files(temp_dir: Path) -> None:
-        """Remove temporary files"""
+        """Remove a temporary directory tree when it exists."""
         if temp_dir.exists():
             shutil.rmtree(temp_dir)
             logger.info(f"Cleaned temporary directory: {temp_dir}")
-    
+
     @staticmethod
     def validate_file(file_path: Path) -> bool:
-        """Validate if file exists and is readable"""
+        """Validate that a file exists, is a regular file, and is readable."""
         if not file_path.exists():
             logger.error(f"File does not exist: {file_path}")
             return False

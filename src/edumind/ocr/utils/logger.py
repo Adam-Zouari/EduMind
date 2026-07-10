@@ -1,9 +1,8 @@
-"""
-Logging utility using loguru
-"""
-from loguru import logger
 import sys
-from ..config import LOGS_DIR, LOG_LEVEL, LOG_FORMAT
+
+from loguru import logger
+
+from ..config import LOG_FORMAT, LOG_LEVEL, LOGS_DIR
 
 # Remove default handler
 logger.remove()
@@ -13,7 +12,7 @@ logger.add(
     sys.stdout,
     format=LOG_FORMAT,
     level=LOG_LEVEL,
-    colorize=True
+    colorize=True,
 )
 
 # Add file handler
@@ -23,9 +22,9 @@ logger.add(
     level=LOG_LEVEL,
     rotation="1 day",
     retention="7 days",
-    compression="zip"
+    compression="zip",
 )
 
 def get_logger(name: str):
-    """Get a logger instance with a specific name"""
+    """Get a logger instance with a specific name."""
     return logger.bind(name=name)
