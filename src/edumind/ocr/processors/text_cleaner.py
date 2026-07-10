@@ -165,4 +165,8 @@ class TextCleaner:
     def extract_sentences(text: str) -> list[str]:
         """Extract sentences from text."""
         sentences = re.split(r"[.!?]+\s+", text)
-        return [sentence.strip() for sentence in sentences if len(sentence.strip()) > MIN_TEXT_LENGTH]
+        return [
+            sentence.strip()
+            for sentence in sentences
+            if len(sentence.strip()) > MIN_TEXT_LENGTH
+        ]

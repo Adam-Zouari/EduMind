@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from ..core.types import OCRTokenPayload
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -28,9 +29,9 @@ class LayoutAnalyzer:
     """Analyze OCR word boxes and reconstruct a lightweight reading order."""
 
     @staticmethod
-    def analyze_layout(image: np.ndarray, ocr_data: dict[str, list[int] | list[str]]) -> list[TextBlock]:
+    def analyze_layout(image: np.ndarray, ocr_data: OCRTokenPayload) -> list[TextBlock]:
         """Convert OCR token data into sorted text blocks."""
-        blocks = []
+        blocks: list[TextBlock] = []
 
         for index in range(len(ocr_data["text"])):
             if int(ocr_data["conf"][index]) < 0:
@@ -60,7 +61,7 @@ class LayoutAnalyzer:
         image_shape: tuple[int, ...],
     ) -> str:
         """Classify a token block using simple page-position heuristics."""
-        img_height, img_width = image_shape[:2]
+        img_height = image_shape[0]
 
         if y < img_height * 0.2 and height > 30:
             return "title"

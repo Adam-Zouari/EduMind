@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from ..core.types import StructuredFieldPayload
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -23,7 +24,7 @@ class FormField:
 class FormRecognizer:
     """Recognize structured fields from OCR text using lightweight heuristics."""
 
-    FIELD_PATTERNS = {
+    FIELD_PATTERNS: dict[str, str] = {
         "name": r"(?:name|nome|nom)\s*:?\s*([A-Za-z\s]+)",
         "email": r"(?:email|e-mail|correo)\s*:?\s*([\w\.-]+@[\w\.-]+\.\w+)",
         "phone": r"(?:phone|tel|telephone|telefono)\s*:?\s*([\d\s\-\(\)]+)",
@@ -36,7 +37,7 @@ class FormRecognizer:
     @staticmethod
     def extract_form_fields(text: str) -> list[FormField]:
         """Extract structured fields from OCR text."""
-        fields = []
+        fields: list[FormField] = []
 
         for field_type, pattern in FormRecognizer.FIELD_PATTERNS.items():
             matches = re.finditer(pattern, text, re.IGNORECASE | re.MULTILINE)
@@ -143,13 +144,13 @@ class FormRecognizer:
         return fields
 
     @staticmethod
-    def to_structured_dict(fields: list[FormField]) -> dict[str, dict[str, str | float]]:
+    def to_structured_dict(fields: list[FormField]) -> dict[str, StructuredFieldPayload]:
         """Convert extracted fields to a dictionary keyed by normalized labels."""
-        result: dict[str, dict[str, str | float]] = {}
+        result: dict[str, StructuredFieldPayload] = {}
         for field in fields:
             key = field.label.lower().replace(" ", "_")
             existing = result.get(key)
-            candidate = {
+            candidate: StructuredFieldPayload = {
                 "value": field.value,
                 "type": field.field_type,
                 "confidence": field.confidence,
