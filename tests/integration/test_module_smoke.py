@@ -18,6 +18,13 @@ def test_rag_service_app_exists() -> None:
     assert hasattr(module, "app")
 
 
+def test_ocr_service_app_exists() -> None:
+    pytest.importorskip("fastapi")
+    module = _import_or_skip("services.ocr_service")
+    assert hasattr(module, "app")
+    assert module.health().status == "healthy"
+
+
 def test_streamlit_app_module_exists() -> None:
     pytest.importorskip("streamlit")
     module = _import_or_skip("apps.streamlit_app")
