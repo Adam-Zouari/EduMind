@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import os
+from fractions import Fraction
 import tempfile
 import time
 from pathlib import Path
@@ -10,46 +10,21 @@ from typing import Any
 
 import ffmpeg
 
-from ..config import WHISPER_MODEL
+from ..config import TEMP_DIR, WHISPER_LANGUAGE, WHISPER_MODEL
 from ..core.base_extractor import BaseExtractor, ExtractionResult
-
-os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
-os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
-os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
-
-WHISPER_AVAILABLE = False
-try:
-    import torch
-    import whisper
-
-    torch.set_num_threads(1)
-    WHISPER_AVAILABLE = True
-except Exception:
-    whisper = None
+from ._media_runtime import get_whisper_device, load_whisper_model
 
 
 class VideoExtractor(BaseExtractor):
     """Extract text from video files."""
 
-    _whisper_model: object | None = None
-
     def __init__(self, model_name: str = WHISPER_MODEL):
         super().__init__()
-        self.model = None
-
-        if not WHISPER_AVAILABLE or whisper is None:
-            self.logger.error("Whisper is not available. Install optional video dependencies.")
-            return
-
-        if VideoExtractor._whisper_model is None:
-            self.logger.info(f"Loading Whisper model for video: {model_name}")
-            try:
-                VideoExtractor._whisper_model = whisper.load_model(model_name, device="cpu")
-            except Exception as exc:
-                self.logger.error(f"Failed to load Whisper model: {exc}")
-                return
-
-        self.model = VideoExtractor._whisper_model
+        self.model_name = model_name
+        self.device = get_whisper_device()
+        self.model, self.runtime_error = load_whisper_model(model_name)
+        if self.model is None and self.runtime_error:
+            self.logger.error(self.runtime_error)
 
     def extract(self, file_path: Path, **kwargs: Any) -> ExtractionResult:
         start_time = time.time()
@@ -58,14 +33,22 @@ class VideoExtractor(BaseExtractor):
         if self.model is None:
             return self._create_error_result(
                 file_path,
-                "Whisper model not available. Install optional video dependencies.",
+                self.runtime_error or "Whisper model not available. Install optional video dependencies.",
             )
 
+        audio_path: Path | None = None
         try:
             audio_path = self._extract_audio(file_path)
-            result = self.model.transcribe(str(audio_path), verbose=False)
-            audio_path.unlink(missing_ok=True)
+            transcribe_kwargs = {"verbose": False}
+            language = kwargs.get("language")
+            if language is None and kwargs.get("languages"):
+                language = kwargs["languages"][0]
+            if language is None:
+                language = WHISPER_LANGUAGE
+            if language:
+                transcribe_kwargs["language"] = language
 
+            result = self.model.transcribe(str(audio_path), **transcribe_kwargs)
             segments = [
                 {"start": segment["start"], "end": segment["end"], "text": segment["text"]}
                 for segment in result.get("segments", [])
@@ -79,7 +62,8 @@ class VideoExtractor(BaseExtractor):
                     "num_segments": len(segments),
                     "segments": segments[:10],
                     "video_info": self._get_video_info(file_path),
-                    "model": WHISPER_MODEL,
+                    "model": self.model_name,
+                    "device": self.device,
                     "extractor": "video",
                 },
                 format_type="video",
@@ -90,9 +74,18 @@ class VideoExtractor(BaseExtractor):
         except Exception as exc:
             self.logger.error(f"Video extraction failed: {exc}")
             return self._create_error_result(file_path, str(exc))
+        finally:
+            if audio_path is not None:
+                audio_path.unlink(missing_ok=True)
 
     def _extract_audio(self, video_path: Path) -> Path:
-        audio_path = Path(tempfile.mktemp(suffix=".wav"))
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=".wav",
+            dir=str(TEMP_DIR),
+        ) as temp_file:
+            audio_path = Path(temp_file.name)
+
         try:
             (
                 ffmpeg.input(str(video_path))
@@ -101,22 +94,36 @@ class VideoExtractor(BaseExtractor):
                 .run(quiet=True, capture_stdout=True, capture_stderr=True)
             )
         except ffmpeg.Error as exc:
-            self.logger.error(f"FFmpeg error: {exc.stderr.decode()}")
-            raise
+            audio_path.unlink(missing_ok=True)
+            stderr = exc.stderr.decode(errors="ignore") if exc.stderr else str(exc)
+            self.logger.error(f"FFmpeg error: {stderr}")
+            raise RuntimeError(stderr) from exc
+
         return audio_path
 
     def _get_video_info(self, video_path: Path) -> dict[str, Any]:
         try:
             probe = ffmpeg.probe(str(video_path))
-            video_stream = next((stream for stream in probe["streams"] if stream["codec_type"] == "video"), None)
+            video_stream = next(
+                (stream for stream in probe["streams"] if stream["codec_type"] == "video"),
+                None,
+            )
             if video_stream:
                 return {
                     "width": video_stream.get("width"),
                     "height": video_stream.get("height"),
                     "codec": video_stream.get("codec_name"),
-                    "fps": eval(video_stream.get("r_frame_rate", "0/1")),
+                    "fps": self._parse_frame_rate(video_stream.get("r_frame_rate", "0/1")),
                     "duration": float(probe["format"].get("duration", 0)),
                 }
         except Exception as exc:
             self.logger.warning(f"Could not extract video info: {exc}")
         return {}
+
+    @staticmethod
+    def _parse_frame_rate(value: str) -> float:
+        """Parse FFmpeg frame-rate strings without using eval()."""
+        try:
+            return float(Fraction(value))
+        except (ArithmeticError, ValueError, ZeroDivisionError):
+            return 0.0

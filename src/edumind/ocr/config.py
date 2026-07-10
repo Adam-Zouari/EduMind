@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 from edumind.common.paths import artifact_path
 
-BASE_DIR = Path(__file__).resolve().parent
 OCR_ARTIFACTS_DIR = artifact_path("ocr", create=True)
 TEMP_DIR = artifact_path("ocr", "temp")
 OUTPUT_DIR = artifact_path("ocr", "output")
@@ -18,8 +16,6 @@ TEMP_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-TIKA_SERVER_JAR = os.getenv("TIKA_SERVER_JAR")
 
 OCR_USE_PADDLE = os.getenv("OCR_USE_PADDLE", "true").lower() == "true"
 OCR_USE_GPU = os.getenv("OCR_USE_GPU", "false").lower() == "true"
@@ -34,18 +30,15 @@ OCR_ROTATION_CORRECTION = True
 OCR_PERSPECTIVE_CORRECTION = True
 OCR_QUALITY_THRESHOLD = 50
 OCR_USE_ANGLE_CLS = os.getenv("OCR_USE_ANGLE_CLS", "false").lower() == "true"
-OCR_ENABLE_HANDWRITING = False
-OCR_PARALLEL_PROCESSING = True
 OCR_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
-WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
+WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cpu").strip().lower()
 WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE")
 
 FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg")
-VIDEO_FRAME_RATE = 1
 
-WEB_TIMEOUT = 30
+WEB_TIMEOUT = int(os.getenv("WEB_TIMEOUT", "30"))
 USER_AGENT = "Mozilla/5.0 (compatible; EduMindAIBot/1.0)"
 
 REMOVE_HEADERS_FOOTERS = True

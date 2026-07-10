@@ -36,6 +36,61 @@ class ExtractionResult:
         result["success"] = self.success
         return result
 
+    def to_cache_dict(self) -> dict[str, Any]:
+        """Serialize the full extraction result for OCR cache storage."""
+        return {
+            "cache_version": 1,
+            "text": self.text,
+            "metadata": self.metadata,
+            "format_type": self.format_type,
+            "file_path": self.file_path,
+            "extraction_time": self.extraction_time,
+            "success": self.success,
+            "error": self.error,
+            "timestamp": self.timestamp.isoformat(),
+        }
+
+    @classmethod
+    def from_cache_dict(cls, data: dict[str, Any]) -> "ExtractionResult":
+        """Rebuild an extraction result from the OCR cache payload."""
+        metadata = data.get("metadata")
+        if metadata is None:
+            metadata = {
+                key: value
+                for key, value in data.items()
+                if key
+                not in {
+                    "cache_version",
+                    "text",
+                    "format_type",
+                    "source",
+                    "file_path",
+                    "extraction_time",
+                    "success",
+                    "error",
+                    "timestamp",
+                }
+            }
+
+        timestamp = datetime.now()
+        raw_timestamp = data.get("timestamp")
+        if raw_timestamp:
+            try:
+                timestamp = datetime.fromisoformat(raw_timestamp)
+            except ValueError:
+                logger.warning("Ignoring invalid OCR cache timestamp: {}", raw_timestamp)
+
+        return cls(
+            text=data.get("text", ""),
+            metadata=metadata,
+            format_type=data.get("format_type", ""),
+            file_path=data.get("file_path", data.get("source", "")),
+            extraction_time=float(data.get("extraction_time", 0.0) or 0.0),
+            success=bool(data.get("success", True)),
+            error=data.get("error"),
+            timestamp=timestamp,
+        )
+
 
 class BaseExtractor(ABC):
     """Abstract base class for all extractors."""

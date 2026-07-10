@@ -1,83 +1,109 @@
-"""
-Web content extraction using Trafilatura and newspaper3k
-"""
-import trafilatura
-from newspaper import Article
-from pathlib import Path
-from typing import Dict
+"""Web content extraction using Trafilatura and newspaper3k."""
+
+from __future__ import annotations
+
 import time
+from pathlib import Path
+from typing import Any
+
+from newspaper import Article
+import requests
+import trafilatura
+
+from ..config import USER_AGENT, WEB_TIMEOUT
 from ..core.base_extractor import BaseExtractor, ExtractionResult
-from ..config import WEB_TIMEOUT, USER_AGENT
+
 
 class WebExtractor(BaseExtractor):
-    """Extract text from HTML/web content"""
-    
-    def __init__(self):
+    """Extract text from HTML files or remote web pages."""
+
+    def __init__(self) -> None:
         super().__init__()
-    
-    def extract(self, file_path: Path, url: str = None, **kwargs) -> ExtractionResult:
-        """Extract text from HTML file or URL"""
+
+    def extract(
+        self,
+        file_path: Path | None,
+        url: str | None = None,
+        **kwargs: Any,
+    ) -> ExtractionResult:
+        """Extract text from an HTML file or a URL."""
         start_time = time.time()
-        self.logger.info(f"Extracting web content: {file_path if file_path else url}")
-        
+        target = file_path if file_path else url
+        self.logger.info(f"Extracting web content: {target}")
+
         try:
             if file_path and file_path.exists():
-                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    html_content = f.read()
+                html_content = file_path.read_text(encoding="utf-8", errors="ignore")
             elif url:
-                downloaded = trafilatura.fetch_url(url)
-                if not downloaded:
-                    raise ValueError(f"Could not download URL: {url}")
-                html_content = downloaded
+                html_content = self._fetch_remote_html(url)
             else:
                 raise ValueError("Either file_path or url must be provided")
-            
-            # Try Trafilatura first (better for articles)
-            text = trafilatura.extract(html_content, include_comments=False, include_tables=True)
-            
-            # Extract metadata
+
+            text = trafilatura.extract(
+                html_content,
+                include_comments=False,
+                include_tables=True,
+            )
+
             metadata = trafilatura.extract_metadata(html_content)
             meta_dict = {
                 "title": metadata.title if metadata else "",
                 "author": metadata.author if metadata else "",
                 "date": metadata.date if metadata else "",
                 "sitename": metadata.sitename if metadata else "",
-                "extractor": "trafilatura"
+                "extractor": "trafilatura",
             }
-            
-            # If Trafilatura fails, try newspaper3k
+
             if not text or len(text) < 100:
                 self.logger.info("Trying newspaper3k for extraction")
                 text, news_meta = self._extract_with_newspaper(html_content, url)
                 meta_dict.update(news_meta)
-            
-            extraction_time = time.time() - start_time
-            
+
             return ExtractionResult(
                 text=text or "",
                 metadata=meta_dict,
                 format_type="web",
-                file_path=str(file_path) if file_path else url,
-                extraction_time=extraction_time,
-                success=True
+                file_path=str(file_path) if file_path else (url or ""),
+                extraction_time=time.time() - start_time,
+                success=True,
             )
-            
-        except Exception as e:
-            self.logger.error(f"Web extraction failed: {e}")
-            return self._create_error_result(file_path or Path(url), str(e))
-    
-    def _extract_with_newspaper(self, html_content: str, url: str = None) -> tuple[str, Dict]:
-        """Extract using newspaper3k"""
-        article = Article(url or "", language='en')
+        except Exception as exc:
+            self.logger.error(f"Web extraction failed: {exc}")
+            return ExtractionResult(
+                text="",
+                metadata={},
+                format_type="web",
+                file_path=str(file_path) if file_path else (url or ""),
+                success=False,
+                error=str(exc),
+            )
+
+    def _extract_with_newspaper(
+        self,
+        html_content: str,
+        url: str | None = None,
+    ) -> tuple[str, dict[str, str]]:
+        """Extract article text using newspaper3k."""
+        article = Article(url or "", language="en")
         article.set_html(html_content)
         article.parse()
-        
+
         metadata = {
             "title": article.title,
             "authors": ", ".join(article.authors),
             "publish_date": str(article.publish_date) if article.publish_date else "",
             "top_image": article.top_image,
-            "extractor": "newspaper3k"
+            "extractor": "newspaper3k",
         }
-        
+
         return article.text, metadata
+
+    def _fetch_remote_html(self, url: str) -> str:
+        """Fetch remote HTML using configured timeout and user-agent settings."""
+        response = requests.get(
+            url,
+            headers={"User-Agent": USER_AGENT},
+            timeout=WEB_TIMEOUT,
+        )
+        response.raise_for_status()
+        return response.text

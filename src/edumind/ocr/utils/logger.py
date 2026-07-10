@@ -3,7 +3,6 @@ Logging utility using loguru
 """
 from loguru import logger
 import sys
-from pathlib import Path
 from ..config import LOGS_DIR, LOG_LEVEL, LOG_FORMAT
 
 # Remove default handler

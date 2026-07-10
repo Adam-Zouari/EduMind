@@ -1,10 +1,11 @@
-"""
-Layout analysis for document structure preservation
-"""
-import cv2
-import numpy as np
-from typing import List, Dict, Tuple
+"""Layout analysis utilities for experimental document structure preservation."""
+
+from __future__ import annotations
+
 from dataclasses import dataclass
+
+import numpy as np
+
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -12,134 +13,105 @@ logger = get_logger(__name__)
 
 @dataclass
 class TextBlock:
-    """Represents a block of text with position and content"""
+    """Represents a text block with position and classification metadata."""
+
     x: int
     y: int
     width: int
     height: int
     text: str
     confidence: float
-    block_type: str  # 'title', 'paragraph', 'list', 'table', 'caption'
+    block_type: str
 
 
 class LayoutAnalyzer:
-    """Analyze document layout to preserve structure"""
-    
+    """Analyze OCR word boxes and reconstruct a lightweight reading order."""
+
     @staticmethod
-    def analyze_layout(image: np.ndarray, ocr_data: Dict) -> List[TextBlock]:
-        """
-        Analyze document layout from OCR data
-        
-        Args:
-            image: Input image
-            ocr_data: OCR data from Tesseract (image_to_data output)
-            
-        Returns:
-            List of TextBlock objects with structure information
-        """
+    def analyze_layout(image: np.ndarray, ocr_data: dict[str, list[int] | list[str]]) -> list[TextBlock]:
+        """Convert OCR token data into sorted text blocks."""
         blocks = []
-        
-        # Group words into text blocks
-        current_block = None
-        
-        for i in range(len(ocr_data['text'])):
-            if int(ocr_data['conf'][i]) < 0:
+
+        for index in range(len(ocr_data["text"])):
+            if int(ocr_data["conf"][index]) < 0:
                 continue
-            
-            text = ocr_data['text'][i].strip()
+
+            text = str(ocr_data["text"][index]).strip()
             if not text:
                 continue
-            
-            x = ocr_data['left'][i]
-            y = ocr_data['top'][i]
-            w = ocr_data['width'][i]
-            h = ocr_data['height'][i]
-            conf = ocr_data['conf'][i]
-            
-            # Determine block type based on position and formatting
-            block_type = LayoutAnalyzer._classify_block_type(
-                text, x, y, w, h, image.shape
-            )
-            
-            block = TextBlock(x, y, w, h, text, conf, block_type)
-            blocks.append(block)
-        
-        # Sort blocks by reading order (top to bottom, left to right)
-        blocks = LayoutAnalyzer._sort_reading_order(blocks)
-        
-        return blocks
-    
+
+            x = int(ocr_data["left"][index])
+            y = int(ocr_data["top"][index])
+            width = int(ocr_data["width"][index])
+            height = int(ocr_data["height"][index])
+            confidence = float(ocr_data["conf"][index])
+            block_type = LayoutAnalyzer._classify_block_type(text, x, y, width, height, image.shape)
+            blocks.append(TextBlock(x, y, width, height, text, confidence, block_type))
+
+        return LayoutAnalyzer._sort_reading_order(blocks)
+
     @staticmethod
-    def _classify_block_type(text: str, x: int, y: int, w: int, h: int, 
-                            image_shape: Tuple) -> str:
-        """Classify text block type based on features"""
+    def _classify_block_type(
+        text: str,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        image_shape: tuple[int, ...],
+    ) -> str:
+        """Classify a token block using simple page-position heuristics."""
         img_height, img_width = image_shape[:2]
-        
-        # Title detection (large text, near top, centered)
-        if y < img_height * 0.2 and h > 30:
-            return 'title'
-        
-        # List detection (starts with bullet or number)
-        if text.startswith(('•', '-', '*', '1.', '2.', '3.')):
-            return 'list'
-        
-        # Caption detection (small text, near bottom or near images)
-        if h < 15 and (y > img_height * 0.8 or 'Figure' in text or 'Table' in text):
-            return 'caption'
-        
-        # Default to paragraph
-        return 'paragraph'
-    
+
+        if y < img_height * 0.2 and height > 30:
+            return "title"
+
+        if text.startswith(("\u2022", "-", "*", "1.", "2.", "3.")):
+            return "list"
+
+        if height < 15 and (y > img_height * 0.8 or "Figure" in text or "Table" in text):
+            return "caption"
+
+        return "paragraph"
+
     @staticmethod
-    def _sort_reading_order(blocks: List[TextBlock]) -> List[TextBlock]:
-        """Sort blocks in natural reading order"""
-        # Sort by y-coordinate (top to bottom), then x-coordinate (left to right)
-        return sorted(blocks, key=lambda b: (b.y // 20, b.x))
-    
+    def _sort_reading_order(blocks: list[TextBlock]) -> list[TextBlock]:
+        """Sort blocks in a simple top-to-bottom, left-to-right order."""
+        return sorted(blocks, key=lambda block: (block.y // 20, block.x))
+
     @staticmethod
-    def reconstruct_text_with_structure(blocks: List[TextBlock]) -> str:
-        """Reconstruct text preserving document structure"""
+    def reconstruct_text_with_structure(blocks: list[TextBlock]) -> str:
+        """Render a text representation that roughly preserves layout semantics."""
         output = []
         current_type = None
-        
+
         for block in blocks:
-            # Add spacing based on block type transitions
             if current_type and current_type != block.block_type:
-                output.append('\n')
-            
-            # Format based on block type
-            if block.block_type == 'title':
+                output.append("\n")
+
+            if block.block_type == "title":
                 output.append(f"\n# {block.text}\n")
-            elif block.block_type == 'list':
+            elif block.block_type == "list":
                 output.append(f"  {block.text}\n")
-            elif block.block_type == 'caption':
+            elif block.block_type == "caption":
                 output.append(f"\n*{block.text}*\n")
-            else:  # paragraph
+            else:
                 output.append(f"{block.text} ")
-            
+
             current_type = block.block_type
-        
-        return ''.join(output).strip()
-    
+
+        return "".join(output).strip()
+
     @staticmethod
-    def detect_columns(blocks: List[TextBlock], image_width: int) -> int:
-        """Detect number of columns in document"""
+    def detect_columns(blocks: list[TextBlock], image_width: int) -> int:
+        """Estimate the number of page columns from block positions."""
         if not blocks:
             return 1
-        
-        # Analyze x-coordinates to find column boundaries
-        x_positions = [b.x for b in blocks]
-        
-        # Use clustering to find columns
-        # Simple approach: check for gaps in x-positions
-        x_sorted = sorted(set(x_positions))
-        gaps = []
-        
-        for i in range(len(x_sorted) - 1):
-            gap = x_sorted[i + 1] - x_sorted[i]
-            if gap > image_width * 0.1:  # Significant gap
-                gaps.append(gap)
-        
-        # Number of columns = number of significant gaps + 1
-        return len(gaps) + 1
 
+        x_positions = sorted(set(block.x for block in blocks))
+        gaps = []
+        for index in range(len(x_positions) - 1):
+            gap = x_positions[index + 1] - x_positions[index]
+            if gap > image_width * 0.1:
+                gaps.append(gap)
+
+        return len(gaps) + 1
