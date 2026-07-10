@@ -108,6 +108,28 @@ There are now two intentionally different serialization paths:
 
 That separation is important. The ingest payload is intentionally flattened and compact, while the cache payload preserves operational fields such as `metadata`, `file_path`, `extraction_time`, and `timestamp`.
 
+### 5. OCR-to-RAG handoff contract
+
+The OCR package is now the upstream producer for the redesigned RAG package.
+
+When OCR output is ingested into RAG through the local orchestrator or the RAG service, the handoff is treated as a nested document payload:
+
+```python
+{
+    "text": result.text,
+    "source": "lesson.pdf",
+    "format_type": result.format_type,
+    "file_path": result.file_path,
+    "metadata": result.metadata,
+}
+```
+
+Important detail:
+
+- `ExtractionResult.to_dict()` still stays stable for downstream compatibility
+- the live OCR-to-RAG boundary no longer depends on flattening OCR metadata into the top level
+- RAG now receives a clearer document contract and derives scalar filter metadata from the nested `metadata` payload
+
 ## File-by-file roles
 
 ## `config.py`

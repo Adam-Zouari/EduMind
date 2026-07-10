@@ -81,27 +81,38 @@ Copy-Item .env.example .env
 The default demo path is the direct package UI. It calls the internal package layer without requiring separate services.
 
 ```bash
+edumind-ui
+```
+
+Equivalent command:
+
+```bash
 python -m edumind.cli ui
 ```
 
-Optional microservices mode:
+Optional API mode:
+
+```bash
+edumind-ocr-api
+edumind-rag-api
+```
+
+Equivalent module commands:
 
 ```bash
 python -m edumind.cli ocr-api
 python -m edumind.cli rag-api
-python -m edumind.cli ui-microservices
 ```
+
+Legacy note:
+
+- `python -m edumind.cli ui-microservices` now opens a deprecation notice page
+- `python -m edumind.cli rag-ui` now opens a deprecation notice page
 
 Windows convenience launcher:
 
 ```powershell
 scripts\windows\start_all_services.bat
-```
-
-Standalone RAG-only Streamlit app:
-
-```bash
-python -m edumind.cli rag-ui
 ```
 
 ## Experiments
