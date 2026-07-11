@@ -21,7 +21,10 @@ from .types import FormatInfo
 
 logger = get_logger(__name__)
 
-DetectedFileProcessor = Callable[[Path, FormatInfo, float, float, BatchProcessingOptions], ExtractionResult]
+DetectedFileProcessor = Callable[
+    [Path, FormatInfo, float, float, BatchProcessingOptions],
+    ExtractionResult,
+]
 ErrorBuilder = Callable[[Path, str, float, bool], ExtractionResult]
 
 
@@ -83,7 +86,12 @@ class BatchProcessingCoordinator:
         """Process a file by validating and detecting it first."""
         total_start = time.perf_counter()
         if not FileHandler.validate_file(file_path):
-            return self.build_error_result(file_path, "File validation failed", total_start, options.process_options.profile)
+            return self.build_error_result(
+                file_path,
+                "File validation failed",
+                total_start,
+                options.process_options.profile,
+            )
 
         try:
             detect_start = time.perf_counter()
@@ -95,7 +103,12 @@ class BatchProcessingCoordinator:
             )
         except Exception as exc:
             logger.error(f"Format detection failed for {file_path}: {exc}")
-            return self.build_error_result(file_path, str(exc), total_start, options.process_options.profile)
+            return self.build_error_result(
+                file_path,
+                str(exc),
+                total_start,
+                options.process_options.profile,
+            )
 
         return self.process_detected_file(
             file_path,
@@ -117,7 +130,11 @@ class BatchProcessingCoordinator:
                 executor.submit(self.process_detected_or_direct, Path(file_path), options): index
                 for index, file_path in enumerate(file_paths)
             }
-            for future in tqdm(as_completed(future_to_index), total=len(file_paths), desc="Processing files"):
+            for future in tqdm(
+                as_completed(future_to_index),
+                total=len(file_paths),
+                desc="Processing files",
+            ):
                 index = future_to_index[future]
                 try:
                     results[index] = future.result()
@@ -141,10 +158,14 @@ class BatchProcessingCoordinator:
         detected_items = self._detect_files(file_paths, options, results)
         image_limiter = Semaphore(min(options.max_workers, 2)) if not OCR_USE_GPU else None
         thread_items = [
-            item for item in detected_items if item.format_info.format_type in self._THREAD_SAFE_FORMATS
+            item
+            for item in detected_items
+            if item.format_info.format_type in self._THREAD_SAFE_FORMATS
         ]
         sequential_items = [
-            item for item in detected_items if item.format_info.format_type not in self._THREAD_SAFE_FORMATS
+            item
+            for item in detected_items
+            if item.format_info.format_type not in self._THREAD_SAFE_FORMATS
         ]
 
         with ThreadPoolExecutor(max_workers=options.max_workers) as executor:
@@ -167,7 +188,11 @@ class BatchProcessingCoordinator:
                     options,
                 )
 
-            for future in tqdm(as_completed(future_to_index), total=len(future_to_index), desc="Processing files"):
+            for future in tqdm(
+                as_completed(future_to_index),
+                total=len(future_to_index),
+                desc="Processing files",
+            ):
                 index = future_to_index[future]
                 try:
                     results[index] = future.result()

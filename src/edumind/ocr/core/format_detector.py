@@ -14,18 +14,20 @@ logger = get_logger(__name__)
 try:
     import magic
 
+    magic_module: Any | None = magic
     MAGIC_AVAILABLE = True
 except (ImportError, OSError) as exc:
-    magic: Any | None = None
+    magic_module = None
     MAGIC_AVAILABLE = False
     logger.warning("python-magic not available ({}). Using extension-based detection.", exc)
 
 try:
     from tika import detector
 
+    tika_detector: Any | None = detector
     TIKA_AVAILABLE = True
 except ImportError:
-    detector: Any | None = None
+    tika_detector = None
     TIKA_AVAILABLE = False
     logger.warning("tika not available. Using extension-based detection.")
 
@@ -35,9 +37,9 @@ class FormatDetector:
 
     def __init__(self) -> None:
         self.magic: Any | None
-        if MAGIC_AVAILABLE and magic is not None:
+        if MAGIC_AVAILABLE and magic_module is not None:
             try:
-                self.magic = magic.Magic(mime=True)
+                self.magic = magic_module.Magic(mime=True)
             except Exception as exc:
                 logger.warning("Failed to initialize python-magic: {}", exc)
                 self.magic = None
@@ -86,10 +88,10 @@ class FormatDetector:
 
     def _detect_with_tika(self, file_path: Path) -> str | None:
         """Detect MIME type using Apache Tika."""
-        if not TIKA_AVAILABLE or detector is None:
+        if not TIKA_AVAILABLE or tika_detector is None:
             return None
         try:
-            mime_type = detector.from_file(str(file_path))
+            mime_type = tika_detector.from_file(str(file_path))
             logger.debug(f"Tika detected: {mime_type}")
             return mime_type
         except Exception as exc:

@@ -5,14 +5,14 @@ from __future__ import annotations
 import csv
 import json
 import math
-from pathlib import Path
 import struct
 import subprocess
 import time
 import wave
+from pathlib import Path
 
-from docx import Document
 import fitz
+from docx import Document
 from PIL import Image, ImageDraw
 
 from edumind.common.paths import artifact_path
@@ -334,21 +334,46 @@ def run_scenario(pipeline: DataIngestionPipeline, scenario: dict[str, object]) -
 def build_summary(results: list[dict[str, object]]) -> dict[str, object]:
     """Build comparison-friendly benchmark summary fields."""
     by_name = {result["name"]: result for result in results}
-    clean_first = float(by_name.get("clean_image_first", {}).get("elapsed_seconds", 0.0) or 0.0)
-    clean_second = float(by_name.get("clean_image_second", {}).get("elapsed_seconds", 0.0) or 0.0)
-    scanned_first = float(by_name.get("scanned_pdf_force_ocr_first", {}).get("elapsed_seconds", 0.0) or 0.0)
-    scanned_second = float(by_name.get("scanned_pdf_force_ocr_second", {}).get("elapsed_seconds", 0.0) or 0.0)
+    clean_first = float(
+        by_name.get("clean_image_first", {}).get("elapsed_seconds", 0.0) or 0.0
+    )
+    clean_second = float(
+        by_name.get("clean_image_second", {}).get("elapsed_seconds", 0.0) or 0.0
+    )
+    scanned_first = float(
+        by_name.get("scanned_pdf_force_ocr_first", {}).get("elapsed_seconds", 0.0) or 0.0
+    )
+    scanned_second = float(
+        by_name.get("scanned_pdf_force_ocr_second", {}).get("elapsed_seconds", 0.0)
+        or 0.0
+    )
     threads = float(by_name.get("mixed_batch_threads", {}).get("elapsed_seconds", 0.0) or 0.0)
-    sequential = float(by_name.get("mixed_batch_sequential", {}).get("elapsed_seconds", 0.0) or 0.0)
+    sequential = float(
+        by_name.get("mixed_batch_sequential", {}).get("elapsed_seconds", 0.0) or 0.0
+    )
 
     return {
-        "cache_rerun_improvement_clean_image_pct": percent_improvement(clean_first, clean_second),
-        "cache_rerun_improvement_scanned_pdf_pct": percent_improvement(scanned_first, scanned_second),
+        "cache_rerun_improvement_clean_image_pct": percent_improvement(
+            clean_first,
+            clean_second,
+        ),
+        "cache_rerun_improvement_scanned_pdf_pct": percent_improvement(
+            scanned_first,
+            scanned_second,
+        ),
         "mixed_batch_threads_vs_sequential_pct": percent_improvement(sequential, threads),
         "native_vs_scanned_pdf": {
-            "native_pdf_default_seconds": by_name.get("native_pdf_default", {}).get("elapsed_seconds"),
-            "scanned_pdf_native_only_seconds": by_name.get("scanned_pdf_native_only", {}).get("elapsed_seconds"),
-            "scanned_pdf_force_ocr_seconds": by_name.get("scanned_pdf_force_ocr_first", {}).get("elapsed_seconds"),
+            "native_pdf_default_seconds": by_name.get("native_pdf_default", {}).get(
+                "elapsed_seconds"
+            ),
+            "scanned_pdf_native_only_seconds": by_name.get(
+                "scanned_pdf_native_only",
+                {},
+            ).get("elapsed_seconds"),
+            "scanned_pdf_force_ocr_seconds": by_name.get(
+                "scanned_pdf_force_ocr_first",
+                {},
+            ).get("elapsed_seconds"),
         },
     }
 

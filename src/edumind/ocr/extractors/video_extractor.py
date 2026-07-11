@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from fractions import Fraction
-from pathlib import Path
 import tempfile
 import time
+from fractions import Fraction
+from pathlib import Path
 from typing import Any, cast
 
 import ffmpeg

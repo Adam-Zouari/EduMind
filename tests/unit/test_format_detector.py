@@ -20,7 +20,10 @@ def test_detect_uses_extension_when_available(tmp_path: Path, monkeypatch) -> No
     assert result.mime_type is None
 
 
-def test_detect_short_circuits_mime_probes_for_known_extensions(tmp_path: Path, monkeypatch) -> None:
+def test_detect_short_circuits_mime_probes_for_known_extensions(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     file_path = tmp_path / "notes.pdf"
     file_path.write_bytes(b"pdf")
     detector = FormatDetector()

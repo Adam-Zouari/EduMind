@@ -137,11 +137,21 @@ def test_batch_strategy_auto_routes_media_sequentially_and_keeps_order(
             success=True,
         )
 
-    def _direct_wrapper(file_path: Path, format_info, format_detection_time, total_start, batch_options):
+    def _direct_wrapper(
+        file_path: Path,
+        format_info,
+        format_detection_time,
+        total_start,
+        batch_options,
+    ):
         direct_calls.append(format_info.format_type)
         return ExtractionResult(text=file_path.name, file_path=str(file_path), success=True)
 
-    monkeypatch.setattr(pipeline.batch_coordinator, "_process_with_optional_image_limit", _thread_wrapper)
+    monkeypatch.setattr(
+        pipeline.batch_coordinator,
+        "_process_with_optional_image_limit",
+        _thread_wrapper,
+    )
     monkeypatch.setattr(pipeline.batch_coordinator, "process_detected_file", _direct_wrapper)
 
     results = pipeline.process_batch([image_path, audio_path], batch_strategy="auto")

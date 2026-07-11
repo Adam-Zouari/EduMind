@@ -41,7 +41,11 @@ class OCRExtractor(BaseExtractor):
         enable_caching: bool = OCR_ENABLE_CACHING,
     ) -> None:
         super().__init__()
-        resolved_threshold = OCR_CONFIDENCE_THRESHOLD if confidence_threshold is None else confidence_threshold
+        resolved_threshold = (
+            OCR_CONFIDENCE_THRESHOLD
+            if confidence_threshold is None
+            else confidence_threshold
+        )
         self.languages = list(languages or OCR_LANGUAGES)
         self.enable_caching = enable_caching
         self.confidence_threshold = resolved_threshold

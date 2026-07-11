@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TypedDict
 
@@ -69,9 +70,9 @@ class FormatInfo:
     extension: str
 
     @classmethod
-    def from_value(cls, value: FormatInfo | dict[str, object]) -> FormatInfo:
+    def from_value(cls, value: FormatInfo | Mapping[str, object]) -> FormatInfo:
         """Normalize dict-style or dataclass-style format metadata."""
-        if isinstance(value, cls):
+        if isinstance(value, FormatInfo):
             return value
 
         mime_value = value.get("mime_type")
