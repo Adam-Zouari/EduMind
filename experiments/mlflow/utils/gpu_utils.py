@@ -6,9 +6,10 @@ Gracefully handles cases where CUDA is not available.
 """
 
 import logging
-from typing import Dict, Optional, Callable, Any
 import time
+from collections.abc import Callable
 from functools import wraps
+from typing import Any
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ def is_cuda_available() -> bool:
     return torch.cuda.is_available()
 
 
-def get_gpu_memory_usage(device_id: int = 0) -> Dict[str, float]:
+def get_gpu_memory_usage(device_id: int = 0) -> dict[str, float]:
     """
     Get current GPU memory usage.
     
@@ -90,7 +91,7 @@ def get_gpu_memory_usage(device_id: int = 0) -> Dict[str, float]:
     return metrics
 
 
-def get_gpu_utilization(device_id: int = 0) -> Dict[str, float]:
+def get_gpu_utilization(device_id: int = 0) -> dict[str, float]:
     """
     Get GPU utilization percentage.
     
@@ -123,7 +124,7 @@ def get_gpu_utilization(device_id: int = 0) -> Dict[str, float]:
     return metrics
 
 
-def get_gpu_info(device_id: int = 0) -> Dict[str, Any]:
+def get_gpu_info(device_id: int = 0) -> dict[str, Any]:
     """
     Get comprehensive GPU information.
     
@@ -216,7 +217,7 @@ def measure_throughput(
     num_items: int,
     *args,
     **kwargs
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """
     Measure throughput (items per second) for a batch processing function.
     
@@ -272,7 +273,7 @@ def reset_peak_memory_stats(device_id: int = 0):
         torch.cuda.empty_cache()
 
 
-def get_peak_memory_stats(device_id: int = 0) -> Dict[str, float]:
+def get_peak_memory_stats(device_id: int = 0) -> dict[str, float]:
     """
     Get peak memory statistics.
     

@@ -15,17 +15,19 @@ Provides functions for:
 - Chunk coherence
 """
 
-from typing import List, Dict, Any, Callable, Optional, Tuple
-import time
-from contextlib import contextmanager
-import numpy as np
 import logging
+import time
+from collections.abc import Callable
+from contextlib import contextmanager
+from typing import Any
+
+import numpy as np
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def compute_recall_at_k(retrieved_ids: List[str], relevant_ids: List[str], k: int) -> float:
+def compute_recall_at_k(retrieved_ids: list[str], relevant_ids: list[str], k: int) -> float:
     """
     Calculate Recall@K metric.
     
@@ -56,7 +58,7 @@ def compute_recall_at_k(retrieved_ids: List[str], relevant_ids: List[str], k: in
     return recall
 
 
-def compute_mrr(retrieved_ids: List[str], relevant_ids: List[str]) -> float:
+def compute_mrr(retrieved_ids: list[str], relevant_ids: list[str]) -> float:
     """
     Calculate Mean Reciprocal Rank (MRR).
 
@@ -84,7 +86,7 @@ def compute_mrr(retrieved_ids: List[str], relevant_ids: List[str]) -> float:
     return 0.0
 
 
-def compute_precision_at_k(retrieved_ids: List[str], relevant_ids: List[str], k: int) -> float:
+def compute_precision_at_k(retrieved_ids: list[str], relevant_ids: list[str], k: int) -> float:
     """
     Calculate Precision@K metric.
 
@@ -114,7 +116,7 @@ def compute_precision_at_k(retrieved_ids: List[str], relevant_ids: List[str], k:
     return precision
 
 
-def compute_ndcg_at_k(retrieved_ids: List[str], relevant_ids: List[str], k: int) -> float:
+def compute_ndcg_at_k(retrieved_ids: list[str], relevant_ids: list[str], k: int) -> float:
     """
     Calculate NDCG@K (Normalized Discounted Cumulative Gain).
 
@@ -159,7 +161,7 @@ def compute_ndcg_at_k(retrieved_ids: List[str], relevant_ids: List[str], k: int)
     return ndcg
 
 
-def compute_map(retrieved_ids: List[str], relevant_ids: List[str]) -> float:
+def compute_map(retrieved_ids: list[str], relevant_ids: list[str]) -> float:
     """
     Calculate MAP (Mean Average Precision).
 
@@ -195,7 +197,7 @@ def compute_map(retrieved_ids: List[str], relevant_ids: List[str]) -> float:
     return ap
 
 
-def compute_hit_rate_at_k(retrieved_ids: List[str], relevant_ids: List[str], k: int) -> float:
+def compute_hit_rate_at_k(retrieved_ids: list[str], relevant_ids: list[str], k: int) -> float:
     """
     Calculate Hit Rate@K.
 
@@ -355,9 +357,9 @@ def measure_function_latency(func: Callable, *args, **kwargs) -> tuple:
 
 def evaluate_answer_quality(
     answer: str, 
-    reference_answer: Optional[str] = None,
-    context: Optional[str] = None
-) -> Dict[str, float]:
+    reference_answer: str | None = None,
+    context: str | None = None
+) -> dict[str, float]:
     """
     Evaluate answer quality using simple heuristics.
     
@@ -517,7 +519,7 @@ def evaluate_completeness(answer: str, reference_answer: str) -> float:
     return completeness
 
 
-def evaluate_conciseness(answer: str, reference_answer: Optional[str] = None) -> float:
+def evaluate_conciseness(answer: str, reference_answer: str | None = None) -> float:
     """
     Evaluate if answer is concise (not overly verbose).
 
@@ -571,9 +573,9 @@ def evaluate_conciseness(answer: str, reference_answer: Optional[str] = None) ->
 
 def evaluate_context_precision(
     answer: str,
-    contexts: List[str],
-    context_ids: Optional[List[str]] = None
-) -> Dict[str, float]:
+    contexts: list[str],
+    context_ids: list[str] | None = None
+) -> dict[str, float]:
     """
     Evaluate how precisely the context was used.
 
@@ -626,7 +628,7 @@ def evaluate_context_precision(
     }
 
 
-def compute_chunk_size_statistics(chunks: List[str]) -> Dict[str, float]:
+def compute_chunk_size_statistics(chunks: list[str]) -> dict[str, float]:
     """
     Compute statistics about chunk sizes.
 
@@ -672,7 +674,7 @@ def compute_chunk_size_statistics(chunks: List[str]) -> Dict[str, float]:
     }
 
 
-def compute_mean_metrics(metrics_list: List[Dict[str, float]]) -> Dict[str, float]:
+def compute_mean_metrics(metrics_list: list[dict[str, float]]) -> dict[str, float]:
     """
     Compute mean values across multiple metric dictionaries.
 
@@ -703,10 +705,10 @@ def compute_mean_metrics(metrics_list: List[Dict[str, float]]) -> Dict[str, floa
 
 def evaluate_retrieval_quality(
     query: str,
-    retrieved_docs: List[Dict[str, Any]],
-    ground_truth_ids: List[str],
-    k_values: List[int] = [1, 3, 5, 10]
-) -> Dict[str, float]:
+    retrieved_docs: list[dict[str, Any]],
+    ground_truth_ids: list[str],
+    k_values: list[int] = [1, 3, 5, 10]
+) -> dict[str, float]:
     """
     Comprehensive retrieval quality evaluation.
     

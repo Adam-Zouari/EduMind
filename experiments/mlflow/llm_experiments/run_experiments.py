@@ -14,37 +14,31 @@ Evaluation rubric (1-5 scale):
 - Faithfulness: Is it grounded in the provided context?
 """
 
-import sys
-import os
-from pathlib import Path
 
 # Add parent directory to path
 
 # Configure MLflow database backend
 from experiments.mlflow.mlflow_config import EVALUATION_DIR, configure_mlflow
+
 configure_mlflow()
+
+import json
+import logging
+import time
+
+import numpy as np
+import requests
 
 from experiments.mlflow.utils import (
     MLflowExperiment,
     evaluate_answer_quality,
-    evaluate_faithfulness,
-    evaluate_correctness,
     evaluate_completeness,
     evaluate_conciseness,
     evaluate_context_precision,
-    measure_latency,
+    evaluate_correctness,
+    evaluate_faithfulness,
     get_gpu_memory_usage,
-    is_cuda_available,
-    log_dict_as_json,
-    log_text_as_artifact
 )
-
-import requests
-import json
-import time
-import numpy as np
-import logging
-from typing import Dict, List
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -163,17 +157,17 @@ Answer:"""
 def load_evaluation_data():
     """Load queries and ground truth."""
     queries_path = EVALUATION_DIR / "eval_queries.json"
-    with open(queries_path, 'r') as f:
+    with open(queries_path) as f:
         queries = json.load(f)
     
     gt_path = EVALUATION_DIR / "ground_truth.json"
-    with open(gt_path, 'r') as f:
+    with open(gt_path) as f:
         ground_truth = json.load(f)
     
     return queries, ground_truth
 
 
-def evaluate_llm_model(model_config: Dict, queries: List[Dict], ground_truth: Dict, num_queries: int = 5):
+def evaluate_llm_model(model_config: dict, queries: list[dict], ground_truth: dict, num_queries: int = 5):
     """
     Evaluate a single LLM model.
     
@@ -322,7 +316,7 @@ def evaluate_llm_model(model_config: Dict, queries: List[Dict], ground_truth: Di
         "avg_response_length_words": np.mean([len(a["answer"].split()) for a in all_answers])
     }
 
-    logger.info(f"\n--- Results Summary ---")
+    logger.info("\n--- Results Summary ---")
     logger.info(f"Correctness: {metrics['correctness']:.3f} ± {metrics['correctness_std']:.3f}")
     logger.info(f"Completeness: {metrics['completeness']:.3f} ± {metrics['completeness_std']:.3f}")
     logger.info(f"Conciseness: {metrics['conciseness']:.3f} ± {metrics['conciseness_std']:.3f}")
@@ -443,8 +437,8 @@ def run_all_experiments(test_mode: bool = False, num_queries: int = 5):
             ))
         
         logger.info("\n✓ All experiments completed!")
-        logger.info(f"\nView results: mlflow ui")
-        logger.info(f"Then navigate to: http://localhost:5000")
+        logger.info("\nView results: mlflow ui")
+        logger.info("Then navigate to: http://localhost:5000")
     else:
         logger.warning("\nNo experiments completed successfully")
 

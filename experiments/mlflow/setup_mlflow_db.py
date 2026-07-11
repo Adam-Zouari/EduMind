@@ -9,12 +9,10 @@ Usage:
     python setup_mlflow_db.py --migrate    # Migrate existing runs to database
 """
 
-import os
-import sqlite3
-import shutil
-from pathlib import Path
-import mlflow
 import argparse
+from pathlib import Path
+
+import mlflow
 
 
 class MLflowDatabaseSetup:
@@ -99,7 +97,7 @@ MLFLOW_ARTIFACT_ROOT={self.artifacts_dir.absolute()}
         """Create Python module for MLflow configuration."""
         config_path = self.mlflow_dir / "mlflow_config.py"
         
-        config_code = f'''"""
+        config_code = '''"""
 MLflow Configuration Module
 
 Automatically configure MLflow to use SQLite database backend.
@@ -121,7 +119,7 @@ DB_PATH = MLFLOW_DIR / "mlflow.db"
 ARTIFACTS_DIR = MLFLOW_DIR / "mlartifacts"
 
 # Database URI - use as_posix() to convert to forward slashes
-DB_URI = f"sqlite:///{{DB_PATH.as_posix()}}"
+DB_URI = f"sqlite:///{DB_PATH.as_posix()}"
 
 
 def configure_mlflow(verbose=True):
@@ -139,8 +137,8 @@ def configure_mlflow(verbose=True):
     
     if verbose:
         print(f"[OK] MLflow configured with database backend")
-        print(f"  Database: {{DB_PATH}}")
-        print(f"  URI: {{DB_URI}}")
+        print(f"  Database: {DB_PATH}")
+        print(f"  URI: {DB_URI}")
 
 
 def get_tracking_uri():
@@ -192,9 +190,9 @@ configure_mlflow(verbose=False)
         print("Starting MLflow UI:")
         print("-" * 50)
         print(f"    mlflow ui --backend-store-uri {self.db_uri}")
-        print(f"    # Or from mlflow directory:")
+        print("    # Or from mlflow directory:")
         print(f"    cd {self.mlflow_dir}")
-        print(f"    mlflow ui --backend-store-uri sqlite:///mlflow.db")
+        print("    mlflow ui --backend-store-uri sqlite:///mlflow.db")
         print()
         
         print("Benefits of database backend:")
@@ -219,8 +217,8 @@ configure_mlflow(verbose=False)
         
         # This is a simplified migration - for production, use MLflow's built-in tools
         print("\n[INFO] For complete migration, use:")
-        print(f"  mlflow experiments csv -o experiments.csv")
-        print(f"  # Then use MLflow's import functionality")
+        print("  mlflow experiments csv -o experiments.csv")
+        print("  # Then use MLflow's import functionality")
         
         print("\n[INFO] Alternatively, you can:")
         print("  1. Keep existing mlruns/ for historical reference")

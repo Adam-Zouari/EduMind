@@ -13,7 +13,6 @@ Refactored to ensure VERY HIGH semantic similarity (>0.8) by:
 
 import json
 import random
-import uuid
 
 # -----------------------------
 # Configuration
@@ -85,7 +84,7 @@ def generate_chunk_text(domain, topic, variant=0, chunk_index=0):
     # Expanded suffix variations (10 options)
     suffix_variations = [
         f"This understanding is crucial for {domain} professionals. ",
-        f"Further research in this area remains active. ",
+        "Further research in this area remains active. ",
         f"The implications for {domain} are significant. ",
         f"Experts in {domain} recognize this importance. ",
         f"This forms a cornerstone of {domain} knowledge. ",
@@ -349,8 +348,8 @@ with open(EVALUATION_DIR / "eval_queries.json", "w", encoding="utf-8") as f:
 print("✅ Dataset generated successfully.")
 print(f"Chunks: {len(chunks)}")
 print(f"Queries: {len(queries)}")
-print(f"\n📊 Data Quality Improvements:")
-print(f"  - Each (domain, topic) has chunks for all 5 template variants")
-print(f"  - Queries are matched to appropriate chunk variants")
-print(f"  - 80% of relevant chunks match query variant, 20% provide diversity")
-print(f"  - This should significantly improve Recall@5 and MRR metrics!")
+print("\n📊 Data Quality Improvements:")
+print("  - Each (domain, topic) has chunks for all 5 template variants")
+print("  - Queries are matched to appropriate chunk variants")
+print("  - 80% of relevant chunks match query variant, 20% provide diversity")
+print("  - This should significantly improve Recall@5 and MRR metrics!")

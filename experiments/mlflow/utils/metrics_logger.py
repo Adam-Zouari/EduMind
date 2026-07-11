@@ -5,13 +5,14 @@ Provides consistent helpers for logging parameters, metrics, and artifacts to ML
 Simplifies experiment tracking across all experiment scripts.
 """
 
-import mlflow
 import json
-import numpy as np
-from typing import Dict, Any, Optional, List
-from pathlib import Path
 import logging
+from pathlib import Path
+from typing import Any
+
 import matplotlib.pyplot as plt
+import mlflow
+import numpy as np
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ def set_experiment(experiment_name: str) -> str:
     return experiment.experiment_id
 
 
-def start_run(run_name: Optional[str] = None, tags: Optional[Dict[str, str]] = None):
+def start_run(run_name: str | None = None, tags: dict[str, str] | None = None):
     """
     Start a new MLflow run.
     
@@ -49,7 +50,7 @@ def start_run(run_name: Optional[str] = None, tags: Optional[Dict[str, str]] = N
     return run
 
 
-def log_params(params: Dict[str, Any]):
+def log_params(params: dict[str, Any]):
     """
     Log multiple parameters to MLflow.
     
@@ -65,7 +66,7 @@ def log_params(params: Dict[str, Any]):
     logger.debug(f"Logged {len(params)} parameters to MLflow")
 
 
-def log_metrics(metrics: Dict[str, float], step: Optional[int] = None):
+def log_metrics(metrics: dict[str, float], step: int | None = None):
     """
     Log multiple metrics to MLflow.
     
@@ -81,7 +82,7 @@ def log_metrics(metrics: Dict[str, float], step: Optional[int] = None):
     logger.debug(f"Logged {len(metrics)} metrics to MLflow")
 
 
-def log_dict_as_json(data: Dict[str, Any], filename: str):
+def log_dict_as_json(data: dict[str, Any], filename: str):
     """
     Save a dictionary as JSON and log as artifact.
     
@@ -185,9 +186,9 @@ def log_figure(fig: plt.Figure, filename: str):
 
 
 def log_experiment_results(
-    params: Dict[str, Any],
-    metrics: Dict[str, float],
-    artifacts: Optional[Dict[str, Any]] = None
+    params: dict[str, Any],
+    metrics: dict[str, float],
+    artifacts: dict[str, Any] | None = None
 ):
     """
     Comprehensive logging of parameters, metrics, and artifacts.
@@ -224,7 +225,7 @@ def log_experiment_results(
 
 
 def create_comparison_plot(
-    data: Dict[str, List[float]],
+    data: dict[str, list[float]],
     title: str,
     xlabel: str,
     ylabel: str,
@@ -290,7 +291,7 @@ class MLflowExperiment:
             exp.log_artifact("results.json", {"key": "value"})
     """
     
-    def __init__(self, experiment_name: str, run_name: Optional[str] = None):
+    def __init__(self, experiment_name: str, run_name: str | None = None):
         self.experiment_name = experiment_name
         self.run_name = run_name
         self.run = None
@@ -307,10 +308,10 @@ class MLflowExperiment:
         else:
             end_run(status="FINISHED")
     
-    def log_params(self, params: Dict[str, Any]):
+    def log_params(self, params: dict[str, Any]):
         log_params(params)
     
-    def log_metrics(self, metrics: Dict[str, float]):
+    def log_metrics(self, metrics: dict[str, float]):
         log_metrics(metrics)
     
     def log_artifact(self, filename: str, content: Any):

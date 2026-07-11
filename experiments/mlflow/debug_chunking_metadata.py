@@ -1,21 +1,21 @@
 from experiments.mlflow.mlflow_config import EVALUATION_DIR
+
 """
 Debug script to check if metadata is being stored and retrieved correctly.
 """
 
-import sys
-from pathlib import Path
 
 import json
+
 from edumind.rag.embedder import Embedder
 from edumind.rag.vector_store import VectorStore
 
 # Load data
 print("Loading data...")
-with open(EVALUATION_DIR / "ground_truth.json", 'r') as f:
+with open(EVALUATION_DIR / "ground_truth.json") as f:
     ground_truth = json.load(f)
 
-with open(EVALUATION_DIR / "eval_queries.json", 'r') as f:
+with open(EVALUATION_DIR / "eval_queries.json") as f:
     queries = json.load(f)
 
 print(f"Loaded {len(ground_truth)} chunks and {len(queries)} queries")
@@ -137,7 +137,7 @@ else:
             print(f"   Relevant chunks in store: {relevant_in_added}")
             
             # Check if they were retrieved
-            print(f"\n3. Were they retrieved?")
+            print("\n3. Were they retrieved?")
             print(f"   Retrieved IDs: {retrieved_original_ids}")
             print(f"   Expected IDs: {relevant_in_added}")
             

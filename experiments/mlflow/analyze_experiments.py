@@ -3,9 +3,9 @@ Analyze MLflow experiments and provide recommendations.
 """
 
 import mlflow
-from experiments.mlflow.mlflow_config import EVALUATION_DIR, configure_mlflow
 import pandas as pd
-import numpy as np
+
+from experiments.mlflow.mlflow_config import configure_mlflow
 
 # Setup MLflow
 configure_mlflow()
@@ -178,19 +178,19 @@ print("\nBased on the analysis of all experiments, here are the best options:\n"
 
 if best_chunking:
     print(f"✅ Best Chunking Strategy: {best_chunking}")
-    print(f"   → Provides optimal balance of retrieval quality and semantic coherence")
+    print("   → Provides optimal balance of retrieval quality and semantic coherence")
 
 if best_retrieval:
     print(f"\n✅ Best Retrieval Strategy: {best_retrieval}")
-    print(f"   → Achieves highest retrieval accuracy with acceptable latency")
+    print("   → Achieves highest retrieval accuracy with acceptable latency")
 
 if best_embedding:
     print(f"\n✅ Best Embedding Model: {best_embedding}")
-    print(f"   → Best retrieval quality with reasonable resource usage")
+    print("   → Best retrieval quality with reasonable resource usage")
 
 if best_llm:
     print(f"\n✅ Best LLM Model: {best_llm}")
-    print(f"   → Highest quality answers with good performance")
+    print("   → Highest quality answers with good performance")
 
 print("\n" + "="*80)
 print("💡 RECOMMENDED RAG PIPELINE CONFIGURATION")

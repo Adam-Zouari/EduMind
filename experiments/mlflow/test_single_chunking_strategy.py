@@ -1,22 +1,21 @@
 from experiments.mlflow.mlflow_config import EVALUATION_DIR
+
 """
 Test a single chunking strategy with debug output.
 """
 
-import sys
-from pathlib import Path
 
 import json
-import re
+
 from edumind.rag.embedder import Embedder
 from edumind.rag.vector_store import VectorStore
 
 # Load data
 print("Loading data...")
-with open(EVALUATION_DIR / "ground_truth.json", 'r') as f:
+with open(EVALUATION_DIR / "ground_truth.json") as f:
     ground_truth = json.load(f)
 
-with open(EVALUATION_DIR / "eval_queries.json", 'r') as f:
+with open(EVALUATION_DIR / "eval_queries.json") as f:
     queries = json.load(f)
 
 print(f"Loaded {len(ground_truth)} chunks and {len(queries)} queries")
@@ -128,7 +127,7 @@ if results['ids'] and results['ids'][0]:
 matches = set(retrieved_original_ids) & relevant_chunk_ids
 precision = len(matches) / len(retrieved_original_ids) if retrieved_original_ids else 0
 
-print(f"\n" + "="*80)
+print("\n" + "="*80)
 print(f"Retrieved: {retrieved_original_ids}")
 print(f"Expected: {list(relevant_chunk_ids)[:5]}")
 print(f"Matches: {list(matches)}")

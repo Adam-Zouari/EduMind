@@ -2,11 +2,11 @@
 Create visualizations of experiment results.
 """
 
-import mlflow
-from experiments.mlflow.mlflow_config import EVALUATION_DIR, configure_mlflow
-import pandas as pd
 import matplotlib.pyplot as plt
+import mlflow
 import seaborn as sns
+
+from experiments.mlflow.mlflow_config import configure_mlflow
 
 # Setup
 configure_mlflow()

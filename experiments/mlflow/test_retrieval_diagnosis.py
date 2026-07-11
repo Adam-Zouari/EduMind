@@ -1,15 +1,16 @@
 from experiments.mlflow.mlflow_config import EVALUATION_DIR
+
 """
 Diagnostic script to test why retrieval metrics are so low.
 This will help us understand if the chunk IDs are being stored and retrieved correctly.
 """
 
-import sys
-from pathlib import Path
 
 import json
+
 from edumind.rag.embedder import Embedder
 from edumind.rag.vector_store import VectorStore
+
 
 def main():
     print("="*80)
@@ -18,10 +19,10 @@ def main():
     
     # Load data
     print("\n1. Loading data...")
-    with open(EVALUATION_DIR / "ground_truth.json", 'r') as f:
+    with open(EVALUATION_DIR / "ground_truth.json") as f:
         ground_truth = json.load(f)
     
-    with open(EVALUATION_DIR / "eval_queries.json", 'r') as f:
+    with open(EVALUATION_DIR / "eval_queries.json") as f:
         queries = json.load(f)
     
     print(f"   Loaded {len(ground_truth)} chunks")
@@ -72,7 +73,7 @@ def main():
     # Retrieve
     results = vector_store.query(query_embedding.tolist(), top_k=5)
     
-    print(f"\n5. Retrieval Results:")
+    print("\n5. Retrieval Results:")
     print(f"   Retrieved {len(results['ids'][0])} results")
     
     # Check what we got
@@ -97,7 +98,7 @@ def main():
         print(f"      Is Relevant: {is_relevant}")
     
     # Compute metrics
-    print(f"\n6. Metrics:")
+    print("\n6. Metrics:")
     relevant_set = set(relevant_chunks)
     retrieved_set = set(retrieved_chunk_ids)
     
@@ -110,7 +111,7 @@ def main():
     print(f"   Precision@5: {precision:.3f}")
     
     # Diagnosis
-    print(f"\n7. Diagnosis:")
+    print("\n7. Diagnosis:")
     if precision > 0.5:
         print("   ✅ GOOD: Retrieval is working correctly!")
     elif precision > 0:

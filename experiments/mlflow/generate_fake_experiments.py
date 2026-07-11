@@ -8,23 +8,23 @@ Usage:
     python mlflow/generate_fake_experiments.py --chunking --retrieval --runs 10
 """
 
-import sys
-import os
-from pathlib import Path
 import argparse
 import random
-import numpy as np
 from datetime import datetime, timedelta
 
-# Add paths
+import numpy as np
 
+# Add paths
 # Configure MLflow database backend
-from experiments.mlflow.mlflow_config import EVALUATION_DIR, configure_mlflow
+from experiments.mlflow.mlflow_config import configure_mlflow
+
 configure_mlflow()
 
-from experiments.mlflow.utils import MLflowExperiment, log_dict_as_json
-import mlflow
 import logging
+
+import mlflow
+
+from experiments.mlflow.utils import log_dict_as_json
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

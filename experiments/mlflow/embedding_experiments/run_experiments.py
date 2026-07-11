@@ -14,36 +14,31 @@ Models tested:
 5. multilingual-e5-large (multilingual support)
 """
 
-import sys
-import os
-from pathlib import Path
 
 # Add parent directory to path
 
 # Configure MLflow database backend
 from experiments.mlflow.mlflow_config import EVALUATION_DIR, configure_mlflow
+
 configure_mlflow()
+
+import json
+import logging
+import time
+
+import numpy as np
+from sentence_transformers import SentenceTransformer
 
 from experiments.mlflow.utils import (
     MLflowExperiment,
-    compute_recall_at_k,
-    compute_precision_at_k,
-    compute_ndcg_at_k,
     compute_map,
     compute_mrr,
-    measure_latency,
+    compute_ndcg_at_k,
+    compute_precision_at_k,
     get_gpu_memory_usage,
     is_cuda_available,
-    log_dict_as_json,
-    log_numpy_array
+    measure_latency,
 )
-
-from sentence_transformers import SentenceTransformer
-import numpy as np
-import json
-import time
-import logging
-from typing import Dict, List
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -83,18 +78,18 @@ def load_evaluation_data():
     """Load queries and ground truth data."""
     # Load queries
     queries_path = EVALUATION_DIR / "eval_queries.json"
-    with open(queries_path, 'r') as f:
+    with open(queries_path) as f:
         queries = json.load(f)
     
     # Load ground truth chunks
     gt_path = EVALUATION_DIR / "ground_truth.json"
-    with open(gt_path, 'r') as f:
+    with open(gt_path) as f:
         ground_truth = json.load(f)
     
     return queries, ground_truth
 
 
-def evaluate_embedding_model(model_config: Dict, queries: List[Dict], ground_truth: Dict):
+def evaluate_embedding_model(model_config: dict, queries: list[dict], ground_truth: dict):
     """
     Evaluate a single embedding model.
     
@@ -248,7 +243,7 @@ def evaluate_embedding_model(model_config: Dict, queries: List[Dict], ground_tru
         "num_chunks": len(chunk_texts)
     }
 
-    logger.info(f"\n--- Results Summary ---")
+    logger.info("\n--- Results Summary ---")
     logger.info(f"NDCG@5: {metrics['ndcg_at_5']:.4f} ± {metrics['ndcg_at_5_std']:.4f} (PRIMARY METRIC)")
     logger.info(f"Precision@5: {metrics['precision_at_5']:.4f} ± {metrics['precision_at_5_std']:.4f}")
     logger.info(f"MAP: {metrics['map']:.4f} ± {metrics['map_std']:.4f}")
@@ -355,8 +350,8 @@ def run_all_experiments(test_mode: bool = False):
         ))
     
     logger.info("\n✓ All experiments completed!")
-    logger.info(f"\nView results: mlflow ui")
-    logger.info(f"Then navigate to: http://localhost:5000")
+    logger.info("\nView results: mlflow ui")
+    logger.info("Then navigate to: http://localhost:5000")
 
 
 if __name__ == "__main__":

@@ -16,45 +16,38 @@ Each strategy is evaluated on:
 - Chunk statistics (avg size, total count)
 """
 
-import sys
-import os
-from pathlib import Path
 import re
 
 # Add paths
-
 # Configure MLflow database backend
 from experiments.mlflow.mlflow_config import EVALUATION_DIR, configure_mlflow
+
 configure_mlflow()
 
-from experiments.mlflow.utils import (
-    MLflowExperiment,
-    compute_recall_at_k,
-    compute_mrr,
-    compute_precision_at_k,
-    compute_ndcg_at_k,
-    compute_diversity,
-    evaluate_answer_quality,
-    evaluate_faithfulness,
-    compute_chunk_size_statistics,
-    compute_chunk_coherence,
-    log_dict_as_json,
-    log_figure,
-    create_comparison_plot
-)
+import json
+import logging
+
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+
+from edumind.rag.embedder import Embedder
 
 # Import RAG components
 from edumind.rag.vector_store import VectorStore
-from edumind.rag.embedder import Embedder
-
-import json
-import numpy as np
-import matplotlib.pyplot as plt
-import logging
-from typing import Dict, List, Tuple
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
-import torch
+from experiments.mlflow.utils import (
+    MLflowExperiment,
+    compute_chunk_size_statistics,
+    compute_diversity,
+    compute_mrr,
+    compute_ndcg_at_k,
+    compute_precision_at_k,
+    compute_recall_at_k,
+    evaluate_answer_quality,
+    evaluate_faithfulness,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -104,11 +97,11 @@ CHUNKING_STRATEGIES = [
 class ChunkingStrategy:
     """Base class for chunking strategies."""
     
-    def __init__(self, config: Dict):
+    def __init__(self, config: dict):
         self.config = config
         self.name = config["name"]
     
-    def chunk_text(self, text: str, metadata: Dict = None) -> List[Dict]:
+    def chunk_text(self, text: str, metadata: dict = None) -> list[dict]:
         """Chunk text according to strategy."""
         raise NotImplementedError
 
@@ -116,7 +109,7 @@ class ChunkingStrategy:
 class FixedCharacterChunker(ChunkingStrategy):
     """Fixed character-based chunking."""
     
-    def chunk_text(self, text: str, metadata: Dict = None) -> List[Dict]:
+    def chunk_text(self, text: str, metadata: dict = None) -> list[dict]:
         chunk_size = self.config["chunk_size"]
         overlap = self.config["chunk_overlap"]
         
@@ -148,12 +141,12 @@ class FixedCharacterChunker(ChunkingStrategy):
 class SentenceWindowChunker(ChunkingStrategy):
     """Sentence-based windowing."""
     
-    def _split_sentences(self, text: str) -> List[str]:
+    def _split_sentences(self, text: str) -> list[str]:
         """Simple sentence splitter."""
         sentences = re.split(r'(?<=[.!?])\s+', text)
         return [s.strip() for s in sentences if s.strip()]
     
-    def chunk_text(self, text: str, metadata: Dict = None) -> List[Dict]:
+    def chunk_text(self, text: str, metadata: dict = None) -> list[dict]:
         num_sentences = self.config["chunk_size"]
         overlap = self.config["chunk_overlap"]
         
@@ -186,15 +179,15 @@ class SentenceWindowChunker(ChunkingStrategy):
 class SemanticChunker(ChunkingStrategy):
     """Semantic similarity-based chunking."""
     
-    def __init__(self, config: Dict):
+    def __init__(self, config: dict):
         super().__init__(config)
         self.model = SentenceTransformer('all-MiniLM-L6-v2', device='cuda' if torch.cuda.is_available() else 'cpu')
     
-    def _split_sentences(self, text: str) -> List[str]:
+    def _split_sentences(self, text: str) -> list[str]:
         sentences = re.split(r'(?<=[.!?])\s+', text)
         return [s.strip() for s in sentences if s.strip()]
     
-    def chunk_text(self, text: str, metadata: Dict = None) -> List[Dict]:
+    def chunk_text(self, text: str, metadata: dict = None) -> list[dict]:
         target_size = self.config["chunk_size"]
         min_size = int(target_size * 0.5)
         
@@ -251,7 +244,7 @@ class SemanticChunker(ChunkingStrategy):
 class HierarchicalChunker(ChunkingStrategy):
     """Hierarchical parent + child chunking."""
     
-    def chunk_text(self, text: str, metadata: Dict = None) -> List[Dict]:
+    def chunk_text(self, text: str, metadata: dict = None) -> list[dict]:
         parent_size = self.config["chunk_size"]
         child_size = self.config["child_size"]
         
@@ -292,7 +285,7 @@ class HierarchicalChunker(ChunkingStrategy):
         return chunks
 
 
-def get_chunker(strategy_config: Dict) -> ChunkingStrategy:
+def get_chunker(strategy_config: dict) -> ChunkingStrategy:
     """Factory function to create chunker based on strategy."""
     strategy_type = strategy_config["strategy_type"]
     
@@ -311,17 +304,17 @@ def get_chunker(strategy_config: Dict) -> ChunkingStrategy:
 def load_evaluation_data():
     """Load queries and ground truth."""
     queries_path = EVALUATION_DIR / "eval_queries.json"
-    with open(queries_path, 'r') as f:
+    with open(queries_path) as f:
         queries = json.load(f)
     
     gt_path = EVALUATION_DIR / "ground_truth.json"
-    with open(gt_path, 'r') as f:
+    with open(gt_path) as f:
         ground_truth = json.load(f)
     
     return queries, ground_truth
 
 
-def create_chunk_distribution_plot(chunk_sizes: List[int], strategy_name: str) -> plt.Figure:
+def create_chunk_distribution_plot(chunk_sizes: list[int], strategy_name: str) -> plt.Figure:
     """Create histogram of chunk sizes."""
     fig, ax = plt.subplots(figsize=(10, 6))
     
@@ -342,10 +335,10 @@ def create_chunk_distribution_plot(chunk_sizes: List[int], strategy_name: str) -
 
 
 def evaluate_chunking_strategy(
-    strategy_config: Dict,
-    queries: List[Dict],
-    ground_truth: Dict
-) -> Tuple[Dict, Dict]:
+    strategy_config: dict,
+    queries: list[dict],
+    ground_truth: dict
+) -> tuple[dict, dict]:
     """
     Evaluate a chunking strategy.
     
@@ -524,7 +517,7 @@ def evaluate_chunking_strategy(
         "num_queries_evaluated": len(recall_scores)
     }
 
-    logger.info(f"\n--- Results Summary ---")
+    logger.info("\n--- Results Summary ---")
     logger.info(f"Precision@5: {metrics['precision_at_5']:.4f} ± {metrics['precision_at_5_std']:.4f}")
     logger.info(f"NDCG@5: {metrics['ndcg_at_5']:.4f} ± {metrics['ndcg_at_5_std']:.4f}")
     logger.info(f"Recall@5: {metrics['recall_at_5']:.4f} ± {metrics['recall_at_5_std']:.4f}")
@@ -653,8 +646,8 @@ def run_all_experiments(test_mode: bool = False):
         ))
     
     logger.info("\n✓ All experiments completed!")
-    logger.info(f"\nView results: mlflow ui")
-    logger.info(f"Then navigate to: http://localhost:5000")
+    logger.info("\nView results: mlflow ui")
+    logger.info("Then navigate to: http://localhost:5000")
 
 
 if __name__ == "__main__":

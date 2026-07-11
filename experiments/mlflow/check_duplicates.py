@@ -6,8 +6,7 @@ import json
 
 from experiments.mlflow.mlflow_config import EVALUATION_DIR
 
-
-with open(EVALUATION_DIR / "ground_truth.json", "r", encoding="utf-8") as handle:
+with open(EVALUATION_DIR / "ground_truth.json", encoding="utf-8") as handle:
     ground_truth = json.load(handle)
 
 clinical_chunks = [(chunk_id, chunk) for chunk_id, chunk in ground_truth.items() if "clinical_psychology" in chunk_id]

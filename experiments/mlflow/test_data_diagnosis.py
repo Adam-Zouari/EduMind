@@ -1,4 +1,5 @@
 from experiments.mlflow.mlflow_config import EVALUATION_DIR
+
 """
 Simple diagnostic to check if the data is structured correctly.
 No dependencies on torch or sentence-transformers.
@@ -7,6 +8,7 @@ No dependencies on torch or sentence-transformers.
 import json
 from collections import defaultdict
 
+
 def main():
     print("="*80)
     print("DATA STRUCTURE DIAGNOSIS")
@@ -14,10 +16,10 @@ def main():
     
     # Load data
     print("\n1. Loading data...")
-    with open(EVALUATION_DIR / "ground_truth.json", 'r') as f:
+    with open(EVALUATION_DIR / "ground_truth.json") as f:
         ground_truth = json.load(f)
     
-    with open(EVALUATION_DIR / "eval_queries.json", 'r') as f:
+    with open(EVALUATION_DIR / "eval_queries.json") as f:
         queries = json.load(f)
     
     print(f"   Loaded {len(ground_truth)} chunks")
@@ -55,7 +57,7 @@ def main():
         print(f"   ❌ PROBLEM: {len(missing_chunks)} relevant chunks NOT in ground truth!")
         print(f"   Missing: {missing_chunks[:5]}...")
     else:
-        print(f"   ✅ GOOD: All relevant chunks exist in ground truth")
+        print("   ✅ GOOD: All relevant chunks exist in ground truth")
     
     # Check domain/topic/variant matching
     print("\n5. Checking Domain/Topic/Variant Matching:")
@@ -91,7 +93,7 @@ def main():
             
             print(f"   Overlap with relevant chunks: {len(overlap)}/{len(relevant_set)}")
             if len(overlap) < len(relevant_set):
-                print(f"   ⚠️  WARNING: Not all relevant chunks match (domain, topic, variant)")
+                print("   ⚠️  WARNING: Not all relevant chunks match (domain, topic, variant)")
     
     # Statistics across all queries
     print("\n6. Overall Statistics:")

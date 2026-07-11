@@ -3,28 +3,27 @@ Simple test script to verify new metrics work correctly.
 Tests only the evaluation module without MLflow dependencies.
 """
 
-import sys
-from pathlib import Path
 
 # Import directly from evaluation module
+import numpy as np
+
 from experiments.mlflow.utils.evaluation import (
-    # Retrieval metrics
-    compute_precision_at_k,
-    compute_ndcg_at_k,
-    compute_map,
-    compute_hit_rate_at_k,
-    compute_diversity,
+    compute_chunk_coherence,
     # Chunking metrics
     compute_chunk_size_statistics,
-    compute_chunk_coherence,
-    # LLM metrics
-    evaluate_correctness,
+    compute_diversity,
+    compute_hit_rate_at_k,
+    compute_map,
+    compute_ndcg_at_k,
+    # Retrieval metrics
+    compute_precision_at_k,
     evaluate_completeness,
     evaluate_conciseness,
-    evaluate_context_precision
+    evaluate_context_precision,
+    # LLM metrics
+    evaluate_correctness,
 )
 
-import numpy as np
 
 def test_retrieval_metrics():
     """Test retrieval quality metrics."""
@@ -68,7 +67,7 @@ def test_chunking_metrics():
     ]
     
     stats = compute_chunk_size_statistics(chunks)
-    print(f"✓ Chunk Statistics:")
+    print("✓ Chunk Statistics:")
     print(f"    Num chunks: {stats['num_chunks']}")
     print(f"    Mean chars: {stats['mean_chars']:.1f}")
     print(f"    Mean tokens: {stats['mean_tokens']:.1f}")

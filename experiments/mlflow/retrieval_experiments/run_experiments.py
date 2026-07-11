@@ -11,37 +11,33 @@ Strategies tested:
 Uses existing RAG/src/vector_store.py which already implements hybrid search.
 """
 
-import sys
-import os
-from pathlib import Path
 
 # Add paths
 
 # Configure MLflow database backend
 from experiments.mlflow.mlflow_config import EVALUATION_DIR, configure_mlflow
+
 configure_mlflow()
 
-from experiments.mlflow.utils import (
-    MLflowExperiment,
-    compute_recall_at_k,
-    compute_precision_at_k,
-    compute_ndcg_at_k,
-    compute_hit_rate_at_k,
-    compute_diversity,
-    compute_mrr,
-    measure_latency,
-    log_dict_as_json
-)
+import json
+import logging
+
+import numpy as np
+
+from edumind.rag.embedder import Embedder
 
 # Import RAG components
 from edumind.rag.vector_store import VectorStore
-from edumind.rag.embedder import Embedder
-from edumind.rag.text_chunker import TextChunker
-
-import json
-import numpy as np
-import logging
-from typing import Dict, List
+from experiments.mlflow.utils import (
+    MLflowExperiment,
+    compute_diversity,
+    compute_hit_rate_at_k,
+    compute_mrr,
+    compute_ndcg_at_k,
+    compute_precision_at_k,
+    compute_recall_at_k,
+    measure_latency,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -75,17 +71,17 @@ RETRIEVAL_STRATEGIES = [
 def load_evaluation_data():
     """Load queries and ground truth."""
     queries_path = EVALUATION_DIR / "eval_queries.json"
-    with open(queries_path, 'r') as f:
+    with open(queries_path) as f:
         queries = json.load(f)
     
     gt_path = EVALUATION_DIR / "ground_truth.json"
-    with open(gt_path, 'r') as f:
+    with open(gt_path) as f:
         ground_truth = json.load(f)
     
     return queries, ground_truth
 
 
-def setup_vector_store(ground_truth: Dict):
+def setup_vector_store(ground_truth: dict):
     """
     Set up vector store with ground truth data.
     
@@ -132,9 +128,9 @@ def setup_vector_store(ground_truth: Dict):
     return vector_store, embedder, chunks
 
 
-def evaluate_retrieval_strategy(strategy_config: Dict, queries: List[Dict], 
+def evaluate_retrieval_strategy(strategy_config: dict, queries: list[dict], 
                                  vector_store: VectorStore, embedder: Embedder,
-                                 chunks: List[Dict]):
+                                 chunks: list[dict]):
     """
     Evaluate a single retrieval strategy.
     
@@ -272,7 +268,7 @@ def evaluate_retrieval_strategy(strategy_config: Dict, queries: List[Dict],
         "num_queries": len(queries)
     }
 
-    logger.info(f"\n--- Results Summary ---")
+    logger.info("\n--- Results Summary ---")
     logger.info(f"NDCG@5: {metrics['ndcg_at_5']:.4f} ± {metrics['ndcg_at_5_std']:.4f}")
     logger.info(f"Precision@5: {metrics['precision_at_5']:.4f} ± {metrics['precision_at_5_std']:.4f}")
     logger.info(f"Hit Rate@5: {metrics['hit_rate_at_5']:.4f} ± {metrics['hit_rate_at_5_std']:.4f}")
@@ -381,8 +377,8 @@ def run_all_experiments(test_mode: bool = False):
     vector_store.reset_collection()
     
     logger.info("\n✓ All experiments completed!")
-    logger.info(f"\nView results: mlflow ui")
-    logger.info(f"Then navigate to: http://localhost:5000")
+    logger.info("\nView results: mlflow ui")
+    logger.info("Then navigate to: http://localhost:5000")
 
 
 if __name__ == "__main__":
