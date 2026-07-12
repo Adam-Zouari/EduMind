@@ -29,3 +29,9 @@ def test_streamlit_app_module_exists() -> None:
     pytest.importorskip("streamlit")
     module = _import_or_skip("apps.streamlit_app")
     assert module is not None
+
+
+def test_experiments_runner_module_exists() -> None:
+    pytest.importorskip("mlflow")
+    module = _import_or_skip("experiments.mlflow.run_all_experiments")
+    assert hasattr(module, "main")
