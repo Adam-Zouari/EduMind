@@ -6,6 +6,7 @@ import logging
 import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 from edumind.common.config import load_yaml_config
 from edumind.common.paths import resolve_config_path
@@ -20,9 +21,11 @@ from .vector_store import VectorStore
 logger = logging.getLogger(__name__)
 
 try:
-    import mlflow
+    import mlflow as _mlflow
 except ImportError:  # pragma: no cover - optional runtime dependency
-    mlflow = None
+    mlflow: Any | None = None
+else:
+    mlflow = _mlflow
 
 
 class RAGPipeline:

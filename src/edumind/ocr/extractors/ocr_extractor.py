@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import Any
 
 import cv2
 import numpy as np
@@ -25,9 +26,11 @@ from ._image_preprocessing import ImagePreprocessor
 from ._image_validation import ImageValidationRules, build_cache_status
 
 try:
-    import mlflow
+    import mlflow as _mlflow
 except ImportError:
-    mlflow = None
+    mlflow: Any | None = None
+else:
+    mlflow = _mlflow
 
 
 class OCRExtractor(BaseExtractor):

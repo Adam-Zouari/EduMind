@@ -1,343 +1,198 @@
-"""
-GPU Monitoring Utilities for MLflow Experiments
+"""GPU monitoring utilities for maintained experiments."""
 
-Provides functions for tracking GPU memory usage, utilization, and performance.
-Gracefully handles cases where CUDA is not available.
-"""
+from __future__ import annotations
 
 import logging
 import time
 from collections.abc import Callable
 from functools import wraps
-from typing import Any
+from typing import Any, TypeVar
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
-# Try to import GPU monitoring libraries
 try:
     import torch
-    TORCH_AVAILABLE = True
+
+    _TORCH_AVAILABLE = True
 except ImportError:
-    TORCH_AVAILABLE = False
-    logger.warning("PyTorch not available. GPU monitoring will be limited.")
+    _TORCH_AVAILABLE = False
 
 try:
     import pynvml
-    PYNVML_AVAILABLE = True
-    # Initialize NVML
+
+    _PYNVML_IMPORTED = True
+except ImportError:
+    _PYNVML_IMPORTED = False
+
+_NVML_INITIALIZED = False
+
+
+def _ensure_nvml() -> bool:
+    """Initialize NVML lazily when utilization data is requested."""
+    global _NVML_INITIALIZED
+
+    if not _PYNVML_IMPORTED:
+        return False
+    if _NVML_INITIALIZED:
+        return True
+
     try:
         pynvml.nvmlInit()
-        logger.info("NVML initialized successfully for GPU monitoring")
-    except Exception as e:
-        PYNVML_AVAILABLE = False
-        logger.warning(f"Could not initialize NVML: {e}")
-except ImportError:
-    PYNVML_AVAILABLE = False
-    logger.warning("pynvml not available. Install with: pip install pynvml")
+    except Exception as exc:
+        logger.debug("Could not initialize NVML: %s", exc)
+        return False
+
+    _NVML_INITIALIZED = True
+    return True
 
 
 def is_cuda_available() -> bool:
-    """
-    Check if CUDA is available.
-    
-    Returns:
-        True if CUDA is available, False otherwise
-    """
-    if not TORCH_AVAILABLE:
-        return False
-    return torch.cuda.is_available()
+    """Return whether CUDA is available through torch."""
+    return bool(_TORCH_AVAILABLE and torch.cuda.is_available())
 
 
 def get_gpu_memory_usage(device_id: int = 0) -> dict[str, float]:
-    """
-    Get current GPU memory usage.
-    
-    Args:
-        device_id: GPU device ID (default: 0)
-        
-    Returns:
-        Dictionary with memory metrics in MB
-    """
+    """Return current GPU memory metrics in megabytes."""
     metrics = {
-        'allocated_mb': 0.0,
-        'reserved_mb': 0.0,
-        'free_mb': 0.0,
-        'total_mb': 0.0
+        "allocated_mb": 0.0,
+        "reserved_mb": 0.0,
+        "free_mb": 0.0,
+        "total_mb": 0.0,
     }
-    
     if not is_cuda_available():
-        logger.debug("CUDA not available, returning zero GPU memory")
         return metrics
-    
+
     try:
-        # PyTorch memory stats
-        allocated = torch.cuda.memory_allocated(device_id) / (1024 ** 2)
-        reserved = torch.cuda.memory_reserved(device_id) / (1024 ** 2)
-        
-        metrics['allocated_mb'] = allocated
-        metrics['reserved_mb'] = reserved
-        
-        # Get total memory using pynvml if available
-        if PYNVML_AVAILABLE:
+        metrics["allocated_mb"] = torch.cuda.memory_allocated(device_id) / (1024 ** 2)
+        metrics["reserved_mb"] = torch.cuda.memory_reserved(device_id) / (1024 ** 2)
+        if _ensure_nvml():
             handle = pynvml.nvmlDeviceGetHandleByIndex(device_id)
-            mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            metrics['total_mb'] = mem_info.total / (1024 ** 2)
-            metrics['free_mb'] = mem_info.free / (1024 ** 2)
-        
-    except Exception as e:
-        logger.warning(f"Error getting GPU memory usage: {e}")
-    
+            memory_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            metrics["total_mb"] = memory_info.total / (1024 ** 2)
+            metrics["free_mb"] = memory_info.free / (1024 ** 2)
+    except Exception as exc:
+        logger.warning("Error getting GPU memory usage: %s", exc)
     return metrics
 
 
 def get_gpu_utilization(device_id: int = 0) -> dict[str, float]:
-    """
-    Get GPU utilization percentage.
-    
-    Args:
-        device_id: GPU device ID (default: 0)
-        
-    Returns:
-        Dictionary with utilization metrics
-    """
+    """Return current GPU and memory utilization percentages."""
     metrics = {
-        'gpu_utilization_percent': 0.0,
-        'memory_utilization_percent': 0.0
+        "gpu_utilization_percent": 0.0,
+        "memory_utilization_percent": 0.0,
     }
-    
-    if not PYNVML_AVAILABLE:
-        logger.debug("NVML not available, returning zero utilization")
+    if not _ensure_nvml():
         return metrics
-    
+
     try:
         handle = pynvml.nvmlDeviceGetHandleByIndex(device_id)
-        
-        # Get utilization rates
         utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)
-        metrics['gpu_utilization_percent'] = utilization.gpu
-        metrics['memory_utilization_percent'] = utilization.memory
-        
-    except Exception as e:
-        logger.warning(f"Error getting GPU utilization: {e}")
-    
+        metrics["gpu_utilization_percent"] = float(utilization.gpu)
+        metrics["memory_utilization_percent"] = float(utilization.memory)
+    except Exception as exc:
+        logger.warning("Error getting GPU utilization: %s", exc)
     return metrics
 
 
 def get_gpu_info(device_id: int = 0) -> dict[str, Any]:
-    """
-    Get comprehensive GPU information.
-    
-    Args:
-        device_id: GPU device ID (default: 0)
-        
-    Returns:
-        Dictionary with GPU information
-    """
-    info = {
-        'cuda_available': is_cuda_available(),
-        'device_id': device_id,
-        'device_name': 'N/A',
-        'driver_version': 'N/A',
-        'cuda_version': 'N/A'
+    """Return a compact GPU-information payload."""
+    info: dict[str, Any] = {
+        "cuda_available": is_cuda_available(),
+        "device_id": device_id,
+        "device_name": "N/A",
+        "driver_version": "N/A",
+        "cuda_version": "N/A",
     }
-    
     if not is_cuda_available():
         return info
-    
+
     try:
-        # Get device name
-        if TORCH_AVAILABLE:
-            info['device_name'] = torch.cuda.get_device_name(device_id)
-            info['cuda_version'] = torch.version.cuda
-        
-        # Get driver version
-        if PYNVML_AVAILABLE:
-            info['driver_version'] = pynvml.nvmlSystemGetDriverVersion()
-            
-    except Exception as e:
-        logger.warning(f"Error getting GPU info: {e}")
-    
+        if _TORCH_AVAILABLE:
+            info["device_name"] = torch.cuda.get_device_name(device_id)
+            info["cuda_version"] = torch.version.cuda
+        if _ensure_nvml():
+            driver_version = pynvml.nvmlSystemGetDriverVersion()
+            info["driver_version"] = (
+                driver_version.decode("utf-8")
+                if isinstance(driver_version, bytes)
+                else str(driver_version)
+            )
+    except Exception as exc:
+        logger.warning("Error getting GPU info: %s", exc)
     return info
 
 
-def monitor_gpu_during_execution(func: Callable) -> Callable:
-    """
-    Decorator to monitor GPU usage during function execution.
-    
-    Usage:
-        @monitor_gpu_during_execution
-        def my_gpu_function():
-            # GPU-intensive code
-            pass
-        
-        result = my_gpu_function()
-    
-    Args:
-        func: Function to monitor
-        
-    Returns:
-        Wrapped function that returns (result, gpu_metrics)
-    """
+def monitor_gpu_during_execution(
+    func: Callable[..., T],
+) -> Callable[..., tuple[T, dict[str, float | bool]]]:
+    """Wrap a function and return its result together with GPU metrics."""
+
     @wraps(func)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: object, **kwargs: object) -> tuple[T, dict[str, float | bool]]:
         if not is_cuda_available():
-            result = func(*args, **kwargs)
-            return result, {'cuda_available': False}
-        
-        # Get initial state
+            return func(*args, **kwargs), {"cuda_available": False}
+
         initial_memory = get_gpu_memory_usage()
-        
-        # Execute function
-        start_time = time.time()
+        start_time = time.perf_counter()
         result = func(*args, **kwargs)
-        execution_time = time.time() - start_time
-        
-        # Get final state
+        execution_time = time.perf_counter() - start_time
         final_memory = get_gpu_memory_usage()
         utilization = get_gpu_utilization()
-        
-        # Compile metrics
-        gpu_metrics = {
-            'execution_time_sec': execution_time,
-            'peak_allocated_mb': final_memory['allocated_mb'],
-            'peak_reserved_mb': final_memory['reserved_mb'],
-            'memory_delta_mb': final_memory['allocated_mb'] - initial_memory['allocated_mb'],
-            'gpu_utilization_percent': utilization['gpu_utilization_percent'],
-            'memory_utilization_percent': utilization['memory_utilization_percent']
+        metrics = {
+            "execution_time_sec": execution_time,
+            "peak_allocated_mb": final_memory["allocated_mb"],
+            "peak_reserved_mb": final_memory["reserved_mb"],
+            "memory_delta_mb": final_memory["allocated_mb"] - initial_memory["allocated_mb"],
+            "gpu_utilization_percent": utilization["gpu_utilization_percent"],
+            "memory_utilization_percent": utilization["memory_utilization_percent"],
         }
-        
-        return result, gpu_metrics
-    
+        return result, metrics
+
     return wrapper
 
 
 def measure_throughput(
-    func: Callable,
+    func: Callable[..., T],
     num_items: int,
-    *args,
-    **kwargs
+    *args: object,
+    **kwargs: object,
 ) -> dict[str, float]:
-    """
-    Measure throughput (items per second) for a batch processing function.
-    
-    Args:
-        func: Function to measure
-        num_items: Number of items processed
-        *args: Arguments for the function
-        **kwargs: Keyword arguments for the function
-        
-    Returns:
-        Dictionary with throughput metrics
-    """
-    start_time = time.time()
-    
-    # Get initial GPU state if available
-    if is_cuda_available():
-        initial_memory = get_gpu_memory_usage()
-    
-    # Execute function
-    result = func(*args, **kwargs)
-    
-    # Calculate metrics
-    execution_time = time.time() - start_time
-    throughput = num_items / execution_time if execution_time > 0 else 0
-    
+    """Measure batch throughput and optional GPU metrics."""
+    start_time = time.perf_counter()
+    func(*args, **kwargs)
+    execution_time = time.perf_counter() - start_time
     metrics = {
-        'num_items': num_items,
-        'execution_time_sec': execution_time,
-        'throughput_items_per_sec': throughput,
-        'latency_per_item_ms': (execution_time * 1000) / num_items if num_items > 0 else 0
+        "num_items": float(num_items),
+        "execution_time_sec": execution_time,
+        "throughput_items_per_sec": num_items / execution_time if execution_time > 0 else 0.0,
+        "latency_per_item_ms": (execution_time * 1000 / num_items) if num_items > 0 else 0.0,
     }
-    
-    # Add GPU metrics if available
     if is_cuda_available():
-        final_memory = get_gpu_memory_usage()
-        utilization = get_gpu_utilization()
-        
-        metrics['gpu_memory_mb'] = final_memory['allocated_mb']
-        metrics['gpu_utilization_percent'] = utilization['gpu_utilization_percent']
-    
+        metrics["gpu_memory_mb"] = get_gpu_memory_usage()["allocated_mb"]
+        metrics["gpu_utilization_percent"] = get_gpu_utilization()["gpu_utilization_percent"]
     return metrics
 
 
-def reset_peak_memory_stats(device_id: int = 0):
-    """
-    Reset PyTorch's peak memory tracking.
-    
-    Args:
-        device_id: GPU device ID (default: 0)
-    """
-    if is_cuda_available() and TORCH_AVAILABLE:
+def reset_peak_memory_stats(device_id: int = 0) -> None:
+    """Reset peak-memory tracking when CUDA is available."""
+    if is_cuda_available() and _TORCH_AVAILABLE:
         torch.cuda.reset_peak_memory_stats(device_id)
         torch.cuda.empty_cache()
 
 
 def get_peak_memory_stats(device_id: int = 0) -> dict[str, float]:
-    """
-    Get peak memory statistics.
-    
-    Args:
-        device_id: GPU device ID (default: 0)
-        
-    Returns:
-        Dictionary with peak memory metrics in MB
-    """
+    """Return peak allocated and reserved GPU memory in megabytes."""
     metrics = {
-        'peak_allocated_mb': 0.0,
-        'peak_reserved_mb': 0.0
+        "peak_allocated_mb": 0.0,
+        "peak_reserved_mb": 0.0,
     }
-    
     if not is_cuda_available():
         return metrics
-    
+
     try:
-        metrics['peak_allocated_mb'] = torch.cuda.max_memory_allocated(device_id) / (1024 ** 2)
-        metrics['peak_reserved_mb'] = torch.cuda.max_memory_reserved(device_id) / (1024 ** 2)
-    except Exception as e:
-        logger.warning(f"Error getting peak memory stats: {e}")
-    
+        metrics["peak_allocated_mb"] = torch.cuda.max_memory_allocated(device_id) / (1024 ** 2)
+        metrics["peak_reserved_mb"] = torch.cuda.max_memory_reserved(device_id) / (1024 ** 2)
+    except Exception as exc:
+        logger.warning("Error getting peak memory stats: %s", exc)
     return metrics
-
-
-if __name__ == "__main__":
-    # Test GPU utilities
-    print("=== GPU Utilities Test ===\n")
-    
-    print(f"CUDA Available: {is_cuda_available()}")
-    print(f"PyTorch Available: {TORCH_AVAILABLE}")
-    print(f"NVML Available: {PYNVML_AVAILABLE}")
-    
-    if is_cuda_available():
-        print("\n--- GPU Info ---")
-        info = get_gpu_info()
-        for key, value in info.items():
-            print(f"{key}: {value}")
-        
-        print("\n--- GPU Memory ---")
-        memory = get_gpu_memory_usage()
-        for key, value in memory.items():
-            print(f"{key}: {value:.2f} MB")
-        
-        print("\n--- GPU Utilization ---")
-        utilization = get_gpu_utilization()
-        for key, value in utilization.items():
-            print(f"{key}: {value:.2f}%")
-        
-        # Test decorator
-        @monitor_gpu_during_execution
-        def dummy_gpu_function():
-            import torch
-            x = torch.randn(1000, 1000, device='cuda')
-            y = torch.matmul(x, x)
-            return y
-        
-        print("\n--- Testing GPU Monitoring Decorator ---")
-        result, metrics = dummy_gpu_function()
-        print("GPU Metrics during execution:")
-        for key, value in metrics.items():
-            print(f"  {key}: {value}")
-    else:
-        print("\nNo CUDA available. GPU monitoring features disabled.")
-    
-    print("\n✓ GPU utilities test complete")

@@ -1,12 +1,10 @@
-"""
-MLflow Metrics Logger
+"""MLflow logging helpers for maintained experiments."""
 
-Provides consistent helpers for logging parameters, metrics, and artifacts to MLflow.
-Simplifies experiment tracking across all experiment scripts.
-"""
+from __future__ import annotations
 
 import json
 import logging
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -14,206 +12,106 @@ import matplotlib.pyplot as plt
 import mlflow
 import numpy as np
 
-logging.basicConfig(level=logging.INFO)
+from experiments.mlflow.mlflow_config import configure_mlflow, ensure_experiment
+
 logger = logging.getLogger(__name__)
 
 
 def set_experiment(experiment_name: str) -> str:
-    """
-    Set the active MLflow experiment.
-    
-    Args:
-        experiment_name: Name of the experiment
-        
-    Returns:
-        Experiment ID
-    """
+    """Set the active MLflow experiment and ensure its artifact root exists."""
+    configure_mlflow(verbose=False)
+    experiment_id = ensure_experiment(experiment_name)
     mlflow.set_experiment(experiment_name)
     experiment = mlflow.get_experiment_by_name(experiment_name)
-    logger.info(f"Active MLflow experiment: {experiment_name} (ID: {experiment.experiment_id})")
-    return experiment.experiment_id
+    if experiment is not None:
+        logger.info(
+            "Active MLflow experiment: %s (ID: %s)",
+            experiment_name,
+            experiment.experiment_id,
+        )
+        return experiment.experiment_id
+    return experiment_id
 
 
-def start_run(run_name: str | None = None, tags: dict[str, str] | None = None):
-    """
-    Start a new MLflow run.
-    
-    Args:
-        run_name: Optional name for the run
-        tags: Optional tags for the run
-        
-    Returns:
-        MLflow run object
-    """
+def start_run(run_name: str | None = None, tags: dict[str, str] | None = None) -> mlflow.ActiveRun:
+    """Start a new MLflow run."""
     run = mlflow.start_run(run_name=run_name, tags=tags)
-    logger.info(f"Started MLflow run: {run.info.run_name} (ID: {run.info.run_id})")
+    logger.info("Started MLflow run: %s (ID: %s)", run.info.run_name, run.info.run_id)
     return run
 
 
-def log_params(params: dict[str, Any]):
-    """
-    Log multiple parameters to MLflow.
-    
-    Args:
-        params: Dictionary of parameters to log
-    """
+def log_params(params: dict[str, Any]) -> None:
+    """Log multiple parameters to MLflow."""
     for key, value in params.items():
-        # Convert non-string values to strings
-        if not isinstance(value, (str, int, float, bool)):
-            value = str(value)
-        mlflow.log_param(key, value)
-    
-    logger.debug(f"Logged {len(params)} parameters to MLflow")
+        mlflow.log_param(key, value if isinstance(value, (str, int, float, bool)) else str(value))
 
 
-def log_metrics(metrics: dict[str, float], step: int | None = None):
-    """
-    Log multiple metrics to MLflow.
-    
-    Args:
-        metrics: Dictionary of metrics to log
-        step: Optional step number for time-series metrics
-    """
+def log_metrics(metrics: dict[str, float], step: int | None = None) -> None:
+    """Log multiple numeric metrics to MLflow."""
     for key, value in metrics.items():
-        # Ensure value is numeric
         if isinstance(value, (int, float, np.number)):
             mlflow.log_metric(key, float(value), step=step)
-    
-    logger.debug(f"Logged {len(metrics)} metrics to MLflow")
 
 
-def log_dict_as_json(data: dict[str, Any], filename: str):
-    """
-    Save a dictionary as JSON and log as artifact.
-    
-    Args:
-        data: Dictionary to save
-        filename: Name of the JSON file
-    """
-    # Ensure .json extension
-    if not filename.endswith('.json'):
-        filename += '.json'
-    
-    # Save to temporary file
-    temp_path = Path(filename)
-    with open(temp_path, 'w') as f:
-        json.dump(data, f, indent=2, default=str)
-    
-    # Log as artifact
-    mlflow.log_artifact(str(temp_path))
-    
-    # Clean up
-    temp_path.unlink()
-    
-    logger.debug(f"Logged JSON artifact: {filename}")
+def log_dict_as_json(data: dict[str, Any], filename: str) -> None:
+    """Save a dictionary as JSON and log it as an artifact."""
+    resolved_filename = filename if filename.endswith(".json") else f"{filename}.json"
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir) / resolved_filename
+        temp_path.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False, default=str),
+            encoding="utf-8",
+        )
+        mlflow.log_artifact(str(temp_path))
 
 
-def log_text_as_artifact(text: str, filename: str):
-    """
-    Save text as file and log as artifact.
-    
-    Args:
-        text: Text content to save
-        filename: Name of the text file
-    """
-    # Ensure .txt extension if not specified
-    if '.' not in filename:
-        filename += '.txt'
-    
-    # Save to temporary file
-    temp_path = Path(filename)
-    with open(temp_path, 'w', encoding='utf-8') as f:
-        f.write(text)
-    
-    # Log as artifact
-    mlflow.log_artifact(str(temp_path))
-    
-    # Clean up
-    temp_path.unlink()
-    
-    logger.debug(f"Logged text artifact: {filename}")
+def log_text_as_artifact(text: str, filename: str) -> None:
+    """Save text and log it as an artifact."""
+    resolved_filename = filename if "." in filename else f"{filename}.txt"
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir) / resolved_filename
+        temp_path.write_text(text, encoding="utf-8")
+        mlflow.log_artifact(str(temp_path))
 
 
-def log_numpy_array(array: np.ndarray, filename: str):
-    """
-    Save numpy array and log as artifact.
-    
-    Args:
-        array: Numpy array to save
-        filename: Name of the .npy file
-    """
-    # Ensure .npy extension
-    if not filename.endswith('.npy'):
-        filename += '.npy'
-    
-    # Save to temporary file
-    temp_path = Path(filename)
-    np.save(temp_path, array)
-    
-    # Log as artifact
-    mlflow.log_artifact(str(temp_path))
-    
-    # Clean up
-    temp_path.unlink()
-    
-    logger.debug(f"Logged numpy artifact: {filename}")
+def log_numpy_array(array: np.ndarray, filename: str) -> None:
+    """Save a NumPy array and log it as an artifact."""
+    resolved_filename = filename if filename.endswith(".npy") else f"{filename}.npy"
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir) / resolved_filename
+        np.save(temp_path, array)
+        mlflow.log_artifact(str(temp_path))
 
 
-def log_figure(fig: plt.Figure, filename: str):
-    """
-    Save matplotlib figure and log as artifact.
-    
-    Args:
-        fig: Matplotlib figure
-        filename: Name of the image file
-    """
-    # Ensure image extension
-    if not any(filename.endswith(ext) for ext in ['.png', '.jpg', '.pdf']):
-        filename += '.png'
-    
-    # Save to temporary file
-    temp_path = Path(filename)
-    fig.savefig(temp_path, dpi=300, bbox_inches='tight')
-    
-    # Log as artifact
-    mlflow.log_artifact(str(temp_path))
-    
-    # Clean up
-    temp_path.unlink()
+def log_figure(fig: plt.Figure, filename: str) -> None:
+    """Save a Matplotlib figure and log it as an artifact."""
+    resolved_filename = filename if any(
+        filename.endswith(extension) for extension in [".png", ".jpg", ".pdf"]
+    ) else f"{filename}.png"
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir) / resolved_filename
+        fig.savefig(temp_path, dpi=300, bbox_inches="tight")
+        mlflow.log_artifact(str(temp_path))
     plt.close(fig)
-    
-    logger.debug(f"Logged figure artifact: {filename}")
 
 
 def log_experiment_results(
     params: dict[str, Any],
     metrics: dict[str, float],
-    artifacts: dict[str, Any] | None = None
-):
-    """
-    Comprehensive logging of parameters, metrics, and artifacts.
-    
-    Args:
-        params: Parameters to log
-        metrics: Metrics to log
-        artifacts: Optional dictionary of artifacts to log
-                  Format: {'filename': content} where content can be:
-                  - dict (saved as JSON)
-                  - str (saved as text)
-                  - np.ndarray (saved as .npy)
-                  - plt.Figure (saved as image)
-    """
-    # Log parameters
+    artifacts: dict[str, Any] | None = None,
+) -> None:
+    """Log parameters, metrics, and optional artifacts with one helper call."""
     log_params(params)
-    
-    # Log metrics
     log_metrics(metrics)
-    
-    # Log artifacts
     if artifacts:
         for filename, content in artifacts.items():
             if isinstance(content, dict):
                 log_dict_as_json(content, filename)
+            elif isinstance(content, (list, tuple)):
+                log_text_as_artifact(
+                    json.dumps(content, indent=2, ensure_ascii=False, default=str),
+                    filename if "." in filename else f"{filename}.json",
+                )
             elif isinstance(content, str):
                 log_text_as_artifact(content, filename)
             elif isinstance(content, np.ndarray):
@@ -221,7 +119,7 @@ def log_experiment_results(
             elif isinstance(content, plt.Figure):
                 log_figure(content, filename)
             else:
-                logger.warning(f"Unknown artifact type for {filename}: {type(content)}")
+                logger.warning("Unknown artifact type for %s: %s", filename, type(content))
 
 
 def create_comparison_plot(
@@ -229,133 +127,57 @@ def create_comparison_plot(
     title: str,
     xlabel: str,
     ylabel: str,
-    filename: str = "comparison.png"
+    filename: str = "comparison.png",
 ) -> plt.Figure:
-    """
-    Create a bar plot comparing multiple metrics.
-    
-    Args:
-        data: Dictionary mapping labels to values
-        title: Plot title
-        xlabel: X-axis label
-        ylabel: Y-axis label
-        filename: Filename to save
-        
-    Returns:
-        Matplotlib figure
-    """
+    """Create a simple comparison plot for experiment summaries."""
+    del filename
     fig, ax = plt.subplots(figsize=(10, 6))
-    
     labels = list(data.keys())
     values = list(data.values())
-    
-    # Handle both single values and lists
-    if isinstance(values[0], list):
-        # Multiple values per label - use bar plot with error bars
-        means = [np.mean(v) for v in values]
-        stds = [np.std(v) for v in values]
+    if values and isinstance(values[0], list):
+        means = [np.mean(value) for value in values]
+        stds = [np.std(value) for value in values]
         ax.bar(labels, means, yerr=stds, capsize=5, alpha=0.7)
     else:
-        # Single values - simple bar plot
         ax.bar(labels, values, alpha=0.7)
-    
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.set_title(title)
-    ax.grid(axis='y', alpha=0.3)
-    plt.xticks(rotation=45, ha='right')
+    ax.grid(axis="y", alpha=0.3)
+    plt.xticks(rotation=45, ha="right")
     plt.tight_layout()
-    
     return fig
 
 
-def end_run(status: str = "FINISHED"):
-    """
-    End the current MLflow run.
-    
-    Args:
-        status: Run status (FINISHED, FAILED, KILLED)
-    """
+def end_run(status: str = "FINISHED") -> None:
+    """End the current MLflow run."""
     mlflow.end_run(status=status)
-    logger.info(f"Ended MLflow run with status: {status}")
 
 
 class MLflowExperiment:
-    """
-    Context manager for MLflow experiments.
-    
-    Usage:
-        with MLflowExperiment("experiment_name", "run_name") as exp:
-            exp.log_params({"param1": "value1"})
-            exp.log_metrics({"metric1": 0.95})
-            exp.log_artifact("results.json", {"key": "value"})
-    """
-    
-    def __init__(self, experiment_name: str, run_name: str | None = None):
+    """Context manager for maintained MLflow experiment runs."""
+
+    def __init__(self, experiment_name: str, run_name: str | None = None) -> None:
         self.experiment_name = experiment_name
         self.run_name = run_name
-        self.run = None
-    
-    def __enter__(self):
+        self.run: mlflow.ActiveRun | None = None
+
+    def __enter__(self) -> MLflowExperiment:
         set_experiment(self.experiment_name)
         self.run = start_run(run_name=self.run_name)
         return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if exc_type is not None:
-            logger.error(f"Error during MLflow run: {exc_val}")
-            end_run(status="FAILED")
-        else:
-            end_run(status="FINISHED")
-    
-    def log_params(self, params: dict[str, Any]):
+
+    def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
+        end_run(status="FAILED" if exc_type is not None else "FINISHED")
+
+    def log_params(self, params: dict[str, Any]) -> None:
+        """Log parameters for the active run."""
         log_params(params)
-    
-    def log_metrics(self, metrics: dict[str, float]):
+
+    def log_metrics(self, metrics: dict[str, float]) -> None:
+        """Log metrics for the active run."""
         log_metrics(metrics)
-    
-    def log_artifact(self, filename: str, content: Any):
-        """Log a single artifact."""
+
+    def log_artifact(self, filename: str, content: Any) -> None:
+        """Log a single artifact for the active run."""
         log_experiment_results({}, {}, {filename: content})
-
-
-if __name__ == "__main__":
-    # Test MLflow logging utilities
-    print("=== MLflow Logging Utilities Test ===\n")
-    
-    # Test experiment setup
-    with MLflowExperiment("test_experiment", "test_run") as exp:
-        # Test parameter logging
-        exp.log_params({
-            "model": "test-model",
-            "batch_size": 32,
-            "learning_rate": 0.001
-        })
-        print("✓ Logged parameters")
-        
-        # Test metric logging
-        exp.log_metrics({
-            "accuracy": 0.95,
-            "loss": 0.15,
-            "f1_score": 0.93
-        })
-        print("✓ Logged metrics")
-        
-        # Test artifact logging
-        exp.log_artifact("test_results.json", {"test": "data", "score": 0.95})
-        exp.log_artifact("test_text.txt", "This is a test text artifact")
-        exp.log_artifact("test_array.npy", np.array([1, 2, 3, 4, 5]))
-        print("✓ Logged artifacts")
-        
-        # Test plot creation
-        fig = create_comparison_plot(
-            {"Model A": 0.85, "Model B": 0.90, "Model C": 0.88},
-            "Model Comparison",
-            "Model",
-            "Accuracy"
-        )
-        exp.log_artifact("comparison.png", fig)
-        print("✓ Logged comparison plot")
-    
-    print("\n✓ All MLflow logging utilities working correctly")
-    print("\nRun 'mlflow ui' and navigate to http://localhost:5000 to view the test run")
