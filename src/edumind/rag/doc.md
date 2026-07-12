@@ -19,8 +19,6 @@ The main supported product boundaries are now:
 - `services/rag_service.py` as the main RAG API
 - `src/edumind/pipeline/orchestrator.py` as the local OCR-to-RAG coordinator
 
-The older `rag_standalone` and `streamlit_microservices` apps remain only as thin deprecation notice pages so they no longer define parallel product behavior.
-
 ## Package layout
 
 ```text

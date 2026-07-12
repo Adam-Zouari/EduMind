@@ -24,17 +24,13 @@ RAG API:
 python -m edumind.cli rag-api
 ```
 
-Streamlit UI for service mode:
-
-```bash
-python -m edumind.cli ui-microservices
-```
-
 Windows launcher:
 
 ```powershell
 scripts\windows\start_all_services.bat
 ```
+
+The microservices helper no longer launches a dedicated Streamlit UI. Use the service APIs directly for boundary testing, and use `python -m edumind.cli ui` for the maintained local product UI.
 
 ## Endpoints
 

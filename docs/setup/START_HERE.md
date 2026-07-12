@@ -61,12 +61,11 @@ Open `http://localhost:8501`.
 
 ## 5. Use optional service mode only when needed
 
-Microservices are still available, but they are no longer the default setup.
+Microservices are still available for API testing, but they are no longer the default setup.
 
 ```bash
 python -m edumind.cli ocr-api
 python -m edumind.cli rag-api
-python -m edumind.cli ui-microservices
 ```
 
 Windows helper:

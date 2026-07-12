@@ -29,7 +29,6 @@ Microservices:
 ```bash
 python -m edumind.cli ocr-api
 python -m edumind.cli rag-api
-python -m edumind.cli ui-microservices
 ```
 
 Experiments:

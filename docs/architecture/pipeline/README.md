@@ -40,7 +40,6 @@ The orchestrator returns a dictionary that includes:
 ## Where it is used
 
 - `apps/streamlit_app.py`
-- `apps/rag_standalone.py`
 - future scripts or notebooks that need an end-to-end local package API
 
 ## API-backed variant

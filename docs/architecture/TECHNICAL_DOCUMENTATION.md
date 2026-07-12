@@ -62,8 +62,6 @@ src/edumind/
 ### Apps
 
 - `apps/streamlit_app.py` - direct package UI
-- `apps/streamlit_microservices.py` - Streamlit UI that talks to local APIs
-- `apps/rag_standalone.py` - RAG-only interface
 
 ### Services
 
@@ -75,8 +73,6 @@ src/edumind/
 `src/edumind/cli.py` exposes the supported runtime targets:
 
 - `ui`
-- `ui-microservices`
-- `rag-ui`
 - `ocr-api`
 - `rag-api`
 - `experiments`

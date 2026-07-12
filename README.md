@@ -104,16 +104,13 @@ python -m edumind.cli ocr-api
 python -m edumind.cli rag-api
 ```
 
-Legacy note:
-
-- `python -m edumind.cli ui-microservices` now opens a deprecation notice page
-- `python -m edumind.cli rag-ui` now opens a deprecation notice page
-
 Windows convenience launcher:
 
 ```powershell
 scripts\windows\start_all_services.bat
 ```
+
+That helper starts the OCR and RAG APIs only. The maintained UI remains `edumind-ui`.
 
 ## Experiments
 

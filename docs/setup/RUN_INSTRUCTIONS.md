@@ -32,12 +32,6 @@ Terminal 2:
 python -m edumind.cli rag-api
 ```
 
-Terminal 3:
-
-```bash
-python -m edumind.cli ui-microservices
-```
-
 Windows helper:
 
 ```powershell
@@ -50,14 +44,6 @@ Ports:
 - OCR API docs: `http://localhost:8000/docs`
 - RAG API docs: `http://localhost:8001/docs`
 - Ollama API: `http://localhost:11434`
-
-## Standalone RAG UI
-
-```bash
-python -m edumind.cli rag-ui
-```
-
-Use this for retrieval and answer-generation work that does not need the OCR ingestion interface.
 
 ## Experiment runner
 
