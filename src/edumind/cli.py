@@ -25,30 +25,6 @@ def run_ui() -> int:
     )
 
 
-def run_microservices_ui() -> int:
-    return _run(
-        [
-            sys.executable,
-            "-m",
-            "streamlit",
-            "run",
-            str(PROJECT_ROOT / "apps" / "streamlit_microservices.py"),
-        ]
-    )
-
-
-def run_rag_ui() -> int:
-    return _run(
-        [
-            sys.executable,
-            "-m",
-            "streamlit",
-            "run",
-            str(PROJECT_ROOT / "apps" / "rag_standalone.py"),
-        ]
-    )
-
-
 def run_ocr_api() -> int:
     return _run(
         [
@@ -96,15 +72,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="EduMind-AI developer CLI")
     parser.add_argument(
         "target",
-        choices=["ui", "ui-microservices", "rag-ui", "ocr-api", "rag-api", "experiments"],
-        help="Runtime target to launch. `ui-microservices` and `rag-ui` are legacy notice pages.",
+        choices=["ui", "ocr-api", "rag-api", "experiments"],
+        help="Runtime target to launch.",
     )
     args = parser.parse_args()
 
     mapping = {
         "ui": run_ui,
-        "ui-microservices": run_microservices_ui,
-        "rag-ui": run_rag_ui,
         "ocr-api": run_ocr_api,
         "rag-api": run_rag_api,
         "experiments": run_experiments,

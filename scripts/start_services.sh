@@ -21,4 +21,9 @@ cleanup() {
 
 trap cleanup EXIT
 
-python -m edumind.cli ui-microservices
+echo "Services launched:"
+echo "  OCR API: http://localhost:8000/docs"
+echo "  RAG API: http://localhost:8001/docs"
+echo "Run 'python -m edumind.cli ui' separately for the maintained local UI."
+
+wait
