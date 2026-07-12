@@ -90,7 +90,7 @@ src/edumind/
 Generated state is intentionally routed outside the source tree:
 
 - vector store: `artifacts/rag/vector_store/`
-- experiment MLflow database and artifacts: `artifacts/mlflow/`
+- experiment MLflow database and artifacts: `artifacts/experiments/mlflow/`
 - uploads and temporary outputs: `artifacts/`
 
 This keeps the Git repository clean and makes runtime data easy to reset.

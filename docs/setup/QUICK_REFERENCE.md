@@ -46,7 +46,7 @@ python -m edumind.cli experiments
 - shared config: `config/base.yaml`
 - environment defaults: `.env.example`
 - vector store: `artifacts/rag/vector_store/`
-- experiment MLflow state: `artifacts/mlflow/`
+- experiment MLflow state: `artifacts/experiments/mlflow/`
 - curated fixtures: `data/evaluation/`
 
 ## Ports

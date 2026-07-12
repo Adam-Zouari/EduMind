@@ -61,7 +61,9 @@ The local vector store persists in:
 
 `artifacts/rag/vector_store/`
 
-MLflow logging is enabled when the dependency is installed. Set `EDUMIND_MLFLOW_TRACKING_URI` if you want runtime logging to use the shared store under `artifacts/mlflow/`.
+MLflow logging is enabled when the dependency is installed. Set `EDUMIND_MLFLOW_TRACKING_URI`
+if you want runtime logging to use the shared store under
+`artifacts/experiments/mlflow/`.
 
 ## Useful methods
 

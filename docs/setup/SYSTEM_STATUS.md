@@ -49,7 +49,7 @@ Tracked in Git:
 Kept out of Git and routed into `artifacts/`:
 
 - vector store state
-- experiment MLflow database and run artifacts
+- experiment MLflow database and run artifacts under `artifacts/experiments/mlflow/`
 - temporary uploads
 - caches and local outputs
 

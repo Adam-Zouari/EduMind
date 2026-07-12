@@ -19,7 +19,7 @@ The repository is organized for portfolio-quality maintainability:
 |-- config/                Shared YAML configuration
 |-- data/                  Curated fixtures and evaluation inputs
 |-- docs/                  Current documentation plus archived legacy notes
-|-- experiments/mlflow/    Experiment runners and analysis utilities
+|-- experiments/mlflow/    Maintained experiment runners and shared utilities
 |-- scripts/               Cross-platform helper scripts
 |-- services/              FastAPI service entrypoints
 |-- src/edumind/
@@ -123,17 +123,20 @@ python -m edumind.cli experiments
 For advanced experiment flags:
 
 ```bash
-python experiments/mlflow/run_all_experiments.py --full --ui
+python experiments/mlflow/run_all_experiments.py --test-mode
+python experiments/mlflow/run_all_experiments.py --skip-llm
+python experiments/mlflow/run_all_experiments.py --only retrieval llm --ui
 ```
 
-Curated evaluation inputs live in `data/evaluation/`. The experiment suite writes local MLflow state into `artifacts/mlflow/`.
+Curated evaluation inputs live in `data/evaluation/`. The experiment suite writes local MLflow
+state into `artifacts/experiments/mlflow/`.
 
 ## Configuration
 
 - `config/base.yaml` is the shared runtime config.
 - `.env.example` shows supported environment overrides.
 - vector store data persists in `artifacts/rag/vector_store/`
-- `EDUMIND_MLFLOW_TRACKING_URI` can point runtime logging at the shared MLflow store in `artifacts/mlflow/`
+- `EDUMIND_MLFLOW_TRACKING_URI` can point runtime logging at the shared MLflow store in `artifacts/experiments/mlflow/`
 
 The repo keeps source code and curated fixtures in Git, while local runtime state stays outside the tracked tree.
 
