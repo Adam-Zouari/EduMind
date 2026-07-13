@@ -3,11 +3,10 @@ from __future__ import annotations
 import argparse
 import importlib
 
-import pytest
-
-pytest.importorskip("mlflow")
-
 from experiments.mlflow.run_all_experiments import RUNNERS, build_parser, select_runners
+
+
+import pytest
 
 
 @pytest.mark.parametrize(
@@ -16,8 +15,10 @@ from experiments.mlflow.run_all_experiments import RUNNERS, build_parser, select
         "experiments.mlflow.run_all_experiments",
         "experiments.mlflow.chunking_experiments.run_experiments",
         "experiments.mlflow.embedding_experiments.run_experiments",
+        "experiments.mlflow.vectordb_experiments.run_experiments",
         "experiments.mlflow.retrieval_experiments.run_experiments",
         "experiments.mlflow.llm_experiments.run_experiments",
+        "experiments.mlflow.final_experiments.run_experiments",
     ],
 )
 def test_maintained_runner_modules_import(module_name: str) -> None:
@@ -25,18 +26,27 @@ def test_maintained_runner_modules_import(module_name: str) -> None:
     assert module is not None
 
 
-def test_runner_selection_honors_skip_llm() -> None:
-    args = argparse.Namespace(only=None, skip_llm=True)
+def test_runner_selection_supports_all_suite() -> None:
+    args = argparse.Namespace(suite="all")
     selected = select_runners(args)
 
-    assert all(runner.name != "llm" for runner in selected)
-    assert len(selected) == len(RUNNERS) - 1
+    assert [runner.name for runner in selected] == [runner.name for runner in RUNNERS]
+
+
+def test_runner_selection_supports_smoke_suite() -> None:
+    args = argparse.Namespace(suite="smoke")
+    selected = select_runners(args)
+
+    assert [runner.name for runner in selected] == [runner.name for runner in RUNNERS]
 
 
 def test_parser_accepts_new_flags() -> None:
     parser = build_parser()
-    args = parser.parse_args(["--test-mode", "--skip-llm", "--only", "retrieval", "embedding"])
+    args = parser.parse_args(
+        ["--suite", "retrieval", "--dataset", "student_benchmark", "--resume", "--top-n", "3"]
+    )
 
-    assert args.test_mode is True
-    assert args.skip_llm is True
-    assert args.only == ["retrieval", "embedding"]
+    assert args.suite == "retrieval"
+    assert args.dataset == "student_benchmark"
+    assert args.resume is True
+    assert args.top_n == 3

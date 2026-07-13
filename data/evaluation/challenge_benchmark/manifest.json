@@ -1,0 +1,12 @@
+{
+  "name": "challenge_benchmark",
+  "version": "0.1.0",
+  "language": "en",
+  "description": "Hard English-only benchmark for final challenge confirmation.",
+  "default_split": "default",
+  "splits": {
+    "default": {
+      "file": "default.json"
+    }
+  }
+}

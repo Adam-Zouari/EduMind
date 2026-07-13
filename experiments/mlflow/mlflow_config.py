@@ -5,8 +5,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-import mlflow
-
 from edumind.common.paths import ARTIFACTS_DIR, DATA_DIR
 
 logger = logging.getLogger(__name__)
@@ -20,6 +18,7 @@ EVALUATION_DIR = DATA_DIR / "evaluation"
 
 def configure_mlflow(verbose: bool = True) -> str:
     """Create the maintained MLflow directories and set the tracking URI."""
+    mlflow = _require_mlflow()
     MLFLOW_DIR.mkdir(parents=True, exist_ok=True)
     MLFLOW_ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
     mlflow.set_tracking_uri(TRACKING_URI)
@@ -31,6 +30,7 @@ def configure_mlflow(verbose: bool = True) -> str:
 
 def ensure_experiment(experiment_name: str) -> str:
     """Create the experiment with a stable local artifact root when needed."""
+    mlflow = _require_mlflow()
     configure_mlflow(verbose=False)
     experiment = mlflow.get_experiment_by_name(experiment_name)
     if experiment is not None:
@@ -63,3 +63,14 @@ def _slugify(value: str) -> str:
     """Build a filesystem-safe name for experiment artifacts."""
     slug = "".join(character.lower() if character.isalnum() else "-" for character in value)
     return slug.strip("-") or "experiment"
+
+
+def _require_mlflow():
+    """Import MLflow only when the logging runtime is actually used."""
+    try:
+        import mlflow
+    except ImportError as exc:  # pragma: no cover - optional runtime dependency
+        raise RuntimeError(
+            "MLflow is required for experiment tracking. Install the `experiments` extra."
+        ) from exc
+    return mlflow

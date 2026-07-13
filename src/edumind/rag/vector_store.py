@@ -145,6 +145,54 @@ class VectorStore:
         )
         return self._merge_hits(dense_hits, lexical_scores, top_k=top_k)
 
+    def query_dense(
+        self,
+        query_embedding: list[float],
+        *,
+        top_k: int = 5,
+        filter_metadata: Mapping[str, object] | None = None,
+    ) -> list[RetrievalHit]:
+        """Run dense-only retrieval without lexical fusion."""
+        validated_filter = self._validate_filter_metadata(filter_metadata)
+        dense_hits = self._query_dense(
+            query_embedding,
+            top_k=top_k,
+            filter_metadata=validated_filter,
+        )
+        ordered_hits = list(dense_hits.values())
+        ordered_hits.sort(key=lambda hit: hit.score, reverse=True)
+        return ordered_hits[:top_k]
+
+    def query_lexical(
+        self,
+        query_text: str,
+        *,
+        top_k: int = 5,
+        filter_metadata: Mapping[str, object] | None = None,
+    ) -> list[RetrievalHit]:
+        """Run lexical-only retrieval and hydrate the stored chunk payloads."""
+        validated_filter = self._validate_filter_metadata(filter_metadata)
+        lexical_scores = self._query_lexical(
+            query_text,
+            top_k=top_k,
+            filter_metadata=validated_filter,
+        )
+        hits: list[RetrievalHit] = []
+        for doc_id, score in lexical_scores.items():
+            fetched_hit = self._fetch_hit_by_id(doc_id)
+            if fetched_hit is None:
+                continue
+            hits.append(
+                RetrievalHit(
+                    id=fetched_hit.id,
+                    document=fetched_hit.document,
+                    metadata=fetched_hit.metadata,
+                    score=score,
+                )
+            )
+        hits.sort(key=lambda hit: hit.score, reverse=True)
+        return hits[:top_k]
+
     def get_collection_count(self) -> int:
         """Return the number of indexed chunks."""
         return int(self.collection.count())

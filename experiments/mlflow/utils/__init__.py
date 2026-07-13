@@ -26,18 +26,6 @@ _EVALUATION_EXPORTS = {
     "evaluate_retrieval_quality",
 }
 
-_FIXTURE_EXPORTS = {
-    "EvaluationDocument",
-    "EvaluationQuery",
-    "build_chunk_record",
-    "build_reference_chunk_records",
-    "index_documents_by_id",
-    "load_evaluation_dataset",
-    "load_evaluation_documents",
-    "load_evaluation_queries",
-    "resolve_query_relevant_ids",
-}
-
 _GPU_EXPORTS = {
     "is_cuda_available",
     "get_gpu_memory_usage",
@@ -64,16 +52,31 @@ _LOGGER_EXPORTS = {
     "MLflowExperiment",
 }
 
-__all__ = sorted(_EVALUATION_EXPORTS | _FIXTURE_EXPORTS | _GPU_EXPORTS | _LOGGER_EXPORTS)
+_BENCHMARK_EXPORTS = {
+    "BenchmarkAsset",
+    "BenchmarkDataset",
+    "BenchmarkQuestion",
+    "BenchmarkRunConfig",
+    "BenchmarkSnapshot",
+    "build_chunk_relevance_map",
+    "build_source_relevance_map",
+    "list_benchmark_datasets",
+    "load_benchmark_dataset",
+    "prepare_benchmark_dataset",
+}
+
+__all__ = sorted(
+    _EVALUATION_EXPORTS | _GPU_EXPORTS | _LOGGER_EXPORTS | _BENCHMARK_EXPORTS
+)
 
 
 def __getattr__(name: str):
     if name in _EVALUATION_EXPORTS:
         return getattr(import_module("experiments.mlflow.utils.evaluation"), name)
-    if name in _FIXTURE_EXPORTS:
-        return getattr(import_module("experiments.mlflow.utils.fixtures"), name)
     if name in _GPU_EXPORTS:
         return getattr(import_module("experiments.mlflow.utils.gpu_utils"), name)
     if name in _LOGGER_EXPORTS:
         return getattr(import_module("experiments.mlflow.utils.metrics_logger"), name)
+    if name in _BENCHMARK_EXPORTS:
+        return getattr(import_module("experiments.mlflow.benchmark"), name)
     raise AttributeError(name)

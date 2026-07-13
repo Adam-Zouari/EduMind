@@ -9,12 +9,18 @@ from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
-import mlflow
 import numpy as np
 
 from experiments.mlflow.mlflow_config import configure_mlflow, ensure_experiment
 
 logger = logging.getLogger(__name__)
+
+try:
+    import mlflow as _mlflow
+except ImportError:  # pragma: no cover - optional runtime dependency
+    mlflow = None
+else:
+    mlflow = _mlflow
 
 
 def set_experiment(experiment_name: str) -> str:
@@ -33,21 +39,29 @@ def set_experiment(experiment_name: str) -> str:
     return experiment_id
 
 
-def start_run(run_name: str | None = None, tags: dict[str, str] | None = None) -> mlflow.ActiveRun:
+def start_run(
+    run_name: str | None = None,
+    tags: dict[str, str] | None = None,
+    *,
+    nested: bool = False,
+) -> Any:
     """Start a new MLflow run."""
-    run = mlflow.start_run(run_name=run_name, tags=tags)
+    _require_mlflow()
+    run = mlflow.start_run(run_name=run_name, tags=tags, nested=nested)
     logger.info("Started MLflow run: %s (ID: %s)", run.info.run_name, run.info.run_id)
     return run
 
 
 def log_params(params: dict[str, Any]) -> None:
     """Log multiple parameters to MLflow."""
+    _require_mlflow()
     for key, value in params.items():
         mlflow.log_param(key, value if isinstance(value, (str, int, float, bool)) else str(value))
 
 
 def log_metrics(metrics: dict[str, float], step: int | None = None) -> None:
     """Log multiple numeric metrics to MLflow."""
+    _require_mlflow()
     for key, value in metrics.items():
         if isinstance(value, (int, float, np.number)):
             mlflow.log_metric(key, float(value), step=step)
@@ -55,6 +69,7 @@ def log_metrics(metrics: dict[str, float], step: int | None = None) -> None:
 
 def log_dict_as_json(data: dict[str, Any], filename: str) -> None:
     """Save a dictionary as JSON and log it as an artifact."""
+    _require_mlflow()
     resolved_filename = filename if filename.endswith(".json") else f"{filename}.json"
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir) / resolved_filename
@@ -67,6 +82,7 @@ def log_dict_as_json(data: dict[str, Any], filename: str) -> None:
 
 def log_text_as_artifact(text: str, filename: str) -> None:
     """Save text and log it as an artifact."""
+    _require_mlflow()
     resolved_filename = filename if "." in filename else f"{filename}.txt"
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir) / resolved_filename
@@ -76,6 +92,7 @@ def log_text_as_artifact(text: str, filename: str) -> None:
 
 def log_numpy_array(array: np.ndarray, filename: str) -> None:
     """Save a NumPy array and log it as an artifact."""
+    _require_mlflow()
     resolved_filename = filename if filename.endswith(".npy") else f"{filename}.npy"
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir) / resolved_filename
@@ -85,6 +102,7 @@ def log_numpy_array(array: np.ndarray, filename: str) -> None:
 
 def log_figure(fig: plt.Figure, filename: str) -> None:
     """Save a Matplotlib figure and log it as an artifact."""
+    _require_mlflow()
     resolved_filename = filename if any(
         filename.endswith(extension) for extension in [".png", ".jpg", ".pdf"]
     ) else f"{filename}.png"
@@ -151,20 +169,30 @@ def create_comparison_plot(
 
 def end_run(status: str = "FINISHED") -> None:
     """End the current MLflow run."""
+    _require_mlflow()
     mlflow.end_run(status=status)
 
 
 class MLflowExperiment:
     """Context manager for maintained MLflow experiment runs."""
 
-    def __init__(self, experiment_name: str, run_name: str | None = None) -> None:
+    def __init__(
+        self,
+        experiment_name: str,
+        run_name: str | None = None,
+        *,
+        nested: bool = False,
+        tags: dict[str, str] | None = None,
+    ) -> None:
         self.experiment_name = experiment_name
         self.run_name = run_name
-        self.run: mlflow.ActiveRun | None = None
+        self.nested = nested
+        self.tags = tags
+        self.run: Any | None = None
 
     def __enter__(self) -> MLflowExperiment:
         set_experiment(self.experiment_name)
-        self.run = start_run(run_name=self.run_name)
+        self.run = start_run(run_name=self.run_name, tags=self.tags, nested=self.nested)
         return self
 
     def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
@@ -181,3 +209,10 @@ class MLflowExperiment:
     def log_artifact(self, filename: str, content: Any) -> None:
         """Log a single artifact for the active run."""
         log_experiment_results({}, {}, {filename: content})
+
+
+def _require_mlflow() -> None:
+    if mlflow is None:  # pragma: no cover - optional runtime dependency
+        raise RuntimeError(
+            "MLflow is required for experiment logging. Install the `experiments` extra."
+        )
