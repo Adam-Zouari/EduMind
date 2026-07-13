@@ -56,13 +56,7 @@ python -m edumind.cli experiments
 Full run plus MLflow UI:
 
 ```bash
-python experiments/mlflow/run_all_experiments.py --only retrieval llm --ui
-```
-
-Skip LLM experiments when Ollama is unavailable:
-
-```bash
-python experiments/mlflow/run_all_experiments.py --skip-llm
+python experiments/mlflow/run_all_experiments.py --suite all --dataset student_benchmark --resume --ui
 ```
 
 Fast local sanity pass:

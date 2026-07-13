@@ -114,21 +114,27 @@ That helper starts the OCR and RAG APIs only. The maintained UI remains `edumind
 
 ## Experiments
 
-Run the bundled experiment suite:
+Run the staged English-only experiment suite:
 
 ```bash
 python -m edumind.cli experiments
 ```
 
-For advanced experiment flags:
+Useful commands:
 
 ```bash
-python experiments/mlflow/run_all_experiments.py --test-mode
-python experiments/mlflow/run_all_experiments.py --skip-llm
-python experiments/mlflow/run_all_experiments.py --only retrieval llm --ui
+edumind-experiments --suite smoke
+edumind-experiments --suite all --dataset student_benchmark --resume
+edumind-experiments --suite retrieval --dataset student_benchmark --resume
 ```
 
-Curated evaluation inputs live in `data/evaluation/`. The experiment suite writes local MLflow
+Equivalent direct module command:
+
+```bash
+python experiments/mlflow/run_all_experiments.py --suite all --dataset student_benchmark --resume
+```
+
+Benchmark manifests live in `data/evaluation/` and the suite writes local MLflow plus staged cache
 state into `artifacts/experiments/mlflow/`.
 
 ## Configuration
