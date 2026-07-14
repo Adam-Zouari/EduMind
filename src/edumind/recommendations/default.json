@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "status": "baseline_pending_benchmarks",
+  "benchmark_run_ids": [],
+  "extraction": {
+    "image": "image-baseline",
+    "pdf": "pdf-hybrid-baseline",
+    "docx": "docx-baseline",
+    "audio": "audio-baseline",
+    "video": "video-baseline"
+  },
+  "rag": {
+    "chunking": "token-256-32",
+    "embedding": "sentence-transformers/all-MiniLM-L6-v2",
+    "retrieval": "rrf",
+    "vector_backend": "chroma",
+    "generation": "qwen3:1.7b"
+  },
+  "authoritative": false,
+  "reason": "Safe production baselines only; standard benchmarks and human review have not run."
+}

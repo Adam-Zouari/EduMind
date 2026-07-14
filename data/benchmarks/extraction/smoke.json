@@ -1,0 +1,24 @@
+{
+  "name": "edumind-smoke-extraction",
+  "version": "1.0.0",
+  "task": "extraction",
+  "split": "smoke",
+  "source": "EduMind deterministic modality fixtures",
+  "license": "CC0-1.0",
+  "revision": "1",
+  "checksum": "7a258b530a5469b2d705d446c51e032bf1486114c1469ba0266bd68a642674d4",
+  "preprocessing_version": "normalization-v1",
+  "split_seed": 42,
+  "samples": [
+    {"id":"image-01","kind":"image","source_path":"data/benchmarks/fixtures/extraction/image-01.png","reference":"Cell biology explains how cells obtain energy.","observed":"Cell  biology explains how cells obtain energy."},
+    {"id":"image-02","kind":"image","source_path":"data/benchmarks/fixtures/extraction/image-02.png","reference":"Mitosis produces two daughter cells.","observed":"Mitosis produces two daughter cells.\n\n\n"},
+    {"id":"pdf-01","kind":"pdf","source_path":"data/benchmarks/fixtures/extraction/pdf-01.pdf","reference":"The chapter introduces linear algebra.","observed":"The chap-\nter introduces linear algebra."},
+    {"id":"pdf-02","kind":"pdf","source_path":"data/benchmarks/fixtures/extraction/pdf-02.pdf","reference":"Vectors have magnitude and direction.","observed":"Vectors\thave magnitude and direction."},
+    {"id":"docx-01","kind":"docx","source_path":"data/benchmarks/fixtures/extraction/docx-01.docx","reference":"Heading\nFirst list item\nSecond list item","observed":"Heading\r\nFirst list item\r\nSecond list item"},
+    {"id":"docx-02","kind":"docx","source_path":"data/benchmarks/fixtures/extraction/docx-02.docx","reference":"A caption describes the embedded image.","observed":"A caption  describes the embedded image."},
+    {"id":"audio-01","kind":"audio","source_path":"data/benchmarks/fixtures/extraction/audio-01.wav","reference":"Entropy increases in an isolated system.","observed":"Entropy increases in an isolated system."},
+    {"id":"audio-02","kind":"audio","source_path":"data/benchmarks/fixtures/extraction/audio-02.wav","reference":"The derivative measures instantaneous change.","observed":"The derivative measures instantaneous change."},
+    {"id":"video-01","kind":"video","source_path":"data/benchmarks/fixtures/extraction/video-01.mp4","reference":"The slide defines a binary search tree.","observed":"The slide defines a binary search tree."},
+    {"id":"video-02","kind":"video","source_path":"data/benchmarks/fixtures/extraction/video-02.mp4","reference":"The lecturer balances the chemical equation.","observed":"The lecturer balances the chemical equation."}
+  ]
+}
