@@ -1,6 +1,17 @@
-"""Pipeline orchestration layer."""
+"""Application pipeline public API."""
 
-from .orchestrator import OCRRAGOrchestrator
-from .orchestrator_api import APIOrchestrator
+from .orchestrator import (
+    DocumentProcessResult,
+    EduMindPipeline,
+    PipelineQueryResult,
+    PipelineStage,
+    ProgressEvent,
+)
 
-__all__ = ["APIOrchestrator", "OCRRAGOrchestrator"]
+__all__ = [
+    "DocumentProcessResult",
+    "EduMindPipeline",
+    "PipelineQueryResult",
+    "PipelineStage",
+    "ProgressEvent",
+]

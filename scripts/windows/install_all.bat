@@ -14,11 +14,10 @@ if not exist .venv (
 
 call .venv\Scripts\activate.bat
 python -m pip install --upgrade pip
-pip install -e .[dev,ui,api,rag,experiments]
+pip install -e .[dev,ui,api,rag,experiments,extraction,asr]
 
 echo.
-echo Optional OCR stack:
-echo   pip install -e .[ocr]
+echo Optional extraction and ASR stacks are included above.
 echo.
 echo If you use Ollama:
 echo   ollama serve

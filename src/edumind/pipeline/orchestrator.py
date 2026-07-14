@@ -1,169 +1,163 @@
-"""Application orchestration between OCR and RAG."""
+"""Typed application orchestration over extraction and RAG."""
 
 from __future__ import annotations
 
-import logging
+import time
+from collections.abc import Callable, Mapping
+from dataclasses import asdict, dataclass, replace
+from enum import Enum
 from pathlib import Path
-from typing import Any, TypedDict, cast
 
-from edumind.ocr.core.base_extractor import ExtractionResult
-from edumind.ocr.core.pipeline import DataIngestionPipeline
+from edumind.extraction import ExtractedDocument, ExtractionPipeline, ExtractionProfile
 from edumind.rag.rag_pipeline import RAGPipeline
-from edumind.rag.serializers import serialize_answer_result, serialize_query_results
-
-logger = logging.getLogger(__name__)
+from edumind.rag.types import AnswerResult, IngestReport, RetrievalHit
 
 
-class ProcessedDocumentPayload(TypedDict):
-    """JSON-friendly OCR plus RAG orchestration result."""
-
-    ocr_success: bool
-    ocr_error: str | None
-    text: str
-    metadata: dict[str, object]
-    file_path: str
-    format_type: str
-    extraction_time: float
-    rag_ingested: bool
-    rag_chunks: int
-    rag_source_id: str | None
-    rag_error: str | None
+class PipelineStage(str, Enum):
+    CLASSIFYING = "classifying"
+    EXTRACTING = "extracting"
+    NORMALIZING = "normalizing"
+    INDEXING = "indexing"
+    RETRIEVING = "retrieving"
+    GENERATING = "generating"
+    COMPLETE = "complete"
 
 
-class OCRRAGOrchestrator:
-    """Coordinate OCR extraction and RAG ingestion/querying."""
+@dataclass(frozen=True)
+class ProgressEvent:
+    stage: PipelineStage
+    message: str
+    progress: float
 
-    def __init__(self, use_llm: bool = True, rag_config_path: str | None = None) -> None:
-        self.ocr_pipeline = DataIngestionPipeline()
-        self.rag_pipeline = RAGPipeline(config_path=rag_config_path, use_llm=use_llm)
+
+@dataclass(frozen=True)
+class DocumentProcessResult:
+    extraction: ExtractedDocument
+    ingest: IngestReport | None
+    timings: Mapping[str, float]
+    warnings: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "extraction": self.extraction.to_dict(),
+            "ingest": asdict(self.ingest) if self.ingest else None,
+            "timings": dict(self.timings),
+            "warnings": list(self.warnings),
+        }
+
+
+@dataclass(frozen=True)
+class PipelineQueryResult:
+    query: str
+    hits: tuple[RetrievalHit, ...]
+    answer: AnswerResult | None
+    timings: Mapping[str, float]
+    warnings: tuple[str, ...] = ()
+
+
+ProgressCallback = Callable[[ProgressEvent], None]
+
+
+class EduMindPipeline:
+    def __init__(
+        self,
+        *,
+        use_llm: bool = True,
+        extraction: ExtractionPipeline | None = None,
+        rag: RAGPipeline | None = None,
+        config_path: str | None = None,
+    ) -> None:
+        self.extraction = extraction or ExtractionPipeline()
+        self.rag = rag or RAGPipeline(config_path=config_path, use_llm=use_llm)
 
     def process_file(
         self,
         file_path: str | Path,
-        ingest_to_rag: bool = True,
-        clean_text: bool = True,
-        **kwargs: Any,
-    ) -> ProcessedDocumentPayload:
-        """Run OCR for one file and optionally ingest the result into RAG."""
-        ocr_result = self.ocr_pipeline.process_file(
-            file_path=file_path,
-            clean_text=clean_text,
-            **kwargs,
+        *,
+        ingest: bool = True,
+        source_name: str | None = None,
+        profile: ExtractionProfile | None = None,
+        progress: ProgressCallback | None = None,
+    ) -> DocumentProcessResult:
+        started = time.perf_counter()
+        self._emit(progress, PipelineStage.CLASSIFYING, "Classifying source", 0.05)
+        extraction_started = time.perf_counter()
+        self._emit(progress, PipelineStage.EXTRACTING, "Extracting source content", 0.15)
+        document = self.extraction.extract(file_path, profile=profile)
+        if source_name is not None:
+            logical_name = Path(source_name).name
+            document = replace(document, source_name=logical_name, source_path=logical_name)
+        extraction_seconds = time.perf_counter() - extraction_started
+        ingest_report = None
+        indexing_seconds = 0.0
+        if ingest:
+            self._emit(progress, PipelineStage.INDEXING, "Indexing normalized content", 0.65)
+            indexing_started = time.perf_counter()
+            ingest_report = self.rag.ingest_document(document)
+            indexing_seconds = time.perf_counter() - indexing_started
+        self._emit(progress, PipelineStage.COMPLETE, "Document ready", 1.0)
+        return DocumentProcessResult(
+            document,
+            ingest_report,
+            {
+                "extraction_seconds": extraction_seconds,
+                "indexing_seconds": indexing_seconds,
+                "total_seconds": time.perf_counter() - started,
+            },
+            tuple(warning.message for warning in document.warnings),
         )
-        return self._build_processed_payload(ocr_result, ingest_to_rag=ingest_to_rag)
-
-    def process_batch(
-        self,
-        file_paths: list[str | Path],
-        ingest_to_rag: bool = True,
-        **kwargs: Any,
-    ) -> list[ProcessedDocumentPayload]:
-        """Process many files through OCR and optional RAG ingest."""
-        ocr_results = self.ocr_pipeline.process_batch(file_paths, **kwargs)
-        return [
-            self._build_processed_payload(result, ingest_to_rag=ingest_to_rag)
-            for result in ocr_results
-        ]
 
     def query(
         self,
-        query_text: str,
+        query: str,
+        *,
         top_k: int = 5,
         generate_answer: bool = True,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        """Query the RAG subsystem and return a JSON-friendly payload."""
-        if generate_answer and self.rag_pipeline.llm_generator is not None:
-            answer_result = self.rag_pipeline.generate_answer(
-                query=query_text,
-                top_k=top_k,
-                **kwargs,
-            )
-            return cast(dict[str, Any], _model_dump(serialize_answer_result(answer_result)))
+        filters: Mapping[str, object] | None = None,
+        progress: ProgressCallback | None = None,
+    ) -> PipelineQueryResult:
+        started = time.perf_counter()
+        self._emit(progress, PipelineStage.RETRIEVING, "Retrieving evidence", 0.2)
+        if generate_answer:
+            self._emit(progress, PipelineStage.GENERATING, "Generating cited answer", 0.55)
+            answer = self.rag.generate_answer(query, top_k=top_k, filter_metadata=filters)
+            hits = tuple(answer.sources)
+            timings = {
+                "retrieval_seconds": answer.retrieval_seconds,
+                "generation_seconds": answer.generation_seconds,
+                "total_seconds": time.perf_counter() - started,
+            }
+            warnings = answer.warnings
+        else:
+            retrieval_started = time.perf_counter()
+            hits = tuple(self.rag.query(query, top_k=top_k, filter_metadata=filters))
+            answer = None
+            timings = {
+                "retrieval_seconds": time.perf_counter() - retrieval_started,
+                "generation_seconds": 0.0,
+                "total_seconds": time.perf_counter() - started,
+            }
+            warnings = ()
+        self._emit(progress, PipelineStage.COMPLETE, "Query complete", 1.0)
+        return PipelineQueryResult(query, hits, answer, timings, warnings)
 
-        results = self.rag_pipeline.query(query_text=query_text, top_k=top_k, **kwargs)
-        return cast(
-            dict[str, Any],
-            _model_dump(serialize_query_results(query_text, results)),
-        )
-
-    def get_stats(self) -> dict[str, Any]:
-        """Return combined OCR and RAG runtime stats."""
-        ocr_formats = sorted(self.ocr_pipeline.extractors.keys())
+    def readiness(self) -> dict[str, object]:
+        stats = self.rag.get_stats()
         return {
-            "rag": self.rag_pipeline.get_stats(),
-            "ocr_extractors": ocr_formats,
-            "ocr_formats": ocr_formats,
+            "ready": True,
+            "extraction_sources": self.extraction.supported_sources(),
+            "rag": stats,
+            "generation_ready": self.rag.llm_generator.health_check()
+            if self.rag.llm_generator
+            else False,
         }
 
-    def reset_rag(self) -> None:
-        """Clear the RAG index while keeping the OCR runtime ready."""
-        self.rag_pipeline.reset()
+    def reset_index(self) -> None:
+        self.rag.reset()
 
-    def reset_database(self) -> None:
-        """Backward-compatible alias for resetting the local RAG index."""
-        self.reset_rag()
-
-    def _build_processed_payload(
-        self,
-        ocr_result: ExtractionResult,
-        *,
-        ingest_to_rag: bool,
-    ) -> ProcessedDocumentPayload:
-        """Convert one OCR result into the combined orchestrator payload."""
-        result: ProcessedDocumentPayload = {
-            "ocr_success": ocr_result.success,
-            "ocr_error": ocr_result.error,
-            "text": ocr_result.text,
-            "metadata": dict(ocr_result.metadata),
-            "file_path": ocr_result.file_path,
-            "format_type": ocr_result.format_type,
-            "extraction_time": ocr_result.extraction_time,
-            "rag_ingested": False,
-            "rag_chunks": 0,
-            "rag_source_id": None,
-            "rag_error": None,
-        }
-        if not (ingest_to_rag and ocr_result.success and ocr_result.text.strip()):
-            return result
-
-        try:
-            report = self.rag_pipeline.ingest_document(self._build_ingest_payload(ocr_result))
-        except Exception as exc:
-            logger.error(
-                "RAG ingestion failed for %s: %s",
-                ocr_result.file_path or "<unknown>",
-                exc,
-            )
-            result["rag_error"] = str(exc)
-            return result
-
-        result["rag_ingested"] = True
-        result["rag_chunks"] = report.chunks_created
-        result["rag_source_id"] = report.source_id
-        return result
-
-    def _build_ingest_payload(self, ocr_result: ExtractionResult) -> dict[str, object]:
-        """Build the normalized nested ingest contract for the RAG pipeline."""
-        return {
-            "text": ocr_result.text,
-            "source": self._resolve_source_name(ocr_result.file_path),
-            "format_type": ocr_result.format_type,
-            "file_path": ocr_result.file_path,
-            "metadata": dict(ocr_result.metadata),
-        }
-
-    def _resolve_source_name(self, file_path: str | None) -> str:
-        """Build a stable source display name for downstream RAG ingest."""
-        if file_path:
-            return Path(file_path).name
-        return "uploaded-document"
-
-
-def _model_dump(model: object) -> dict[str, object]:
-    """Return a dict from either a Pydantic v1 or v2 model."""
-    if hasattr(model, "model_dump"):
-        return getattr(model, "model_dump")()
-    if hasattr(model, "dict"):
-        return getattr(model, "dict")()
-    raise TypeError(f"Unsupported model type: {type(model).__name__}")
+    @staticmethod
+    def _emit(
+        callback: ProgressCallback | None, stage: PipelineStage, message: str, value: float
+    ) -> None:
+        if callback:
+            callback(ProgressEvent(stage, message, value))
