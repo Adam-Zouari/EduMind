@@ -2,7 +2,8 @@
 
 __all__ = [
     "common",
-    "ocr",
+    "extraction",
+    "benchmarks",
     "pipeline",
     "rag",
 ]
