@@ -1,142 +1,206 @@
 from __future__ import annotations
 
+import json
+from dataclasses import replace
+
+import numpy as np
+import pytest
+
+from edumind.common.config import load_settings
+from edumind.extraction import ExtractedDocument, ExtractedSegment, ExtractionProfile, SourceKind
+from edumind.rag.errors import RAGConfigurationError
 from edumind.rag.rag_pipeline import RAGPipeline
-from edumind.rag.types import AnswerResult, ChunkRecord, IngestDocument, RetrievalHit
-
-
-class FakeOCRProcessor:
-    def normalize_document(self, document):
-        del document
-        return IngestDocument(
-            text="Normalized study content",
-            source_id="doc-1",
-            source="notes.pdf",
-            format_type="pdf",
-            file_path="notes.pdf",
-            metadata={"page": 1, "source": "notes.pdf"},
-            filter_metadata={"page": 1},
-        )
-
-
-class FakeTextChunker:
-    def chunk_document(self, document: IngestDocument) -> list[ChunkRecord]:
-        return [
-            ChunkRecord(
-                id="doc-1:0",
-                source_id=document.source_id,
-                text="chunk one",
-                chunk_index=0,
-                total_chunks=2,
-                metadata=dict(document.metadata),
-                filter_metadata=dict(document.filter_metadata),
-            ),
-            ChunkRecord(
-                id="doc-1:1",
-                source_id=document.source_id,
-                text="chunk two",
-                chunk_index=1,
-                total_chunks=2,
-                metadata=dict(document.metadata),
-                filter_metadata=dict(document.filter_metadata),
-            ),
-        ]
+from edumind.rag.tokenizers import RegexOffsetTokenizer
+from edumind.rag.types import RetrievalHit
 
 
 class FakeEmbedder:
-    def embed_chunks(self, chunks: list[ChunkRecord]) -> list[ChunkRecord]:
+    model_loaded = True
+
+    def embed_chunks(self, chunks):
+        return [replace(chunk, embedding=[1.0, 0.0]) for chunk in chunks]
+
+    def embed_query(self, text):
+        assert text.strip()
+        return np.asarray([1.0, 0.0], dtype=np.float32)
+
+
+class FakeStore:
+    collection_name = "test"
+
+    def __init__(self, tmp_path):
+        self.persist_directory = tmp_path
+        self.chunks = []
+        self.manifest = None
+        self.reset_called = False
+        self.no_hits = False
+
+    def ensure_manifest(self, manifest):
+        self.manifest = manifest
+        return manifest
+
+    def replace_document(self, source_id, chunks):
+        replaced = len(self.chunks)
+        self.chunks = list(chunks)
+        return replaced
+
+    def query_dense(self, vector, *, top_k, filter_metadata=None):
+        if self.no_hits:
+            return []
         return [
-            ChunkRecord(
-                id=chunk.id,
-                source_id=chunk.source_id,
-                text=chunk.text,
-                chunk_index=chunk.chunk_index,
-                total_chunks=chunk.total_chunks,
-                metadata=dict(chunk.metadata),
-                filter_metadata=dict(chunk.filter_metadata),
-                embedding=[0.1, 0.2],
+            RetrievalHit(
+                "dense",
+                "alpha beta gamma",
+                {"source": "notes.pdf", "page": 2},
+                0.9,
+                1,
+                "dense",
+                3,
             )
-            for chunk in chunks
         ]
 
+    def query_lexical(self, query, *, top_k, filter_metadata=None):
+        if self.no_hits:
+            return []
+        return [
+            RetrievalHit(
+                "lexical",
+                "beta evidence",
+                {"source": "notes.pdf", "page": 3},
+                2.0,
+                1,
+                "bm25",
+                2,
+            )
+        ]
 
-class FakeVectorStore:
-    def __init__(self) -> None:
-        self.upserted: list[ChunkRecord] = []
+    def load_index_manifest(self):
+        return self.manifest
 
-    def upsert_chunks(self, chunks: list[ChunkRecord]) -> int:
-        self.upserted = chunks
-        return len(chunks)
+    def get_collection_count(self):
+        return len(self.chunks)
 
-    def get_collection_count(self) -> int:
-        return len(self.upserted)
-
-
-class FakeLLMGenerator:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, list[RetrievalHit], str | None, bool]] = []
-
-    def generate_with_results(
-        self,
-        query: str,
-        results: list[RetrievalHit],
-        *,
-        system_prompt: str | None = None,
-        stream: bool = False,
-    ) -> str:
-        self.calls.append((query, results, system_prompt, stream))
-        return "Grounded answer"
+    def reset_collection(self):
+        self.reset_called = True
+        self.chunks = []
 
 
-def test_ingest_document_returns_report_and_upserts_chunks() -> None:
-    pipeline = RAGPipeline.__new__(RAGPipeline)
-    pipeline.ocr_processor = FakeOCRProcessor()
-    pipeline.text_chunker = FakeTextChunker()
-    pipeline.embedder = FakeEmbedder()
-    pipeline.vector_store = FakeVectorStore()
-    pipeline._log_active_mlflow_ingest = lambda document, chunk_count: None
+class FakeGenerator:
+    def __init__(self):
+        self.answer = "Alpha is supported [1]."
 
-    report = RAGPipeline.ingest_document(pipeline, {"text": "raw payload"})
+    def generate_with_results(self, query, results, **kwargs):
+        assert query and results
+        return self.answer
 
-    assert report.source_id == "doc-1"
-    assert report.chunks_created == 2
-    assert len(pipeline.vector_store.upserted) == 2
+    def health_check(self):
+        return True
 
 
-def test_generate_answer_queries_once_and_reuses_results() -> None:
-    pipeline = RAGPipeline.__new__(RAGPipeline)
-    llm_generator = FakeLLMGenerator()
-    results = [
-        RetrievalHit(
-            id="chunk-1",
-            document="Study this section first",
-            metadata={"source": "lesson.pdf", "page": 3},
-            score=0.93,
-        )
-    ]
-    query_calls: list[tuple[str, int | None, object]] = []
+class FakeReranker:
+    name = "fake-reranker"
 
-    def fake_query(
-        query_text: str,
-        top_k: int | None = None,
-        filter_metadata=None,
-    ) -> list[RetrievalHit]:
-        query_calls.append((query_text, top_k, filter_metadata))
-        return results
+    def rerank(self, query, hits, limit):
+        assert query and limit == 20
+        return [replace(hit, retrieval_method=self.name) for hit in reversed(hits)]
 
-    pipeline.query = fake_query
-    pipeline.llm_generator = llm_generator
-    pipeline._log_active_mlflow_query = lambda query, results, answer: None
 
-    answer = RAGPipeline.generate_answer(
-        pipeline,
-        query="What should I review?",
-        top_k=4,
-        filter_metadata={"page": 3},
+def _pipeline(tmp_path):
+    store = FakeStore(tmp_path)
+    generator = FakeGenerator()
+    pipeline = RAGPipeline(
+        tokenizer=RegexOffsetTokenizer(),
+        embedder=FakeEmbedder(),
+        vector_store=store,
+        generator=generator,
     )
+    return pipeline, store, generator
 
-    assert isinstance(answer, AnswerResult)
-    assert answer.answer == "Grounded answer"
-    assert answer.sources == results
-    assert len(query_calls) == 1
-    assert llm_generator.calls[0][1] == results
-    assert "Study this section first" in answer.context
+
+def test_rag_pipeline_ingest_query_generate_stats_and_reset(tmp_path) -> None:
+    pipeline, store, generator = _pipeline(tmp_path)
+    first = pipeline.ingest_document(
+        {"text": "alpha beta gamma", "source": "notes.pdf", "metadata": {"course": "ml"}}
+    )
+    assert first.chunks_created == 1 and first.chunks_replaced == 0
+    extracted = ExtractedDocument(
+        "lecture.pdf",
+        "lecture.pdf",
+        SourceKind.PDF,
+        "checksum",
+        "application/pdf",
+        "delta epsilon",
+        (ExtractedSegment("delta epsilon", 0, 13, page_number=1),),
+        ExtractionProfile("default", "pypdf", "1"),
+    )
+    assert pipeline.ingest_documents([extracted])[0].chunks_replaced == 1
+    hits = pipeline.query("alpha", top_k=1)
+    assert len(hits) == 1 and hits[0].retrieval_method == "rrf"
+    answer = pipeline.generate_answer("alpha", top_k=1)
+    assert answer.answer.endswith("[1].") and not answer.warnings
+    generator.answer = "Unsupported without a citation."
+    assert pipeline.generate_answer("alpha").warnings == ("missing_or_invalid_citations",)
+    stats = pipeline.get_stats()
+    assert stats["model_loaded"] is True and stats["index_compatibility_key"]
+    pipeline.reset()
+    assert store.reset_called is True and store.manifest is not None
+
+
+def test_rag_pipeline_empty_query_no_evidence_and_generator_gate(tmp_path) -> None:
+    pipeline, store, _ = _pipeline(tmp_path)
+    with pytest.raises(ValueError, match="must not be empty"):
+        pipeline.query("  ")
+    store.no_hits = True
+    refusal = pipeline.generate_answer("unknown")
+    assert refusal.warnings == ("no_retrieval_evidence",)
+    pipeline.llm_generator = None
+    with pytest.raises(ValueError, match="not initialized"):
+        pipeline.generate_answer("alpha")
+
+
+def test_rag_pipeline_uses_configured_production_reranker_stack(tmp_path) -> None:
+    settings = load_settings(
+        overrides={
+            "retrieval": {
+                "strategy": "rrf-minilm-reranker",
+                "reranker_revision": "abc123",
+            }
+        }
+    )
+    pipeline = RAGPipeline(
+        settings=settings,
+        tokenizer=RegexOffsetTokenizer(),
+        embedder=FakeEmbedder(),
+        vector_store=FakeStore(tmp_path),
+        generator=FakeGenerator(),
+        reranker=FakeReranker(),
+    )
+    assert pipeline.query("alpha", top_k=1)[0].retrieval_method == "fake-reranker"
+    assert pipeline.get_stats()["retrieval_strategy"] == "rrf-minilm-reranker"
+
+
+def test_rag_pipeline_requires_and_uses_ollama_digest_lock(tmp_path) -> None:
+    missing_settings = load_settings(
+        overrides={"generation": {"model_lock_path": str(tmp_path / "missing.json")}}
+    )
+    with pytest.raises(RAGConfigurationError, match="Missing Ollama model lock"):
+        RAGPipeline(
+            settings=missing_settings,
+            use_llm=True,
+            tokenizer=RegexOffsetTokenizer(),
+            embedder=FakeEmbedder(),
+            vector_store=FakeStore(tmp_path),
+        )
+
+    lock = tmp_path / "ollama.json"
+    lock.write_text(json.dumps({"models": {"qwen3:1.7b": "sha256:locked"}}), encoding="utf-8")
+    settings = load_settings(overrides={"generation": {"model_lock_path": str(lock)}})
+    pipeline = RAGPipeline(
+        settings=settings,
+        use_llm=True,
+        tokenizer=RegexOffsetTokenizer(),
+        embedder=FakeEmbedder(),
+        vector_store=FakeStore(tmp_path),
+    )
+    assert pipeline.llm_generator is not None
+    assert pipeline.llm_generator.profile.digest == "sha256:locked"

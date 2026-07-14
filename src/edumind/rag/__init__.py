@@ -1,57 +1,27 @@
-"""RAG package with lazy exports."""
+"""Retrieval-augmented generation public API."""
 
-from __future__ import annotations
-
-__version__ = "1.0.0"
+from .contracts import (
+    ChunkingStrategy,
+    EmbeddingSpec,
+    GenerationProfile,
+    IndexManifest,
+    RecommendationManifest,
+    Reranker,
+    RetrievalStrategy,
+)
+from .types import AnswerResult, ChunkRecord, IngestDocument, IngestReport, RetrievalHit
 
 __all__ = [
-    "OCRProcessor",
-    "TextChunker",
-    "Embedder",
-    "VectorStore",
-    "OllamaGenerator",
-    "RAGPipeline",
-    "IngestDocument",
-    "RetrievalHit",
     "AnswerResult",
+    "ChunkRecord",
+    "ChunkingStrategy",
+    "EmbeddingSpec",
+    "GenerationProfile",
+    "IndexManifest",
+    "IngestDocument",
+    "IngestReport",
+    "RecommendationManifest",
+    "Reranker",
+    "RetrievalHit",
+    "RetrievalStrategy",
 ]
-
-
-def __getattr__(name: str):
-    if name == "OCRProcessor":
-        from .ocr_processor import OCRProcessor
-
-        return OCRProcessor
-    if name == "TextChunker":
-        from .text_chunker import TextChunker
-
-        return TextChunker
-    if name == "Embedder":
-        from .embedder import Embedder
-
-        return Embedder
-    if name == "VectorStore":
-        from .vector_store import VectorStore
-
-        return VectorStore
-    if name == "OllamaGenerator":
-        from .llm_generator import OllamaGenerator
-
-        return OllamaGenerator
-    if name == "RAGPipeline":
-        from .rag_pipeline import RAGPipeline
-
-        return RAGPipeline
-    if name == "IngestDocument":
-        from .types import IngestDocument
-
-        return IngestDocument
-    if name == "RetrievalHit":
-        from .types import RetrievalHit
-
-        return RetrievalHit
-    if name == "AnswerResult":
-        from .types import AnswerResult
-
-        return AnswerResult
-    raise AttributeError(name)

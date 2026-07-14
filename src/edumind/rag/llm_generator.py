@@ -1,64 +1,69 @@
-"""Library-safe Ollama client used by the RAG pipeline."""
+"""Pinned-profile Ollama generation with citation-grounded prompts."""
 
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterator, Mapping, Sequence
+import time
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import requests
 
+from .contracts import GenerationProfile
 from .errors import OllamaConnectionError, OllamaRequestError
-from .types import DEFAULT_OLLAMA_TIMEOUT, LLMSettings, RetrievalHit
+from .types import RetrievalHit
 
-DEFAULT_SYSTEM_PROMPT = (
-    "You are a helpful AI assistant. Answer the user's question using the provided context. "
-    "If the context is insufficient, say so plainly. Be concise and accurate."
-)
+DEFAULT_SYSTEM_PROMPT = """You are a careful study assistant.
+Answer only from the numbered evidence.
+Every factual claim must cite one or more evidence blocks using [1], [2], and so on.
+If the evidence cannot answer the question, say exactly: I don't have enough evidence to answer.
+Do not invent sources, page numbers, facts, or citations. Keep the answer concise."""
+
+
+@dataclass(frozen=True)
+class GenerationMeasurement:
+    answer: str
+    total_seconds: float
+    time_to_first_token_seconds: float
+    load_seconds: float
+    prompt_evaluation_seconds: float
+    generation_seconds: float
+    prompt_tokens: int
+    answer_tokens: int
+    reasoning_tokens_estimate: int
+    tokens_per_second: float
 
 
 class OllamaGenerator:
-    """Generate answers with Ollama without doing network work at construction time."""
-
     def __init__(
         self,
-        settings: LLMSettings | None = None,
+        profile: GenerationProfile,
         *,
-        model_name: str = "qwen3:1.7b",
-        base_url: str = "http://localhost:11434",
-        temperature: float = 0.7,
-        max_tokens: int = 2048,
-        request_timeout: int = DEFAULT_OLLAMA_TIMEOUT,
+        base_url: str = "http://127.0.0.1:11434",
+        timeout_seconds: int = 120,
         session: requests.Session | None = None,
     ) -> None:
-        resolved_settings = settings or LLMSettings(
-            model_name=model_name,
-            base_url=base_url,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            request_timeout=request_timeout,
-        )
-        self.model_name = resolved_settings.model_name
-        self.base_url = resolved_settings.base_url.rstrip("/")
-        self.temperature = resolved_settings.temperature
-        self.max_tokens = resolved_settings.max_tokens
-        self.request_timeout = resolved_settings.request_timeout
+        self.profile = profile
+        self.model_name = profile.model_name
+        self.base_url = base_url.rstrip("/")
+        self.timeout_seconds = timeout_seconds
         self.session = session or requests.Session()
+        self._digest_validated = profile.digest == "unpinned"
 
     def health_check(self) -> bool:
-        """Return whether the Ollama service is reachable."""
         try:
-            self.list_models()
-        except (OllamaConnectionError, OllamaRequestError):
+            response = self.session.get(f"{self.base_url}/api/tags", timeout=5)
+            return response.ok
+        except requests.RequestException:
             return False
-        return True
 
     def list_models(self) -> list[str]:
-        """Return all model names advertised by Ollama."""
-        response = self._request("GET", "/api/tags", timeout=5)
-        payload = response.json()
+        payload = self._request("GET", "/api/tags")
         models = payload.get("models", [])
-        return [str(model.get("name", "")) for model in models if isinstance(model, dict)]
+        if not isinstance(models, Sequence):
+            return []
+        return [str(item.get("name", "")) for item in models if isinstance(item, Mapping)]
 
     def generate(
         self,
@@ -67,218 +72,199 @@ class OllamaGenerator:
         *,
         system_prompt: str | None = None,
         stream: bool = False,
-    ) -> str:
-        """Generate an answer from question plus retrieved context."""
-        payload = self._build_generate_payload(
-            query=query,
-            context=context,
-            system_prompt=system_prompt,
-            stream=stream,
-        )
-
+    ) -> str | Iterator[str]:
+        self._validate_digest()
+        prompt = self._prompt(query, context, system_prompt)
+        payload = self._payload(prompt, stream=stream)
         if stream:
-            return "".join(self.stream_generate(query, context, system_prompt=system_prompt))
-
-        response = self._request(
-            "POST",
-            "/api/generate",
-            json=payload,
-            timeout=self.request_timeout,
-        )
-        return _parse_generate_response(response.json())
-
-    def stream_generate(
-        self,
-        query: str,
-        context: str,
-        *,
-        system_prompt: str | None = None,
-    ) -> Iterator[str]:
-        """Yield generated text chunks from Ollama."""
-        payload = self._build_generate_payload(
-            query=query,
-            context=context,
-            system_prompt=system_prompt,
-            stream=True,
-        )
-        response = self._request(
-            "POST",
-            "/api/generate",
-            json=payload,
-            timeout=self.request_timeout,
-            stream=True,
-        )
-        yield from _iter_stream_text(response, extractor=_extract_generate_chunk_text)
+            return self._stream(payload)
+        response = self._request("POST", "/api/generate", json=payload)
+        return str(response.get("response", "")).strip()
 
     def generate_with_results(
         self,
         query: str,
         results: Sequence[RetrievalHit],
-        *,
         system_prompt: str | None = None,
         stream: bool = False,
     ) -> str:
-        """Generate an answer using already retrieved results."""
         context = self.build_context(results)
-        return self.generate(query, context, system_prompt=system_prompt, stream=stream)
+        output = self.generate(query, context, system_prompt=system_prompt, stream=stream)
+        return "".join(output) if not isinstance(output, str) else output
 
-    def build_context(self, results: Sequence[RetrievalHit]) -> str:
-        """Build a textual context block from retrieval hits."""
-        context_parts = [
-            f"[Document {index}]\n{hit.document}\nSource: {hit.source}, Page: {hit.page}"
-            for index, hit in enumerate(results, start=1)
-        ]
-        return "\n\n".join(context_parts)
-
-    def chat(
+    def generate_measured_with_results(
         self,
-        messages: list[dict[str, str]],
-        *,
-        stream: bool = False,
-    ) -> str:
-        """Send chat-style messages to Ollama."""
-        payload = self._build_chat_payload(messages, stream=stream)
-        if stream:
-            return "".join(self.stream_chat(messages))
-
-        response = self._request(
-            "POST",
-            "/api/chat",
-            json=payload,
-            timeout=self.request_timeout,
-        )
-        return _parse_chat_response(response.json())
-
-    def stream_chat(self, messages: list[dict[str, str]]) -> Iterator[str]:
-        """Yield chat chunks from Ollama."""
-        payload = self._build_chat_payload(messages, stream=True)
-        response = self._request(
-            "POST",
-            "/api/chat",
-            json=payload,
-            timeout=self.request_timeout,
-            stream=True,
-        )
-        yield from _iter_stream_text(response, extractor=_extract_chat_chunk_text)
-
-    def _build_generate_payload(
-        self,
-        *,
         query: str,
-        context: str,
-        system_prompt: str | None,
-        stream: bool,
-    ) -> dict[str, object]:
-        """Build the Ollama generate payload."""
-        prompt = f"Context:\n{context}\n\nQuestion: {query}\n\nAnswer:"
-        return {
-            "model": self.model_name,
+        results: Sequence[RetrievalHit],
+        system_prompt: str | None = None,
+    ) -> GenerationMeasurement:
+        """Stream one answer while retaining timings/counts, never a reasoning trace."""
+        self._validate_digest()
+        prompt = self._prompt(query, self.build_context(results), system_prompt)
+        payload = self._payload(prompt, stream=True)
+        started = time.perf_counter()
+        first_token_at: float | None = None
+        answer_parts: list[str] = []
+        reasoning_tokens_estimate = 0
+        final: Mapping[str, object] = {}
+        try:
+            with self.session.post(
+                f"{self.base_url}/api/generate",
+                json=dict(payload),  # type: ignore[arg-type]
+                stream=True,
+                timeout=self.timeout_seconds,
+            ) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    item = json.loads(line)
+                    if not isinstance(item, Mapping):
+                        continue
+                    response_text = str(item.get("response", ""))
+                    thinking_text = str(item.get("thinking", ""))
+                    if (response_text or thinking_text) and first_token_at is None:
+                        first_token_at = time.perf_counter()
+                    if response_text:
+                        answer_parts.append(response_text)
+                    if thinking_text:
+                        reasoning_tokens_estimate += len(thinking_text.split())
+                    final = item
+        except requests.ConnectionError as exc:
+            raise OllamaConnectionError(
+                f"Ollama is unavailable at {self.base_url}. Start Ollama and install "
+                f"{self.model_name}."
+            ) from exc
+        except requests.RequestException as exc:
+            raise OllamaRequestError("Ollama streaming request failed") from exc
+        finished = time.perf_counter()
+        generation_seconds = _duration_seconds(final.get("eval_duration"))
+        answer_tokens = _integer(final.get("eval_count"))
+        return GenerationMeasurement(
+            "".join(answer_parts).strip(),
+            finished - started,
+            (first_token_at or finished) - started,
+            _duration_seconds(final.get("load_duration")),
+            _duration_seconds(final.get("prompt_eval_duration")),
+            generation_seconds,
+            _integer(final.get("prompt_eval_count")),
+            answer_tokens,
+            reasoning_tokens_estimate,
+            answer_tokens / generation_seconds if generation_seconds > 0 else 0.0,
+        )
+
+    def unload(self) -> None:
+        """Explicitly unload the selected model between benchmark candidates."""
+        self._request(
+            "POST",
+            "/api/generate",
+            json={"model": self.profile.model_name, "keep_alive": 0, "stream": False},
+        )
+
+    @staticmethod
+    def build_context(results: Sequence[RetrievalHit]) -> str:
+        return "\n\n".join(
+            f"[{index}] source={hit.source}; page={hit.page}\n{hit.document}"
+            for index, hit in enumerate(results, start=1)
+        )
+
+    def _payload(self, prompt: str, *, stream: bool) -> dict[str, object]:
+        options: dict[str, object] = {
+            "temperature": self.profile.temperature,
+            "seed": self.profile.seed,
+            "num_ctx": self.profile.context_tokens,
+            "num_predict": self.profile.maximum_answer_tokens,
+        }
+        payload: dict[str, object] = {
+            "model": self.profile.model_name,
             "prompt": prompt,
-            "system": system_prompt or DEFAULT_SYSTEM_PROMPT,
             "stream": stream,
-            "options": {
-                "temperature": self.temperature,
-                "num_predict": self.max_tokens,
-            },
+            "options": options,
+            "keep_alive": self.profile.keep_alive,
         }
+        if self.profile.thinking != "off":
+            payload["think"] = self.profile.thinking
+        return payload
 
-    def _build_chat_payload(
-        self,
-        messages: list[dict[str, str]],
-        *,
-        stream: bool,
-    ) -> dict[str, object]:
-        """Build the Ollama chat payload."""
-        return {
-            "model": self.model_name,
-            "messages": messages,
-            "stream": stream,
-            "options": {
-                "temperature": self.temperature,
-                "num_predict": self.max_tokens,
-            },
-        }
+    @staticmethod
+    def _prompt(query: str, context: str, system_prompt: str | None) -> str:
+        return (
+            f"{system_prompt or DEFAULT_SYSTEM_PROMPT}\n\n"
+            f"Evidence:\n{context}\n\nQuestion: {query}\nAnswer with citations:"
+        )
 
-    def _request(
-        self,
-        method: str,
-        path: str,
-        *,
-        timeout: int,
-        stream: bool = False,
-        **kwargs: Any,
-    ) -> requests.Response:
-        """Perform an Ollama request with consistent error handling."""
-        url = f"{self.base_url}{path}"
+    def _validate_digest(self) -> None:
+        if self._digest_validated:
+            return
+        payload = self._request("GET", "/api/tags")
+        rows = payload.get("models", [])
+        installed = (
+            {
+                str(item.get("name")): str(item.get("digest"))
+                for item in rows
+                if isinstance(item, Mapping)
+            }
+            if isinstance(rows, Sequence)
+            else {}
+        )
+        actual = installed.get(self.profile.model_name)
+        if actual is None:
+            raise OllamaRequestError(
+                f"Pinned Ollama model is missing: {self.profile.model_name}. Run model preparation."
+            )
+        if actual != self.profile.digest:
+            raise OllamaRequestError(
+                f"Ollama digest mismatch for {self.profile.model_name}; expected "
+                f"{self.profile.digest}, received {actual}. Re-run preparation and benchmarks."
+            )
+        self._digest_validated = True
+
+    def _request(self, method: str, path: str, **kwargs: Any) -> Mapping[str, object]:
         try:
             response = self.session.request(
-                method=method,
-                url=url,
-                timeout=timeout,
-                stream=stream,
-                **kwargs,
+                method, f"{self.base_url}{path}", timeout=self.timeout_seconds, **kwargs
             )
+            response.raise_for_status()
         except requests.ConnectionError as exc:
-            raise OllamaConnectionError(f"Could not connect to Ollama at {self.base_url}") from exc
+            raise OllamaConnectionError(
+                f"Ollama is unavailable at {self.base_url}. Start Ollama and install "
+                f"{self.model_name}."
+            ) from exc
         except requests.RequestException as exc:
-            raise OllamaRequestError(f"Ollama request failed: {exc}") from exc
+            raise OllamaRequestError(f"Ollama request failed for model {self.model_name}") from exc
+        payload = response.json()
+        if not isinstance(payload, Mapping):
+            raise OllamaRequestError("Ollama returned a non-object response")
+        return payload
 
-        if response.status_code >= 400:
-            raise OllamaRequestError(
-                f"Ollama API request failed ({response.status_code}): {response.text}"
-            )
-        return response
-
-
-def _parse_generate_response(payload: Mapping[str, object]) -> str:
-    """Decode a non-streaming generate response body."""
-    return str(payload.get("response", "")).strip()
-
-
-def _parse_chat_response(payload: Mapping[str, object]) -> str:
-    """Decode a non-streaming chat response body."""
-    message = payload.get("message", {})
-    if not isinstance(message, Mapping):
-        return ""
-    return str(message.get("content", "")).strip()
-
-
-def _iter_stream_text(
-    response: requests.Response,
-    *,
-    extractor: Callable[[Mapping[str, object]], str],
-) -> Iterator[str]:
-    """Yield decoded text chunks from Ollama's JSON-lines stream."""
-    for payload in _iter_stream_payloads(response):
-        text = extractor(payload)
-        if text:
-            yield text
-        if payload.get("done", False):
-            break
-
-
-def _iter_stream_payloads(response: requests.Response) -> Iterator[Mapping[str, object]]:
-    """Yield decoded JSON objects from an Ollama streaming response."""
-    for line in response.iter_lines():
-        if not line:
-            continue
+    def _stream(self, payload: Mapping[str, object]) -> Iterator[str]:
         try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, Mapping):
-            yield payload
+            with self.session.post(
+                f"{self.base_url}/api/generate",
+                json=dict(payload),  # type: ignore[arg-type]
+                stream=True,
+                timeout=self.timeout_seconds,
+            ) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    item = json.loads(line)
+                    text = item.get("response", "")
+                    if text:
+                        yield str(text)
+        except requests.RequestException as exc:
+            raise OllamaRequestError("Ollama streaming request failed") from exc
 
 
-def _extract_generate_chunk_text(payload: Mapping[str, object]) -> str:
-    """Extract text from one generate stream payload."""
-    return str(payload.get("response", ""))
+def _duration_seconds(value: object) -> float:
+    return _integer(value) / 1_000_000_000
 
 
-def _extract_chat_chunk_text(payload: Mapping[str, object]) -> str:
-    """Extract text from one chat stream payload."""
-    message = payload.get("message", {})
-    if not isinstance(message, Mapping):
-        return ""
-    return str(message.get("content", ""))
-
+def _integer(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0

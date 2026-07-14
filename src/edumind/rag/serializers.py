@@ -21,6 +21,9 @@ def serialize_retrieval_hit(result: RetrievalHit) -> RetrievalHitResponse:
         score=result.score,
         source=result.source,
         page=result.page,
+        rank=result.rank,
+        retrieval_method=result.retrieval_method,
+        token_count=result.token_count,
     )
 
 
@@ -38,6 +41,9 @@ def serialize_answer_result(result: AnswerResult) -> AnswerResponse:
         answer=result.answer,
         sources=[serialize_retrieval_hit(source) for source in result.sources],
         context=result.context,
+        retrieval_seconds=result.retrieval_seconds,
+        generation_seconds=result.generation_seconds,
+        warnings=list(result.warnings),
     )
 
 
@@ -47,4 +53,6 @@ def serialize_ingest_report(report: IngestReport) -> IngestResponse:
         success=True,
         chunks=report.chunks_created,
         source_id=report.source_id,
+        chunks_replaced=report.chunks_replaced,
+        elapsed_seconds=report.elapsed_seconds,
     )

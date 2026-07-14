@@ -1,113 +1,95 @@
-"""Embedding utilities for the RAG pipeline."""
+"""Model-contract-aware lazy embedding runtime."""
 
 from __future__ import annotations
 
-import logging
+from collections.abc import Sequence
 from dataclasses import replace
-from typing import TYPE_CHECKING
 
 import numpy as np
 
-from edumind.common.config import load_yaml_config
-
+from .contracts import EmbeddingSpec, embedding_spec
 from .errors import RAGConfigurationError
-from .types import ChunkRecord, EmbeddingSettings, RAGConfig
-
-if TYPE_CHECKING:
-    from sentence_transformers import SentenceTransformer
-
-logger = logging.getLogger(__name__)
+from .types import ChunkRecord, EmbeddingSettings
 
 
 class Embedder:
-    """Generate embeddings using a lazily loaded sentence-transformers model."""
-
     def __init__(
         self,
+        spec: EmbeddingSpec | None = None,
         settings: EmbeddingSettings | None = None,
         config_path: str | None = None,
     ) -> None:
-        if settings is None:
-            raw_config = load_yaml_config(config_path)
-            settings = RAGConfig.from_mapping(raw_config).embedding
-
-        self.model_name = settings.model_name
-        self.embedding_dim = settings.embedding_dim
-        self.batch_size = settings.batch_size
-        self.device = self._resolve_device(settings.device)
-        self._model: SentenceTransformer | None = None
+        del config_path
+        if spec is None:
+            name = settings.model_name if settings else "sentence-transformers/all-MiniLM-L6-v2"
+            device = settings.device if settings else "cpu"
+            spec = embedding_spec(name, document_device=device, query_device="cpu")
+        self.spec = spec
+        self.model_name = spec.model_name
+        self.embedding_dim = spec.dimension
+        self.batch_size = settings.batch_size if settings else 32
+        self._models: dict[str, object] = {}
 
     @property
     def model_loaded(self) -> bool:
-        """Return whether the embedding model has already been instantiated."""
-        return self._model is not None
+        return bool(self._models)
+
+    def embed_query(self, text: str) -> np.ndarray:
+        return self._encode([self.spec.query_prefix + text], device=self.spec.query_device)[0]
 
     def embed_text(self, text: str) -> np.ndarray:
-        """Embed a single text value into a dense vector."""
-        if not text or not text.strip():
-            return np.zeros(self.embedding_dim, dtype=float)
-        return self.embed_texts([text], show_progress=False)[0]
+        return self.embed_query(text)
 
-    def embed_texts(self, texts: list[str], show_progress: bool = False) -> np.ndarray:
-        """Embed many text values at once."""
-        if not texts:
-            return np.empty((0, self.embedding_dim), dtype=float)
+    def embed_texts(self, texts: Sequence[str], show_progress: bool = False) -> np.ndarray:
+        del show_progress
+        prepared = [self.spec.document_prefix + text for text in texts]
+        return self._encode(prepared, device=self.spec.document_device)
 
-        model = self._get_model()
-        embeddings = model.encode(
-            texts,
-            convert_to_numpy=True,
-            show_progress_bar=show_progress,
-            batch_size=self.batch_size,
-        )
-        array = np.asarray(embeddings, dtype=float)
-        if array.ndim == 1:
-            array = array.reshape(1, -1)
-        self._validate_dimension(array.shape[1])
-        return array
-
-    def embed_chunks(self, chunks: list[ChunkRecord]) -> list[ChunkRecord]:
-        """Return chunk records with embeddings attached."""
+    def embed_chunks(self, chunks: Sequence[ChunkRecord]) -> list[ChunkRecord]:
         if not chunks:
             return []
-
-        embeddings = self.embed_texts([chunk.text for chunk in chunks], show_progress=False)
+        vectors = self.embed_texts([chunk.text for chunk in chunks])
         return [
-            replace(chunk, embedding=embedding.tolist())
-            for chunk, embedding in zip(chunks, embeddings, strict=False)
+            replace(chunk, embedding=vector.astype(float).tolist())
+            for chunk, vector in zip(chunks, vectors, strict=True)
         ]
 
-    def _get_model(self) -> SentenceTransformer:
-        """Load and cache the sentence-transformers model on first use."""
-        if self._model is not None:
-            return self._model
-
-        from sentence_transformers import SentenceTransformer
-
-        logger.info(f"Loading embedding model {self.model_name} on {self.device}")
-        self._model = SentenceTransformer(self.model_name, device=self.device)
-        return self._model
-
-    def _resolve_device(self, requested_device: str) -> str:
-        """Resolve a requested device while keeping import-time behavior light."""
-        if requested_device != "cuda":
-            return requested_device
-
-        try:
-            import torch
-        except ImportError:  # pragma: no cover - optional runtime dependency
-            logger.warning("CUDA requested but torch is unavailable. Falling back to CPU.")
-            return "cpu"
-
-        if not torch.cuda.is_available():
-            logger.warning("CUDA requested but unavailable. Falling back to CPU.")
-            return "cpu"
-        return requested_device
-
-    def _validate_dimension(self, actual_dimension: int) -> None:
-        """Ensure the configured embedding dimension matches the model output."""
-        if actual_dimension != self.embedding_dim:
+    def _encode(self, texts: Sequence[str], *, device: str) -> np.ndarray:
+        model = self._model(device)
+        vectors = np.asarray(
+            model.encode(
+                list(texts),
+                batch_size=self.batch_size,
+                normalize_embeddings=self.spec.normalize,
+                convert_to_numpy=True,
+                show_progress_bar=False,
+            ),
+            dtype=np.float32,
+        )
+        if vectors.ndim != 2 or vectors.shape[1] != self.spec.dimension:
+            actual = vectors.shape[1] if vectors.ndim == 2 else "invalid"
             raise RAGConfigurationError(
-                "Configured embedding_dim does not match model output "
-                f"({self.embedding_dim} != {actual_dimension})"
+                f"Embedding contract dimension mismatch for {self.spec.model_name}: expected "
+                f"{self.spec.dimension}, received {actual}"
             )
+        return vectors
+
+    def _model(self, device: str):
+        if device not in self._models:
+            try:
+                from sentence_transformers import SentenceTransformer
+            except ModuleNotFoundError as exc:
+                raise RAGConfigurationError(
+                    "sentence-transformers is required; install .[rag]"
+                ) from exc
+            kwargs: dict[str, object] = {
+                "revision": self.spec.revision,
+                "device": device,
+                "local_files_only": True,
+            }
+            if self.spec.model_name.startswith("nomic-ai/"):
+                kwargs["trust_remote_code"] = True
+            model = SentenceTransformer(self.spec.model_name, **kwargs)
+            model.max_seq_length = self.spec.maximum_length
+            self._models[device] = model
+        return self._models[device]

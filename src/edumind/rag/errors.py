@@ -7,6 +7,10 @@ class RAGConfigurationError(ValueError):
     """Raised when the RAG configuration is invalid."""
 
 
+class IndexCompatibilityError(RAGConfigurationError):
+    """Raised when persisted vectors do not match the active contracts."""
+
+
 class MetadataFilterError(ValueError):
     """Raised when metadata filters are unsupported or malformed."""
 
