@@ -12,7 +12,7 @@
 - Reusable Python code belongs in `src/edumind/`.
 - User-facing apps belong in `apps/`.
 - API surfaces belong in `services/`.
-- Experiment code belongs in `experiments/mlflow/`.
+- Benchmark implementation belongs in `src/edumind/benchmarks/`; experiment protocols belong in `experiments/benchmarks/`.
 - Long-form notes belong in `docs/`.
 
 ## Pull requests

@@ -1,207 +1,93 @@
-# EduMind-AI
+# EduMind
 
-EduMind-AI is a package-first OCR + RAG monorepo for document ingestion, semantic retrieval, and MLflow-backed experimentation.
+EduMind is a local, English-first extraction and retrieval-augmented generation system whose configurable production strategies are selected through reproducible benchmarks. It targets one user on an i7-12700H, 32 GB RAM, and RTX 3050 4 GB machine.
 
-The repository is organized for portfolio-quality maintainability:
+## What is included
 
-- reusable Python code lives under `src/edumind/`
-- apps and APIs are thin entrypoints
-- experiments are isolated from product code
-- generated state is routed into gitignored `artifacts/`
-- setup, architecture, and historical notes are separated under `docs/`
+- Image, PDF, DOCX, audio, and video text extraction through typed, revisioned contracts
+- Offset-preserving chunking, contract-aware embeddings, dense/BM25/RRF retrieval, reranking, and cited Ollama generation
+- A thin Streamlit application and local-only extraction/RAG APIs
+- Technology-neutral extraction, RAG, vector-system, human-review, and reporting benchmarks
+- Deterministic network-free smoke fixtures plus manifest-driven standard/full datasets
+
+Web extraction, structured table extraction, formulas, and dedicated form parsing are intentionally excluded. Flattened text present in PDF/DOCX sources may survive extraction without structural guarantees.
 
 ## Repository map
 
 ```text
-.
-|-- apps/                  Streamlit entrypoints
-|-- artifacts/             Local runtime outputs, caches, vector stores, MLflow state
-|-- config/                Shared YAML configuration
-|-- data/                  Curated fixtures and evaluation inputs
-|-- docs/                  Current documentation plus archived legacy notes
-|-- experiments/mlflow/    Maintained experiment runners and shared utilities
-|-- scripts/               Cross-platform helper scripts
-|-- services/              FastAPI service entrypoints
-|-- src/edumind/
-|   |-- common/            Shared paths, config loaders, schemas
-|   |-- ocr/               Extraction pipeline and format-specific extractors
-|   |-- pipeline/          OCR-to-RAG orchestration layer
-|   `-- rag/               Chunking, embeddings, retrieval, and answer generation
-`-- tests/                 Unit, integration, and experiment tests
+src/edumind/extraction/   production extraction contracts and adapters
+src/edumind/rag/          production indexing, retrieval, and generation
+src/edumind/pipeline/     typed end-to-end orchestration
+src/edumind/app/          testable application actions and state
+src/edumind/benchmarks/   benchmark engine, metrics, manifests, and reports
+apps/                     thin Streamlit entry point
+services/                 local FastAPI adapters
+experiments/benchmarks/   benchmark documentation and source wrapper
+data/benchmarks/          committed smoke fixtures and versioned manifests
 ```
 
-## Quick start
+## Installation
 
-EduMind-AI targets Python 3.10. The full local product workflow usually needs:
-
-- Python 3.10
-- Ollama for local LLM inference
-- Tesseract for image OCR
-- FFmpeg for audio and video extraction
-
-Create one environment at the repo root:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -e .[dev,ui,api,rag,experiments,ocr]
-```
-
-Windows:
+Python 3.10 or newer is supported; Python 3.11 is recommended for a fresh environment.
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\activate
-pip install --upgrade pip
-pip install -e .[dev,ui,api,rag,experiments,ocr]
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev,ui,api,rag,extraction,asr,benchmarks]"
 ```
 
-For lighter workflows you can install only the extras you need:
+Dependencies are split so normal runtime paths do not require MLflow or every extraction engine. `requirements.lock` records the validated environment snapshot. External tools such as Tesseract, FFmpeg, Ollama, datasets, and model weights are checked by preflight and are never downloaded at import time.
 
-- `.[ui,rag]` for RAG-only UI work
-- `.[api,rag]` for service work without OCR
-- `.[experiments]` for experiment analysis
-- `.[ocr]` to add the heavier extraction stack
-
-Copy environment defaults before running locally:
-
-```bash
-cp .env.example .env
-```
-
-Windows:
+## Public commands
 
 ```powershell
-Copy-Item .env.example .env
+edumind ui
+edumind extraction-api
+edumind rag-api
+
+edumind benchmark preflight
+edumind benchmark prepare qasper
+edumind benchmark prepare assets ASSET_PLAN_JSON
+edumind benchmark prepare extraction-models
+edumind benchmark prepare huggingface-models
+edumind benchmark prepare ollama-models
+edumind benchmark extraction image
+edumind benchmark extraction all
+edumind benchmark rag chunking-embedding
+edumind benchmark rag retrieval
+edumind benchmark rag generation
+edumind benchmark rag final
+edumind benchmark systems vectordb
+edumind benchmark review export SUMMARY_JSON REVIEW_CSV
+edumind benchmark review import REVIEW_CSV
+edumind benchmark report SUMMARY_JSON
+edumind benchmark all
 ```
 
-## Run the product
+Commands default to `smoke`. Put `--profile standard` or `--profile full` immediately after `benchmark` for authoritative local runs. Smoke uses deterministic fixtures/fakes where appropriate, makes no quality claim, and requires no network or Ollama.
 
-The default demo path is the direct package UI. It calls the internal package layer without requiring separate services.
+The APIs bind to `127.0.0.1`. Their liveness and readiness endpoints are separate, uploads are streamed with a 100 MiB default limit, and destructive resets are serialized.
 
-```bash
-edumind-ui
-```
+## Benchmark interpretation
 
-Equivalent command:
+Standard/full runs save per-sample results, complete fingerprints, 95% paired-bootstrap intervals, and Pareto candidates. They apply hard correctness/resource gates before promotion and never manufacture a min-max overall score. Overlapping quality intervals are resolved by p95 latency, memory, then storage.
 
-```bash
-python -m edumind.cli ui
-```
+Packaged defaults refer to a versioned recommendation manifest. It is deliberately non-authoritative until the required datasets/models are present, 60 blinded judgments are imported, and one selected system is evaluated once on the locked test. Chroma remains the runtime vector backend unless a conforming alternative reaches recall/filter gates and improves p95 latency or storage by at least 20%.
 
-Optional API mode:
+Start with [the benchmark overview](experiments/benchmarks/doc.md), then use each subsystem's `doc.md` for its exact formulas, controls, commands, artifacts, and limitations.
 
-```bash
-edumind-ocr-api
-edumind-rag-api
-```
-
-Equivalent module commands:
-
-```bash
-python -m edumind.cli ocr-api
-python -m edumind.cli rag-api
-```
-
-Windows convenience launcher:
+## Verification
 
 ```powershell
-scripts\windows\start_all_services.bat
-```
-
-That helper starts the OCR and RAG APIs only. The maintained UI remains `edumind-ui`.
-
-## Experiments
-
-Run the staged English-only experiment suite:
-
-```bash
-python -m edumind.cli experiments
-```
-
-Useful commands:
-
-```bash
-edumind-experiments --suite smoke
-edumind-experiments --suite all --dataset student_benchmark --resume
-edumind-experiments --suite retrieval --dataset student_benchmark --resume
-```
-
-Equivalent direct module command:
-
-```bash
-python experiments/mlflow/run_all_experiments.py --suite all --dataset student_benchmark --resume
-```
-
-Benchmark manifests live in `data/evaluation/` and the suite writes local MLflow plus staged cache
-state into `artifacts/experiments/mlflow/`.
-
-## Configuration
-
-- `config/base.yaml` is the shared runtime config.
-- `.env.example` shows supported environment overrides.
-- vector store data persists in `artifacts/rag/vector_store/`
-- `EDUMIND_MLFLOW_TRACKING_URI` can point runtime logging at the shared MLflow store in `artifacts/experiments/mlflow/`
-
-The repo keeps source code and curated fixtures in Git, while local runtime state stays outside the tracked tree.
-
-## Development workflow
-
-Quality checks:
-
-```bash
-ruff check .
-mypy src
 pytest
+ruff check src apps services experiments tests
+ruff format --check src apps services experiments tests
+mypy src apps services experiments
+python -m pip check
+python -m compileall -q src apps services experiments
+edumind benchmark preflight
+edumind benchmark all
 ```
 
-## OCR self-test
-
-For OCR-only stabilization work, the official validation path is:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -e .[dev,ocr,api]
-ruff check .
-mypy src
-pytest -q
-```
-
-From outside the repo root, confirm the editable install works:
-
-```bash
-python -c "from edumind.ocr import DataIngestionPipeline; print(DataIngestionPipeline)"
-```
-
-Manual OCR smoke checks:
-
-- run a small PDF through `DataIngestionPipeline`
-- run a scanned PDF with `pdf_ocr_mode="force"` and compare it to `pdf_ocr_mode="off"`
-- run a small DOCX through `DataIngestionPipeline`
-- run an image twice and confirm `artifacts/ocr/cache/` is populated and the second pass uses cache
-- optionally test short audio and video files if Whisper and FFmpeg are installed locally
-
-To benchmark the refined OCR path locally:
-
-```bash
-python scripts/ocr_benchmark.py
-```
-
-The benchmark runner writes JSON and CSV output into `artifacts/ocr/benchmarks/`.
-
-CI runs the same core checks on pull requests with GitHub Actions.
-
-## Documentation
-
-- `docs/README.md` - documentation index
-- `docs/setup/` - onboarding, commands, and environment guidance
-- `docs/architecture/` - system design and package/module docs
-- `docs/experiments/` - experiment workflow notes
-- `docs/archive/` - legacy reports, screenshots, and historical notes
-
-## License
-
-MIT
+Standard benchmarks require explicit preparation and may take hours. Final recommendations must not be inferred from smoke output or from a model merely importing successfully.

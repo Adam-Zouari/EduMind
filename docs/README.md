@@ -1,27 +1,13 @@
-# Documentation Index
+# Documentation map
 
-This directory is split into current operating docs and historical material.
+- [Start here](setup/START_HERE.md)
+- [Run instructions](setup/RUN_INSTRUCTIONS.md)
+- [Quick reference](setup/QUICK_REFERENCE.md)
+- [System status](setup/SYSTEM_STATUS.md)
+- [Technical architecture](architecture/TECHNICAL_DOCUMENTATION.md)
+- [Extraction architecture](architecture/extraction/README.md)
+- [RAG architecture](architecture/rag/README.md)
+- [Pipeline architecture](architecture/pipeline/README.md)
+- [Benchmark documentation](../experiments/benchmarks/doc.md)
 
-## Start here
-
-- `setup/START_HERE.md` - fastest path from clone to running product
-- `setup/RUN_INSTRUCTIONS.md` - common runtime modes and commands
-- `setup/QUICK_REFERENCE.md` - short command and path cheat sheet
-- `setup/SYSTEM_STATUS.md` - current repository state and quality gates
-
-## Architecture
-
-- `architecture/TECHNICAL_DOCUMENTATION.md` - end-to-end system overview
-- `architecture/ocr/README.md` - OCR package guide
-- `architecture/rag/README.md` - RAG package guide
-- `architecture/pipeline/README.md` - orchestration layer guide
-- `architecture/pipeline/MICROSERVICES_GUIDE.md` - optional service mode
-
-## Experiments
-
-- `experiments/README.md` - MLflow workflow, data, and execution model
-
-## Archive
-
-- `archive/` contains legacy notes, screenshots, and historical reports kept for reference
-- material under `archive/` is not the source of truth for the current package layout
+Implementation-specific `doc.md` files live beside `src/edumind/extraction`, `src/edumind/rag`, `src/edumind/pipeline`, `apps`, and `services`. Historical documents under `docs/archive` are non-authoritative.

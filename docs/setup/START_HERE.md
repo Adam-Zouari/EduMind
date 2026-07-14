@@ -1,81 +1,17 @@
-# Start Here
+# Start here
 
-This is the fastest path to a working local EduMind-AI setup.
-
-## 1. Create one root environment
-
-EduMind-AI now uses a single project environment named `.venv`.
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -e .[dev,ui,api,rag,experiments,ocr]
-```
-
-Windows:
+Use Python 3.10 or newer on the target Windows machine; Python 3.11 is recommended.
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\activate
-pip install --upgrade pip
-pip install -e .[dev,ui,api,rag,experiments,ocr]
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev,ui,api,rag,extraction,asr,benchmarks]"
+edumind benchmark preflight
+pytest
+edumind benchmark all
 ```
 
-## 2. Copy local environment defaults
+The last command is a non-authoritative, network-free smoke suite. Standard runs require explicit dataset/model preparation and local tools such as Tesseract, FFmpeg, and Ollama. Preflight reports missing requirements as failures; it does not silently remove candidates.
 
-```bash
-cp .env.example .env
-```
-
-Windows:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-## 3. Prepare optional local services
-
-You only need these if your workflow uses them:
-
-- Ollama for answer generation
-- Tesseract for image OCR
-- FFmpeg for audio and video extraction
-
-Start Ollama and pull the default model:
-
-```bash
-ollama serve
-ollama pull qwen3:1.7b
-```
-
-## 4. Run the default product path
-
-The main demo mode is the direct Streamlit app:
-
-```bash
-python -m edumind.cli ui
-```
-
-Open `http://localhost:8501`.
-
-## 5. Use optional service mode only when needed
-
-Microservices are still available for API testing, but they are no longer the default setup.
-
-```bash
-python -m edumind.cli ocr-api
-python -m edumind.cli rag-api
-```
-
-Windows helper:
-
-```powershell
-scripts\windows\start_all_services.bat
-```
-
-## What to read next
-
-- `docs/setup/RUN_INSTRUCTIONS.md` for the full command matrix
-- `docs/setup/QUICK_REFERENCE.md` for a compact cheat sheet
-- `docs/architecture/TECHNICAL_DOCUMENTATION.md` for the package layout and system flow
+Configuration ships in the package. Put local secrets/settings in `.env` (never commit it), set `EDUMIND_CONFIG` to a YAML override, or pass typed overrides in Python.

@@ -1,94 +1,37 @@
-# Run Instructions
+# Run instructions
 
-This guide covers the supported runtime modes after the repo modernization.
-
-## Recommended mode: direct package UI
-
-This is the main product path and the best default for demos and local development.
-
-```bash
-python -m edumind.cli ui
-```
-
-What it does:
-
-- starts Streamlit on port `8501`
-- imports `edumind.pipeline.orchestrator.OCRRAGOrchestrator` directly
-- avoids the extra process overhead of local service mode
-
-## Optional mode: microservices
-
-Use this when you want isolated HTTP services or you are testing API boundaries.
-
-Terminal 1:
-
-```bash
-python -m edumind.cli ocr-api
-```
-
-Terminal 2:
-
-```bash
-python -m edumind.cli rag-api
-```
-
-Windows helper:
+Application and APIs:
 
 ```powershell
-scripts\windows\start_all_services.bat
+edumind ui
+edumind extraction-api
+edumind rag-api
 ```
 
-Ports:
+Benchmark examples:
 
-- Streamlit UI: `http://localhost:8501`
-- OCR API docs: `http://localhost:8000/docs`
-- RAG API docs: `http://localhost:8001/docs`
-- Ollama API: `http://localhost:11434`
+```powershell
+edumind benchmark preflight
+edumind benchmark prepare qasper
+edumind benchmark prepare assets ASSET_PLAN_JSON
+edumind benchmark prepare extraction-models
+edumind benchmark prepare huggingface-models
+edumind benchmark prepare ollama-models
+edumind benchmark extraction all
+edumind benchmark rag all
+edumind benchmark systems vectordb
+edumind benchmark all
 
-## Experiment runner
-
-Quick pass:
-
-```bash
-python -m edumind.cli experiments
+edumind benchmark --profile standard extraction image
+edumind benchmark --profile standard rag chunking-embedding
 ```
 
-Full run plus MLflow UI:
+Review/report commands require paths:
 
-```bash
-python experiments/mlflow/run_all_experiments.py --suite all --dataset student_benchmark --resume --ui
+```powershell
+edumind benchmark review export SUMMARY_JSON REVIEW_CSV
+edumind benchmark review import REVIEW_CSV
+edumind benchmark report SUMMARY_JSON
 ```
 
-Fast local sanity pass:
-
-```bash
-python experiments/mlflow/run_all_experiments.py --test-mode
-```
-
-## Health checks
-
-```bash
-curl http://localhost:8000/health
-curl http://localhost:8001/health
-curl http://localhost:11434/api/tags
-```
-
-Expected:
-
-- OCR and RAG services return `{"status":"healthy"}`
-- Ollama returns the locally available model list
-
-## Common setup notes
-
-- install from the repo root into `.venv`
-- use `pip install -e .[dev,ui,api,rag,experiments,ocr]` for the full local stack
-- copy `.env.example` to `.env` before local overrides
-- `config/base.yaml` is the shared runtime config
-- generated state should appear under `artifacts/`, not inside source folders
-
-## Troubleshooting
-
-- `ModuleNotFoundError`: make sure the environment was installed with `pip install -e ...`
-- empty answers: confirm Ollama is running and `qwen3:1.7b` is available
-- OCR failures on images: verify Tesseract is installed and reachable through `TESSERACT_CMD`
-- audio or video extraction failures: verify `FFMPEG_PATH` points to a working FFmpeg binary
+Smoke validates execution only. Do not promote a strategy from smoke. Standard and full candidates must pass their documented correctness/resource gates; final RAG additionally requires 60 blinded judgments and the locked test.

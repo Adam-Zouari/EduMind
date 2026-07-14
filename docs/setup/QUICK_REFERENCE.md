@@ -1,87 +1,15 @@
-# Quick Reference
+# Quick reference
 
-## Install
+| Purpose | Location or command |
+|---|---|
+| Packaged defaults | `src/edumind/defaults.yaml` |
+| Recommendation manifest | `src/edumind/recommendations/default.json` |
+| Extraction API | `edumind extraction-api` on `127.0.0.1:8000` |
+| RAG API | `edumind rag-api` on `127.0.0.1:8001` |
+| UI | `edumind ui` |
+| Smoke all | `edumind benchmark all` |
+| Standard all | `edumind benchmark --profile standard all` |
+| Benchmark artifacts | `artifacts/benchmarks/` |
+| Runtime vector data | configured under `artifacts/` |
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .[dev,ui,api,rag,experiments,ocr]
-```
-
-Windows:
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\activate
-pip install -e .[dev,ui,api,rag,experiments,ocr]
-```
-
-## Run
-
-Default UI:
-
-```bash
-python -m edumind.cli ui
-```
-
-Microservices:
-
-```bash
-python -m edumind.cli ocr-api
-python -m edumind.cli rag-api
-```
-
-Experiments:
-
-```bash
-python -m edumind.cli experiments
-```
-
-## Important paths
-
-- package root: `src/edumind/`
-- apps: `apps/`
-- services: `services/`
-- experiments: `experiments/mlflow/`
-- shared config: `config/base.yaml`
-- environment defaults: `.env.example`
-- vector store: `artifacts/rag/vector_store/`
-- experiment MLflow state: `artifacts/experiments/mlflow/`
-- curated fixtures: `data/evaluation/`
-
-## Ports
-
-- `8501` - Streamlit UI
-- `8000` - OCR API
-- `8001` - RAG API
-- `11434` - Ollama
-
-## Quality checks
-
-```bash
-ruff check .
-mypy src
-pytest
-```
-
-## Health checks
-
-```bash
-curl http://localhost:8000/health
-curl http://localhost:8001/health
-curl http://localhost:11434/api/tags
-```
-
-## Current defaults
-
-- LLM model: `qwen3:1.7b`
-- embedding model: `sentence-transformers/all-MiniLM-L6-v2`
-- chunk size: `1000`
-- chunk overlap: `200`
-- vector collection: `ocr_documents`
-
-## If something breaks
-
-- reinstall editable dependencies with `pip install -e .[...]`
-- verify Ollama is running before answer-generation tests
-- verify Tesseract and FFmpeg are installed for OCR media workflows
+Verification: `pytest`, `ruff check src apps services experiments tests`, `mypy src apps services experiments`, `python -m pip check`, then smoke preflight/all.
