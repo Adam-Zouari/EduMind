@@ -59,6 +59,8 @@ Thumbs.db
 *.bak
 Screenshot *.png
 data/evaluation/ocr_extraction_result.json
+data/benchmarks/raw/
+data/benchmarks/downloads/
 docs/archive/2.7.0.3
 
 # Archived screenshots should not grow further

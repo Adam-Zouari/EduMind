@@ -1,9 +1,16 @@
 embedding:
-  device: "cpu"
+  indexing_device: cpu
+  query_device: cpu
 
-vectordb:
-  persist_directory: "artifacts/rag/vector_store.local"
+vector:
+  persist_directory: artifacts/rag/vector_store.local
 
-llm:
-  model_name: "qwen3:1.7b"
-  base_url: "http://localhost:11434"
+# Optional benchmark-promoted stack; immutable revision is mandatory when enabled.
+retrieval:
+  strategy: rrf
+  reranker_revision:
+  reranker_device: cpu
+
+generation:
+  model_name: qwen3:1.7b
+  base_url: http://127.0.0.1:11434
