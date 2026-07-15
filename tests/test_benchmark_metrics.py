@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from edumind.benchmarks.metrics import (
+from experiments.benchmarks.common.metrics import (
     average_precision_at_k,
     balanced_accuracy,
     character_error_rate,
@@ -16,9 +16,7 @@ from edumind.benchmarks.metrics import (
     merge_intervals,
     ndcg_at_k,
     paired_bootstrap_interval,
-    pareto_front,
     precision_at_k,
-    randomized_order,
     recall_at_k,
     reciprocal_rank,
     relevance_grades,
@@ -26,6 +24,7 @@ from edumind.benchmarks.metrics import (
     token_f1,
     word_error_rate,
 )
+from experiments.benchmarks.common.text_metrics import content_scores, reading_order_accuracy
 
 
 def test_interval_overlap_is_clamped_and_union_avoids_double_counting() -> None:
@@ -49,18 +48,12 @@ def test_error_and_answer_metrics() -> None:
     assert token_f1("red blue", "red green") == pytest.approx(0.5)
 
 
-def test_bootstrap_holm_and_pareto_are_deterministic() -> None:
+def test_bootstrap_and_holm_are_deterministic() -> None:
     first = paired_bootstrap_interval([1, 2, 3], resamples=500, seed=42)
     second = paired_bootstrap_interval([1, 2, 3], resamples=500, seed=42)
     assert first == second
     adjusted = holm_adjust({"a": 0.01, "b": 0.04, "c": 0.03})
     assert adjusted["a"] <= adjusted["c"] <= adjusted["b"]
-    rows = [
-        {"quality": 1.0, "latency": 2.0},
-        {"quality": 0.9, "latency": 1.0},
-        {"quality": 0.8, "latency": 3.0},
-    ]
-    assert pareto_front(rows, {"quality": "max", "latency": "min"}) == [0, 1]
 
 
 def test_metric_edge_cases_and_directions() -> None:
@@ -82,4 +75,12 @@ def test_metric_edge_cases_and_directions() -> None:
     assert paired.estimate == 2.0
     with pytest.raises(ValueError, match="non-empty"):
         paired_bootstrap_interval([])
-    assert randomized_order(["a", "b", "c"], seed=7) == randomized_order(["a", "b", "c"], seed=7)
+
+
+def test_extraction_text_metrics_have_known_ranges_and_directions() -> None:
+    scores = content_scores("alpha beta", "alpha extra")
+    assert scores["content_precision"] == 0.5
+    assert scores["content_recall"] == 0.5
+    assert scores["missing_text_rate"] == 0.5
+    assert scores["hallucinated_text_rate"] == 0.5
+    assert reading_order_accuracy("alpha beta gamma", "alpha gamma beta") < 1.0

@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from edumind.benchmarks.datasets import (
+from experiments.benchmarks.common.datasets import (
     DatasetValidationError,
     assert_no_split_leakage,
     load_manifest,
