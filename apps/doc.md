@@ -1,7 +1,10 @@
-# Applications
+# Streamlit application
 
-`apps/streamlit_app.py` is a thin rendering entry point. Testable upload, query, reset, readiness, and state-normalization behavior lives in `edumind.app`.
+`apps/streamlit_app.py` is the complete current application. `apps/controller.py` owns upload cleanup, the configured 100 MiB limit, duplicate prevention, pipeline calls, safe errors, readiness, and reset. `apps/state.py` defines session records. No Streamlit module exists under `src` and there is no API transport layer.
 
-Uploads are identified by SHA-256, so a Streamlit rerun does not ingest the same bytes twice. Temporary files are deleted in `finally` blocks, while the original safe filename is preserved for indexing and citations. The UI reports progress, document status, warnings, cited sources, and timings. Reset requires explicit confirmation, and user-facing failures use safe messages with model-install guidance rather than raw tracebacks.
+The controller constructs the production `EduMindPipeline`, which connects to the provisional Chroma HTTP server configured in `config/base.yaml`. Starting the UI never starts Docker or downloads models. When Chroma is unavailable the application shows the exact Compose command.
 
-Run locally with `edumind ui`. The app is intentionally local and single-user; it must not be exposed as a multi-tenant service without adding authentication, durable job coordination, and tenant-aware storage.
+```powershell
+docker compose -f infrastructure/chroma.yml up -d
+streamlit run apps/streamlit_app.py
+```

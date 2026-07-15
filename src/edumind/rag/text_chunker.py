@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from edumind.common.artifacts import stable_hash
 
 from .contracts import ChunkingStrategy
-from .tokenizers import OffsetTokenizer, RegexOffsetTokenizer, TiktokenOffsetTokenizer
-from .types import ChunkingSettings, ChunkRecord, IngestDocument, build_chunk_id
+from .tokenizers import OffsetTokenizer, TiktokenOffsetTokenizer
+from .types import ChunkRecord, IngestDocument, build_chunk_id
 
 
 @dataclass(frozen=True)
@@ -165,11 +165,22 @@ class SemanticChunkingStrategy:
         for index in range(len(spans)):
             start = spans[start_index][0]
             end = spans[index][1]
-            over_limit = self.tokenizer.count(text[start:end]) >= self.maximum_tokens
-            if index == len(spans) - 1 or index in break_after or over_limit:
-                chunks.append((start, end, self.tokenizer.count(text[start:end])))
+            if index == len(spans) - 1 or index in break_after:
+                chunks.extend(self._bounded(text, start, end))
                 start_index = index + 1
         return chunks
+    def _bounded(self, text: str, start: int, end: int) -> list[tuple[int, int, int]]:
+        local = self.tokenizer.spans(text[start:end])
+        if not local:
+            return []
+        return [
+            (
+                start + local[index][0],
+                start + local[min(index + self.maximum_tokens, len(local)) - 1][1],
+                min(self.maximum_tokens, len(local) - index),
+            )
+            for index in range(0, len(local), self.maximum_tokens)
+        ]
 
 
 def build_chunking_strategy(
@@ -178,7 +189,7 @@ def build_chunking_strategy(
     tokenizer = tokenizer or TiktokenOffsetTokenizer()
     if name == "token-256-32":
         return TokenChunkingStrategy(tokenizer, 256, 32, name)
-    if name in {"token", "token-384-64"}:
+    if name == "token-384-64":
         return TokenChunkingStrategy(tokenizer, 384, 64, "token-384-64")
     if name == "sentence-8-2":
         return SentenceChunkingStrategy(tokenizer, 8, 2, name)
@@ -198,22 +209,9 @@ class TextChunker:
 
     def __init__(
         self,
-        strategy: ChunkingStrategy | None = None,
-        settings: ChunkingSettings | None = None,
-        embedder: object | None = None,
-        config_path: str | None = None,
+        strategy: ChunkingStrategy,
     ) -> None:
-        del config_path
-        if strategy is None:
-            if settings:
-                strategy = TokenChunkingStrategy(
-                    RegexOffsetTokenizer(), settings.chunk_size, settings.chunk_overlap
-                )
-            else:
-                strategy = build_chunking_strategy("token-384-64")
-        assert strategy is not None
         self.strategy = strategy
-        self.embedder = embedder
         self.chunk_size = getattr(strategy, "size", getattr(strategy, "maximum_tokens", 0))
         self.chunk_overlap = getattr(strategy, "overlap", 0)
 
@@ -248,10 +246,3 @@ class TextChunker:
                 )
             )
         return chunks
-
-    def chunk_text(self, text: str, metadata: dict[str, object] | None = None) -> list[ChunkRecord]:
-        from .document_processor import normalize_ingest_document
-
-        return self.chunk_document(
-            normalize_ingest_document({"text": text, "metadata": metadata or {}})
-        )

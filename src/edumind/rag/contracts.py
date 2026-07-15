@@ -2,17 +2,11 @@
 
 from __future__ import annotations
 
-import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
-from importlib.resources import files
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from edumind.common.artifacts import stable_hash
-
-if TYPE_CHECKING:
-    from .types import RetrievalHit
-
 
 @dataclass(frozen=True)
 class EmbeddingSpec:
@@ -121,12 +115,10 @@ class GenerationProfile:
 @dataclass(frozen=True)
 class IndexManifest:
     schema_version: int
-    content_checksum: str
     embedding_contract: str
     chunking_contract: str
     backend: str
     collection_name: str
-    filter_fields: tuple[str, ...] = ()
 
     @property
     def compatibility_key(self) -> str:
@@ -141,34 +133,6 @@ class IndexManifest:
         )
 
 
-@dataclass(frozen=True)
-class RecommendationManifest:
-    schema_version: int
-    status: str
-    benchmark_run_ids: tuple[str, ...]
-    extraction: Mapping[str, str]
-    rag: Mapping[str, str]
-    authoritative: bool
-    reason: str
-
-
-def load_recommendation_manifest() -> RecommendationManifest:
-    resource = files("edumind").joinpath("recommendations/default.json")
-    payload = json.loads(resource.read_text(encoding="utf-8"))
-    manifest = RecommendationManifest(
-        schema_version=int(payload["schema_version"]),
-        status=str(payload["status"]),
-        benchmark_run_ids=tuple(str(value) for value in payload.get("benchmark_run_ids", [])),
-        extraction=dict(payload.get("extraction", {})),
-        rag=dict(payload.get("rag", {})),
-        authoritative=bool(payload.get("authoritative", False)),
-        reason=str(payload.get("reason", "")),
-    )
-    if manifest.authoritative and not manifest.benchmark_run_ids:
-        raise ValueError("An authoritative recommendation requires benchmark run IDs")
-    return manifest
-
-
 @runtime_checkable
 class ChunkingStrategy(Protocol):
     @property
@@ -179,28 +143,6 @@ class ChunkingStrategy(Protocol):
 
     def split(self, text: str) -> list[tuple[int, int, int]]:
         """Return half-open character spans plus token counts."""
-
-
-@runtime_checkable
-class RetrievalStrategy(Protocol):
-    name: str
-
-    def retrieve(
-        self,
-        query: str,
-        query_embedding: Sequence[float],
-        limit: int,
-        filters: Mapping[str, object] | None = None,
-    ): ...
-
-
-@runtime_checkable
-class Reranker(Protocol):
-    name: str
-
-    def rerank(
-        self, query: str, hits: Sequence[RetrievalHit], limit: int
-    ) -> list[RetrievalHit]: ...
 
 
 EmbeddingFunction = Callable[[Sequence[str]], Sequence[Sequence[float]]]

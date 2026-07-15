@@ -31,7 +31,7 @@ class GenerationMeasurement:
     generation_seconds: float
     prompt_tokens: int
     answer_tokens: int
-    reasoning_tokens_estimate: int
+    reasoning_words_estimate: int
     tokens_per_second: float
 
 
@@ -105,7 +105,7 @@ class OllamaGenerator:
         started = time.perf_counter()
         first_token_at: float | None = None
         answer_parts: list[str] = []
-        reasoning_tokens_estimate = 0
+        reasoning_words_estimate = 0
         final: Mapping[str, object] = {}
         try:
             with self.session.post(
@@ -123,12 +123,12 @@ class OllamaGenerator:
                         continue
                     response_text = str(item.get("response", ""))
                     thinking_text = str(item.get("thinking", ""))
-                    if (response_text or thinking_text) and first_token_at is None:
+                    if response_text and first_token_at is None:
                         first_token_at = time.perf_counter()
                     if response_text:
                         answer_parts.append(response_text)
                     if thinking_text:
-                        reasoning_tokens_estimate += len(thinking_text.split())
+                        reasoning_words_estimate += len(thinking_text.split())
                     final = item
         except requests.ConnectionError as exc:
             raise OllamaConnectionError(
@@ -149,7 +149,7 @@ class OllamaGenerator:
             generation_seconds,
             _integer(final.get("prompt_eval_count")),
             answer_tokens,
-            reasoning_tokens_estimate,
+            reasoning_words_estimate,
             answer_tokens / generation_seconds if generation_seconds > 0 else 0.0,
         )
 
@@ -160,6 +160,32 @@ class OllamaGenerator:
             "/api/generate",
             json={"model": self.profile.model_name, "keep_alive": 0, "stream": False},
         )
+
+    def runtime_memory(self) -> dict[str, float]:
+        """Return Ollama-reported loaded-model allocation; omit unavailable fields."""
+        payload = self._request("GET", "/api/ps")
+        rows = payload.get("models", [])
+        if not isinstance(rows, Sequence):
+            return {}
+        row = next(
+            (
+                value
+                for value in rows
+                if isinstance(value, Mapping)
+                and str(value.get("name", value.get("model", ""))) == self.profile.model_name
+            ),
+            None,
+        )
+        if not isinstance(row, Mapping):
+            return {}
+        result = {}
+        size = _integer(row.get("size"))
+        size_vram = _integer(row.get("size_vram"))
+        if size:
+            result["ollama_model_memory_gb"] = size / (1024**3)
+        if size_vram:
+            result["ollama_model_vram_mb"] = size_vram / (1024**2)
+        return result
 
     @staticmethod
     def build_context(results: Sequence[RetrievalHit]) -> str:

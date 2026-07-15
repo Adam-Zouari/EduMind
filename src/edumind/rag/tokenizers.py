@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import bisect
-import re
 from typing import Protocol
 
 
@@ -15,23 +14,6 @@ class OffsetTokenizer(Protocol):
     def count(self, text: str) -> int: ...
 
     def truncate(self, text: str, maximum_tokens: int) -> str: ...
-
-
-class RegexOffsetTokenizer:
-    name = "regex-smoke-v1"
-    _pattern = re.compile(r"\w+|[^\w\s]", re.UNICODE)
-
-    def spans(self, text: str) -> list[tuple[int, int]]:
-        return [(match.start(), match.end()) for match in self._pattern.finditer(text)]
-
-    def count(self, text: str) -> int:
-        return len(self.spans(text))
-
-    def truncate(self, text: str, maximum_tokens: int) -> str:
-        spans = self.spans(text)
-        if len(spans) <= maximum_tokens:
-            return text
-        return text[: spans[maximum_tokens - 1][1]] if maximum_tokens > 0 else ""
 
 
 class TiktokenOffsetTokenizer:
@@ -81,7 +63,7 @@ class HuggingFaceOffsetTokenizer:
             from transformers import AutoTokenizer
         except ModuleNotFoundError as exc:
             raise RuntimeError(
-                "transformers is required for model-tokenizer benchmark chunking"
+                "transformers is required for exact model-tokenizer chunking"
             ) from exc
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_name,

@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import BinaryIO, Protocol, TypeAlias, runtime_checkable
+from typing import Protocol, TypeAlias, runtime_checkable
 
 from edumind.common.artifacts import sha256_file, stable_hash
 
@@ -177,10 +177,3 @@ class Extractor(Protocol):
 
     def extract(self, request: ExtractionRequest, kind: SourceKind) -> ExtractedDocument:
         """Extract a document or raise a structured extraction error."""
-
-
-class ReadableBinary(Protocol):
-    def read(self, size: int = -1) -> bytes: ...
-
-
-ExtractionSource: TypeAlias = str | Path | BinaryIO | ReadableBinary

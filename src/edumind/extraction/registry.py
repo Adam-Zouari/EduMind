@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from .contracts import Extractor, SourceKind
@@ -13,8 +13,6 @@ class ExtractorRegistration:
     name: str
     kinds: frozenset[SourceKind]
     factory: Callable[[], Extractor]
-    extra: str
-    benchmark_group: str
 
 
 class ExtractorRegistry:
@@ -44,6 +42,3 @@ class ExtractorRegistry:
         return sorted(
             name for name, item in self._registrations.items() if kind is None or kind in item.kinds
         )
-
-    def registrations(self) -> Iterator[ExtractorRegistration]:
-        yield from (self._registrations[name] for name in sorted(self._registrations))

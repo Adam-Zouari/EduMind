@@ -5,8 +5,8 @@
 ## Flow
 
 ```text
-path or stream -> source detection -> extraction router -> lazy extractor
-               -> normalization -> ExtractedDocument -> revisioned cache
+local path -> source detection -> extraction router -> lazy extractor
+           -> normalization -> ExtractedDocument -> revisioned cache
 ```
 
 The supported `SourceKind` values are image, PDF, DOCX, audio, and video. Web pages, structured tables, formulas, and form parsing are intentionally outside the public contract. A PDF or DOCX extractor may retain flattened text from these elements, but callers must not infer structural fidelity.
@@ -19,9 +19,9 @@ The supported `SourceKind` values are image, PDF, DOCX, audio, and video. Web pa
 - `ExtractedSegment` uses half-open character offsets and may include a page, timestamp, or bounding box.
 - `Extractor` is the protocol implemented by every production adapter and exercised by benchmarks.
 
-Optional libraries and models load only when their engine is selected. Preparation and preflight commands own downloads; importing this package must not download anything or mutate the filesystem. Temporary media files are always cleaned up. Cache identity includes source checksum, extractor/model revision, and all behavior-changing options.
+Optional libraries and models load only when their engine is selected. Explicit preparation commands own downloads; importing this package must not download anything or mutate the filesystem. Temporary media files are always cleaned up. Cache identity includes source checksum, extractor/model revision, and all behavior-changing options.
 
-`edumind benchmark prepare extraction-models` downloads PaddleOCR, docTR, OpenAI Whisper, and faster-whisper weights explicitly and records their immutable revisions and local paths. Optional extractors require those prepared paths and fail with installation guidance instead of downloading during a request.
+`python experiments/benchmarks/prepare.py extraction-models` downloads PaddleOCR, docTR, OpenAI Whisper, and faster-whisper weights explicitly and records their immutable revisions and local paths. Optional extractors require those prepared paths and fail with installation guidance instead of downloading during a request.
 
 ## Runtime defaults and selection
 
@@ -30,7 +30,7 @@ Defaults are provisional until a standard benchmark and human-required downstrea
 Run the smoke contract path with:
 
 ```powershell
-edumind benchmark --profile smoke extraction all
+python experiments/benchmarks/extraction/image/run.py --profile smoke
 ```
 
 The benchmark protocols, metrics, promotion rules, and limitations are documented under `experiments/benchmarks/extraction/`.

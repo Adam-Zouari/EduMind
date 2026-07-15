@@ -1,4 +1,4 @@
-"""Stable extraction failures suitable for APIs and local diagnostics."""
+"""Stable extraction failures suitable for the local application."""
 
 from __future__ import annotations
 
@@ -22,16 +22,6 @@ class MissingDependencyError(ExtractionError):
     recoverable = True
 
 
-class ModelUnavailableError(ExtractionError):
-    code = "model_unavailable"
-    recoverable = True
-
-
 class ExtractionBackendError(ExtractionError):
     code = "backend_failed"
-    recoverable = True
-
-
-class ExtractionCacheError(ExtractionError):
-    code = "cache_failed"
     recoverable = True

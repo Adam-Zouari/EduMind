@@ -1,1 +1,1 @@
-"""Application entrypoints."""
+"""Directly runnable EduMind Streamlit application."""

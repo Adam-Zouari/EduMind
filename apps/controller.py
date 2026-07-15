@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import tempfile
 from collections.abc import Callable, MutableMapping
 from pathlib import Path
@@ -14,7 +15,9 @@ from edumind.pipeline import (
     ProgressEvent,
 )
 
-from .state import DocumentRecord, DocumentStatus
+from apps.state import DocumentRecord, DocumentStatus
+
+LOGGER = logging.getLogger(__name__)
 
 
 class AppController:
@@ -33,6 +36,16 @@ class AppController:
         if checksum in records:
             return DocumentRecord.from_dict(records[checksum]), False
         safe_name = Path(filename).name or "upload.bin"
+        maximum = self.pipeline.extraction.settings.extraction.maximum_upload_bytes
+        if len(content) > maximum:
+            record = DocumentRecord(
+                checksum,
+                safe_name,
+                DocumentStatus.FAILED,
+                error=f"Upload exceeds the configured {maximum / (1024 ** 2):.0f} MiB limit.",
+            )
+            records[checksum] = record.to_dict()
+            return record, True
         suffix = Path(safe_name).suffix[:16]
         path: Path | None = None
         try:
@@ -49,12 +62,21 @@ class AppController:
             )
             record = self._record(checksum, safe_name, result)
         except Exception as exc:
+            LOGGER.exception("Failed to process upload %s", safe_name)
             record = DocumentRecord(
-                checksum, safe_name, DocumentStatus.FAILED, error=_safe_error(exc)
+                checksum, safe_name, DocumentStatus.FAILED, error=safe_error(exc)
             )
         finally:
             if path is not None:
                 path.unlink(missing_ok=True)
+        if record.status == DocumentStatus.READY:
+            stale = [
+                key
+                for key, value in records.items()
+                if key != checksum and str(value.get("filename")) == safe_name
+            ]
+            for key in stale:
+                del records[key]
         records[checksum] = record.to_dict()
         return record, True
 
@@ -83,8 +105,8 @@ class AppController:
         )
 
 
-def _safe_error(exc: Exception) -> str:
+def safe_error(exc: Exception) -> str:
     name = type(exc).__name__
-    if name in {"MissingDependencyError", "ModelUnavailableError", "RAGConfigurationError"}:
+    if name in {"MissingDependencyError", "RAGConfigurationError"}:
         return str(exc)
     return "Processing failed. Check the local application logs for details."

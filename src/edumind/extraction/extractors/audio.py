@@ -64,8 +64,8 @@ class AudioExtractor:
             model_path = Path(str(configured_path)).expanduser() if configured_path else None
             if model_path is None or not model_path.is_dir():
                 raise FileNotFoundError(
-                    "faster-whisper weights are not prepared locally; run `edumind benchmark "
-                    "prepare extraction-models` and use its model lock"
+                    "faster-whisper weights are not prepared locally; run `python "
+                    "experiments/benchmarks/prepare.py extraction-models`"
                 )
             if self._runtime is None:
                 self._runtime = WhisperModel(

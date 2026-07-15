@@ -8,7 +8,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 
-from edumind.common.artifacts import stable_hash
 from edumind.common.config import Settings, load_settings
 from edumind.extraction import ExtractedDocument
 
@@ -16,15 +15,12 @@ from .contracts import (
     ChunkingStrategy,
     GenerationProfile,
     IndexManifest,
-    Reranker,
     embedding_spec,
-    load_recommendation_manifest,
 )
 from .document_processor import normalize_ingest_document
 from .embedder import Embedder
 from .errors import RAGConfigurationError
 from .llm_generator import OllamaGenerator
-from .retrieval import StoreRetrieval, base_retrieval_strategy, build_reranker
 from .text_chunker import (
     SemanticChunkingStrategy,
     TextChunker,
@@ -37,7 +33,7 @@ from .vector_store import VectorStore
 
 
 class RAGPipeline:
-    """The sole production path used by product services and benchmark runners."""
+    """The sole production RAG path used by the direct Streamlit pipeline."""
 
     def __init__(
         self,
@@ -49,10 +45,8 @@ class RAGPipeline:
         embedder: Embedder | None = None,
         vector_store: VectorStore | None = None,
         generator: OllamaGenerator | None = None,
-        reranker: Reranker | None = None,
     ) -> None:
         self.settings = settings or load_settings(config_path)
-        self.recommendation = load_recommendation_manifest()
         self.embedding_spec = embedding_spec(
             self.settings.embedding.model_name,
             document_device=self.settings.embedding.indexing_device,
@@ -84,7 +78,9 @@ class RAGPipeline:
             if self.settings.chunking.tokenizer == "embedding"
             else TiktokenOffsetTokenizer(self.settings.chunking.tokenizer)
         )
-        self.embedder = embedder or Embedder(spec=self.embedding_spec)
+        self.embedder = embedder or Embedder(
+            spec=self.embedding_spec, batch_size=self.settings.embedding.batch_size
+        )
         strategy: ChunkingStrategy
         if self.settings.chunking.strategy in {"token", "token-384-64"}:
             strategy = TokenChunkingStrategy(
@@ -103,34 +99,23 @@ class RAGPipeline:
             strategy = build_chunking_strategy(
                 self.settings.chunking.strategy, tokenizer=self.tokenizer
             )
-        self.text_chunker = TextChunker(strategy=strategy, embedder=self.embedder)
+        self.text_chunker = TextChunker(strategy)
         self.vector_store = vector_store or VectorStore(
             VectorStoreSettings(
                 self.settings.vector.collection_name,
-                self.settings.vector.persist_directory,
+                self.settings.vector.endpoint,
                 self.settings.vector.distance_metric,
             )
         )
         self.index_manifest = IndexManifest(
             schema_version=1,
-            content_checksum=stable_hash([]),
             embedding_contract=self.embedding_spec.fingerprint,
             chunking_contract=strategy.fingerprint,
             backend=self.settings.vector.backend,
             collection_name=self.settings.vector.collection_name,
         )
         self.vector_store.ensure_manifest(self.index_manifest)
-        self.retrieval = StoreRetrieval(
-            self.vector_store,
-            base_retrieval_strategy(self.settings.retrieval.strategy),
-            self.settings.retrieval.rrf_k,
-        )
-        self.retrieval_stack_name = self.settings.retrieval.strategy
-        self.reranker = reranker or build_reranker(
-            self.settings.retrieval.strategy,
-            revision=self.settings.retrieval.reranker_revision,
-            device=self.settings.retrieval.reranker_device,
-        )
+        self.retrieval_stack_name = "dense"
         generation_digest = self.settings.generation.digest
         if use_llm and generator is None and generation_digest == "unpinned":
             generation_digest = _locked_ollama_digest(
@@ -164,6 +149,8 @@ class RAGPipeline:
         started = time.perf_counter()
         normalized = self._normalize_document(document)
         chunks = self.text_chunker.chunk_document(normalized)
+        if not chunks:
+            raise ValueError("Cannot index a document that produced no text chunks")
         embedded = self.embedder.embed_chunks(chunks)
         replaced = self.vector_store.replace_document(normalized.source_id, embedded)
         return IngestReport(
@@ -189,16 +176,11 @@ class RAGPipeline:
             raise ValueError("Query must not be empty")
         limit = top_k or self.top_k
         query_vector = self.embedder.embed_query(query_text)
-        candidates = self.retrieval.retrieve(
-            query_text,
+        candidates = self.vector_store.query_dense(
             query_vector.tolist(),
-            self.settings.retrieval.candidate_k,
-            filter_metadata,
+            top_k=self.settings.retrieval.candidate_k,
+            filter_metadata=filter_metadata,
         )
-        if self.reranker is not None:
-            candidates = self.reranker.rerank(
-                query_text, candidates, self.settings.retrieval.candidate_k
-            )
         return self._pack_hits(candidates, limit, self.settings.retrieval.context_token_budget)
 
     def _pack_hits(
@@ -283,16 +265,12 @@ class RAGPipeline:
             "embedding_dimension": self.embedding_spec.dimension,
             "chunking_strategy": self.text_chunker.strategy.name,
             "retrieval_strategy": self.retrieval_stack_name,
-            "reranker": self.reranker.name if self.reranker is not None else None,
             "context_token_budget": self.settings.retrieval.context_token_budget,
             "collection_name": self.vector_store.collection_name,
-            "persist_directory": str(self.vector_store.persist_directory),
+            "vector_endpoint": self.vector_store.endpoint,
             "model_loaded": self.embedder.model_loaded,
             "llm_enabled": self.llm_generator is not None,
             "index_compatibility_key": manifest.compatibility_key if manifest else None,
-            "recommendation_status": self.recommendation.status,
-            "recommendation_run_ids": self.recommendation.benchmark_run_ids,
-            "recommendation_authoritative": self.recommendation.authoritative,
         }
 
     def reset(self) -> None:
@@ -333,7 +311,8 @@ def _citations_valid(answer: str, context_count: int) -> bool:
 def _locked_ollama_digest(path: Path, model_name: str) -> str:
     if not path.is_file():
         raise RAGConfigurationError(
-            f"Missing Ollama model lock {path}; run `edumind benchmark prepare ollama-models`"
+            f"Missing Ollama model lock {path}; run "
+            "`python experiments/benchmarks/prepare.py ollama-models`"
         )
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))

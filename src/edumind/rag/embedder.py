@@ -7,27 +7,21 @@ from dataclasses import replace
 
 import numpy as np
 
-from .contracts import EmbeddingSpec, embedding_spec
+from .contracts import EmbeddingSpec
 from .errors import RAGConfigurationError
-from .types import ChunkRecord, EmbeddingSettings
+from .types import ChunkRecord
 
 
 class Embedder:
     def __init__(
         self,
-        spec: EmbeddingSpec | None = None,
-        settings: EmbeddingSettings | None = None,
-        config_path: str | None = None,
+        spec: EmbeddingSpec,
+        batch_size: int = 32,
     ) -> None:
-        del config_path
-        if spec is None:
-            name = settings.model_name if settings else "sentence-transformers/all-MiniLM-L6-v2"
-            device = settings.device if settings else "cpu"
-            spec = embedding_spec(name, document_device=device, query_device="cpu")
         self.spec = spec
         self.model_name = spec.model_name
         self.embedding_dim = spec.dimension
-        self.batch_size = settings.batch_size if settings else 32
+        self.batch_size = batch_size
         self._models: dict[str, object] = {}
 
     @property
@@ -36,9 +30,6 @@ class Embedder:
 
     def embed_query(self, text: str) -> np.ndarray:
         return self._encode([self.spec.query_prefix + text], device=self.spec.query_device)[0]
-
-    def embed_text(self, text: str) -> np.ndarray:
-        return self.embed_query(text)
 
     def embed_texts(self, texts: Sequence[str], show_progress: bool = False) -> np.ndarray:
         del show_progress

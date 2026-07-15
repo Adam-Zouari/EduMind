@@ -1,28 +1,9 @@
-# RAG subsystem
+# Production RAG
 
-The RAG package indexes `ExtractedDocument` values and answers questions from ranked, cited evidence. Benchmarks import these production contracts rather than maintaining experiment-only copies.
+The current production path is intentionally one provisional stack: exact-offset token chunks (256 tokens, 32 overlap), the audited `all-MiniLM-L6-v2` embedding contract, dense search through Chroma HTTP, ranked context packing under 2,048 tokens, and cited Ollama generation with `qwen3:1.7b`.
 
-## Indexing
+`EmbeddingSpec` fixes the model revision, tokenizer, prefixes, normalization, dimension, similarity, maximum length, and indexing/query devices. `IndexManifest` rejects an existing Chroma collection when the embedding or chunking contract is incompatible. Whole-document replacement removes every old chunk before adding the new version and restores the previous rows if insertion fails. Compound Chroma filters use `$and`.
 
-1. An offset-preserving `ChunkingStrategy` creates `ChunkRecord` values.
-2. `EmbeddingSpec` applies the model revision, tokenizer, prefixes, normalization, dimension, similarity, maximum length, and indexing/query devices.
-3. `IndexManifest` records content, embedding, chunking, and backend contracts.
-4. `VectorStore.replace_document` replaces every chunk for one logical source under a local lock, updates the lexical index atomically, and refreshes the content checksum.
+There is no global similarity threshold. Contexts are packed in rank order and truncated only at tokenizer boundaries. Prompts number evidence blocks and require bracket citations; an empty ranking produces an evidence-based refusal.
 
-An index with an incompatible contract raises `IndexCompatibilityError` with a rebuild instruction. Query filters are allowed only for fields declared in the manifest. Chroma multi-field filters use explicit `$and` clauses.
-
-## Retrieval and generation
-
-Production retrieval supports dense ranking, BM25, reciprocal-rank fusion, and lazy cross-encoder reranking. RRF combines ranks rather than incompatible dense and lexical scores. Contexts are packed in rank order under the configured token budget; there is no global similarity threshold.
-
-Selectable stacks are `dense`, `bm25`, `rrf`, `rrf-minilm-reranker`, and `rrf-qwen3-reranker`. A reranker stack requires an immutable revision and defaults to CPU. Ollama generation resolves an unpinned configured model through the prepared digest lock and refuses to start if the lock is missing or incompatible.
-
-Prompts number each source and require bracket citations. `GenerationProfile` pins the Ollama model/digest contract, thinking mode, seed, sampling, context limit, and output limit. Runtime logs exclude document text, questions, generated answers, and reasoning traces by default.
-
-Indexing and query devices are configured independently. The local default embeds and reranks queries on CPU so the 4 GB GPU remains available to Ollama.
-
-## Promotion boundary
-
-Packaged defaults point to `recommendations/default.json`. That manifest remains non-authoritative until standard retrieval/generation benchmarks, 60 blinded human judgments, and the one-time locked test are complete. Smoke success only proves that contracts execute.
-
-See `experiments/benchmarks/rag/` for exact formulas, candidates, and promotion gates.
+Production does not contain BM25, RRF, rerankers, alternative database clients, an embedded store, or recommendation-manifest machinery. Those candidates are evaluated under `experiments/benchmarks` and may enter production only through a later explicit code/config change.

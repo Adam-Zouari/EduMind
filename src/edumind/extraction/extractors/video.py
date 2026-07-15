@@ -70,7 +70,13 @@ class VideoExtractor:
                 image_engine = str(request.options.get("image_engine", "tesseract-5"))
                 image_revision = str(request.options.get("image_revision", "5"))
                 image_profile = replace(
-                    request.profile, engine=image_engine, routing="video-keyframe"
+                    request.profile,
+                    engine=image_engine,
+                    engine_revision=image_revision,
+                    preprocessing=str(
+                        request.options.get("image_preprocessing", request.profile.preprocessing)
+                    ),
+                    routing="video-keyframe",
                 )
                 image_key = (image_engine, image_revision)
                 if image_key not in self._image_extractors:
@@ -103,6 +109,8 @@ class VideoExtractor:
                 "keyframe_policy": self.keyframes,
                 "audio_engine": f"{audio_engine}-{audio_model}-{audio_compute_type}",
                 "image_engine": image_engine,
+                "audio_segment_count": len(audio.segments),
+                "visual_segment_count": len(visual_segments),
             },
             seconds=time.perf_counter() - started,
         )

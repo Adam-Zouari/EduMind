@@ -13,16 +13,11 @@ temp/
 cache/
 mlruns/
 mlartifacts/
-experiments/mlflow/.mlflow_config
 
 # Python cache
 __pycache__/
 *.py[cod]
 .pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
 
 # Build output
 build/
@@ -35,8 +30,6 @@ dist/
 *.sqlite3
 *.npy
 *.pkl
-bm25_index.pkl
-**/vectordb/
 
 # Logs
 *.log
@@ -58,10 +51,6 @@ Thumbs.db
 *.tmp
 *.bak
 Screenshot *.png
-data/evaluation/ocr_extraction_result.json
 data/benchmarks/raw/
 data/benchmarks/downloads/
-docs/archive/2.7.0.3
-
-# Archived screenshots should not grow further
-docs/archive/screenshots/
+data/benchmarks/models/*.json

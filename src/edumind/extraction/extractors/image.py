@@ -128,8 +128,8 @@ class ImageExtractor:
         recognition_directory = Path(str(request.options.get("text_recognition_model_dir", "")))
         if not detection_directory.is_dir() or not recognition_directory.is_dir():
             raise FileNotFoundError(
-                "PaddleOCR weights are not prepared locally; run `edumind benchmark prepare "
-                "extraction-models` and use its model lock"
+                "PaddleOCR weights are not prepared locally; run `python "
+                "experiments/benchmarks/prepare.py extraction-models`"
             )
         if self._runtime is None:
             self._runtime = PaddleOCR(
@@ -163,8 +163,8 @@ class ImageExtractor:
         cache_directory = Path(str(request.options.get("doctr_cache_dir", "")))
         if not cache_directory.is_dir() or not any(cache_directory.rglob("*")):
             raise FileNotFoundError(
-                "docTR weights are not prepared locally; run `edumind benchmark prepare "
-                "extraction-models` and use its model lock"
+                "docTR weights are not prepared locally; run `python "
+                "experiments/benchmarks/prepare.py extraction-models`"
             )
         os.environ["DOCTR_CACHE_DIR"] = str(cache_directory)
         if self._runtime is None:

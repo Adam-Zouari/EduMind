@@ -34,6 +34,8 @@ class PDFExtractor:
                 pages = self._docling(request.source_path)
             elif self.engine == "hybrid-pdf":
                 pages = self._hybrid(request)
+            elif self.engine == "ocr-pdf":
+                pages = self._ocr_pages(request, force=True)
             else:
                 raise ValueError(f"Unknown PDF engine: {self.engine}")
         except MissingDependencyError:
@@ -91,6 +93,17 @@ class PDFExtractor:
         threshold = int(raw_threshold) if isinstance(raw_threshold, (str, int, float)) else 40
         if all(len(page.strip()) >= threshold for page in pages):
             return pages
+        return self._ocr_pages(request, force=False, native_pages=pages, threshold=threshold)
+
+    def _ocr_pages(
+        self,
+        request: ExtractionRequest,
+        *,
+        force: bool,
+        native_pages: list[str] | None = None,
+        threshold: int = 40,
+    ) -> list[str]:
+        pages = native_pages if native_pages is not None else self._pypdf(request.source_path)
         try:
             import fitz
         except ModuleNotFoundError as exc:
@@ -105,14 +118,22 @@ class PDFExtractor:
             tempfile.TemporaryDirectory(prefix="edumind-pdf-") as temp,
         ):
             for index, page in enumerate(pdf):
-                if len(pages[index].strip()) >= threshold:
+                if not force and len(pages[index].strip()) >= threshold:
                     continue
                 image_path = Path(temp) / f"page-{index + 1}.png"
                 page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False).save(image_path)
                 image_request = ExtractionRequest.from_path(
                     image_path,
                     source_kind=SourceKind.IMAGE,
-                    profile=replace(profile, engine=ocr_engine, routing="pdf-page-fallback"),
+                    profile=replace(
+                        profile,
+                        engine=ocr_engine,
+                        engine_revision=str(request.options.get("image_revision", "unpinned")),
+                        preprocessing=str(
+                            request.options.get("image_preprocessing", profile.preprocessing)
+                        ),
+                        routing="pdf-page-fallback",
+                    ),
                 )
                 pages[index] = ocr.extract(image_request, SourceKind.IMAGE).text
         return pages

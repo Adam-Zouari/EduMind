@@ -71,18 +71,41 @@ def local_file_lock(path: Path, *, timeout_seconds: float = 30.0) -> Iterator[No
 def git_provenance(root: Path) -> dict[str, object]:
     """Collect a commit plus dirty-content hash without logging file contents."""
     try:
+        import hashlib
+
         commit = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True
         ).stdout.strip()
         status = subprocess.run(
             ["git", "status", "--porcelain"], cwd=root, check=True, capture_output=True, text=True
         ).stdout
+        digest = hashlib.sha256()
+        digest.update(
+            subprocess.run(
+                ["git", "diff", "--binary", "HEAD"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            ).stdout
+        )
+        untracked = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        for relative in sorted(untracked):
+            path = root / relative
+            if path.is_file():
+                digest.update(relative.encode("utf-8"))
+                digest.update(bytes.fromhex(sha256_file(path)))
     except (OSError, subprocess.CalledProcessError):
         return {"commit": "unknown", "dirty": None, "dirty_hash": None}
     return {
         "commit": commit,
         "dirty": bool(status),
-        "dirty_hash": stable_hash(status) if status else None,
+        "dirty_hash": digest.hexdigest() if status else None,
     }
 
 

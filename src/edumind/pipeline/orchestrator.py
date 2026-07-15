@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass, replace
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 
+from edumind.common.config import load_settings
 from edumind.extraction import ExtractedDocument, ExtractionPipeline, ExtractionProfile
 from edumind.rag.rag_pipeline import RAGPipeline
 from edumind.rag.types import AnswerResult, IngestReport, RetrievalHit
@@ -16,7 +17,6 @@ from edumind.rag.types import AnswerResult, IngestReport, RetrievalHit
 class PipelineStage(str, Enum):
     CLASSIFYING = "classifying"
     EXTRACTING = "extracting"
-    NORMALIZING = "normalizing"
     INDEXING = "indexing"
     RETRIEVING = "retrieving"
     GENERATING = "generating"
@@ -36,15 +36,6 @@ class DocumentProcessResult:
     ingest: IngestReport | None
     timings: Mapping[str, float]
     warnings: tuple[str, ...] = ()
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "extraction": self.extraction.to_dict(),
-            "ingest": asdict(self.ingest) if self.ingest else None,
-            "timings": dict(self.timings),
-            "warnings": list(self.warnings),
-        }
-
 
 @dataclass(frozen=True)
 class PipelineQueryResult:
@@ -67,8 +58,9 @@ class EduMindPipeline:
         rag: RAGPipeline | None = None,
         config_path: str | None = None,
     ) -> None:
-        self.extraction = extraction or ExtractionPipeline()
-        self.rag = rag or RAGPipeline(config_path=config_path, use_llm=use_llm)
+        settings = load_settings(config_path) if extraction is None or rag is None else None
+        self.extraction = extraction or ExtractionPipeline(settings)
+        self.rag = rag or RAGPipeline(settings=settings, use_llm=use_llm)
 
     def process_file(
         self,

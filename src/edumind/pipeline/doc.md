@@ -1,9 +1,5 @@
-# Pipeline subsystem
+# Production pipeline
 
-`EduMindPipeline` is the typed application boundary joining extraction, indexing, retrieval, and generation. It contains orchestration only; extraction and RAG strategy logic stays in their owning packages.
+`EduMindPipeline` is the one in-process application boundary. It classifies and extracts a source, normalizes it, chunks and embeds it, replaces that logical document in Chroma server, retrieves dense evidence, packs it under the token budget, and optionally calls Ollama.
 
-`process_file` returns `DocumentProcessResult` with the typed extracted document, optional ingest report, stage timings, and warnings. A logical `source_name` may be supplied for temporary uploads so indexes and citations never expose random temporary filenames. `query` returns `PipelineQueryResult` with ranked hits, an optional generated answer, timings, and warnings.
-
-Both operations emit `ProgressEvent` values. `readiness` distinguishes configured extraction capabilities from local generation availability. `reset_index` delegates the destructive action to the RAG boundary; services serialize it and the UI requires confirmation.
-
-The service client is a transport adapter for deployments that intentionally split extraction and RAG processes. It uses the extraction API terminology and does not recreate local business rules.
+It returns typed extraction, ingestion, query, answer, timing, warning, and progress values. Streamlit calls it directly. There is no API/service client and experiment runners do not create an alternative product pipeline.

@@ -3,7 +3,6 @@
 __all__ = [
     "common",
     "extraction",
-    "benchmarks",
     "pipeline",
     "rag",
 ]

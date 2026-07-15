@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from hashlib import sha256
-from pathlib import Path
 from typing import TypeAlias, TypeGuard
 
 MetadataScalar: TypeAlias = str | int | float | bool
@@ -42,8 +41,11 @@ def build_source_id(
     format_type: str | None,
     metadata: Mapping[str, object],
 ) -> str:
+    explicit_identity = metadata.get("logical_document_id")
     file_hash = metadata.get("source_checksum") or metadata.get("file_hash")
-    identity = str(file_hash or file_path or source or text)
+    # A changed version of the same logical document must replace its old chunks.
+    # Content hashes are provenance, not document identity, unless no stable name exists.
+    identity = str(explicit_identity or file_path or source or file_hash or text)
     return sha256(identity.encode("utf-8")).hexdigest()
 
 
@@ -108,14 +110,6 @@ class IngestReport:
 
 
 @dataclass(frozen=True)
-class QueryResult:
-    query: str
-    hits: tuple[RetrievalHit, ...]
-    retrieval_seconds: float
-    context_tokens: int
-
-
-@dataclass(frozen=True)
 class AnswerResult:
     answer: str
     sources: list[RetrievalHit]
@@ -130,21 +124,5 @@ class AnswerResult:
 @dataclass(frozen=True)
 class VectorStoreSettings:
     collection_name: str
-    persist_directory: Path
+    endpoint: str
     distance_metric: str = "cosine"
-
-
-# Compatibility settings remain small value objects for callers constructing components directly.
-@dataclass(frozen=True)
-class EmbeddingSettings:
-    model_name: str
-    embedding_dim: int
-    device: str = "cpu"
-    batch_size: int = 32
-
-
-@dataclass(frozen=True)
-class ChunkingSettings:
-    chunk_size: int
-    chunk_overlap: int
-    separators: tuple[str, ...] = ("\n\n", "\n", " ", "")

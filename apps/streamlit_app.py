@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import logging
+
 import streamlit as st
 
-from edumind.app import AppController
 from edumind.pipeline import EduMindPipeline, ProgressEvent
+
+from apps.controller import AppController, safe_error
+
+LOGGER = logging.getLogger(__name__)
 
 
 @st.cache_resource
@@ -31,6 +36,7 @@ def _render_readiness(controller: AppController) -> None:
                 "the configured model."
             )
     except Exception as exc:
+        LOGGER.exception("Runtime readiness check failed")
         st.error(f"Runtime not ready: {exc}")
 
 
@@ -88,7 +94,8 @@ def _render_query(controller: AppController) -> None:
             with st.spinner("Retrieving evidence and generating a cited answer..."):
                 result = controller.query(question, top_k=top_k)
         except Exception as exc:
-            st.error(f"Query failed: {exc}")
+            LOGGER.exception("Query failed")
+            st.error(f"Query failed: {safe_error(exc)}")
             return
         if result.answer:
             st.markdown(result.answer.answer)
@@ -114,10 +121,10 @@ def _render_documents(controller: AppController) -> None:
         st.write(
             f"{record.get('filename')} — {record.get('status')} — {record.get('chunks', 0)} chunks"
         )
-    confirmation = st.checkbox("I understand that reset deletes the local index")
-    if st.button("Reset local index", disabled=not confirmation):
+    confirmation = st.checkbox("I understand that reset deletes the Chroma collection")
+    if st.button("Reset Chroma collection", disabled=not confirmation):
         controller.reset(_records())
-        st.success("Local index reset.")
+        st.success("Chroma collection reset.")
         st.rerun()
 
 
@@ -125,7 +132,16 @@ def main() -> None:
     st.set_page_config(page_title="EduMind", page_icon="📚", layout="wide")
     st.title("EduMind")
     st.caption("Local multimodal extraction and citation-grounded study assistance")
-    controller = _controller()
+    try:
+        controller = _controller()
+    except Exception as exc:
+        LOGGER.exception("Application startup failed")
+        st.error(safe_error(exc))
+        st.info(
+            "Start the provisional database with `docker compose -f "
+            "infrastructure/chroma.yml up -d`, then reload this page."
+        )
+        st.stop()
     _render_readiness(controller)
     upload_tab, query_tab, documents_tab = st.tabs(["Extract & index", "Ask", "Documents"])
     with upload_tab:

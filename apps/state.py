@@ -1,4 +1,4 @@
-"""Framework-independent app state normalization."""
+"""Streamlit session-state value objects."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from enum import Enum
 
 
 class DocumentStatus(str, Enum):
-    PROCESSING = "processing"
     READY = "ready"
     FAILED = "failed"
 

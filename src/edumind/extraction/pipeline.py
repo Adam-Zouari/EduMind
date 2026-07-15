@@ -27,11 +27,11 @@ DEFAULT_PROFILE_BY_KIND = {
     SourceKind.AUDIO: ExtractionProfile(
         "audio-baseline",
         "faster-whisper-base-int8",
-        "3d3d5dee26484f91867d81cb899cfcf72b96be6c",
+        "from-lock",
         device="cpu",
     ),
     SourceKind.VIDEO: ExtractionProfile(
-        "video-baseline", "video-hybrid", "ffmpeg-system", device="cpu", routing="hybrid"
+        "video-baseline", "video-hybrid", "from-lock", device="cpu", routing="hybrid"
     ),
 }
 
@@ -49,144 +49,109 @@ def build_default_registry() -> ExtractorRegistry:
             "tesseract-5",
             frozenset({SourceKind.IMAGE}),
             lambda: ImageExtractor("tesseract-5", "5"),
-            "extraction",
-            "image",
         ),
         ExtractorRegistration(
             "paddleocr-v5-mobile",
             frozenset({SourceKind.IMAGE}),
             lambda: ImageExtractor("paddleocr-v5-mobile", "v5"),
-            "extraction",
-            "image",
         ),
         ExtractorRegistration(
             "paddleocr-v5-server",
             frozenset({SourceKind.IMAGE}),
             lambda: ImageExtractor("paddleocr-v5-server", "v5"),
-            "extraction",
-            "image",
         ),
         ExtractorRegistration(
             "doctr-fast-parseq",
             frozenset({SourceKind.IMAGE}),
             lambda: ImageExtractor("doctr-fast-parseq", "unpinned"),
-            "benchmarks",
-            "image",
         ),
         ExtractorRegistration(
-            "pypdf", frozenset({SourceKind.PDF}), lambda: PDFExtractor("pypdf"), "extraction", "pdf"
+            "pypdf", frozenset({SourceKind.PDF}), lambda: PDFExtractor("pypdf")
         ),
         ExtractorRegistration(
             "pdfplumber",
             frozenset({SourceKind.PDF}),
             lambda: PDFExtractor("pdfplumber"),
-            "extraction",
-            "pdf",
         ),
         ExtractorRegistration(
             "docling-pdf",
             frozenset({SourceKind.PDF}),
             lambda: PDFExtractor("docling-pdf"),
-            "benchmarks",
-            "pdf",
         ),
         ExtractorRegistration(
             "hybrid-pdf",
             frozenset({SourceKind.PDF}),
             lambda: PDFExtractor("hybrid-pdf", "1"),
-            "extraction",
-            "pdf",
+        ),
+        ExtractorRegistration(
+            "ocr-pdf",
+            frozenset({SourceKind.PDF}),
+            lambda: PDFExtractor("ocr-pdf", "1"),
         ),
         ExtractorRegistration(
             "python-docx",
             frozenset({SourceKind.DOCX}),
             lambda: DOCXExtractor("python-docx", "1"),
-            "extraction",
-            "docx",
         ),
         ExtractorRegistration(
             "mammoth",
             frozenset({SourceKind.DOCX}),
             lambda: DOCXExtractor("mammoth"),
-            "benchmarks",
-            "docx",
         ),
         ExtractorRegistration(
             "docling-docx",
             frozenset({SourceKind.DOCX}),
             lambda: DOCXExtractor("docling-docx"),
-            "benchmarks",
-            "docx",
         ),
         ExtractorRegistration(
             "unstructured-docx",
             frozenset({SourceKind.DOCX}),
             lambda: DOCXExtractor("unstructured-docx"),
-            "benchmarks",
-            "docx",
         ),
         ExtractorRegistration(
             "openai-whisper-small-en",
             frozenset({SourceKind.AUDIO}),
             lambda: AudioExtractor("openai-whisper", "small.en", "float16"),
-            "asr",
-            "audio",
         ),
         ExtractorRegistration(
             "faster-whisper-tiny-int8",
             frozenset({SourceKind.AUDIO}),
             lambda: AudioExtractor("faster-whisper", "tiny.en", "int8"),
-            "asr",
-            "audio",
         ),
         ExtractorRegistration(
             "faster-whisper-base-int8",
             frozenset({SourceKind.AUDIO}),
             lambda: AudioExtractor("faster-whisper", "base.en", "int8"),
-            "asr",
-            "audio",
         ),
         ExtractorRegistration(
             "faster-whisper-small-int8",
             frozenset({SourceKind.AUDIO}),
             lambda: AudioExtractor("faster-whisper", "small.en", "int8"),
-            "asr",
-            "audio",
         ),
         ExtractorRegistration(
             "faster-whisper-small-float16",
             frozenset({SourceKind.AUDIO}),
             lambda: AudioExtractor("faster-whisper", "small.en", "float16"),
-            "asr",
-            "audio",
         ),
         ExtractorRegistration(
             "faster-whisper-turbo-int8",
             frozenset({SourceKind.AUDIO}),
             lambda: AudioExtractor("faster-whisper", "turbo", "int8"),
-            "asr",
-            "audio",
         ),
         ExtractorRegistration(
             "video-fixed",
             frozenset({SourceKind.VIDEO}),
             lambda: VideoExtractor("fixed"),
-            "asr,extraction",
-            "video",
         ),
         ExtractorRegistration(
             "video-scene",
             frozenset({SourceKind.VIDEO}),
             lambda: VideoExtractor("scene"),
-            "asr,extraction",
-            "video",
         ),
         ExtractorRegistration(
             "video-hybrid",
             frozenset({SourceKind.VIDEO}),
             lambda: VideoExtractor("hybrid"),
-            "asr,extraction",
-            "video",
         ),
     ]
     for registration in registrations:
@@ -219,7 +184,7 @@ class ExtractionPipeline:
             kind, resolved_mime = classify_source(request.source_path, request.mime_type)
             kind = request.source_kind or kind
             resolved_profile = profile or request.profile or DEFAULT_PROFILE_BY_KIND[kind]
-            prepared_options = self._prepared_model_options(resolved_profile)
+            resolved_profile, prepared_options = self._prepare_profile(resolved_profile)
             request = replace(
                 request,
                 source_kind=kind,
@@ -236,7 +201,7 @@ class ExtractionPipeline:
             kind, resolved_mime = classify_source(path, mime_type)
             kind = source_kind or kind
             resolved_profile = profile or DEFAULT_PROFILE_BY_KIND[kind]
-            prepared_options = self._prepared_model_options(resolved_profile)
+            resolved_profile, prepared_options = self._prepare_profile(resolved_profile)
             request = ExtractionRequest.from_path(
                 path,
                 mime_type=resolved_mime,
@@ -267,10 +232,17 @@ class ExtractionPipeline:
     def supported_sources(self) -> dict[str, list[str]]:
         return {kind.value: self.registry.names(kind) for kind in SourceKind}
 
-    def _prepared_model_options(self, profile: ExtractionProfile) -> dict[str, str]:
+    def _prepare_profile(
+        self, profile: ExtractionProfile
+    ) -> tuple[ExtractionProfile, dict[str, str]]:
         lock_path = self.settings.extraction.model_lock_path
         if not lock_path.is_file():
-            return {}
+            if profile.engine_revision == "from-lock":
+                raise RuntimeError(
+                    f"Missing extraction model lock {lock_path}; run `python "
+                    "experiments/benchmarks/prepare.py extraction-models`"
+                )
+            return profile, {}
         try:
             payload = json.loads(lock_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
@@ -285,6 +257,8 @@ class ExtractionPipeline:
         if not isinstance(entry, Mapping):
             raise RuntimeError(f"Malformed model lock entry for {candidate}")
         locked_revision = entry.get("revision")
+        if locked_revision and profile.engine_revision == "from-lock":
+            profile = replace(profile, engine_revision=str(locked_revision))
         if (
             locked_revision
             and not profile.engine.startswith("video-")
@@ -295,7 +269,7 @@ class ExtractionPipeline:
                 f"{profile.engine_revision}, model lock has {locked_revision}. Rebuild the "
                 "profile or prepare the expected model revision."
             )
-        return {
+        return profile, {
             str(key): str(value)
             for key, value in entry.items()
             if str(key).endswith("_path") or str(key).endswith("_dir")
