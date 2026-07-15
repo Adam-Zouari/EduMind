@@ -1,19 +1,14 @@
-# Technical architecture
-
-EduMind is a package-first local extraction and cited-RAG system.
+# Current architecture
 
 ```text
-source -> edumind.extraction -> ExtractedDocument
-       -> edumind.pipeline -> edumind.rag -> cited answer
-                              |-- chunking + embeddings
-                              |-- Chroma + BM25 + RRF/reranker
-                              `-- token-budget packing + Ollama
+Streamlit (apps/) -> EduMindPipeline -> extraction + dense RAG -> Chroma HTTP -> Ollama
 
-production contracts <-> edumind.benchmarks -> artifacts/recommendations
+datasets -> experiments/benchmarks -> metrics + MLflow -> human approval
+                                                        -> later production edit
 ```
 
-Configuration defaults ship inside the wheel and may be overridden by `.env`, `EDUMIND_CONFIG`, or typed programmatic overrides. Common utilities centralize hashing, atomic writes, locks, provenance, and artifact paths. No optional model downloads occur at import time.
+`src/edumind` contains production code only. `apps` owns the complete Streamlit UI and its session controller. `config/base.yaml` is the only production configuration source. There is no FastAPI/service layer, packaged benchmark command, recommendation manifest, embedded vector database, production BM25 index, or duplicate Streamlit application.
 
-The Streamlit and FastAPI files are adapters. Business behavior is testable below them, APIs bind locally, and errors are logged internally while clients receive stable safe schemas. Benchmark tracking is adapter based; MLflow is not a normal RAG dependency.
+The application is intentionally single-process while component selection is still experimental. Chroma server, token 256/32, MiniLM, dense top-5 retrieval, a 2,048-token context budget, and Qwen 3 1.7B are provisional defaults.
 
-For precise contracts see the `doc.md` beside extraction, RAG, pipeline, apps, and services. For experimental methods see [`experiments/benchmarks/doc.md`](../../experiments/benchmarks/doc.md).
+Alternative extraction engines reuse production extractor contracts. Alternative chunking, embedding, retrieval, generation, and database implementations live under `experiments/benchmarks`; benchmark results never edit production automatically.

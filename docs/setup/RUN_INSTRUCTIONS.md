@@ -1,37 +1,40 @@
 # Run instructions
 
-Application and APIs:
+Application:
 
 ```powershell
-edumind ui
-edumind extraction-api
-edumind rag-api
+docker compose -f infrastructure/chroma.yml up -d
+streamlit run apps/streamlit_app.py
 ```
 
-Benchmark examples:
+Common preparation:
 
 ```powershell
-edumind benchmark preflight
-edumind benchmark prepare qasper
-edumind benchmark prepare assets ASSET_PLAN_JSON
-edumind benchmark prepare extraction-models
-edumind benchmark prepare huggingface-models
-edumind benchmark prepare ollama-models
-edumind benchmark extraction all
-edumind benchmark rag all
-edumind benchmark systems vectordb
-edumind benchmark all
-
-edumind benchmark --profile standard extraction image
-edumind benchmark --profile standard rag chunking-embedding
+python experiments/benchmarks/prepare.py smoke-fixtures
+python experiments/benchmarks/prepare.py app-models
+python experiments/benchmarks/prepare.py qasper
+python experiments/benchmarks/prepare.py huggingface-models
+python experiments/benchmarks/prepare.py extraction-models
+python experiments/benchmarks/prepare.py ollama-models
 ```
 
-Review/report commands require paths:
+Representative direct benchmarks:
 
 ```powershell
-edumind benchmark review export SUMMARY_JSON REVIEW_CSV
-edumind benchmark review import REVIEW_CSV
-edumind benchmark report SUMMARY_JSON
+python experiments/benchmarks/extraction/image/run.py --profile standard
+python experiments/benchmarks/rag/chunking_embedding/run.py --profile standard
+python experiments/benchmarks/rag/retrieval/run.py --profile standard --embedding-summary EMBEDDING_SUMMARY_JSON
+python experiments/benchmarks/rag/generation/run.py --profile standard
+python experiments/benchmarks/rag/final/run.py --profile standard --retrieval-summary RETRIEVAL_SUMMARY_JSON --generation-summary GENERATION_SUMMARY_JSON
 ```
 
-Smoke validates execution only. Do not promote a strategy from smoke. Standard and full candidates must pass their documented correctness/resource gates; final RAG additionally requires 60 blinded judgments and the locked test.
+Vector servers:
+
+```powershell
+python experiments/benchmarks/prepare.py vectordb
+docker compose --env-file experiments/benchmarks/vectordb/.env -f experiments/benchmarks/vectordb/compose.yml up -d
+python experiments/benchmarks/vectordb/run.py --profile smoke
+python experiments/benchmarks/vectordb/run.py --profile standard
+```
+
+Use `--shortlist STANDARD_SUMMARY_JSON` for finalist-only full component runs. Human review is `python experiments/benchmarks/review.py export|import ...`.

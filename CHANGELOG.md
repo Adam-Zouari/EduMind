@@ -1,9 +1,9 @@
 # Changelog
 
-## 0.1.0 - 2026-07-09
+## Unreleased
 
-- Reorganized the repo around `src/edumind`, `apps`, `services`, `experiments`, `docs`, `config`, and `data`.
-- Added a root `pyproject.toml` with optional dependency groups and CLI entrypoints.
-- Moved runtime state to `artifacts/` and evaluation fixtures to `data/evaluation/`.
-- Replaced path-hack imports in the main OCR, RAG, pipeline, and service layers.
-- Added CI scaffolding, contributor docs, environment examples, and pytest-based tests.
+- Simplified production to Streamlit -> extraction/RAG pipeline -> Chroma HTTP -> Ollama.
+- Moved all experiment implementation, candidates, metrics, MLflow logging, and documentation to `experiments/benchmarks`.
+- Removed the API/service layer, packaged benchmark framework, embedded vector databases, duplicate application modules, recommendation machinery, and broad build/lint/coverage workflows.
+- Split application and benchmark dependencies into separate lock files.
+- Added direct extraction, RAG, and four-server vector-database benchmarks with per-sample artifacts and confidence intervals.

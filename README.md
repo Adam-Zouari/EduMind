@@ -1,93 +1,82 @@
 # EduMind
 
-EduMind is a local, English-first extraction and retrieval-augmented generation system whose configurable production strategies are selected through reproducible benchmarks. It targets one user on an i7-12700H, 32 GB RAM, and RTX 3050 4 GB machine.
+EduMind extracts local study material, indexes it in a Chroma HTTP server, and answers questions through Ollama with numbered evidence citations. The application defaults are provisional; alternative extractors, chunkers, embeddings, retrieval strategies, language models, and vector servers are selected only through experiments.
 
-## What is included
+For every prerequisite, model, dataset location, server command, and recommended experiment order, use [guide.md](guide.md).
 
-- Image, PDF, DOCX, audio, and video text extraction through typed, revisioned contracts
-- Offset-preserving chunking, contract-aware embeddings, dense/BM25/RRF retrieval, reranking, and cited Ollama generation
-- A thin Streamlit application and local-only extraction/RAG APIs
-- Technology-neutral extraction, RAG, vector-system, human-review, and reporting benchmarks
-- Deterministic network-free smoke fixtures plus manifest-driven standard/full datasets
-
-Web extraction, structured table extraction, formulas, and dedicated form parsing are intentionally excluded. Flattened text present in PDF/DOCX sources may survive extraction without structural guarantees.
-
-## Repository map
+## Layout
 
 ```text
-src/edumind/extraction/   production extraction contracts and adapters
-src/edumind/rag/          production indexing, retrieval, and generation
-src/edumind/pipeline/     typed end-to-end orchestration
-src/edumind/app/          testable application actions and state
-src/edumind/benchmarks/   benchmark engine, metrics, manifests, and reports
-apps/                     thin Streamlit entry point
-services/                 local FastAPI adapters
-experiments/benchmarks/   benchmark documentation and source wrapper
-data/benchmarks/          committed smoke fixtures and versioned manifests
+src/edumind/              production extraction, RAG, config, and pipeline
+apps/                     complete Streamlit application
+config/base.yaml          single production configuration
+experiments/benchmarks/   direct experiments, metrics, candidates, and docs
+infrastructure/chroma.yml provisional production Chroma server
+requirements/             separate app and benchmark dependency pins
 ```
 
-## Installation
+There is no application API layer and no benchmark package under `src`. Streamlit constructs the pipeline directly. Production uses Chroma server dense retrieval only; experiment-only BM25, RRF, rerankers, and alternative database clients do not become runtime dependencies automatically.
 
-Python 3.10 or newer is supported; Python 3.11 is recommended for a fresh environment.
+## Install once, edit directly
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+Use a fresh virtual environment. In Git Bash, activate it before invoking `python -m pip`; this avoids installing into the global Python environment.
+
+```bash
+python -m venv venv
+source venv/Scripts/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[dev,ui,api,rag,extraction,asr,benchmarks]"
+python -m pip install -r requirements/app.lock
+python -m pip install -r requirements/benchmarks.lock
+python -m pip install -e . --no-deps
 ```
 
-Dependencies are split so normal runtime paths do not require MLflow or every extraction engine. `requirements.lock` records the validated environment snapshot. External tools such as Tesseract, FFmpeg, Ollama, datasets, and model weights are checked by preflight and are never downloaded at import time.
+Editable installation means changes under `src`, `apps`, and `experiments` are visible immediately. There is no rebuild step and no Ruff, MyPy, coverage, or wheel gate.
 
-## Public commands
+System programs still required by the selected production path are Docker Desktop, Ollama, FFmpeg, and Tesseract 5.
 
-```powershell
-edumind ui
-edumind extraction-api
-edumind rag-api
+## Run the provisional application
 
-edumind benchmark preflight
-edumind benchmark prepare qasper
-edumind benchmark prepare assets ASSET_PLAN_JSON
-edumind benchmark prepare extraction-models
-edumind benchmark prepare huggingface-models
-edumind benchmark prepare ollama-models
-edumind benchmark extraction image
-edumind benchmark extraction all
-edumind benchmark rag chunking-embedding
-edumind benchmark rag retrieval
-edumind benchmark rag generation
-edumind benchmark rag final
-edumind benchmark systems vectordb
-edumind benchmark review export SUMMARY_JSON REVIEW_CSV
-edumind benchmark review import REVIEW_CSV
-edumind benchmark report SUMMARY_JSON
-edumind benchmark all
+Prepare only the three provisional application models first, then start Chroma and Streamlit:
+
+```bash
+python experiments/benchmarks/prepare.py app-models
+docker compose -f infrastructure/chroma.yml up -d
+streamlit run apps/streamlit_app.py
 ```
 
-Commands default to `smoke`. Put `--profile standard` or `--profile full` immediately after `benchmark` for authoritative local runs. Smoke uses deterministic fixtures/fakes where appropriate, makes no quality claim, and requires no network or Ollama.
+The defaults in `config/base.yaml` are token chunks of 256 with 32 overlap, `all-MiniLM-L6-v2`, dense top-5 retrieval under a 2,048-token evidence budget, and `qwen3:1.7b`.
 
-The APIs bind to `127.0.0.1`. Their liveness and readiness endpoints are separate, uploads are streamed with a 100 MiB default limit, and destructive resets are serialized.
+## Run experiments
 
-## Benchmark interpretation
+MLflow is the run browser and defaults to local SQLite/artifacts:
 
-Standard/full runs save per-sample results, complete fingerprints, 95% paired-bootstrap intervals, and Pareto candidates. They apply hard correctness/resource gates before promotion and never manufacture a min-max overall score. Overlapping quality intervals are resolved by p95 latency, memory, then storage.
-
-Packaged defaults refer to a versioned recommendation manifest. It is deliberately non-authoritative until the required datasets/models are present, 60 blinded judgments are imported, and one selected system is evaluated once on the locked test. Chroma remains the runtime vector backend unless a conforming alternative reaches recall/filter gates and improves p95 latency or storage by at least 20%.
-
-Start with [the benchmark overview](experiments/benchmarks/doc.md), then use each subsystem's `doc.md` for its exact formulas, controls, commands, artifacts, and limitations.
-
-## Verification
-
-```powershell
-pytest
-ruff check src apps services experiments tests
-ruff format --check src apps services experiments tests
-mypy src apps services experiments
-python -m pip check
-python -m compileall -q src apps services experiments
-edumind benchmark preflight
-edumind benchmark all
+```bash
+mlflow ui --backend-store-uri sqlite:///mlflow.db
+python experiments/benchmarks/prepare.py qasper
+python experiments/benchmarks/rag/chunking_embedding/run.py --profile standard
+python experiments/benchmarks/rag/retrieval/run.py --profile standard --embedding-summary EMBEDDING_SUMMARY_JSON
+python experiments/benchmarks/rag/generation/run.py --profile standard
 ```
 
-Standard benchmarks require explicit preparation and may take hours. Final recommendations must not be inferred from smoke output or from a model merely importing successfully.
+For the real four-server database benchmark:
+
+```bash
+python experiments/benchmarks/prepare.py vectordb
+docker compose --env-file experiments/benchmarks/vectordb/.env -f experiments/benchmarks/vectordb/compose.yml up -d
+python experiments/benchmarks/vectordb/run.py --profile smoke
+python experiments/benchmarks/vectordb/run.py --profile standard
+```
+
+The benchmark compares Chroma, Qdrant, Weaviate, and PostgreSQL/pgvector. Smoke only validates the real path. Standard/full results retain every query, confidence intervals, exact NumPy recall, filter and replacement conformance, concurrency measurements, resource measurements, and environment provenance.
+
+Start with [the benchmark overview](experiments/benchmarks/doc.md) and then read the `doc.md` beside the experiment you plan to run.
+
+## Minimal checks
+
+Only metric and dataset invariants are automated:
+
+```bash
+python -m pytest tests/test_benchmark_metrics.py tests/test_benchmark_datasets.py
+```
+
+Real smoke scripts are the integration checks. A failed optional candidate remains a recorded failed run; it is never silently converted into a successful benchmark.
