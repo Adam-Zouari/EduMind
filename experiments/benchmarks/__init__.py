@@ -1,1 +1,1 @@
-"""Repository-facing benchmark documents and module wrapper."""
+"""Direct experiment runners and their shared scientific helpers."""

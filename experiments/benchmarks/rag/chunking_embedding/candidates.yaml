@@ -1,0 +1,23 @@
+smoke:
+  - token-256-32|sentence-transformers/all-MiniLM-L6-v2
+standard:
+  - recursive-character|sentence-transformers/all-MiniLM-L6-v2
+  - recursive-character|BAAI/bge-base-en-v1.5
+  - recursive-character|nomic-ai/nomic-embed-text-v1.5
+  - recursive-character|Qwen/Qwen3-Embedding-0.6B
+  - token-256-32|sentence-transformers/all-MiniLM-L6-v2
+  - token-256-32|BAAI/bge-base-en-v1.5
+  - token-256-32|nomic-ai/nomic-embed-text-v1.5
+  - token-256-32|Qwen/Qwen3-Embedding-0.6B
+  - token-384-64|sentence-transformers/all-MiniLM-L6-v2
+  - token-384-64|BAAI/bge-base-en-v1.5
+  - token-384-64|nomic-ai/nomic-embed-text-v1.5
+  - token-384-64|Qwen/Qwen3-Embedding-0.6B
+  - sentence-8-2|sentence-transformers/all-MiniLM-L6-v2
+  - sentence-8-2|BAAI/bge-base-en-v1.5
+  - sentence-8-2|nomic-ai/nomic-embed-text-v1.5
+  - sentence-8-2|Qwen/Qwen3-Embedding-0.6B
+  - semantic|sentence-transformers/all-MiniLM-L6-v2
+  - semantic|BAAI/bge-base-en-v1.5
+  - semantic|nomic-ai/nomic-embed-text-v1.5
+  - semantic|Qwen/Qwen3-Embedding-0.6B

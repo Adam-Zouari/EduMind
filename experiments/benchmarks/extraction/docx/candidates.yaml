@@ -1,0 +1,2 @@
+smoke: [python-docx]
+standard: [python-docx, mammoth, docling-docx, unstructured-docx]

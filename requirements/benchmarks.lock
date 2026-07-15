@@ -1,0 +1,30 @@
+-r app.lock
+
+# Experiment tracking and artifacts.
+mlflow==3.14.0
+pandas==2.3.3
+pyarrow==24.0.0
+psutil==7.2.2
+nvidia-ml-py==13.610.43
+
+# Datasets, models, and experiment-only strategies.
+datasets==5.0.0
+huggingface-hub==1.23.0
+rank-bm25==0.2.2
+openai-whisper==20250625
+paddleocr==3.7.0
+paddlepaddle==3.3.1
+docling==2.113.0
+python-doctr==1.0.1
+mammoth==1.12.0
+unstructured==0.18.32
+
+# Four vector-server clients. The servers themselves run from Docker images.
+qdrant-client==1.18.0
+weaviate-client==4.22.0
+psycopg==3.3.4
+psycopg-binary==3.3.4
+psycopg-pool==3.3.1
+
+# Only the small metric/dataset checks use pytest.
+pytest==9.1.1

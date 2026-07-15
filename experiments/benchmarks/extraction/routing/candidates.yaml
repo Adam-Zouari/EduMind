@@ -1,0 +1,2 @@
+smoke: [always-native, page-hybrid-router]
+standard: [always-native, always-ocr, document-router, page-hybrid-router]

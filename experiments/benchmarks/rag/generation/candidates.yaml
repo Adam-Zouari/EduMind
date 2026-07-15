@@ -1,0 +1,12 @@
+smoke: [qwen3:1.7b]
+standard:
+  - qwen3:1.7b
+  - qwen3.5:4b-direct
+  - qwen3.5:4b-thinking
+  - qwen3.5:9b-direct
+  - qwen3.5:9b-thinking
+  - gemma3:4b
+  - gemma3:12b
+  - ministral-3:8b-instruct-2512-q4_K_M
+  - gpt-oss:20b-low
+  - gpt-oss:20b-medium

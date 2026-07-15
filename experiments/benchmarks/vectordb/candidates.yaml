@@ -1,0 +1,2 @@
+smoke: [chroma, qdrant, weaviate, pgvector]
+standard: [chroma, qdrant, weaviate, pgvector]

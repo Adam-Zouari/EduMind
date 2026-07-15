@@ -1,0 +1,2 @@
+smoke: [dense, bm25, rrf]
+standard: [dense, bm25, rrf, rrf-minilm-reranker, rrf-qwen3-reranker]

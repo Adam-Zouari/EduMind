@@ -1,0 +1,15 @@
+smoke:
+  - tesseract-5|document
+standard:
+  - tesseract-5|raw
+  - tesseract-5|document
+  - tesseract-5|photo
+  - paddleocr-v5-mobile|raw
+  - paddleocr-v5-mobile|document
+  - paddleocr-v5-mobile|photo
+  - paddleocr-v5-server|raw
+  - paddleocr-v5-server|document
+  - paddleocr-v5-server|photo
+  - doctr-fast-parseq|raw
+  - doctr-fast-parseq|document
+  - doctr-fast-parseq|photo

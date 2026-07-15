@@ -1,0 +1,2 @@
+smoke: [video-hybrid]
+standard: [video-fixed, video-scene, video-hybrid]

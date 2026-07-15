@@ -1,0 +1,61 @@
+name: edumind-vector-benchmark
+
+services:
+  chroma:
+    image: ${CHROMA_IMAGE:-chromadb/chroma:1.5.9}
+    container_name: edumind-benchmark-chroma
+    ports:
+      - "127.0.0.1:8001:8000"
+    volumes:
+      - chroma-data:/data
+    environment:
+      ANONYMIZED_TELEMETRY: "FALSE"
+      IS_PERSISTENT: "TRUE"
+      PERSIST_DIRECTORY: /data
+    restart: "no"
+
+  qdrant:
+    image: ${QDRANT_IMAGE:-qdrant/qdrant:v1.17.0}
+    container_name: edumind-benchmark-qdrant
+    ports:
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    restart: "no"
+
+  weaviate:
+    image: ${WEAVIATE_IMAGE:-cr.weaviate.io/semitechnologies/weaviate:1.38.2}
+    container_name: edumind-benchmark-weaviate
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:50051:50051"
+    volumes:
+      - weaviate-data:/var/lib/weaviate
+    environment:
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: /var/lib/weaviate
+      QUERY_DEFAULTS_LIMIT: "100"
+      CLUSTER_HOSTNAME: benchmark-node
+      DISABLE_TELEMETRY: "true"
+    restart: "no"
+
+  pgvector:
+    image: ${PGVECTOR_IMAGE:-pgvector/pgvector:0.8.2-pg17-bookworm}
+    container_name: edumind-benchmark-pgvector
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pgvector-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: edumind
+      POSTGRES_PASSWORD: edumind
+      POSTGRES_DB: edumind
+    shm_size: 1gb
+    restart: "no"
+
+volumes:
+  chroma-data:
+  qdrant-data:
+  weaviate-data:
+  pgvector-data:

@@ -1,0 +1,2 @@
+smoke: [minimal, conservative, aggressive]
+standard: [minimal, conservative, aggressive]

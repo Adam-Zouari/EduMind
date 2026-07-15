@@ -1,33 +1,61 @@
-# EduMind benchmark program
+# EduMind experiment program
 
-## Question
+## Boundary
 
-Which production extraction and RAG profiles give the best evidence-grounded quality while satisfying correctness, memory, and local latency gates on the target computer?
+All selection work lives in this directory. Production code under `src/edumind` provides the strategies that already exist in the application, while experiment-only alternatives such as BM25, RRF, rerankers, database adapters, datasets, statistics, and MLflow logging remain here. A benchmark never edits `config/base.yaml`; changing production requires a separate, explicit decision after reviewing evidence.
 
-## Experimental contract
+Each experiment directory contains `run.py`, `candidates.yaml`, and `doc.md`. The runners are ordinary Python scripts rather than an installed benchmark framework.
 
-Every selectable strategy is registered in `edumind.benchmarks.registry` and the benchmark imports its production implementation. Smoke-only fakes are explicitly marked non-deployment-eligible and cannot create an authoritative recommendation. A run freezes the dataset checksum, full plan, Git/dirty hash, dependency lock, candidate revisions, seed, and hardware before evaluation. Development chooses candidates, validation promotes them, and the locked test is evaluated once after human review.
-
-Each run writes `plan.json`, `provenance.json`, one complete per-candidate file containing per-sample observations, `summary.json`, and `_SUCCESS.json`. Only successful candidates with samples are cacheable. MLflow is an optional tracking adapter with a parent plan run and nested candidate runs; benchmark correctness never depends on MLflow.
-
-## Statistics and promotion
-
-Metrics are aggregated only after per-sample persistence. A 95% percentile confidence interval is calculated from 10,000 paired bootstrap resamples with seed 42 (`smoke` uses 500 solely for speed). Formal families of p-values use Holm correction. Correctness and resource gates run before Pareto selection. If quality intervals overlap, the tie-break order is p95 latency, peak memory, then storage. No normalized or weighted overall score is produced.
-
-## Profiles and commands
+## Environment and preparation
 
 ```powershell
-edumind benchmark --profile smoke preflight
-edumind benchmark --profile smoke all
-edumind benchmark prepare extraction-models
-edumind benchmark --profile standard extraction image
-edumind benchmark --profile standard rag chunking-embedding
-edumind benchmark --profile standard systems vectordb
-edumind benchmark report artifacts/benchmarks/<suite>/<stage>/<run>/summary.json
+python -m venv venv
+venv\Scripts\Activate.ps1
+python -m pip install -r requirements/app.lock
+python -m pip install -r requirements/benchmarks.lock
+python -m pip install -e . --no-deps
+
+python experiments/benchmarks/prepare.py smoke-fixtures
+python experiments/benchmarks/prepare.py app-models
+python experiments/benchmarks/prepare.py qasper
+python experiments/benchmarks/prepare.py huggingface-models
+python experiments/benchmarks/prepare.py extraction-models
+python experiments/benchmarks/prepare.py ollama-models
+python experiments/benchmarks/prepare.py vectordb
 ```
 
-`smoke` is deterministic, offline, and non-authoritative. Its fake model reads committed modality fixtures through the real classifier, request, router, normalization, and result contracts. `standard` is the local decision run. `full` expands repetitions/candidates for overnight qualification. Preparation downloads optional extraction weights sequentially and writes an immutable local lock; missing datasets, engines, packages, model locks, or Ollama models fail preflight explicitly.
+Every preparation step is explicit. Imports and application startup do not download models or start Docker.
 
-## Invalid conclusions
+`app-models` downloads only MiniLM, faster-whisper `base.en` int8 weights, and `qwen3:1.7b`. `huggingface-models` downloads the four embedding models, two rerankers, and local NLI model. `extraction-models` downloads both PaddleOCR profiles, docTR, OpenAI Whisper small.en, and all faster-whisper candidates. `ollama-models` pulls every documented generation candidate. `vectordb` pulls and digest-locks the four server images. `qasper` creates the frozen paper-level RAG manifests. Large public extraction assets require a checksum/license plan passed to `prepare.py assets --plan PLAN.json`; standard extraction runs refuse assets without SHA-256 provenance.
 
-A smoke winner is not a quality winner. Component results do not prove end-to-end superiority. Automated generation metrics do not replace the 60 blinded judgments. Validation is not the locked test. Results from changed data, code, dependencies, model digests, or hardware are a different run fingerprint.
+## Runs and artifacts
+
+MLflow is enabled by default at `sqlite:///mlflow.db`. Start its browser separately with:
+
+```powershell
+mlflow ui --backend-store-uri sqlite:///mlflow.db
+```
+
+An invocation creates one parent run and one child per candidate. It logs the complete plan, dataset checksum, Git state, dependency-lock hashes, model revisions or Docker digests, seed, hardware, scalar metrics, 95% confidence bounds, `plan.json`, `provenance.json`, `summary.json`, candidate status files, and one `samples.parquet` per successful candidate. Candidate exceptions fail that child and remain visible. `--no-mlflow` is only a debugging option.
+
+`smoke` uses tiny real paths and one repetition. It supports no quality or speed claim. `standard` runs all candidates on validation data with three measured repetitions and selects a Pareto set. `full` accepts a standard-run `summary.json` through `--shortlist`, runs finalists only, and provides stronger operational evidence. The final RAG locked test is run once only after blinded review.
+
+## Scientific rules
+
+Manifests freeze source, license, revision, split, preprocessing, sample IDs, and checksums. RAG splits are paper-isolated and evidence uses validated half-open offsets. Candidate and query order use seed 42. Standard/full retain per-sample observations and use 10,000 bootstrap resamples for 95% intervals. Holm correction is available only for declared formal comparison families.
+
+Hard correctness/resource gates run before Pareto selection. There is no min-max normalization and no weighted overall score. When quality intervals overlap, prefer lower p95 latency, then memory, then storage. Smoke winners, import success, and automated generation metrics are not promotion evidence.
+
+## Direct commands
+
+```powershell
+python experiments/benchmarks/extraction/image/run.py --profile standard
+python experiments/benchmarks/rag/chunking_embedding/run.py --profile standard
+python experiments/benchmarks/rag/retrieval/run.py --profile standard --embedding-summary EMBEDDING_SUMMARY_JSON
+python experiments/benchmarks/rag/generation/run.py --profile standard
+python experiments/benchmarks/rag/final/run.py --profile standard --retrieval-summary RETRIEVAL_SUMMARY_JSON --generation-summary GENERATION_SUMMARY_JSON
+docker compose --env-file experiments/benchmarks/vectordb/.env -f experiments/benchmarks/vectordb/compose.yml up -d
+python experiments/benchmarks/vectordb/run.py --profile standard
+```
+
+See each experiment's `doc.md` for its hypothesis, formulas, candidates, promotion rules, limitations, and interpretation example.

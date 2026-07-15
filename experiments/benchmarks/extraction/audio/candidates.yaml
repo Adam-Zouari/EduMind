@@ -1,0 +1,8 @@
+smoke: [faster-whisper-base-int8]
+standard:
+  - openai-whisper-small-en
+  - faster-whisper-tiny-int8
+  - faster-whisper-base-int8
+  - faster-whisper-small-int8
+  - faster-whisper-small-float16
+  - faster-whisper-turbo-int8

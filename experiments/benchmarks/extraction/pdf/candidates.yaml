@@ -1,0 +1,2 @@
+smoke: [pypdf]
+standard: [pypdf, pdfplumber, docling-pdf, hybrid-pdf]
