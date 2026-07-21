@@ -68,6 +68,7 @@ def export_review(
             identity_map[item_id] = {
                 "candidate": str(candidate["candidate"]),
                 "sample_id": sample_id,
+                "evidence_type": str(metadata.get("evidence_type", "text")),
             }
             rows.append(
                 {
@@ -76,6 +77,7 @@ def export_review(
                     "answer": metadata.get("generated_answer", ""),
                     "reference_answer": metadata.get("reference_answer", ""),
                     "evidence": metadata.get("frozen_context", ""),
+                    "evidence_type": metadata.get("evidence_type", "text"),
                     **{field: "" for field in RUBRIC_FIELDS},
                     "notes": "",
                 }
@@ -111,12 +113,17 @@ def import_review(review_path: Path, identity_path: Path | None = None) -> dict[
     if len({row.get("item_id") for row in rows}) != len(rows):
         raise ValueError("Human review contains duplicate item IDs")
     aggregates: dict[str, dict[str, list[float]]] = {}
+    strata: dict[str, dict[str, dict[str, list[float]]]] = {}
     for row in rows:
         item_id = str(row.get("item_id", ""))
         if item_id not in known:
             raise ValueError(f"Unknown blinded review item: {item_id}")
         candidate = str(known[item_id]["candidate"])
+        evidence_type = str(known[item_id].get("evidence_type", "text"))
         candidate_values = aggregates.setdefault(candidate, {field: [] for field in RUBRIC_FIELDS})
+        stratum_values = strata.setdefault(candidate, {}).setdefault(
+            evidence_type, {field: [] for field in RUBRIC_FIELDS}
+        )
         for field in RUBRIC_FIELDS:
             try:
                 value = int(row.get(field, ""))
@@ -128,12 +135,23 @@ def import_review(review_path: Path, identity_path: Path | None = None) -> dict[
             if value < 0 or value > maximum:
                 raise ValueError(f"Review field {field} must be in [0, {maximum}] for {item_id}")
             candidate_values[field].append(float(value))
+            stratum_values[field].append(float(value))
     summary = {
         "run_id": identity.get("run_id"),
         "judgment_count": len(rows),
         "candidates": {
             candidate: {field: sum(values) / len(values) for field, values in fields.items()}
             for candidate, fields in aggregates.items()
+        },
+        "strata": {
+            candidate: {
+                evidence_type: {
+                    field: sum(values) / len(values)
+                    for field, values in fields.items()
+                }
+                for evidence_type, fields in candidate_strata.items()
+            }
+            for candidate, candidate_strata in strata.items()
         },
         "complete": True,
     }
@@ -142,13 +160,25 @@ def import_review(review_path: Path, identity_path: Path | None = None) -> dict[
 
 
 def _stratified_ids(samples: list[dict[str, object]], count: int, seed: int) -> list[str]:
-    answerable = [str(item["sample_id"]) for item in samples if _sample_answerable(item)]
-    unanswerable = [str(item["sample_id"]) for item in samples if not _sample_answerable(item)]
-    random_state = random.Random(seed)
-    random_state.shuffle(answerable)
-    random_state.shuffle(unanswerable)
-    unanswerable_count = min(len(unanswerable), max(1, count // 3))
-    return answerable[: count - unanswerable_count] + unanswerable[:unanswerable_count]
+    groups: dict[tuple[str, bool], list[str]] = {}
+    for item in samples:
+        metadata = item.get("metadata", {})
+        evidence_type = (
+            str(metadata.get("evidence_type", "text"))
+            if isinstance(metadata, dict)
+            else "text"
+        )
+        groups.setdefault((evidence_type, _sample_answerable(item)), []).append(
+            str(item["sample_id"])
+        )
+    for index, values in enumerate(groups.values()):
+        random.Random(seed + index).shuffle(values)
+    selected: list[str] = []
+    while len(selected) < count and any(groups.values()):
+        for key in sorted(groups):
+            if groups[key] and len(selected) < count:
+                selected.append(groups[key].pop())
+    return selected
 
 
 def _sample_answerable(sample: dict[str, object]) -> bool:

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import os
 import argparse
 import json
 import random
 import subprocess
+from collections import Counter
 import sys
 from collections.abc import Mapping, Sequence
 from importlib.metadata import version
@@ -30,19 +30,26 @@ QASPER_DATASET = "allenai/qasper"
 QASPER_REVISION = "3065362e337ded696bbb0171b073c73e513c9410"
 HUGGINGFACE_MODELS = (
     "sentence-transformers/all-MiniLM-L6-v2",
-    "BAAI/bge-base-en-v1.5",
-    "nomic-ai/nomic-embed-text-v1.5",
+    "google/embeddinggemma-300m",
+    "infgrad/Jasper-Token-Compression-600M",
     "Qwen/Qwen3-Embedding-0.6B",
+    "nvidia/Nemotron-3-Embed-1B-BF16",
+    "Qwen/Qwen3-Embedding-4B",
+    "nvidia/Nemotron-3-Embed-8B-BF16",
     "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    "BAAI/bge-reranker-v2-m3",
     "Qwen/Qwen3-Reranker-0.6B",
-    "cross-encoder/nli-deberta-v3-base",
+    "Qwen/Qwen3-Reranker-4B",
+    "vectara/hallucination_evaluation_model",
 )
+PINNED_HUGGINGFACE_REVISIONS = {
+    "sentence-transformers/all-MiniLM-L6-v2": "c9745ed1d9f207416be6d2e6f8de32d1f16199bf",
+}
 OLLAMA_MODELS = (
     "qwen3:1.7b",
     "qwen3.5:4b-q4_K_M",
     "qwen3.5:9b-q4_K_M",
-    "gemma3:4b",
-    "gemma3:12b",
+    "gemma4:12b-it-q4_K_M",
     "ministral-3:8b-instruct-2512-q4_K_M",
     "gpt-oss:20b",
 )
@@ -52,6 +59,15 @@ FASTER_WHISPER_MODELS = {
     "faster-whisper-small-int8": "Systran/faster-whisper-small.en",
     "faster-whisper-small-float16": "Systran/faster-whisper-small.en",
     "faster-whisper-turbo-int8": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+}
+
+EXTRACTION_HUGGINGFACE_MODELS = {
+    "distil-whisper-large-v3.5": "distil-whisper/distil-large-v3.5",
+    "parakeet-tdt-0.6b-v3": "nvidia/parakeet-tdt-0.6b-v3",
+    "canary-qwen-2.5b": "nvidia/canary-qwen-2.5b",
+    "glm-ocr": "zai-org/GLM-OCR",
+    "mineru-2.5-pro": "opendatalab/MinerU2.5-Pro-2605-1.2B",
+    "olmocr-2-7b": "allenai/olmOCR-2-7B-1025",
 }
 
 VECTOR_IMAGES = {
@@ -65,60 +81,19 @@ VECTOR_IMAGES = {
 
 def prepare_app_models(root: Path) -> list[Path]:
     """Download only the provisional application's MiniLM, base ASR, and Qwen model."""
-    try:
-        from huggingface_hub import HfApi, snapshot_download
-    except ModuleNotFoundError as exc:
-        raise RuntimeError("huggingface-hub is required for model preparation") from exc
-
-    model_directory = root / "data/benchmarks/downloads/models"
-    model_directory.mkdir(parents=True, exist_ok=True)
-    _prepare_tiktoken()
-    minilm = "sentence-transformers/all-MiniLM-L6-v2"
-    minilm_revision = "c9745ed1d9f207416be6d2e6f8de32d1f16199bf"
-    snapshot_download(repo_id=minilm, revision=minilm_revision)
     huggingface_lock = root / "data/benchmarks/models/huggingface.json"
-    _merge_model_lock(
+    prepare_huggingface_models(
         huggingface_lock,
-        "huggingface",
-        {minilm: minilm_revision},
+        ["sentence-transformers/all-MiniLM-L6-v2"],
     )
-
-    repository = FASTER_WHISPER_MODELS["faster-whisper-base-int8"]
-    revision = str(HfApi().model_info(repository).sha)
-    local_directory = model_directory / repository.replace("/", "--")
-    snapshot_download(repo_id=repository, revision=revision, local_dir=local_directory)
     extraction_lock = root / "data/benchmarks/models/extraction.json"
-    _merge_model_lock(
+    prepare_extraction_models(
         extraction_lock,
-        "explicit-local-preparation",
-        {
-            "faster-whisper-base-int8": {
-                "provider": "huggingface",
-                "model": repository,
-                "revision": revision,
-                "model_path": str(local_directory),
-            }
-        },
+        root / "data/benchmarks/downloads/models",
+        ["faster-whisper-base-int8"],
     )
-
-    subprocess.run(["ollama", "pull", "qwen3:1.7b"], check=True)
-    response = requests.get("http://127.0.0.1:11434/api/tags", timeout=30)
-    response.raise_for_status()
-    payload = response.json()
-    rows = payload.get("models", []) if isinstance(payload, Mapping) else []
-    digests = {
-        str(row.get("name")): str(row.get("digest"))
-        for row in rows
-        if isinstance(row, Mapping)
-    }
-    if not digests.get("qwen3:1.7b"):
-        raise RuntimeError("Ollama did not report qwen3:1.7b after pulling it")
     ollama_lock = root / "data/benchmarks/models/ollama.json"
-    _merge_model_lock(
-        ollama_lock,
-        "ollama-local",
-        {"qwen3:1.7b": digests["qwen3:1.7b"]},
-    )
+    prepare_ollama_models(ollama_lock, ["qwen3:1.7b"])
     return [huggingface_lock, extraction_lock, ollama_lock]
 
 
@@ -142,7 +117,7 @@ def prepare_qasper(output_directory: Path, *, seed: int = 42) -> list[Path]:
     try:
         from datasets import load_dataset
     except ModuleNotFoundError as exc:
-        raise RuntimeError("datasets is required; install .[benchmarks]") from exc
+        raise RuntimeError("datasets is required; install requirements/benchmarks.lock") from exc
     dataset = load_dataset(QASPER_DATASET, "qasper", revision=QASPER_REVISION)
     plans = (
         ("dev", "train", 100),
@@ -179,6 +154,76 @@ def prepare_qasper(output_directory: Path, *, seed: int = 42) -> list[Path]:
         outputs.append(output)
     assert_no_split_leakage([load_manifest(path) for path in outputs])
     return outputs
+
+
+def prepare_rag_selection_manifest(
+    qasper_path: Path, structured_path: Path, output_path: Path
+) -> Path:
+    """Combine one QASPER split with verified table/formula/mixed RAG samples."""
+    qasper = load_manifest(qasper_path)
+    structured = load_manifest(structured_path)
+    if qasper.split != structured.split:
+        raise ValueError(
+            f"RAG source splits differ: {qasper.split!r} versus {structured.split!r}"
+        )
+    structured_questions = [
+        sample for sample in structured.samples if sample.get("kind") == "question"
+    ]
+    required_types = {"table", "formula", "mixed"}
+    invalid_types = sorted(
+        {
+            str(sample.get("evidence_type", ""))
+            for sample in structured_questions
+            if str(sample.get("evidence_type", "")) not in required_types | {"text"}
+        }
+    )
+    if invalid_types:
+        raise ValueError(
+            "Structured RAG questions use unsupported evidence_type values: "
+            + ", ".join(invalid_types)
+        )
+    evidence_counts = Counter(
+        str(sample.get("evidence_type"))
+        for sample in structured_questions
+        if sample.get("answerable") and sample.get("evidence")
+    )
+    insufficient = {
+        evidence_type: evidence_counts[evidence_type]
+        for evidence_type in required_types
+        if evidence_counts[evidence_type] < 10
+    }
+    if insufficient:
+        raise ValueError(
+            "Structured RAG manifests require at least 10 answerable questions with "
+            "verified spans for each structural evidence type; received "
+            + ", ".join(f"{name}={count}" for name, count in sorted(insufficient.items()))
+        )
+    combined = [*qasper.samples, *structured.samples]
+    identifiers = [str(sample.get("id", "")) for sample in combined]
+    duplicates = sorted(identifier for identifier, count in Counter(identifiers).items() if count > 1)
+    if duplicates:
+        raise ValueError(
+            "RAG manifests contain duplicate IDs; namespace the structured corpus: "
+            + ", ".join(duplicates[:10])
+        )
+    payload = {
+        "name": f"edumind-rag-selection-{qasper.split}",
+        "version": "2.0.0",
+        "task": "rag",
+        "split": qasper.split,
+        "source": f"{qasper.source}+{structured.source}",
+        "license": f"{qasper.license};{structured.license}",
+        "revision": f"{qasper.revision}+{structured.revision}",
+        "checksum": manifest_content_checksum(combined),
+        "preprocessing_version": "structured-rag-markdown-v1",
+        "split_seed": 42,
+        "samples": combined,
+    }
+    atomic_write_json(output_path, payload)
+    # Re-read to enforce the normal checksum/evidence-offset contract.
+    resolved = load_manifest(output_path)
+    assert_no_split_leakage([resolved])
+    return output_path
 
 
 def prepare_public_assets(plan_path: Path, output_directory: Path) -> list[Path]:
@@ -223,89 +268,166 @@ def prepare_public_assets(plan_path: Path, output_directory: Path) -> list[Path]
     return downloaded
 
 
-def prepare_huggingface_models(output_path: Path) -> Path:
+def prepare_huggingface_models(
+    output_path: Path, selected: Sequence[str] | None = None
+) -> Path:
     """Resolve immutable revisions, download sequentially, and write a model lock."""
     try:
         from huggingface_hub import HfApi, snapshot_download
     except ModuleNotFoundError as exc:
-        raise RuntimeError("huggingface-hub is required; install .[benchmarks]") from exc
+        raise RuntimeError(
+            "huggingface-hub is required; install requirements/benchmarks.lock"
+        ) from exc
     api = HfApi()
-    revisions: dict[str, str] = {}
-    for model in HUGGINGFACE_MODELS:
-        revision = str(api.model_info(model).sha)
+    models = _selected(HUGGINGFACE_MODELS, selected, "Hugging Face model")
+    for model in models:
+        revision = PINNED_HUGGINGFACE_REVISIONS.get(model) or str(api.model_info(model).sha)
         snapshot_download(repo_id=model, revision=revision)
-        revisions[model] = revision
-    atomic_write_json(
-        output_path,
-        {"schema_version": 1, "source": "huggingface", "models": revisions},
-    )
+        # Persist each completed candidate. An interrupted later download does not
+        # invalidate already prepared models, and snapshot_download resumes partials.
+        _merge_model_lock(output_path, "huggingface", {model: revision})
     return output_path
 
 
-def prepare_extraction_models(output_path: Path, cache_directory: Path) -> Path:
-    """Download every optional extraction weight in one explicit, fail-atomic command."""
+def prepare_extraction_models(
+    output_path: Path,
+    cache_directory: Path,
+    selected: Sequence[str] | None = None,
+) -> Path:
+    """Prepare selected extraction candidates and persist every completed item."""
     try:
-        import whisper
-        from doctr.models import ocr_predictor
         from huggingface_hub import HfApi, snapshot_download
-        from paddleocr import PaddleOCR
     except ModuleNotFoundError as exc:
-        raise RuntimeError(
-            "Extraction, ASR, and benchmark extras are required before model preparation"
-        ) from exc
+        raise RuntimeError("huggingface-hub is required for model preparation") from exc
 
     cache_directory = cache_directory.expanduser().resolve()
     cache_directory.mkdir(parents=True, exist_ok=True)
+    available = (
+        *FASTER_WHISPER_MODELS,
+        *EXTRACTION_HUGGINGFACE_MODELS,
+        "openai-whisper-small-en",
+        "paddleocr-v5-mobile",
+        "paddleocr-v5-server",
+        "pp-structure-v3",
+        "paddleocr-vl-1.6",
+        "docling",
+    )
+    chosen = set(_selected(available, selected, "extraction candidate"))
     api = HfApi()
-    models: dict[str, dict[str, str]] = {}
     downloaded_repositories: dict[str, tuple[str, Path]] = {}
+    extraction_snapshots: dict[str, tuple[str, Path]] = {}
+
     for candidate, repository in FASTER_WHISPER_MODELS.items():
+        if candidate not in chosen:
+            continue
         if repository not in downloaded_repositories:
             revision = str(api.model_info(repository).sha)
             local_directory = cache_directory / repository.replace("/", "--")
-            snapshot_download(
-                repo_id=repository,
-                revision=revision,
-                local_dir=local_directory,
-            )
+            snapshot_download(repo_id=repository, revision=revision, local_dir=local_directory)
             downloaded_repositories[repository] = (revision, local_directory)
         revision, local_directory = downloaded_repositories[repository]
-        models[candidate] = {
-            "provider": "huggingface",
-            "model": repository,
-            "revision": revision,
-            "model_path": str(local_directory),
-        }
+        _merge_model_lock(
+            output_path,
+            "explicit-local-preparation",
+            {
+                candidate: {
+                    "provider": "huggingface",
+                    "model": repository,
+                    "revision": revision,
+                    "model_path": str(local_directory),
+                }
+            },
+        )
 
-    whisper_directory = cache_directory / "openai-whisper"
-    whisper_directory.mkdir(parents=True, exist_ok=True)
-    whisper_model = whisper.load_model(
-        "small.en", download_root=str(whisper_directory), device="cpu"
-    )
-    del whisper_model
-    whisper_path = whisper_directory / "small.en.pt"
-    if not whisper_path.is_file():
-        raise RuntimeError("OpenAI Whisper did not create the expected small.en weight file")
-    models["openai-whisper-small-en"] = {
-        "provider": "openai-whisper",
-        "model": "small.en",
-        "revision": sha256_file(whisper_path),
-        "model_path": str(whisper_path),
-    }
+    for candidate, repository in EXTRACTION_HUGGINGFACE_MODELS.items():
+        if candidate not in chosen:
+            continue
+        revision = str(api.model_info(repository).sha)
+        local_directory = cache_directory / repository.replace("/", "--")
+        snapshot_download(repo_id=repository, revision=revision, local_dir=local_directory)
+        extraction_snapshots[candidate] = (revision, local_directory)
+        _merge_model_lock(
+            output_path,
+            "explicit-local-preparation",
+            {
+                candidate: {
+                    "provider": "huggingface",
+                    "model": repository,
+                    "revision": revision,
+                    "model_path": str(local_directory),
+                }
+            },
+        )
+
+    if "mineru-2.5-pro" in chosen:
+        _, model_directory = extraction_snapshots["mineru-2.5-pro"]
+        mineru_config = cache_directory / "mineru-2.5-pro.json"
+        atomic_write_json(
+            mineru_config,
+            {
+                "latex-delimiter-config": {
+                    "display": {"left": "$$", "right": "$$"},
+                    "inline": {"left": "$", "right": "$"},
+                },
+                "llm-aided-config": {"title_aided": {"enable": False}},
+                "models-dir": {"pipeline": "", "vlm": str(model_directory)},
+                "model-source": "local",
+                "config_version": "1.3.2",
+            },
+        )
+        revision, _ = extraction_snapshots["mineru-2.5-pro"]
+        _merge_model_lock(
+            output_path,
+            "explicit-local-preparation",
+            {
+                "mineru-2.5-pro": {
+                    "provider": "huggingface",
+                    "model": EXTRACTION_HUGGINGFACE_MODELS["mineru-2.5-pro"],
+                    "revision": revision,
+                    "model_path": str(model_directory),
+                    "mineru_config_path": str(mineru_config),
+                }
+            },
+        )
+
+    if "openai-whisper-small-en" in chosen:
+        try:
+            import whisper
+        except ModuleNotFoundError as exc:
+            raise RuntimeError("openai-whisper is required for this candidate") from exc
+        whisper_directory = cache_directory / "openai-whisper"
+        whisper_directory.mkdir(parents=True, exist_ok=True)
+        whisper_model = whisper.load_model(
+            "small.en", download_root=str(whisper_directory), device="cpu"
+        )
+        del whisper_model
+        whisper_path = whisper_directory / "small.en.pt"
+        if not whisper_path.is_file():
+            raise RuntimeError("OpenAI Whisper did not create the expected small.en weight file")
+        _merge_model_lock(
+            output_path,
+            "explicit-local-preparation",
+            {
+                "openai-whisper-small-en": {
+                    "provider": "openai-whisper",
+                    "model": "small.en",
+                    "revision": sha256_file(whisper_path),
+                    "model_path": str(whisper_path),
+                }
+            },
+        )
 
     paddle_cache = Path.home() / ".paddlex" / "official_models"
     for candidate, detector, recognizer in (
-        (
-            "paddleocr-v5-mobile",
-            "PP-OCRv5_mobile_det",
-            "en_PP-OCRv5_mobile_rec",
-        ),
-        (
-            "paddleocr-v5-server",
-            "PP-OCRv5_server_det",
-            "PP-OCRv5_server_rec",
-        ),
+        ("paddleocr-v5-mobile", "PP-OCRv5_mobile_det", "en_PP-OCRv5_mobile_rec"),
+        ("paddleocr-v5-server", "PP-OCRv5_server_det", "PP-OCRv5_server_rec"),
     ):
+        if candidate not in chosen:
+            continue
+        try:
+            from paddleocr import PaddleOCR
+        except ModuleNotFoundError as exc:
+            raise RuntimeError("PaddleOCR is required for this candidate") from exc
         PaddleOCR(
             lang="en",
             text_detection_model_name=detector,
@@ -314,41 +436,94 @@ def prepare_extraction_models(output_path: Path, cache_directory: Path) -> Path:
             use_doc_unwarping=False,
             use_textline_orientation=False,
         )
-        detection_path = paddle_cache / detector
-        recognition_path = paddle_cache / recognizer
+        detection_path, recognition_path = paddle_cache / detector, paddle_cache / recognizer
         if not detection_path.is_dir() or not recognition_path.is_dir():
             raise RuntimeError(f"PaddleOCR did not prepare local model directories for {candidate}")
-        models[candidate] = {
-            "provider": "paddleocr",
-            "model": f"{detector}+{recognizer}",
-            "revision": version("paddleocr"),
-            "text_detection_model_dir": str(detection_path),
-            "text_recognition_model_dir": str(recognition_path),
-        }
+        _merge_model_lock(
+            output_path,
+            "explicit-local-preparation",
+            {
+                candidate: {
+                    "provider": "paddleocr",
+                    "model": f"{detector}+{recognizer}",
+                    "revision": version("paddleocr"),
+                    "text_detection_model_dir": str(detection_path),
+                    "text_recognition_model_dir": str(recognition_path),
+                }
+            },
+        )
 
-    doctr_cache = cache_directory / "doctr"
-    os.environ["DOCTR_CACHE_DIR"] = str(doctr_cache)
-    # Instantiation is intentionally confined to this command so runtime cannot download weights.
-    ocr_predictor(det_arch="fast_base", reco_arch="parseq", pretrained=True)
-    if not doctr_cache.is_dir() or not any(doctr_cache.rglob("*")):
-        raise RuntimeError("docTR did not populate its configured local model cache")
-    models["doctr-fast-parseq"] = {
-        "provider": "doctr",
-        "model": "fast_base+parseq",
-        "revision": version("python-doctr"),
-        "doctr_cache_dir": str(doctr_cache),
-    }
-    atomic_write_json(
-        output_path,
-        {"schema_version": 1, "source": "explicit-local-preparation", "models": models},
-    )
+    if {"pp-structure-v3", "paddleocr-vl-1.6"} & chosen:
+        if "pp-structure-v3" in chosen:
+            try:
+                from paddleocr import PPStructureV3
+            except (ImportError, ModuleNotFoundError) as exc:
+                raise RuntimeError("PP-StructureV3 is unavailable in PaddleOCR") from exc
+            PPStructureV3(device="cpu")
+        if "paddleocr-vl-1.6" in chosen:
+            try:
+                from paddlex import create_pipeline
+            except (ImportError, ModuleNotFoundError) as exc:
+                raise RuntimeError("PaddleX OCR extras are required for PaddleOCR-VL") from exc
+            create_pipeline(pipeline="PaddleOCR-VL-1.6", device="cpu")
+        paddle_root = Path.home() / ".paddlex"
+        if not paddle_root.is_dir() or not any(paddle_root.rglob("*")):
+            raise RuntimeError("Paddle document pipelines did not populate the local cache")
+        if "pp-structure-v3" in chosen:
+            _merge_model_lock(
+                output_path,
+                "explicit-local-preparation",
+                {
+                    "pp-structure-v3": {
+                        "provider": "paddlex",
+                        "model": "PP-StructureV3",
+                        "revision": version("paddleocr"),
+                        "paddle_cache_dir": str(paddle_root),
+                    }
+                },
+            )
+        if "paddleocr-vl-1.6" in chosen:
+            _merge_model_lock(
+                output_path,
+                "explicit-local-preparation",
+                {
+                    "paddleocr-vl-1.6": {
+                        "provider": "paddlex",
+                        "model": "PaddleOCR-VL-1.6",
+                        "revision": f"paddleocr-{version('paddleocr')}+paddlex-{version('paddlex')}",
+                        "paddle_cache_dir": str(paddle_root),
+                    }
+                },
+            )
+
+    if "docling" in chosen:
+        docling_directory = cache_directory / "docling"
+        subprocess.run(
+            ["docling-tools", "models", "download", "--output-dir", str(docling_directory)],
+            check=True,
+        )
+        if not docling_directory.is_dir() or not any(docling_directory.rglob("*")):
+            raise RuntimeError("Docling model preparation produced an empty artifact directory")
+        _merge_model_lock(
+            output_path,
+            "explicit-local-preparation",
+            {
+                "docling": {
+                    "provider": "docling",
+                    "model": "default-local-pipeline",
+                    "revision": version("docling"),
+                    "docling_artifacts_dir": str(docling_directory),
+                }
+            },
+        )
     return output_path
 
 
-def prepare_ollama_models(output_path: Path) -> Path:
+def prepare_ollama_models(output_path: Path, selected: Sequence[str] | None = None) -> Path:
     """Pull the documented Ollama candidates sequentially and lock installed digests."""
     _prepare_tiktoken()
-    for model in OLLAMA_MODELS:
+    models = _selected(OLLAMA_MODELS, selected, "Ollama model")
+    for model in models:
         subprocess.run(["ollama", "pull", model], check=True)
     response = requests.get("http://127.0.0.1:11434/api/tags", timeout=30)
     response.raise_for_status()
@@ -359,18 +534,26 @@ def prepare_ollama_models(output_path: Path) -> Path:
         for row in rows
         if isinstance(row, Mapping) and row.get("name") and row.get("digest")
     }
-    missing = [model for model in OLLAMA_MODELS if model not in installed]
+    missing = [model for model in models if model not in installed]
     if missing:
         raise RuntimeError(f"Ollama did not report pulled models: {', '.join(missing)}")
-    atomic_write_json(
+    _merge_model_lock(
         output_path,
-        {
-            "schema_version": 1,
-            "source": "ollama-local",
-            "models": {model: installed[model] for model in OLLAMA_MODELS},
-        },
+        "ollama-local",
+        {model: installed[model] for model in models},
     )
     return output_path
+
+
+def _selected(
+    available: Sequence[str], selected: Sequence[str] | None, label: str
+) -> tuple[str, ...]:
+    if not selected:
+        return tuple(available)
+    unknown = sorted(set(selected) - set(available))
+    if unknown:
+        raise ValueError(f"Unknown {label}(s): {', '.join(unknown)}")
+    return tuple(dict.fromkeys(selected))
 
 
 def _prepare_tiktoken() -> None:
@@ -489,29 +672,59 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Explicit EduMind benchmark preparation")
     parser.add_argument(
         "target",
-        choices=("app-models", "qasper", "assets", "huggingface-models", "ollama-models", "extraction-models", "vectordb", "smoke-fixtures"),
+        choices=("app-models", "qasper", "rag-selection", "assets", "huggingface-models", "ollama-models", "extraction-models", "vectordb", "smoke-fixtures"),
     )
     parser.add_argument("--plan", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--qasper-manifest", type=Path)
+    parser.add_argument("--structured-manifest", type=Path)
+    parser.add_argument(
+        "--candidate",
+        action="append",
+        help="Prepare only this candidate; repeat the option for several candidates",
+    )
     arguments = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     if arguments.target == "app-models":
         outputs = prepare_app_models(root)
     elif arguments.target == "qasper":
         outputs = prepare_qasper(arguments.output or root / "data/benchmarks/rag")
+    elif arguments.target == "rag-selection":
+        if not arguments.qasper_manifest or not arguments.structured_manifest or not arguments.output:
+            parser.error(
+                "rag-selection requires --qasper-manifest, --structured-manifest, and --output"
+            )
+        outputs = [
+            prepare_rag_selection_manifest(
+                arguments.qasper_manifest,
+                arguments.structured_manifest,
+                arguments.output,
+            )
+        ]
     elif arguments.target == "assets":
         if arguments.plan is None:
             parser.error("assets requires --plan")
         outputs = prepare_public_assets(arguments.plan, arguments.output or root / "data/benchmarks/raw")
     elif arguments.target == "huggingface-models":
-        outputs = [prepare_huggingface_models(arguments.output or root / "data/benchmarks/models/huggingface.json")]
+        outputs = [
+            prepare_huggingface_models(
+                arguments.output or root / "data/benchmarks/models/huggingface.json",
+                arguments.candidate,
+            )
+        ]
     elif arguments.target == "ollama-models":
-        outputs = [prepare_ollama_models(arguments.output or root / "data/benchmarks/models/ollama.json")]
+        outputs = [
+            prepare_ollama_models(
+                arguments.output or root / "data/benchmarks/models/ollama.json",
+                arguments.candidate,
+            )
+        ]
     elif arguments.target == "extraction-models":
         outputs = [
             prepare_extraction_models(
                 arguments.output or root / "data/benchmarks/models/extraction.json",
                 root / "data/benchmarks/downloads/models",
+                arguments.candidate,
             )
         ]
     elif arguments.target == "vectordb":
@@ -593,7 +806,14 @@ def _qasper_samples(papers: Sequence[Mapping[str, Any]]) -> list[dict[str, objec
     for paper in papers:
         paper_id = str(paper["id"])
         text = _paper_text(paper)
-        samples.append({"id": paper_id, "kind": "document", "text": text})
+        samples.append(
+            {
+                "id": paper_id,
+                "kind": "document",
+                "text": text,
+                "representation": "markdown-sections",
+            }
+        )
         for qa in _records(paper.get("qas", [])):
             answers, evidence, answer_type, answerable = _answers_and_evidence(qa, text, paper_id)
             samples.append(
@@ -606,6 +826,7 @@ def _qasper_samples(papers: Sequence[Mapping[str, Any]]) -> list[dict[str, objec
                     "accepted_answers": answers,
                     "answer_type": answer_type,
                     "answerable": answerable,
+                    "evidence_type": "text",
                     "evidence": evidence,
                 }
             )
@@ -614,9 +835,13 @@ def _qasper_samples(papers: Sequence[Mapping[str, Any]]) -> list[dict[str, objec
 
 def _paper_text(paper: Mapping[str, Any]) -> str:
     sections = _records(paper.get("full_text", []))
-    blocks = [str(paper.get("title", "")), str(paper.get("abstract", ""))]
+    title = str(paper.get("title", "")).strip()
+    abstract = str(paper.get("abstract", "")).strip()
+    blocks = [f"# {title}" if title else "", "## Abstract", abstract]
     for section in sections:
-        blocks.append(str(section.get("section_name", "")))
+        section_name = str(section.get("section_name", "")).strip()
+        if section_name:
+            blocks.append(f"## {section_name}")
         paragraphs = section.get("paragraphs", [])
         if isinstance(paragraphs, Sequence) and not isinstance(paragraphs, (str, bytes)):
             blocks.extend(str(paragraph) for paragraph in paragraphs)

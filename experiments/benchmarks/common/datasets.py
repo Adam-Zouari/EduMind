@@ -134,3 +134,37 @@ def assert_no_split_leakage(manifests: list[DatasetManifest]) -> None:
             seen_ids[sample_id] = f"{manifest.name}/{manifest.split}"
             seen_hashes[digest] = f"{manifest.name}/{manifest.split}"
             seen_documents.append((f"{manifest.name}/{manifest.split}", shingles))
+
+
+def seal_manifest(path: str | Path) -> DatasetManifest:
+    """Write the samples checksum, then enforce the complete manifest contract."""
+    from edumind.common.artifacts import atomic_write_json
+
+    manifest_path = Path(path)
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    samples = payload.get("samples")
+    if not isinstance(samples, list) or not samples:
+        raise DatasetValidationError("Manifest must contain a non-empty samples list")
+    payload["checksum"] = manifest_content_checksum(samples)
+    atomic_write_json(manifest_path, payload)
+    return load_manifest(manifest_path)
+
+
+def main() -> int:
+    """Small direct utility for sealing and validating hand-authored manifests."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Seal or validate benchmark manifests")
+    parser.add_argument("action", choices=("seal", "validate"))
+    parser.add_argument("manifests", nargs="+", type=Path)
+    arguments = parser.parse_args()
+    if arguments.action == "seal":
+        for path in arguments.manifests:
+            seal_manifest(path)
+    else:
+        assert_no_split_leakage([load_manifest(path) for path in arguments.manifests])
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
