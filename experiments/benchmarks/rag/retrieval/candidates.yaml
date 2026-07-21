@@ -1,2 +1,9 @@
 smoke: [dense, bm25, rrf]
-standard: [dense, bm25, rrf, rrf-minilm-reranker, rrf-qwen3-reranker]
+standard:
+  - dense
+  - bm25
+  - rrf
+  - rrf-minilm-reranker
+  - rrf-bge-v2-m3-reranker
+  - rrf-qwen3-0.6b-reranker
+  - rrf-qwen3-4b-reranker

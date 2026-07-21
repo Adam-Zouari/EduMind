@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 import time
+import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
@@ -80,13 +81,34 @@ def evaluate(
         latency = float(np.median(item_latencies))
         latencies.extend(item_latencies)
         metrics, retrieved_tokens = retrieval_metrics(question, selected, index.chunks, index.tokenizer)
+        evidence_type = str(question.get("evidence_type", "text"))
+        metrics.update(
+            {
+                f"stratum.{evidence_type}.{name}": value
+                for name, value in metrics.items()
+                if name
+                in {
+                    "ndcg_at_3",
+                    "ndcg_at_5",
+                    "context_recall_at_3",
+                    "context_recall_at_5",
+                    "context_precision_at_3",
+                    "context_precision_at_5",
+                    "context_recall_at_2048_tokens",
+                }
+            }
+        )
         metrics["determinism"] = float(all(candidate == order for candidate in orders))
         samples.append(
             SampleResult(
                 str(question["id"]),
                 metrics,
                 latency,
-                {"retrieved_tokens": retrieved_tokens, "measured_repetitions": repetitions},
+                {
+                    "retrieved_tokens": retrieved_tokens,
+                    "measured_repetitions": repetitions,
+                    "evidence_type": evidence_type,
+                },
             )
         )
     token_counts = np.asarray([chunk.tokens for chunk in index.chunks], dtype=float)
@@ -103,8 +125,9 @@ def evaluate(
 
 def build_index(manifest, chunker_name, embedding_name, revisions, with_bm25=True) -> ExactIndex:
     revision = revisions[embedding_name]
+    device = os.environ.get("EDUMIND_BENCHMARK_EMBEDDING_DEVICE", "cpu").strip() or "cpu"
     spec = embedding_spec(
-        embedding_name, revision=revision, document_device="cpu", query_device="cpu"
+        embedding_name, revision=revision, document_device=device, query_device=device
     )
     embedder = Embedder(spec=spec)
     tokenizer = HuggingFaceOffsetTokenizer(spec.tokenizer, revision=revision)
@@ -203,7 +226,9 @@ def _grade(chunk: Chunk, evidence: Sequence[Mapping[str, object]]) -> float:
 def reranker_for(method: str, revisions: Mapping[str, str]) -> Reranker | None:
     model = {
         "rrf-minilm-reranker": "cross-encoder/ms-marco-MiniLM-L-6-v2",
-        "rrf-qwen3-reranker": "Qwen/Qwen3-Reranker-0.6B",
+        "rrf-bge-v2-m3-reranker": "BAAI/bge-reranker-v2-m3",
+        "rrf-qwen3-0.6b-reranker": "Qwen/Qwen3-Reranker-0.6B",
+        "rrf-qwen3-4b-reranker": "Qwen/Qwen3-Reranker-4B",
     }.get(method)
     return Reranker(model, revisions[model]) if model else None
 

@@ -17,7 +17,7 @@ arguments = parser("Benchmark Ollama generation on frozen oracle contexts").pars
 manifest_path = arguments.manifest or PROJECT_ROOT / (
     "data/benchmarks/rag/smoke.json"
     if arguments.profile == "smoke"
-    else f"data/benchmarks/rag/qasper-{'dev' if arguments.profile == 'standard' else 'validation'}.json"
+    else f"data/benchmarks/rag/rag-selection-{'dev' if arguments.profile == 'standard' else 'validation'}.json"
 )
 manifest = load_manifest(manifest_path)
 candidates = resolved_candidates(directory / "candidates.yaml", arguments.profile, arguments.shortlist)
@@ -42,7 +42,7 @@ result = run_benchmark(
     directions={
         "citation_f1": "max",
         "answerability_balanced_accuracy": "max",
-        "nli_faithfulness": "max",
+        "hhem_faithfulness": "max",
         "operational.p95_latency_seconds": "min",
         "operational.combined_process_ollama_memory_gb": "min",
     },

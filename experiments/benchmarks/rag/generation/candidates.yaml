@@ -5,8 +5,7 @@ standard:
   - qwen3.5:4b-thinking
   - qwen3.5:9b-direct
   - qwen3.5:9b-thinking
-  - gemma3:4b
-  - gemma3:12b
+  - gemma4:12b-it-q4_K_M
   - ministral-3:8b-instruct-2512-q4_K_M
   - gpt-oss:20b-low
   - gpt-oss:20b-medium

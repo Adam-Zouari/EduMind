@@ -183,6 +183,214 @@ class SemanticChunkingStrategy:
         ]
 
 
+@dataclass(frozen=True)
+class SectionAwareChunkingStrategy:
+    """Keep Markdown sections intact where possible, then apply a token ceiling."""
+
+    tokenizer: OffsetTokenizer
+    size: int = 512
+    overlap: int = 64
+    name: str = "section-aware-512-64"
+
+    @property
+    def fingerprint(self) -> str:
+        return stable_hash(
+            {
+                "name": self.name,
+                "tokenizer": self.tokenizer.name,
+                "size": self.size,
+                "overlap": self.overlap,
+                "heading_pattern": "markdown-v1",
+            }
+        )
+
+    def split(self, text: str) -> list[tuple[int, int, int]]:
+        if not text.strip():
+            return []
+        headings = [match.start() for match in re.finditer(r"(?m)^#{1,6}[ \t]+\S", text)]
+        boundaries = sorted({0, *headings, len(text)})
+        if len(boundaries) == 2:
+            return _token_spans(text, 0, len(text), self.tokenizer, self.size, self.overlap)
+        chunks: list[tuple[int, int, int]] = []
+        for start, end in zip(boundaries, boundaries[1:]):
+            if text[start:end].strip():
+                chunks.extend(
+                    _token_spans(text, start, end, self.tokenizer, self.size, self.overlap)
+                )
+        return chunks
+
+
+@dataclass(frozen=True)
+class StructureAwareChunkingStrategy:
+    """Respect Markdown sections, tables, and display formulas under a token ceiling."""
+
+    tokenizer: OffsetTokenizer
+    size: int = 512
+    overlap: int = 64
+    name: str = "structure-aware-512-64"
+
+    @property
+    def fingerprint(self) -> str:
+        return stable_hash(
+            {
+                "name": self.name,
+                "tokenizer": self.tokenizer.name,
+                "size": self.size,
+                "overlap": self.overlap,
+                "structure_parser": "markdown-table-formula-v1",
+            }
+        )
+
+    def split(self, text: str) -> list[tuple[int, int, int]]:
+        if not text.strip():
+            return []
+        protected = _structured_spans(text)
+        headings = [match.start() for match in re.finditer(r"(?m)^#{1,6}[ \t]+\S", text)]
+        boundaries = sorted(
+            {
+                0,
+                len(text),
+                *headings,
+                *(value for span in protected for value in span),
+            }
+        )
+        units = [
+            (start, end)
+            for start, end in zip(boundaries, boundaries[1:])
+            if text[start:end].strip()
+        ]
+        chunks: list[tuple[int, int, int]] = []
+        pending_start: int | None = None
+        pending_end: int | None = None
+        for start, end in units:
+            unit_tokens = self.tokenizer.count(text[start:end])
+            if unit_tokens > self.size:
+                if pending_start is not None and pending_end is not None:
+                    chunks.append(
+                        (
+                            pending_start,
+                            pending_end,
+                            self.tokenizer.count(text[pending_start:pending_end]),
+                        )
+                    )
+                    pending_start = pending_end = None
+                chunks.extend(
+                    _split_structured_unit(
+                        text, start, end, self.tokenizer, self.size, self.overlap
+                    )
+                )
+                continue
+            proposed_start = start if pending_start is None else pending_start
+            proposed_tokens = self.tokenizer.count(text[proposed_start:end])
+            if pending_start is not None and proposed_tokens > self.size:
+                assert pending_end is not None
+                chunks.append(
+                    (
+                        pending_start,
+                        pending_end,
+                        self.tokenizer.count(text[pending_start:pending_end]),
+                    )
+                )
+                pending_start = start
+            elif pending_start is None:
+                pending_start = start
+            pending_end = end
+        if pending_start is not None and pending_end is not None:
+            chunks.append(
+                (
+                    pending_start,
+                    pending_end,
+                    self.tokenizer.count(text[pending_start:pending_end]),
+                )
+            )
+        return chunks
+
+
+def _token_spans(
+    text: str,
+    start: int,
+    end: int,
+    tokenizer: OffsetTokenizer,
+    size: int,
+    overlap: int,
+) -> list[tuple[int, int, int]]:
+    local = tokenizer.spans(text[start:end])
+    if not local:
+        return []
+    step = size - overlap
+    result: list[tuple[int, int, int]] = []
+    for token_start in range(0, len(local), step):
+        token_end = min(token_start + size, len(local))
+        result.append(
+            (
+                start + local[token_start][0],
+                start + local[token_end - 1][1],
+                token_end - token_start,
+            )
+        )
+        if token_end == len(local):
+            break
+    return result
+
+
+def _structured_spans(text: str) -> list[tuple[int, int]]:
+    formulas = [
+        match.span()
+        for match in re.finditer(r"(?s)\$\$.*?\$\$|\\\[.*?\\\]", text)
+    ]
+    tables = []
+    for match in re.finditer(r"(?m)(?:^[^\n]*\|[^\n]*(?:\n|$)){2,}", text):
+        block = match.group(0)
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        if len(lines) >= 2 and any(
+            re.fullmatch(r"\|?[ :]?-{3,}[-| :]*\|?", line) for line in lines[1:3]
+        ):
+            tables.append(match.span())
+    html_tables = [
+        match.span() for match in re.finditer(r"(?is)<table\b.*?</table>", text)
+    ]
+    return sorted({*formulas, *tables, *html_tables})
+
+
+def _split_structured_unit(
+    text: str,
+    start: int,
+    end: int,
+    tokenizer: OffsetTokenizer,
+    size: int,
+    overlap: int,
+) -> list[tuple[int, int, int]]:
+    """Split oversized Markdown tables at row boundaries; otherwise use tokens."""
+    block = text[start:end]
+    lines = list(re.finditer(r"[^\n]+(?:\n|$)", block))
+    is_markdown_table = len(lines) >= 2 and all("|" in line.group(0) for line in lines)
+    if not is_markdown_table:
+        return _token_spans(text, start, end, tokenizer, size, overlap)
+    result: list[tuple[int, int, int]] = []
+    group_start = 0
+    group_end = 0
+    for line in lines:
+        proposed_end = line.end()
+        if group_end > group_start and tokenizer.count(block[group_start:proposed_end]) > size:
+            absolute_start, absolute_end = start + group_start, start + group_end
+            result.append(
+                (absolute_start, absolute_end, tokenizer.count(text[absolute_start:absolute_end]))
+            )
+            group_start = line.start()
+        group_end = proposed_end
+    if group_end > group_start:
+        absolute_start, absolute_end = start + group_start, start + group_end
+        if tokenizer.count(text[absolute_start:absolute_end]) <= size:
+            result.append(
+                (absolute_start, absolute_end, tokenizer.count(text[absolute_start:absolute_end]))
+            )
+        else:
+            result.extend(
+                _token_spans(text, absolute_start, absolute_end, tokenizer, size, overlap)
+            )
+    return result
+
+
 def build_chunking_strategy(
     name: str, *, tokenizer: OffsetTokenizer | None = None, embed_sentences=None
 ) -> ChunkingStrategy:
@@ -191,6 +399,8 @@ def build_chunking_strategy(
         return TokenChunkingStrategy(tokenizer, 256, 32, name)
     if name == "token-384-64":
         return TokenChunkingStrategy(tokenizer, 384, 64, "token-384-64")
+    if name == "token-512-64":
+        return TokenChunkingStrategy(tokenizer, 512, 64, "token-512-64")
     if name == "sentence-8-2":
         return SentenceChunkingStrategy(tokenizer, 8, 2, name)
     if name == "recursive-character":
@@ -201,6 +411,10 @@ def build_chunking_strategy(
                 "Semantic chunking requires the production sentence embedding function"
             )
         return SemanticChunkingStrategy(tokenizer, embed_sentences)
+    if name == "section-aware-512-64":
+        return SectionAwareChunkingStrategy(tokenizer)
+    if name == "structure-aware-512-64":
+        return StructureAwareChunkingStrategy(tokenizer)
     raise ValueError(f"Unknown chunking strategy: {name}")
 
 

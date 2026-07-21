@@ -80,7 +80,7 @@ def main() -> int:
             "context_precision_at_5": "max",
             "context_recall_at_2048_tokens": "max",
             "citation_f1": "max",
-            "nli_faithfulness": "max",
+            "hhem_faithfulness": "max",
             "operational.p95_latency_seconds": "min",
             "operational.combined_process_ollama_memory_gb": "min",
         },

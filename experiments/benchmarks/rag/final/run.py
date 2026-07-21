@@ -34,7 +34,7 @@ arguments = argument_parser.parse_args()
 manifest_path = arguments.manifest or PROJECT_ROOT / (
     "data/benchmarks/rag/smoke.json"
     if arguments.profile == "smoke"
-    else f"data/benchmarks/rag/qasper-{'validation' if arguments.profile == 'standard' else 'locked-test'}.json"
+    else f"data/benchmarks/rag/rag-selection-{'validation' if arguments.profile == 'standard' else 'locked-test'}.json"
 )
 manifest = load_manifest(manifest_path)
 candidates = resolved_candidates(directory / "candidates.yaml", arguments.profile, arguments.shortlist)
@@ -118,7 +118,7 @@ result = run_benchmark(
         "context_recall_at_2048_tokens": "max",
         "citation_f1": "max",
         "answerability_balanced_accuracy": "max",
-        "nli_faithfulness": "max",
+        "hhem_faithfulness": "max",
         "operational.p95_latency_seconds": "min",
         "operational.combined_process_ollama_memory_gb": "min",
     },

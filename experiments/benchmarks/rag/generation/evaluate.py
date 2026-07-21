@@ -35,39 +35,32 @@ MODEL_NAMES = {
     "qwen3.5:4b-thinking": "qwen3.5:4b-q4_K_M",
     "qwen3.5:9b-direct": "qwen3.5:9b-q4_K_M",
     "qwen3.5:9b-thinking": "qwen3.5:9b-q4_K_M",
-    "gemma3:4b": "gemma3:4b",
-    "gemma3:12b": "gemma3:12b",
+    "gemma4:12b-it-q4_K_M": "gemma4:12b-it-q4_K_M",
     "ministral-3:8b-instruct-2512-q4_K_M": "ministral-3:8b-instruct-2512-q4_K_M",
     "gpt-oss:20b-low": "gpt-oss:20b",
     "gpt-oss:20b-medium": "gpt-oss:20b",
 }
 
 
-class LocalNLI:
+class LocalFaithfulness:
     def __init__(self, revision: str) -> None:
         self.revision = revision
-        self.pipeline = None
+        self.model = None
 
     def score(self, context: str, answer: str) -> float:
         if not answer.strip() or _is_refusal(answer):
             return 1.0
-        if self.pipeline is None:
-            from transformers import pipeline
+        if self.model is None:
+            from transformers import AutoModelForSequenceClassification
 
-            self.pipeline = pipeline(
-                "text-classification",
-                model="cross-encoder/nli-deberta-v3-base",
+            self.model = AutoModelForSequenceClassification.from_pretrained(
+                "vectara/hallucination_evaluation_model",
                 revision=self.revision,
-                device=-1,
                 local_files_only=True,
-                top_k=None,
+                trust_remote_code=True,
             )
-        output = self.pipeline({"text": context, "text_pair": _clean_answer(answer)}, truncation=True)
-        rows = output[0] if output and isinstance(output[0], list) else output
-        for row in rows:
-            if "entail" in str(row["label"]).casefold():
-                return float(row["score"])
-        raise RuntimeError("Pinned NLI model did not expose an entailment label")
+        score = self.model.predict([(context, _clean_answer(answer))])
+        return float(score[0])
 
 
 def evaluate_candidate(
@@ -89,7 +82,9 @@ def evaluate_candidate(
     }
     generator = _generator(candidate, digests)
     tokenizer = TiktokenOffsetTokenizer()
-    nli = LocalNLI(model_revisions["cross-encoder/nli-deberta-v3-base"])
+    faithfulness = LocalFaithfulness(
+        model_revisions["vectara/hallucination_evaluation_model"]
+    )
     retrieval_reranker = (
         reranker_for(retrieval_method, model_revisions) if final_index is not None else None
     )
@@ -165,7 +160,7 @@ def evaluate_candidate(
                     "rouge_l": max(rouge_l(clean, value) for value in references) if answerable else float(not repeat_prediction),
                     **citation_scores(repeat_answer, _supported_contexts(question, hits)),
                     "answerability_correct": float(repeat_prediction == answerable),
-                    "nli_faithfulness": nli.score(context, repeat_answer),
+                    "hhem_faithfulness": faithfulness.score(context, repeat_answer),
                     "unsupported_answer_rate": float(not answerable and repeat_prediction),
                     "malformed_output_rate": float(_malformed(repeat_answer, len(hits))),
                 }
@@ -177,6 +172,7 @@ def evaluate_candidate(
         averaged_metrics["determinism"] = float(
             all(measurement.answer == answer for measurement in repeated)
         )
+        evidence_type = str(question.get("evidence_type", "text"))
         if final_index is not None:
             by_id = {chunk.identifier: chunk for chunk in final_index.chunks}
             selected = [by_id[hit.id] for hit in hits if hit.id in by_id]
@@ -186,6 +182,23 @@ def evaluate_candidate(
             averaged_metrics.update(retrieval_quality)
         else:
             retrieved_tokens = sum(hit.token_count for hit in hits)
+        averaged_metrics.update(
+            {
+                f"stratum.{evidence_type}.{name}": value
+                for name, value in averaged_metrics.items()
+                if name
+                in {
+                    "citation_f1",
+                    "hhem_faithfulness",
+                    "token_f1",
+                    "answerability_correct",
+                    "ndcg_at_3",
+                    "ndcg_at_5",
+                    "context_recall_at_3",
+                    "context_recall_at_5",
+                }
+            }
+        )
         sample_latency = float(
             np.median(
                 [
@@ -209,6 +222,7 @@ def evaluate_candidate(
                     "top_k": top_k,
                     "measured_repetitions": repetitions,
                     "retrieved_tokens": retrieved_tokens,
+                    "evidence_type": evidence_type,
                 },
             )
         )
@@ -349,7 +363,11 @@ def _questions(manifest, count):
     ]
     groups = {}
     for row in rows:
-        key = str(row.get("answer_type") or ("answerable" if row.get("answerable") else "unanswerable"))
+        answer_type = str(
+            row.get("answer_type")
+            or ("answerable" if row.get("answerable") else "unanswerable")
+        )
+        key = f"{row.get('evidence_type', 'text')}|{answer_type}"
         groups.setdefault(key, []).append(row)
     for key, group in groups.items():
         random.Random(42 + sum(ord(character) for character in key)).shuffle(group)

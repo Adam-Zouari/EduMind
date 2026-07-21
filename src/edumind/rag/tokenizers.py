@@ -24,7 +24,7 @@ class TiktokenOffsetTokenizer:
             import tiktoken
         except ModuleNotFoundError as exc:
             raise RuntimeError(
-                "tiktoken is required for runtime token chunking; install .[rag]"
+                "tiktoken is required for runtime token chunking; install requirements/app.lock"
             ) from exc
         self.encoding = tiktoken.get_encoding(encoding_name)
         self.name = f"tiktoken:{encoding_name}"

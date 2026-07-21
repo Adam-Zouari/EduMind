@@ -21,6 +21,11 @@ class EmbeddingSpec:
     maximum_length: int
     document_device: str = "cpu"
     query_device: str = "cpu"
+    interface: str = "encode"
+    query_prompt_name: str | None = None
+    document_prompt_name: str | None = None
+    trust_remote_code: bool = False
+    encode_options: tuple[tuple[str, float], ...] = ()
 
     @property
     def fingerprint(self) -> str:
@@ -39,27 +44,31 @@ EMBEDDING_SPECS: dict[str, EmbeddingSpec] = {
         "cosine",
         256,
     ),
-    "BAAI/bge-base-en-v1.5": EmbeddingSpec(
-        "BAAI/bge-base-en-v1.5",
+    "google/embeddinggemma-300m": EmbeddingSpec(
+        "google/embeddinggemma-300m",
         "main",
-        "BAAI/bge-base-en-v1.5",
-        "Represent this sentence for searching relevant passages: ",
+        "google/embeddinggemma-300m",
+        "task: search result | query: ",
+        "title: none | text: ",
+        True,
+        768,
+        "cosine",
+        2048,
+        interface="query-document",
+    ),
+    "infgrad/Jasper-Token-Compression-600M": EmbeddingSpec(
+        "infgrad/Jasper-Token-Compression-600M",
+        "main",
+        "infgrad/Jasper-Token-Compression-600M",
+        "",
         "",
         True,
-        768,
+        1024,
         "cosine",
-        512,
-    ),
-    "nomic-ai/nomic-embed-text-v1.5": EmbeddingSpec(
-        "nomic-ai/nomic-embed-text-v1.5",
-        "main",
-        "nomic-ai/nomic-embed-text-v1.5",
-        "search_query: ",
-        "search_document: ",
-        True,
-        768,
-        "cosine",
-        8192,
+        1024,
+        query_prompt_name="query",
+        trust_remote_code=True,
+        encode_options=(("compression_ratio", 0.3333),),
     ),
     "Qwen/Qwen3-Embedding-0.6B": EmbeddingSpec(
         "Qwen/Qwen3-Embedding-0.6B",
@@ -71,6 +80,41 @@ EMBEDDING_SPECS: dict[str, EmbeddingSpec] = {
         1024,
         "cosine",
         32768,
+    ),
+    "nvidia/Nemotron-3-Embed-1B-BF16": EmbeddingSpec(
+        "nvidia/Nemotron-3-Embed-1B-BF16",
+        "main",
+        "nvidia/Nemotron-3-Embed-1B-BF16",
+        "query: ",
+        "passage: ",
+        True,
+        2048,
+        "cosine",
+        32768,
+        interface="query-document",
+    ),
+    "Qwen/Qwen3-Embedding-4B": EmbeddingSpec(
+        "Qwen/Qwen3-Embedding-4B",
+        "main",
+        "Qwen/Qwen3-Embedding-4B",
+        "Instruct: Retrieve relevant educational evidence\nQuery: ",
+        "",
+        True,
+        2560,
+        "cosine",
+        32768,
+    ),
+    "nvidia/Nemotron-3-Embed-8B-BF16": EmbeddingSpec(
+        "nvidia/Nemotron-3-Embed-8B-BF16",
+        "main",
+        "nvidia/Nemotron-3-Embed-8B-BF16",
+        "query: ",
+        "passage: ",
+        True,
+        4096,
+        "cosine",
+        32768,
+        interface="query-document",
     ),
 }
 

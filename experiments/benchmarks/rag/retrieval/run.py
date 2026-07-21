@@ -36,7 +36,7 @@ arguments = argument_parser.parse_args()
 manifest_path = arguments.manifest or PROJECT_ROOT / (
     "data/benchmarks/rag/smoke.json"
     if arguments.profile == "smoke"
-    else f"data/benchmarks/rag/qasper-{'dev' if arguments.profile == 'standard' else 'validation'}.json"
+    else f"data/benchmarks/rag/rag-selection-{'dev' if arguments.profile == 'standard' else 'validation'}.json"
 )
 manifest = load_manifest(manifest_path)
 if arguments.shortlist:

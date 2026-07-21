@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import os
 from collections.abc import Sequence
 
 
@@ -43,8 +44,9 @@ class Reranker:
                 self.model = CrossEncoder(
                     self.model_name,
                     revision=self.revision,
-                    device="cpu",
+                    device=os.environ.get("EDUMIND_BENCHMARK_RERANKER_DEVICE", "cpu"),
                     local_files_only=True,
+                    trust_remote_code=self.model_name.startswith("BAAI/"),
                 )
         scores = (
             self.model.predict(query, documents)
@@ -71,13 +73,15 @@ class _QwenReranker:
         )
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.device = os.environ.get("EDUMIND_BENCHMARK_RERANKER_DEVICE", "cpu")
+        dtype = torch.bfloat16 if self.device.startswith("cuda") else torch.float32
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
             revision=revision,
             local_files_only=True,
             trust_remote_code=True,
-            torch_dtype=torch.float32,
-        ).to("cpu")
+            torch_dtype=dtype,
+        ).to(self.device)
         self.model.eval()
         self.yes_id = self.tokenizer.encode("yes", add_special_tokens=False)[0]
         self.no_id = self.tokenizer.encode("no", add_special_tokens=False)[0]
@@ -104,6 +108,7 @@ class _QwenReranker:
                 max_length=2048,
                 return_tensors="pt",
             )
+            encoded = {key: value.to(self.device) for key, value in encoded.items()}
             with self.torch.no_grad():
                 logits = self.model(**encoded).logits[:, -1, [self.no_id, self.yes_id]]
                 probabilities = self.torch.softmax(logits, dim=-1)[:, 1]
