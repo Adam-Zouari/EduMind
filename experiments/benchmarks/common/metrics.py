@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -230,15 +230,4 @@ def paired_bootstrap_interval(
         float(np.quantile(samples, 1.0 - alpha)),
         confidence,
     )
-
-
-def holm_adjust(p_values: Mapping[str, float]) -> dict[str, float]:
-    ordered = sorted(p_values.items(), key=lambda item: item[1])
-    adjusted: dict[str, float] = {}
-    running = 0.0
-    count = len(ordered)
-    for index, (name, value) in enumerate(ordered):
-        running = max(running, min(1.0, (count - index) * value))
-        adjusted[name] = running
-    return adjusted
 
