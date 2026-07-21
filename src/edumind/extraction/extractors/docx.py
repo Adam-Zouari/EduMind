@@ -1,4 +1,4 @@
-"""DOCX extraction candidates with no structural table/formula guarantee."""
+"""Lightweight native DOCX extraction controls."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ class DOCXExtractor:
                 from docx import Document
             except ModuleNotFoundError as exc:
                 raise MissingDependencyError(
-                    "python-docx is required; install .[extraction]"
+                    "python-docx is required; install requirements/app.lock"
                 ) from exc
             document = Document(str(request.source_path))
             blocks = [paragraph.text for paragraph in document.paragraphs]
@@ -58,22 +58,4 @@ class DOCXExtractor:
                 raise MissingDependencyError("Mammoth is required for this DOCX candidate") from exc
             with request.source_path.open("rb") as handle:
                 return str(mammoth.extract_raw_text(handle).value)
-        if self.engine == "docling-docx":
-            try:
-                from docling.document_converter import DocumentConverter
-            except ModuleNotFoundError as exc:
-                raise MissingDependencyError("Docling is required for this DOCX candidate") from exc
-            return str(
-                DocumentConverter().convert(str(request.source_path)).document.export_to_markdown()
-            )
-        if self.engine == "unstructured-docx":
-            try:
-                from unstructured.partition.docx import partition_docx
-            except ModuleNotFoundError as exc:
-                raise MissingDependencyError(
-                    "Unstructured is required for this DOCX candidate"
-                ) from exc
-            return "\n".join(
-                str(item) for item in partition_docx(filename=str(request.source_path))
-            )
         raise ValueError(f"Unknown DOCX engine: {self.engine}")

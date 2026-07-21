@@ -3,6 +3,7 @@
 from .contracts import (
     ExtractedDocument,
     ExtractedSegment,
+    SegmentKind,
     ExtractionProfile,
     ExtractionRequest,
     ExtractionWarning,
@@ -14,6 +15,7 @@ from .pipeline import ExtractionPipeline
 __all__ = [
     "ExtractedDocument",
     "ExtractedSegment",
+    "SegmentKind",
     "ExtractionPipeline",
     "ExtractionProfile",
     "ExtractionRequest",

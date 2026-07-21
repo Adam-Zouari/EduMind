@@ -11,6 +11,16 @@ from ..contracts import ExtractedDocument, ExtractionRequest, ExtractionWarning,
 from ..errors import ExtractionBackendError, MissingDependencyError
 from .base import build_document
 from .image import ImageExtractor
+from .structured_document import StructuredDocumentExtractor
+
+STRUCTURED_IMAGE_ENGINES = {
+    "docling",
+    "pp-structure-v3",
+    "paddleocr-vl-1.6",
+    "glm-ocr",
+    "mineru-2.5-pro",
+    "olmocr-2-7b",
+}
 
 
 class PDFExtractor:
@@ -30,8 +40,6 @@ class PDFExtractor:
                 pages = self._pypdf(request.source_path)
             elif self.engine == "pdfplumber":
                 pages = self._pdfplumber(request.source_path)
-            elif self.engine == "docling-pdf":
-                pages = self._docling(request.source_path)
             elif self.engine == "hybrid-pdf":
                 pages = self._hybrid(request)
             elif self.engine == "ocr-pdf":
@@ -66,7 +74,9 @@ class PDFExtractor:
         try:
             from pypdf import PdfReader
         except ModuleNotFoundError as exc:
-            raise MissingDependencyError("pypdf is required; install .[extraction]") from exc
+            raise MissingDependencyError(
+                "pypdf is required; install requirements/app.lock"
+            ) from exc
         return [page.extract_text() or "" for page in PdfReader(path).pages]
 
     @staticmethod
@@ -74,18 +84,11 @@ class PDFExtractor:
         try:
             import pdfplumber
         except ModuleNotFoundError as exc:
-            raise MissingDependencyError("pdfplumber is required; install .[extraction]") from exc
+            raise MissingDependencyError(
+                "pdfplumber is required; install requirements/app.lock"
+            ) from exc
         with pdfplumber.open(path) as pdf:
             return [page.extract_text(layout=True) or "" for page in pdf.pages]
-
-    @staticmethod
-    def _docling(path: Path) -> list[str]:
-        try:
-            from docling.document_converter import DocumentConverter
-        except ModuleNotFoundError as exc:
-            raise MissingDependencyError("Docling is required for this PDF candidate") from exc
-        document = DocumentConverter().convert(str(path)).document
-        return [document.export_to_markdown()]
 
     def _hybrid(self, request: ExtractionRequest) -> list[str]:
         pages = self._pypdf(request.source_path)
@@ -109,7 +112,12 @@ class PDFExtractor:
         except ModuleNotFoundError as exc:
             raise MissingDependencyError("PyMuPDF is required for hybrid PDF routing") from exc
         ocr_engine = str(request.options.get("image_engine", "tesseract-5"))
-        ocr = ImageExtractor(ocr_engine, "5" if ocr_engine == "tesseract-5" else "unpinned")
+        revision = str(request.options.get("image_revision", "unpinned"))
+        ocr = (
+            StructuredDocumentExtractor(ocr_engine, revision)
+            if ocr_engine in STRUCTURED_IMAGE_ENGINES
+            else ImageExtractor(ocr_engine, "5" if ocr_engine == "tesseract-5" else revision)
+        )
         profile = request.profile
         if profile is None:
             raise ValueError("Resolved extraction profile is required")

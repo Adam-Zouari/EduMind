@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import time
 from pathlib import Path
 from typing import Any
@@ -31,8 +30,6 @@ class ImageExtractor:
                 text = self._tesseract(image)
             elif self.engine.startswith("paddleocr"):
                 text = self._paddle(image, request)
-            elif self.engine == "doctr-fast-parseq":
-                text = self._doctr(image, request)
             else:
                 raise ValueError(f"Unknown image engine: {self.engine}")
         except MissingDependencyError:
@@ -59,7 +56,7 @@ class ImageExtractor:
             from PIL import Image, ImageOps
         except ModuleNotFoundError as exc:
             raise MissingDependencyError(
-                "Pillow is required for image extraction; install .[extraction]"
+                "Pillow is required for image extraction; install requirements/app.lock"
             ) from exc
         image = Image.open(request.source_path).convert("RGB")
         profile = request.profile.preprocessing if request.profile else "raw"
@@ -113,7 +110,9 @@ class ImageExtractor:
         try:
             import pytesseract
         except ModuleNotFoundError as exc:
-            raise MissingDependencyError("pytesseract is required; install .[extraction]") from exc
+            raise MissingDependencyError(
+                "pytesseract is required; install requirements/app.lock"
+            ) from exc
         return str(pytesseract.image_to_string(image, lang="eng"))
 
     def _paddle(self, image, request: ExtractionRequest) -> str:
@@ -121,7 +120,9 @@ class ImageExtractor:
             import numpy as np
             from paddleocr import PaddleOCR
         except ModuleNotFoundError as exc:
-            raise MissingDependencyError("PaddleOCR is required; install .[extraction]") from exc
+            raise MissingDependencyError(
+                "PaddleOCR is required; install requirements/benchmarks.lock"
+            ) from exc
         use_server = self.engine.endswith("server")
         model_name = "PP-OCRv5_server_rec" if use_server else "en_PP-OCRv5_mobile_rec"
         detection_directory = Path(str(request.options.get("text_detection_model_dir", "")))
@@ -152,26 +153,6 @@ class ImageExtractor:
                 if isinstance(value, list):
                     texts.extend(str(item) for item in value)
         return "\n".join(texts)
-
-    def _doctr(self, image, request: ExtractionRequest) -> str:
-        try:
-            import numpy as np
-            from doctr.io import DocumentFile
-            from doctr.models import ocr_predictor
-        except ModuleNotFoundError as exc:
-            raise MissingDependencyError("docTR is required for this candidate") from exc
-        cache_directory = Path(str(request.options.get("doctr_cache_dir", "")))
-        if not cache_directory.is_dir() or not any(cache_directory.rglob("*")):
-            raise FileNotFoundError(
-                "docTR weights are not prepared locally; run `python "
-                "experiments/benchmarks/prepare.py extraction-models`"
-            )
-        os.environ["DOCTR_CACHE_DIR"] = str(cache_directory)
-        if self._runtime is None:
-            self._runtime = ocr_predictor(det_arch="fast_base", reco_arch="parseq", pretrained=True)
-        result = self._runtime(DocumentFile.from_images([np.asarray(image)]))
-        return str(result.render())
-
 
 def _perspective_warp(gray, points):
     import cv2

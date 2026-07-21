@@ -21,6 +21,17 @@ class SourceKind(str, Enum):
     VIDEO = "video"
 
 
+class SegmentKind(str, Enum):
+    TEXT = "text"
+    HEADING = "heading"
+    LIST_ITEM = "list_item"
+    TABLE = "table"
+    FORMULA = "formula"
+    CAPTION = "caption"
+    AUDIO = "audio"
+    VISUAL_TEXT = "visual_text"
+
+
 @dataclass(frozen=True)
 class ExtractionProfile:
     """Everything that can affect an extraction result."""
@@ -90,6 +101,8 @@ class ExtractedSegment:
     timestamp_start: float | None = None
     timestamp_end: float | None = None
     bounding_box: BoundingBox | None = None
+    kind: SegmentKind = SegmentKind.TEXT
+    structured_content: Mapping[str, object] = field(default_factory=dict)
     metadata: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -100,6 +113,13 @@ class ExtractedSegment:
         if self.timestamp_start is not None and self.timestamp_end is not None:
             if self.timestamp_end < self.timestamp_start:
                 raise ValueError("Segment timestamps are reversed")
+        if self.kind is SegmentKind.TABLE and self.structured_content:
+            rows = self.structured_content.get("rows")
+            if not isinstance(rows, (list, tuple)):
+                raise ValueError("Structured table segments require a rows sequence")
+        if self.kind is SegmentKind.FORMULA and self.structured_content:
+            if not isinstance(self.structured_content.get("latex"), str):
+                raise ValueError("Structured formula segments require a LaTeX string")
 
 
 @dataclass(frozen=True)
@@ -153,7 +173,7 @@ class ExtractedDocument:
             mime_type=str(payload["mime_type"]) if payload.get("mime_type") else None,
             text=str(payload.get("text", "")),
             segments=tuple(
-                ExtractedSegment(**dict(item)) for item in raw_segments if isinstance(item, Mapping)
+                _segment_from_dict(item) for item in raw_segments if isinstance(item, Mapping)
             ),
             profile=profile,
             metadata=metadata,
@@ -177,3 +197,16 @@ class Extractor(Protocol):
 
     def extract(self, request: ExtractionRequest, kind: SourceKind) -> ExtractedDocument:
         """Extract a document or raise a structured extraction error."""
+
+
+def _segment_from_dict(payload: Mapping[str, object]) -> ExtractedSegment:
+    values = dict(payload)
+    values["kind"] = SegmentKind(str(values.get("kind", SegmentKind.TEXT.value)))
+    structured = values.get("structured_content", {})
+    values["structured_content"] = dict(structured) if isinstance(structured, Mapping) else {}
+    metadata = values.get("metadata", {})
+    values["metadata"] = dict(metadata) if isinstance(metadata, Mapping) else {}
+    bounding_box = values.get("bounding_box")
+    if isinstance(bounding_box, (list, tuple)):
+        values["bounding_box"] = tuple(float(value) for value in bounding_box)
+    return ExtractedSegment(**values)

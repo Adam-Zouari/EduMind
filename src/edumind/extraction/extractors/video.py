@@ -14,6 +14,8 @@ from ..errors import ExtractionBackendError
 from .audio import AudioExtractor
 from .base import build_document
 from .image import ImageExtractor
+from .pdf import STRUCTURED_IMAGE_ENGINES
+from .structured_document import StructuredDocumentExtractor
 
 
 class VideoExtractor:
@@ -24,7 +26,9 @@ class VideoExtractor:
         self.name = f"video-{keyframes}"
         self.revision = "ffmpeg-system"
         self._audio_extractors: dict[tuple[str, str, str], AudioExtractor] = {}
-        self._image_extractors: dict[tuple[str, str], ImageExtractor] = {}
+        self._image_extractors: dict[
+            tuple[str, str], ImageExtractor | StructuredDocumentExtractor
+        ] = {}
 
     def extract(self, request: ExtractionRequest, kind: SourceKind) -> ExtractedDocument:
         if request.profile is None:
@@ -80,7 +84,11 @@ class VideoExtractor:
                 )
                 image_key = (image_engine, image_revision)
                 if image_key not in self._image_extractors:
-                    self._image_extractors[image_key] = ImageExtractor(*image_key)
+                    self._image_extractors[image_key] = (
+                        StructuredDocumentExtractor(*image_key)
+                        if image_engine in STRUCTURED_IMAGE_ENGINES
+                        else ImageExtractor(*image_key)
+                    )
                 image_extractor = self._image_extractors[image_key]
                 for frame, timestamp in frames:
                     image_request = ExtractionRequest.from_path(

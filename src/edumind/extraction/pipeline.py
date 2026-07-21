@@ -41,10 +41,11 @@ def build_default_registry() -> ExtractorRegistry:
     from .extractors.docx import DOCXExtractor
     from .extractors.image import ImageExtractor
     from .extractors.pdf import PDFExtractor
+    from .extractors.structured_document import StructuredDocumentExtractor
     from .extractors.video import VideoExtractor
 
     registry = ExtractorRegistry()
-    registrations = [
+    registrations: list[ExtractorRegistration] = [
         ExtractorRegistration(
             "tesseract-5",
             frozenset({SourceKind.IMAGE}),
@@ -61,22 +62,12 @@ def build_default_registry() -> ExtractorRegistry:
             lambda: ImageExtractor("paddleocr-v5-server", "v5"),
         ),
         ExtractorRegistration(
-            "doctr-fast-parseq",
-            frozenset({SourceKind.IMAGE}),
-            lambda: ImageExtractor("doctr-fast-parseq", "unpinned"),
-        ),
-        ExtractorRegistration(
             "pypdf", frozenset({SourceKind.PDF}), lambda: PDFExtractor("pypdf")
         ),
         ExtractorRegistration(
             "pdfplumber",
             frozenset({SourceKind.PDF}),
             lambda: PDFExtractor("pdfplumber"),
-        ),
-        ExtractorRegistration(
-            "docling-pdf",
-            frozenset({SourceKind.PDF}),
-            lambda: PDFExtractor("docling-pdf"),
         ),
         ExtractorRegistration(
             "hybrid-pdf",
@@ -99,61 +90,72 @@ def build_default_registry() -> ExtractorRegistry:
             lambda: DOCXExtractor("mammoth"),
         ),
         ExtractorRegistration(
-            "docling-docx",
-            frozenset({SourceKind.DOCX}),
-            lambda: DOCXExtractor("docling-docx"),
-        ),
-        ExtractorRegistration(
-            "unstructured-docx",
-            frozenset({SourceKind.DOCX}),
-            lambda: DOCXExtractor("unstructured-docx"),
-        ),
-        ExtractorRegistration(
             "openai-whisper-small-en",
             frozenset({SourceKind.AUDIO}),
             lambda: AudioExtractor("openai-whisper", "small.en", "float16"),
         ),
-        ExtractorRegistration(
-            "faster-whisper-tiny-int8",
-            frozenset({SourceKind.AUDIO}),
-            lambda: AudioExtractor("faster-whisper", "tiny.en", "int8"),
-        ),
-        ExtractorRegistration(
-            "faster-whisper-base-int8",
-            frozenset({SourceKind.AUDIO}),
-            lambda: AudioExtractor("faster-whisper", "base.en", "int8"),
-        ),
-        ExtractorRegistration(
-            "faster-whisper-small-int8",
-            frozenset({SourceKind.AUDIO}),
-            lambda: AudioExtractor("faster-whisper", "small.en", "int8"),
-        ),
-        ExtractorRegistration(
-            "faster-whisper-small-float16",
-            frozenset({SourceKind.AUDIO}),
-            lambda: AudioExtractor("faster-whisper", "small.en", "float16"),
-        ),
-        ExtractorRegistration(
-            "faster-whisper-turbo-int8",
-            frozenset({SourceKind.AUDIO}),
-            lambda: AudioExtractor("faster-whisper", "turbo", "int8"),
-        ),
-        ExtractorRegistration(
-            "video-fixed",
-            frozenset({SourceKind.VIDEO}),
-            lambda: VideoExtractor("fixed"),
-        ),
-        ExtractorRegistration(
-            "video-scene",
-            frozenset({SourceKind.VIDEO}),
-            lambda: VideoExtractor("scene"),
-        ),
-        ExtractorRegistration(
-            "video-hybrid",
-            frozenset({SourceKind.VIDEO}),
-            lambda: VideoExtractor("hybrid"),
-        ),
     ]
+    for name, kinds in (
+        ("docling", frozenset({SourceKind.IMAGE, SourceKind.PDF, SourceKind.DOCX})),
+        ("pp-structure-v3", frozenset({SourceKind.IMAGE, SourceKind.PDF})),
+        ("paddleocr-vl-1.6", frozenset({SourceKind.IMAGE, SourceKind.PDF})),
+        ("glm-ocr", frozenset({SourceKind.IMAGE, SourceKind.PDF})),
+        ("mineru-2.5-pro", frozenset({SourceKind.IMAGE, SourceKind.PDF, SourceKind.DOCX})),
+        ("olmocr-2-7b", frozenset({SourceKind.IMAGE, SourceKind.PDF})),
+    ):
+        registrations.append(
+            ExtractorRegistration(
+                name, kinds, lambda engine=name: StructuredDocumentExtractor(engine)
+            )
+        )
+    for name, model, compute_type in (
+        ("faster-whisper-tiny-int8", "tiny.en", "int8"),
+        ("faster-whisper-base-int8", "base.en", "int8"),
+        ("faster-whisper-small-int8", "small.en", "int8"),
+        ("faster-whisper-small-float16", "small.en", "float16"),
+        ("faster-whisper-turbo-int8", "turbo", "int8"),
+    ):
+        registrations.append(
+            ExtractorRegistration(
+                name,
+                frozenset({SourceKind.AUDIO}),
+                lambda model=model, compute_type=compute_type: AudioExtractor(
+                    "faster-whisper", model, compute_type
+                ),
+            )
+        )
+    for name, engine, model, compute_type in (
+        (
+            "distil-whisper-large-v3.5",
+            "transformers-asr",
+            "distil-whisper/distil-large-v3.5",
+            "float16",
+        ),
+        (
+            "parakeet-tdt-0.6b-v3",
+            "transformers-asr",
+            "nvidia/parakeet-tdt-0.6b-v3",
+            "bfloat16",
+        ),
+        ("canary-qwen-2.5b", "nemo-canary", "nvidia/canary-qwen-2.5b", "bfloat16"),
+    ):
+        registrations.append(
+            ExtractorRegistration(
+                name,
+                frozenset({SourceKind.AUDIO}),
+                lambda engine=engine, model=model, compute_type=compute_type: AudioExtractor(
+                    engine, model, compute_type
+                ),
+            )
+        )
+    for routing in ("fixed", "scene", "hybrid"):
+        registrations.append(
+            ExtractorRegistration(
+                f"video-{routing}",
+                frozenset({SourceKind.VIDEO}),
+                lambda routing=routing: VideoExtractor(routing),
+            )
+        )
     for registration in registrations:
         registry.register(registration)
     return registry

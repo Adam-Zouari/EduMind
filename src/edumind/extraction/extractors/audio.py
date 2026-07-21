@@ -59,7 +59,9 @@ class AudioExtractor:
             try:
                 from faster_whisper import WhisperModel
             except ModuleNotFoundError as exc:
-                raise MissingDependencyError("faster-whisper is required; install .[asr]") from exc
+                raise MissingDependencyError(
+                    "faster-whisper is required; install requirements/app.lock"
+                ) from exc
             configured_path = request.options.get("model_path")
             model_path = Path(str(configured_path)).expanduser() if configured_path else None
             if model_path is None or not model_path.is_dir():
@@ -87,7 +89,9 @@ class AudioExtractor:
             try:
                 import whisper
             except ModuleNotFoundError as exc:
-                raise MissingDependencyError("openai-whisper is required; install .[asr]") from exc
+                raise MissingDependencyError(
+                    "openai-whisper is required; install requirements/benchmarks.lock"
+                ) from exc
             configured_path = request.options.get("model_path")
             model_path = Path(str(configured_path)).expanduser() if configured_path else None
             if model_path is None or not model_path.is_file():
@@ -103,4 +107,93 @@ class AudioExtractor:
                 (float(item.get("start", 0.0)), float(item.get("end", 0.0)))
                 for item in raw_segments
             ]
+        if self.engine == "transformers-asr":
+            return self._transformers_asr(request)
+        if self.engine == "nemo-canary":
+            return self._nemo_canary(request)
         raise ValueError(f"Unknown ASR engine: {self.engine}")
+
+    def _transformers_asr(
+        self, request: ExtractionRequest
+    ) -> tuple[list[str], list[tuple[float, float]]]:
+        try:
+            import torch
+            from transformers import pipeline
+        except ModuleNotFoundError as exc:
+            raise MissingDependencyError("Transformers is required for this ASR candidate") from exc
+        profile = request.profile
+        assert profile is not None
+        model_path = Path(str(request.options.get("model_path", ""))).expanduser()
+        if not model_path.is_dir():
+            raise FileNotFoundError(
+                "ASR weights are not prepared; run `python "
+                "experiments/benchmarks/prepare.py extraction-models`"
+            )
+        if self._runtime is None:
+            dtype = {
+                "float16": torch.float16,
+                "bfloat16": torch.bfloat16,
+                "float32": torch.float32,
+            }.get(self.compute_type, torch.float32)
+            self._runtime = pipeline(
+                "automatic-speech-recognition",
+                model=str(model_path),
+                device=0 if profile.device == "cuda" else -1,
+                dtype=dtype,
+                model_kwargs={"local_files_only": True},
+            )
+        result = self._runtime(str(request.source_path), return_timestamps=True)
+        chunks = result.get("chunks", []) if isinstance(result, dict) else []
+        texts: list[str] = []
+        timestamps: list[tuple[float, float]] = []
+        for chunk in chunks:
+            if not isinstance(chunk, dict):
+                continue
+            timestamp = chunk.get("timestamp")
+            if not isinstance(timestamp, (list, tuple)) or len(timestamp) != 2:
+                continue
+            start = float(timestamp[0] or 0.0)
+            end = float(timestamp[1] if timestamp[1] is not None else start)
+            texts.append(str(chunk.get("text", "")).strip())
+            timestamps.append((start, end))
+        if texts:
+            return texts, timestamps
+        text = str(result.get("text", "")).strip() if isinstance(result, dict) else str(result)
+        return [text], [(0.0, 0.0)]
+
+    def _nemo_canary(
+        self, request: ExtractionRequest
+    ) -> tuple[list[str], list[tuple[float, float]]]:
+        try:
+            from nemo.collections.speechlm2.models import SALM
+        except ModuleNotFoundError as exc:
+            raise MissingDependencyError(
+                "Canary-Qwen requires NVIDIA NeMo; install the candidate exactly as described "
+                "in guide.md"
+            ) from exc
+        model_directory = Path(str(request.options.get("model_path", ""))).expanduser()
+        if not model_directory.is_dir() or not (model_directory / "model.safetensors").is_file():
+            raise FileNotFoundError(
+                "The prepared Canary Hugging Face snapshot is missing model.safetensors"
+            )
+        if self._runtime is None:
+            # Canary-Qwen is published as a Hugging Face safetensors repository,
+            # not a legacy .nemo archive. Loading the pinned local directory keeps
+            # inference offline and prevents `main` from moving after preparation.
+            self._runtime = SALM.from_pretrained(str(model_directory))
+            if hasattr(self._runtime, "to"):
+                self._runtime = self._runtime.to(request.profile.device)
+        answer_ids = self._runtime.generate(
+            prompts=[
+                [
+                    {
+                        "role": "user",
+                        "content": f"Transcribe the following: {self._runtime.audio_locator_tag}",
+                        "audio": [str(request.source_path)],
+                    }
+                ]
+            ],
+            max_new_tokens=256,
+        )
+        text = str(self._runtime.tokenizer.ids_to_text(answer_ids[0].cpu())).strip()
+        return [text], [(0.0, 0.0)]

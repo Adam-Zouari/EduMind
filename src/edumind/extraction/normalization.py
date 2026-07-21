@@ -6,7 +6,7 @@ import re
 import unicodedata
 from dataclasses import replace
 
-from .contracts import ExtractedDocument, ExtractedSegment
+from .contracts import ExtractedDocument, ExtractedSegment, SegmentKind
 
 
 def normalize_text(text: str, profile: str) -> str:
@@ -33,7 +33,8 @@ def normalize_document(document: ExtractedDocument, profile: str) -> ExtractedDo
     pieces: list[str] = []
     offset = 0
     for original in source_segments:
-        text = normalize_text(original.text, profile)
+        segment_profile = "minimal" if original.kind is SegmentKind.FORMULA else profile
+        text = normalize_text(original.text, segment_profile)
         if not text:
             continue
         if pieces:
@@ -42,7 +43,22 @@ def normalize_document(document: ExtractedDocument, profile: str) -> ExtractedDo
         start = offset
         pieces.append(text)
         offset += len(text)
-        segments.append(replace(original, text=text, start=start, end=offset))
+        structured = dict(original.structured_content)
+        if original.kind is SegmentKind.TABLE and isinstance(structured.get("rows"), (list, tuple)):
+            structured["rows"] = [
+                [normalize_text(str(cell), profile) for cell in row]
+                for row in structured["rows"]
+                if isinstance(row, (list, tuple))
+            ]
+        segments.append(
+            replace(
+                original,
+                text=text,
+                start=start,
+                end=offset,
+                structured_content=structured,
+            )
+        )
     return replace(
         document,
         text="".join(pieces),
