@@ -2,11 +2,11 @@
 
 ## Question and candidates
 
-Which chunker/embedding pair puts verified QASPER evidence near the top of exact retrieval? Standard crosses recursive-character, token 256/32, token 384/64, sentence 8/2, and semantic chunking with MiniLM, BGE base, Nomic v1.5, and Qwen3 Embedding 0.6B: 20 combinations. Exact NumPy search isolates this decision from database ANN error.
+Which chunker/embedding pair puts verified educational evidence near the top of exact retrieval? Standard crosses recursive-character, token 256/32, token 384/64, token 512/64, sentence 8/2, semantic, section-aware 512/64, and structure-aware 512/64 chunking with MiniLM, EmbeddingGemma 300M, Jasper Token Compression 600M, Qwen3 Embedding 0.6B/4B, and Nemotron 3 Embed 1B/8B: all 56 combinations. Exact NumPy search isolates this decision from database ANN error.
 
 ## Data and procedure
 
-`prepare.py qasper` creates paper-isolated 100-paper development, 40-paper validation, and 40-paper locked manifests with accepted answers and verified half-open evidence offsets. Component tuning never reads locked test. Every candidate uses the production chunker, tokenizer, prefixes, normalization, dimension, similarity, and pinned model revision. Standard/full execute each query three times for latency/determinism while computing one quality observation per question.
+`prepare.py qasper` creates paper-isolated text-only source manifests. `prepare.py rag-selection` combines each split with an independently verified structured manifest containing table, formula, and mixed-evidence questions. The resulting `rag-selection-dev`, `rag-selection-validation`, and `rag-selection-locked-test` manifests are the actual standard/full inputs. Component tuning never reads locked test. Every candidate uses the production chunker, tokenizer, query/document interface, prompts or prefixes, normalization, dimension, similarity, and pinned model revision. Section-aware respects headings and prose sections. Structure-aware additionally protects Markdown/HTML tables and displayed formulas and splits oversized Markdown tables at row boundaries. Both fall back deterministically when structure is absent. Standard/full execute each query three times for latency/determinism while computing one quality observation per question. Results are reported overall and by text/table/formula/mixed evidence type.
 
 ## Metrics
 
@@ -26,4 +26,4 @@ python experiments/benchmarks/rag/chunking_embedding/run.py --profile full --sho
 
 Artifacts are plan/provenance, candidate JSON, per-question Parquet, summary intervals/comparisons/Pareto set, and local MLflow runs. This component result does not prove answer quality, ANN performance, or extraction robustness.
 
-Example: token-384/BGE may dominate token-256/BGE, but that says nothing about token-384/Qwen; conclusions belong to complete pairs.
+Example: token-384/Qwen may dominate token-256/Qwen, but that says nothing about structure-aware/EmbeddingGemma; conclusions belong to complete pairs. Running all 56 pairs measures those interactions instead of assuming them away.

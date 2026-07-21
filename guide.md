@@ -2,6 +2,8 @@
 
 This is the complete preparation checklist for the provisional application and every benchmark. Run commands from the repository root. A smoke run proves that a real path executes; only standard/full runs on frozen data can support comparisons.
 
+The complete procedure and formulas are in `experiments/benchmarks/benchmark_manual.md`; public evidence for every candidate decision is in `experiments/benchmarks/model_selection.md`.
+
 ## 1. What is automatic and what is not
 
 Preparation commands download model weights, QASPER, and pinned Docker images and then write machine-local lock files. They do not choose winners, edit `config/base.yaml`, fabricate extraction references, or promote a benchmark result into the application.
@@ -127,14 +129,25 @@ python experiments/benchmarks/prepare.py huggingface-models
 It resolves immutable revisions, downloads them through the Hugging Face cache, and writes `data/benchmarks/models/huggingface.json` for:
 
 - `sentence-transformers/all-MiniLM-L6-v2`
-- `BAAI/bge-base-en-v1.5`
-- `nomic-ai/nomic-embed-text-v1.5`
+- `google/embeddinggemma-300m` (accept the Gemma license on Hugging Face first)
+- `infgrad/Jasper-Token-Compression-600M`
 - `Qwen/Qwen3-Embedding-0.6B`
+- `nvidia/Nemotron-3-Embed-1B-BF16`
+- `Qwen/Qwen3-Embedding-4B`
+- `nvidia/Nemotron-3-Embed-8B-BF16`
 - `cross-encoder/ms-marco-MiniLM-L-6-v2`
+- `BAAI/bge-reranker-v2-m3`
 - `Qwen/Qwen3-Reranker-0.6B`
-- `cross-encoder/nli-deberta-v3-base`
+- `Qwen/Qwen3-Reranker-4B`
+- `vectara/hallucination_evaluation_model`
 
-The first four are embedding candidates, the next two are rerankers, and the last model supplies the pinned local NLI diagnostic. The weights remain in the normal Hugging Face cache; the JSON lock records exactly which revisions were used.
+The first seven are embedding candidates, the next four are rerankers, and HHEM supplies the automated faithfulness diagnostic. The weights remain in the normal Hugging Face cache; the JSON lock records exactly which revisions were used. To download one large model at a time, use for example:
+
+```bash
+python experiments/benchmarks/prepare.py huggingface-models --candidate Qwen/Qwen3-Embedding-4B
+```
+
+The option is repeatable. Completed candidates are written to the lock immediately, and rerunning uses Hugging Face's resumable cache.
 
 ### Ollama generation models
 
@@ -149,12 +162,11 @@ It pulls the following base model tags sequentially and records their installed 
 - `qwen3:1.7b`
 - `qwen3.5:4b-q4_K_M`
 - `qwen3.5:9b-q4_K_M`
-- `gemma3:4b`
-- `gemma3:12b`
+- `gemma4:12b-it-q4_K_M`
 - `ministral-3:8b-instruct-2512-q4_K_M`
 - `gpt-oss:20b`
 
-The benchmark creates ten profiles from those seven tags: Qwen 3.5 4B/9B are each tested with direct and thinking modes, and GPT-OSS 20B is tested with low and medium reasoning. Do not pull separate model names for those profiles.
+The benchmark creates nine profiles from those six tags: Qwen 3.5 4B/9B are each tested with direct and thinking modes, and GPT-OSS 20B is tested with low and medium reasoning. Do not pull separate model names for those profiles. `--candidate MODEL_TAG` also works here.
 
 Verify installed tags with:
 
@@ -176,13 +188,37 @@ It prepares and locks:
 - faster-whisper `tiny.en`, `base.en`, `small.en` and large-v3-turbo weights used by the int8/float16 profiles;
 - PaddleOCR PP-OCRv5 English mobile detector/recognizer;
 - PaddleOCR PP-OCRv5 server detector/recognizer;
-- docTR `fast_base` detector with PARSeq recognition.
+- Docling's local layout, table, and formula artifacts;
+- PP-StructureV3;
+- PaddleOCR-VL-1.6;
+- `zai-org/GLM-OCR`;
+- `opendatalab/MinerU2.5-Pro-2605-1.2B`;
+- `allenai/olmOCR-2-7B-1025`;
+- Distil-Whisper large v3.5, Parakeet TDT 0.6B v3, and Canary-Qwen 2.5B.
 
-OpenAI Whisper, faster-whisper, and docTR assets are placed under `data/benchmarks/downloads/models/` where configured. PaddleOCR uses its Windows user cache under `~/.paddlex/official_models`. Tesseract has no downloaded model lock because it is a separately installed system engine. PDF/DOCX candidates such as pypdf, pdfplumber, Docling, Mammoth, and Unstructured are Python packages installed from `requirements/benchmarks.lock`.
+Large extraction preparation should normally be run one candidate at a time:
+
+```bash
+python experiments/benchmarks/prepare.py extraction-models --candidate docling
+python experiments/benchmarks/prepare.py extraction-models --candidate pp-structure-v3
+python experiments/benchmarks/prepare.py extraction-models --candidate paddleocr-vl-1.6
+python experiments/benchmarks/prepare.py extraction-models --candidate olmocr-2-7b
+```
+
+OpenAI Whisper, faster-whisper, Hugging Face document-VLM, and ASR assets are placed under `data/benchmarks/downloads/models/`; PaddleOCR-VL and PP-StructureV3 use the prepared `~/.paddlex` cache and are locked by their PaddleOCR/PaddleX package versions. Tesseract is a separately installed system engine. pypdf, pdfplumber, Docling, python-docx, and Mammoth come from the lock files.
+
+The following candidates need an official runtime or service in addition to their prepared weights because installing every rapidly changing VLM stack into the application environment would create dependency conflicts:
+
+- GLM-OCR: install `glmocr[selfhosted]` from the [official GLM-OCR repository](https://github.com/zai-org/GLM-OCR), serve the exact local model directory recorded in `data/benchmarks/models/extraction.json`, create a YAML config whose `pipeline.maas.enabled` is `false` and whose `pipeline.ocr_api` points to that service, and put the config path in each relevant manifest sample as `options.glm_config_path`. Hosted/API-key mode is rejected.
+- MinerU: install `mineru[all]` using the [official MinerU instructions](https://github.com/opendatalab/MinerU). Preparation writes a candidate-specific `mineru_config_path` pointing to the pinned 2605 weights. The runner passes that config, forces `MINERU_MODEL_SOURCE=local`/offline Hugging Face mode, and calls the `vlm-transformers` backend so an unrecorded default model cannot replace the candidate.
+- olmOCR: install the toolkit from the [official olmOCR repository](https://github.com/allenai/olmocr); the runner calls `olmocr` with the prepared local model path.
+- Canary-Qwen: install the NeMo revision required by the [official model card](https://huggingface.co/nvidia/canary-qwen-2.5b). Keep that dependency isolated if it conflicts with the main environment, and run the audio candidate from that environment against the same manifest.
+
+The benchmark never silently downloads a missing model. A candidate that is not prepared is recorded as failed.
 
 If a preparation command fails, do not manually create a lock file. Fix the missing tool/network/dependency and rerun it; an incomplete candidate must remain a visible failure rather than being silently skipped.
 
-## 6. QASPER data for RAG experiments
+## 6. RAG data: QASPER plus structured educational evidence
 
 Prepare the pinned `allenai/qasper` revision:
 
@@ -190,7 +226,7 @@ Prepare the pinned `allenai/qasper` revision:
 python experiments/benchmarks/prepare.py qasper
 ```
 
-The command writes:
+The command writes three text-evidence source manifests:
 
 ```text
 data/benchmarks/rag/qasper-dev.json          100 papers for standard component selection
@@ -198,7 +234,65 @@ data/benchmarks/rag/qasper-validation.json    40 papers for full/finalist valida
 data/benchmarks/rag/qasper-locked-test.json   40 papers for the one-time final test
 ```
 
-The split unit is a paper. The preparation code verifies paper isolation, normalized evidence offsets, checksums, source revision, preprocessing version, and seed 42. Do not inspect or tune against the locked-test answers. If any evidence offset cannot be validated, preparation fails instead of dropping the evidence.
+The split unit is a paper. The preparation code verifies paper isolation, normalized evidence offsets, checksums, source revision, preprocessing version, and seed 42. If any evidence offset cannot be validated, preparation fails instead of dropping it.
+
+QASPER alone is not sufficient to select section-aware versus structure-aware chunking because it does not provide the Markdown table/formula evidence needed by that decision. Create three independently verified manifests:
+
+```text
+data/benchmarks/rag/structured-dev.json
+data/benchmarks/rag/structured-validation.json
+data/benchmarks/rag/structured-locked-test.json
+```
+
+Use the same manifest header as QASPER. Each structured document is serialized exactly as the RAG system receives it, including headings, Markdown/HTML tables, and display formulas. A minimal document/question pair is:
+
+```json
+{
+  "id": "structured-doc-001",
+  "kind": "document",
+  "text": "## Results\n\n| Model | Accuracy |\n|---|---:|\n| A | 91% |\n\n$$E=mc^2$$",
+  "source": "verified-source-001.pdf"
+},
+{
+  "id": "structured-q-001",
+  "kind": "question",
+  "document_id": "structured-doc-001",
+  "question": "What accuracy is reported for model A?",
+  "answer": "91%",
+  "accepted_answers": ["91%"],
+  "answerable": true,
+  "answer_type": "extractive",
+  "evidence_type": "table",
+  "evidence": [
+    {
+      "document_id": "structured-doc-001",
+      "start": 12,
+      "end": 55,
+      "text": "| Model | Accuracy |\n|---|---:|\n| A | 91% |"
+    }
+  ]
+}
+```
+
+These offsets exactly select the displayed table string; calculate every real offset from the exact stored text in the same way. Every question must use `evidence_type` equal to `text`, `table`, `formula`, or `mixed`. Each structured split needs at least 10 answerable table questions, 10 formula questions, and 10 mixed-evidence questions, all with verified non-empty spans. This is a minimum validity gate, not proof that the corpus is representative. IDs must be globally unique across QASPER and the structured data. Keep source licenses, revisions, and split families in the manifest provenance. Seal the checksum after editing, then validate all three splits for exact/near-duplicate leakage:
+
+```bash
+python -m experiments.benchmarks.common.datasets seal data/benchmarks/rag/structured-dev.json data/benchmarks/rag/structured-validation.json data/benchmarks/rag/structured-locked-test.json
+python -m experiments.benchmarks.common.datasets validate data/benchmarks/rag/structured-dev.json data/benchmarks/rag/structured-validation.json data/benchmarks/rag/structured-locked-test.json
+```
+
+Sealing proves only that the file is internally consistent; it does not verify that the reference answer or evidence annotation is factually correct. Those annotations still require human verification.
+
+Combine QASPER and structured evidence one split at a time:
+
+```bash
+python experiments/benchmarks/prepare.py rag-selection --qasper-manifest data/benchmarks/rag/qasper-dev.json --structured-manifest data/benchmarks/rag/structured-dev.json --output data/benchmarks/rag/rag-selection-dev.json
+python experiments/benchmarks/prepare.py rag-selection --qasper-manifest data/benchmarks/rag/qasper-validation.json --structured-manifest data/benchmarks/rag/structured-validation.json --output data/benchmarks/rag/rag-selection-validation.json
+python experiments/benchmarks/prepare.py rag-selection --qasper-manifest data/benchmarks/rag/qasper-locked-test.json --structured-manifest data/benchmarks/rag/structured-locked-test.json --output data/benchmarks/rag/rag-selection-locked-test.json
+python -m experiments.benchmarks.common.datasets validate data/benchmarks/rag/rag-selection-dev.json data/benchmarks/rag/rag-selection-validation.json data/benchmarks/rag/rag-selection-locked-test.json
+```
+
+The RAG standard/full runners use the `rag-selection-*` files by default. Do not inspect or tune against locked-test answers.
 
 ## 7. Data required by extraction/OCR experiments
 
@@ -231,7 +325,8 @@ Each asset sample needs at least:
 - verified normalized `reference` text;
 - `source_license` and `source_revision`;
 - `document_family` for family-level split isolation;
-- annotations needed by the modality, such as page text/order and page labels, word/segment timestamps, clip duration, or visible video text.
+- annotations needed by the modality. Every authoritative PDF sample has `reference_pages` plus a same-length `reference_page_texts` array in page order; audio/video add word or segment timestamps, clip duration, and visible video text as applicable.
+- `reference_elements` for pages/documents containing tables or formulas. A table element contains `{"kind": "table", "rows": [[...]], "page_number": 1}`; a formula contains `{"kind": "formula", "latex": "...", "page_number": 1}`. Bounding boxes may be added when the source benchmark supplies them.
 
 The manifest header follows `data/benchmarks/extraction/smoke.json` and includes `name`, `version`, `task`, `split`, `source`, `license`, `revision`, `checksum`, `preprocessing_version`, and `split_seed`.
 
@@ -249,7 +344,20 @@ The runners enforce these minimum sample counts in both validation and locked-te
 
 The image corpus should cover clean scans, noisy/skewed scans, phone photos, low resolution, and multi-column pages. PDF should cover digital, scanned, mixed, broken-encoding, slide, and academic layouts. Audio should cover clean/noisy speech, accents, technical vocabulary, and multiple speakers. Video needs verified transcripts, timestamps, and on-screen text. These categories are part of experimental validity, even when the minimum count check passes.
 
-Tables and formulas may appear only as flattened ordinary text. There is no web, structured-table, formula, or dedicated form benchmark in this project.
+Tables and formulas are part of complete image/PDF/DOCX extraction. They are not separate upload types or separate product APIs. Web and dedicated form extraction remain out of scope.
+
+### Authoritative public data sources
+
+Use the official repositories/dataset pages and preserve their exact revision and license in the local manifest:
+
+- [OmniDocBench v1.6/v1.7](https://github.com/opendatalab/OmniDocBench): primary complete-page corpus and official text, layout, reading-order, table TEDS, and formula CDM evaluators. Put downloaded pages/PDFs under `data/benchmarks/raw/omnidocbench/`. Do not mix versions in one manifest.
+- [olmOCR-Bench](https://github.com/allenai/olmocr): difficult PDF linearization cases for old scans, multi-column pages, tiny text, tables, math, headers, and footers. Put assets under `data/benchmarks/raw/olmocr-bench/`.
+- [OHR-Bench](https://github.com/opendatalab/OHR-Bench): 350 PDFs and questions designed to measure extraction-caused RAG degradation. Put it under `data/benchmarks/raw/ohr-bench/`; use its official split and keep its downstream results separate from QASPER selection.
+- [PureDocBench dataset](https://huggingface.co/datasets/zhihengli-casia/puredocbench): optional robustness track with clean, digitally degraded, and real-degraded pages. Put it under `data/benchmarks/raw/puredocbench/` and do not combine its degradation conditions without stratified reporting.
+- [Open ASR Leaderboard dataset collection](https://huggingface.co/datasets/hf-audio/open-asr-leaderboard): source for reproducible English ASR test sets such as LibriSpeech, Earnings22, SPGISpeech, VoxPopuli, GigaSpeech, and AMI. Select licensed subsets and put them under `data/benchmarks/raw/asr/`; add EduMind technical-vocabulary/noise clips rather than treating a public average as sufficient.
+- [QASPER](https://huggingface.co/datasets/allenai/qasper): downloaded automatically by section 6 and combined with verified structured evidence for chunking, retrieval, generation, and final RAG.
+
+OmniDocBench and olmOCR-Bench provide credible public parsing evidence, but EduMind still runs its own benchmark because it requires English-specific strata, exact typed output/provenance, the selected table/formula serialization, local latency/resources, and downstream retrieval/answer quality. OHR-Bench directly helps the downstream confirmation but does not replace QASPER or the component experiments.
 
 ### Licensed asset download plan
 

@@ -2,15 +2,15 @@
 
 ## Question and candidates
 
-Which pinned local Ollama profile produces the best grounded, cited answer from frozen evidence? Standard screens Qwen3 1.7B, Qwen3.5 4B/9B direct and thinking, Gemma3 4B/12B, Ministral 3 8B, and GPT-OSS 20B low/medium reasoning. Freezing evidence isolates generation.
+Which pinned local Ollama profile produces the best grounded, cited answer from frozen evidence? Standard screens Qwen3 1.7B, Qwen3.5 4B/9B direct and thinking, Gemma 4 12B, Ministral 3 8B, and GPT-OSS 20B low/medium reasoning. Freezing evidence isolates generation.
 
 ## Data and procedure
 
-The runner deterministically balances up to 24 development questions across answerable and unanswerable cases. Answerable cases receive verified evidence; unanswerable cases receive their document. Evidence is capped at 3,500 tokens to leave room within the 4,096-token prompt target. Every profile pins its Ollama digest, temperature 0, seed 42, 8,192 context, and 256 answer-token maximum. The model is unloaded for cold measurement, warmed twice, then standard/full generate three measured answers per question. Metrics are averaged within a question; repeated questions remain one bootstrap unit.
+The runner deterministically balances up to 24 development questions jointly across evidence type and answer type, preserving text, table, formula, mixed, answerable, and unanswerable cases when present. Answerable cases receive verified evidence; unanswerable cases receive their document. Evidence is capped at 3,500 tokens to leave room within the 4,096-token prompt target. Every profile pins its Ollama digest, temperature 0, seed 42, 8,192 context, and 256 answer-token maximum. The model is unloaded for cold measurement, warmed twice, then standard/full generate three measured answers per question. Metrics are averaged within a question; repeated questions remain one bootstrap unit. Overall and evidence-type aggregates are retained.
 
 ## Metrics
 
-Automated generation metrics are Exact Match, Token F1, ROUGE-L, pinned local NLI Faithfulness, answerability correctness/balanced accuracy, refusal precision/recall/F1, unsupported-answer rate, malformed-output rate, and determinism. Citation Precision is supported cited context IDs / cited IDs; Citation Recall is supported context IDs cited / supported context IDs; Citation F1 is their harmonic mean. These are context-citation diagnostics, not claim-level human judgments.
+Automated generation metrics are Exact Match, Token F1, ROUGE-L, pinned local HHEM Faithfulness, answerability correctness/balanced accuracy, refusal precision/recall/F1, unsupported-answer rate, malformed-output rate, and determinism. Citation Precision is supported cited context IDs / cited IDs; Citation Recall is supported context IDs cited / supported context IDs; Citation F1 is their harmonic mean. These are context-citation diagnostics, not claim-level human judgments.
 
 Operations include complete request p50/p95, visible-answer TTFT p50/p95, Ollama prompt-evaluation and model-generation durations, prompt/answer token counts, an explicitly labeled reasoning word-count estimate, tokens/second, answers/minute, cold load, evaluator-process RAM, and Ollama-reported model RAM/VRAM. The resource gate uses evaluator peak RAM plus Ollama's loaded-model allocation and requires the sum below 28 GB; the two sources remain separately visible.
 

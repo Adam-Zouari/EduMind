@@ -1,5 +1,7 @@
 # EduMind experiment program
 
+Read `benchmark_manual.md` for the consolidated scientific and operational specification and `model_selection.md` for candidate evidence and include/exclude decisions.
+
 ## Boundary
 
 All selection work lives in this directory. Production code under `src/edumind` provides the strategies that already exist in the application, while experiment-only alternatives such as BM25, RRF, rerankers, database adapters, datasets, statistics, and MLflow logging remain here. A benchmark never edits `config/base.yaml`; changing production requires a separate, explicit decision after reviewing evidence.
@@ -26,7 +28,7 @@ python experiments/benchmarks/prepare.py vectordb
 
 Every preparation step is explicit. Imports and application startup do not download models or start Docker.
 
-`app-models` downloads only MiniLM, faster-whisper `base.en` int8 weights, and `qwen3:1.7b`. `huggingface-models` downloads the four embedding models, two rerankers, and local NLI model. `extraction-models` downloads both PaddleOCR profiles, docTR, OpenAI Whisper small.en, and all faster-whisper candidates. `ollama-models` pulls every documented generation candidate. `vectordb` pulls and digest-locks the four server images. `qasper` creates the frozen paper-level RAG manifests. Large public extraction assets require a checksum/license plan passed to `prepare.py assets --plan PLAN.json`; standard extraction runs refuse assets without SHA-256 provenance.
+`app-models` downloads only MiniLM, faster-whisper `base.en` int8 weights, and `qwen3:1.7b`. `huggingface-models` prepares seven embeddings, four rerankers, and HHEM. `extraction-models` prepares the selected OCR, complete-document, and ASR candidates. Both commands accept repeatable `--candidate` options and persist every completed model, so large downloads are resumable. `ollama-models` pulls every documented generation candidate. `vectordb` pulls and digest-locks the four server images. `qasper` creates the frozen text source manifests; `rag-selection` combines them with verified table/formula/mixed manifests. Large public extraction assets require a checksum/license plan passed to `prepare.py assets --plan PLAN.json`; standard extraction runs refuse assets without SHA-256 provenance.
 
 ## Runs and artifacts
 
@@ -42,7 +44,7 @@ An invocation creates one parent run and one child per candidate. It logs the co
 
 ## Scientific rules
 
-Manifests freeze source, license, revision, split, preprocessing, sample IDs, and checksums. RAG splits are paper-isolated and evidence uses validated half-open offsets. Candidate and query order use seed 42. Standard/full retain per-sample observations and use 10,000 bootstrap resamples for 95% intervals. Holm correction is available only for declared formal comparison families.
+Manifests freeze source, license, revision, split, preprocessing, sample IDs, and checksums. RAG splits are paper-isolated and evidence uses validated half-open offsets. Candidate and query order use seed 42. Standard/full retain per-sample observations and use 10,000 bootstrap resamples for 95% intervals. The reports make interval and Pareto comparisons; they do not perform an unused hypothesis-testing workflow.
 
 Hard correctness/resource gates run before Pareto selection. There is no min-max normalization and no weighted overall score. When quality intervals overlap, prefer lower p95 latency, then memory, then storage. Smoke winners, import success, and automated generation metrics are not promotion evidence.
 

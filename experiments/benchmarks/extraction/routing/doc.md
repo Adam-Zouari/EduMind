@@ -22,6 +22,6 @@ python experiments/benchmarks/extraction/routing/run.py --profile standard --ima
 python experiments/benchmarks/extraction/routing/run.py --profile full --shortlist SUMMARY_JSON --image-summary IMAGE_SUMMARY_JSON
 ```
 
-Results do not generalize beyond represented PDF layouts or establish table, formula, form, or web extraction.
+Results do not generalize beyond represented PDF layouts. Text-only routing quality cannot establish table/formula quality; structural routing conclusions require annotated table/formula pages. Dedicated forms and web extraction remain out of scope.
 
 Artifacts are plan/provenance JSON, candidate JSON, per-document Parquet, summary intervals/comparisons, and local MLflow runs. Example: high route-label accuracy is insufficient if quality regret remains worse than page-hybrid routing.

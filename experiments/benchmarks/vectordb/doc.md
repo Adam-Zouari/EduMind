@@ -21,7 +21,7 @@ python experiments/benchmarks/vectordb/run.py --profile standard
 
 The production Chroma Compose file and benchmark Chroma use the same loopback port, so they must not run together. Removing the benchmark volumes before an authoritative run prevents old indexes from contaminating storage and ingestion measurements. The command targets only this named benchmark Compose project.
 
-Smoke uses 1,000 vectors, 50 queries, and concurrency 1. Standard uses 100,000 vectors at dimensions 384 and 1,024, 500 queries, three repetitions, and concurrency 1/8/32. Full requires `--embedding-summary` with exactly one approved chunking/embedding pair; it rebuilds that pair's real QASPER vectors and also uses a one-million-vector clustered corpus at the selected dimension with concurrency 1/8/32/64. Smoke proves only that the real path works.
+Smoke uses 1,000 vectors, 50 queries, and concurrency 1. Standard uses 100,000 vectors at dimensions 384 and 1,024, 500 queries, three repetitions, and concurrency 1/8/32. Full requires `--embedding-summary` with exactly one approved chunking/embedding pair; it rebuilds that pair's real combined text/table/formula/mixed RAG vectors and also uses a one-million-vector clustered corpus at the selected dimension with concurrency 1/8/32/64. Smoke proves only that the real path works.
 
 For standard/full, each server tries `m {16,32}`, construction breadth `{100,200}`, and search breadth `{64,128}` on a 10,000-vector validation slice. Unsupported settings are counted. The lowest-latency setting reaching Recall@10 of 0.99 is used for the measured workload. Every run records Git state, hardware, client versions, server image digests, selected settings, and per-query observations.
 

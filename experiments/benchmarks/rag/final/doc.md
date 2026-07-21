@@ -6,7 +6,7 @@ Which complete local system should be promoted? Provide approved retrieval and g
 
 ## Procedure
 
-Each measured repetition performs query embedding, exact dense/BM25/RRF/reranking as selected, top-k context construction, Ollama prompting, and generation. End-to-end latency is retrieval plus generation; retrieval and generation are also reported separately. Retrieval metrics are computed from the exact chunks used for generation. Standard uses QASPER validation. It never edits production configuration.
+Each measured repetition performs query embedding, exact dense/BM25/RRF/reranking as selected, top-k context construction, Ollama prompting, and generation. End-to-end latency is retrieval plus generation; retrieval and generation are also reported separately. Retrieval metrics are computed from the exact chunks used for generation. Standard uses the combined `rag-selection-validation` manifest: QASPER text questions plus verified table, formula, and mixed-evidence questions. It never edits production configuration.
 
 ```powershell
 python experiments/benchmarks/rag/final/run.py --profile standard `
@@ -21,7 +21,7 @@ python experiments/benchmarks/review.py export FINAL_SUMMARY_JSON human-review.c
 python experiments/benchmarks/review.py import human-review.csv
 ```
 
-Reviewers score Faithfulness, Answer Correctness, Completeness, and Citation Accuracy from 0 to 2, plus answerability correctness from 0 to 1. Import requires exactly 60 unique, valid judgments before unblinding.
+Reviewers score Faithfulness, Answer Correctness, Completeness, and Citation Accuracy from 0 to 2, plus answerability correctness from 0 to 1. Question selection is stratified jointly by evidence type and answerability. Import requires exactly 60 unique, valid judgments before unblinding and reports both overall and evidence-type means.
 
 - Faithfulness: 2 = every material claim follows from evidence; 1 = a minor unsupported/overstated claim; 0 = a material contradiction or fabrication.
 - Answer Correctness: 2 = agrees with an accepted answer; 1 = partly correct but materially imperfect; 0 = wrong.
@@ -55,6 +55,6 @@ python experiments/benchmarks/rag/final/confirm_extraction.py `
   --candidate "chunker@@embedding@@retrieval@@generator@@top_k=5"
 ```
 
-The two child runs use the same frozen system and report paired `verified-reference - selected-extraction` intervals for retrieval, citation/NLI, and end-to-end metrics. To collect the required human deltas, export both systems with `review.py export CONFIRMATION_SUMMARY human-confirmation.csv --finalists 2 --questions 20`, producing 40 blinded judgments. This stage quantifies extraction degradation; it must not retune the selected components.
+The two child runs use the same frozen system and report paired `verified-reference - selected-extraction` intervals for retrieval, citation/HHEM, and end-to-end metrics. Questions and results are stratified as text, table, formula, and mixed evidence when those annotations exist, so a strong text average cannot hide structural failure. To collect the required human deltas, export both systems with `review.py export CONFIRMATION_SUMMARY human-confirmation.csv --finalists 2 --questions 20`, producing 40 blinded judgments. This stage quantifies extraction degradation; it must not retune the selected components.
 
 Artifacts include plan/provenance, per-system candidate JSON/Parquet, paired intervals, human-review CSV plus separate identity/results JSON, and the locked-test marker. Example: the best Token F1 system is not selected when blinded Faithfulness is materially worse.

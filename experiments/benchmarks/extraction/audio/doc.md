@@ -2,7 +2,7 @@
 
 ## Question and candidates
 
-Which local English ASR profile minimizes transcription and timing error at acceptable cost? Compare OpenAI Whisper `small.en` with faster-whisper tiny/base/small/turbo candidates. Turbo is a quality ceiling until it passes resource and latency gates.
+Which local English ASR profile minimizes transcription and timing error at acceptable cost? Compare OpenAI Whisper `small.en`; faster-whisper tiny/base/small/turbo profiles; Distil-Whisper large v3.5; NVIDIA Parakeet TDT 0.6B v3; and Canary-Qwen 2.5B. The latter two prevent a Whisper-only conclusion. Every model must pass the same local dependency, timing, resource, and determinism checks.
 
 ## Data and procedure
 
@@ -14,7 +14,7 @@ Tiny/base int8 run on CPU; OpenAI small, faster-whisper small, and turbo run on 
 
 - WER and CER are Levenshtein error counts divided by reference word/character counts; lower is better.
 - Missing and hallucinated speech use normalized unmatched transcript tokens; lower is better.
-- Timestamp MAE is mean absolute start-time error in seconds when one-to-one timestamp annotations exist. Timestamp Alignment Coverage reports matched count / larger count when counts differ.
+- Timestamp MAE is mean absolute start-time error in seconds when one-to-one timestamp annotations exist. Timestamp Alignment Coverage reports matched count / larger count and remains a selection objective when counts differ, so a transcript-only model cannot evade timestamp evaluation.
 - Segment Boundary MAE is the mean absolute start/end error only when the manifest supplies aligned boundaries and the predicted count matches. It is omitted otherwise, not fabricated.
 - Real-Time Factor = measured processing seconds / annotated audio seconds. Below 1 is faster than real time.
 - Operations: cold invocation, p50/p95 clip latency, clips/minute, process RAM, and VRAM when available. Determinism records identical transcripts across repetitions.

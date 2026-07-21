@@ -2,11 +2,11 @@
 
 ## Question and candidates
 
-For up to three explicitly approved chunker/embedding pairs, which ranking strategy retrieves the best evidence? Compare dense, BM25, reciprocal-rank fusion of dense and BM25, RRF + MiniLM cross-encoder, and RRF + Qwen3 Reranker 0.6B. BM25, RRF, and rerankers live only in experiments.
+For up to three explicitly approved chunker/embedding pairs, which ranking strategy retrieves the best evidence? Compare dense, BM25, reciprocal-rank fusion of dense and BM25, and RRF followed separately by MiniLM, BGE v2-m3, Qwen3 0.6B, or Qwen3 4B reranking. BM25, RRF, and rerankers live only in experiments.
 
 ## Data and procedure
 
-Pass the chunking/embedding `summary.json` with `--embedding-summary`. The runner rejects more than three unresolved Pareto pairs, crosses each approved pair with every strategy, builds its exact index, retrieves 20 before fusion/reranking, and evaluates QASPER at top 10. RRF combines ranks as `sum(1 / (60 + rank))`; incompatible raw dense/BM25 scores are never mixed. Standard/full repeat queries three times and report determinism without treating repeats as extra questions.
+Pass the chunking/embedding `summary.json` with `--embedding-summary`. The runner rejects more than three unresolved Pareto pairs, crosses each approved pair with every strategy, builds its exact index, retrieves 20 before fusion/reranking, and evaluates the combined text/table/formula/mixed manifest at top 10. RRF combines ranks as `sum(1 / (60 + rank))`; incompatible raw dense/BM25 scores are never mixed. Standard/full repeat queries three times and report determinism without treating repeats as extra questions. Overall metrics select candidates; evidence-type aggregates remain mandatory diagnostics so a structural failure cannot be hidden by the larger text stratum.
 
 ## Metrics
 
