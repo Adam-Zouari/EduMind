@@ -6,7 +6,6 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 from pathlib import Path
-import statistics
 import sys
 import time
 
@@ -44,7 +43,7 @@ def main() -> int:
     retrieval = _single_selection(arguments.retrieval_summary)
     candidates = _finalists(database_payload)
     chunker_name, embedding_name = embedding.split("|", 1)
-    manifest = load_manifest(PROJECT_ROOT / "data/benchmarks/rag/qasper-validation.json")
+    manifest = load_manifest(PROJECT_ROOT / "data/benchmarks/rag/rag-selection-validation.json")
     revisions = load_model_lock(PROJECT_ROOT / "data/benchmarks/models/huggingface.json")
     vector_revisions = image_lock()
     index = build_index(manifest, chunker_name, embedding_name, revisions, with_bm25=True)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from pathlib import Path
 
 import numpy as np
