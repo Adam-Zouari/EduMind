@@ -10,6 +10,9 @@ standard:
   - paddleocr-v5-server|raw
   - paddleocr-v5-server|document
   - paddleocr-v5-server|photo
-  - doctr-fast-parseq|raw
-  - doctr-fast-parseq|document
-  - doctr-fast-parseq|photo
+  - docling
+  - pp-structure-v3
+  - paddleocr-vl-1.6
+  - glm-ocr
+  - mineru-2.5-pro
+  - olmocr-2-7b

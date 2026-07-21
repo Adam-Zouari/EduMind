@@ -14,10 +14,11 @@ rank-bm25==0.2.2
 openai-whisper==20250625
 paddleocr==3.7.0
 paddlepaddle==3.3.1
+paddlex[ocr]==3.7.0
 docling==2.113.0
-python-doctr==1.0.1
 mammoth==1.12.0
-unstructured==0.18.32
+accelerate==1.12.0
+soundfile==0.13.1
 
 # Four vector-server clients. The servers themselves run from Docker images.
 qdrant-client==1.18.0

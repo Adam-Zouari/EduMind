@@ -6,3 +6,6 @@ standard:
   - faster-whisper-small-int8
   - faster-whisper-small-float16
   - faster-whisper-turbo-int8
+  - distil-whisper-large-v3.5
+  - parakeet-tdt-0.6b-v3
+  - canary-qwen-2.5b

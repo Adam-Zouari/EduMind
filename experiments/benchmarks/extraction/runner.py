@@ -16,6 +16,7 @@ from edumind.extraction.normalization import normalize_text
 
 from experiments.benchmarks.common.contracts import BenchmarkPlan, BenchmarkResult, SampleResult
 from experiments.benchmarks.common.datasets import load_manifest
+from experiments.benchmarks.common.document_metrics import structured_document_scores
 from experiments.benchmarks.common.metrics import (
     character_error_rate,
     levenshtein,
@@ -172,13 +173,9 @@ def _metrics(stage, reference, hypothesis, item, document) -> dict[str, float]:
         }
     )
     if stage in {"image", "pdf", "routing"}:
-        expected_pages = max(1, int(item.get("reference_pages", 1)))
-        pages = {
-            segment.page_number
-            for segment in document.segments
-            if segment.page_number is not None and segment.text.strip()
-        }
-        scores["page_coverage"] = min(1.0, len(pages) / expected_pages)
+        scores.update(_page_scores(item, document))
+    if stage in {"image", "pdf", "docx", "routing"} and document is not None:
+        scores.update(structured_document_scores(item.get("reference_elements"), document))
     if stage in {"audio", "video"}:
         reference_timestamps = item.get("reference_timestamps")
         if isinstance(reference_timestamps, Sequence) and not isinstance(reference_timestamps, str):
@@ -329,6 +326,18 @@ def _validate_assets(
                     f"Extraction sample {item.get('id')} lacks authoritative provenance: "
                     f"{', '.join(missing)}"
                 )
+            if item.get("kind") == "pdf":
+                reference_pages = item.get("reference_page_texts")
+                if (
+                    not isinstance(reference_pages, Sequence)
+                    or isinstance(reference_pages, (str, bytes))
+                    or not reference_pages
+                    or len(reference_pages) != int(item.get("reference_pages", 0))
+                ):
+                    raise ValueError(
+                        f"Authoritative PDF sample {item.get('id')} requires "
+                        "reference_page_texts matching reference_pages"
+                    )
         if not path.is_file():
             raise FileNotFoundError(f"Extraction asset is missing: {path}")
         if expected and sha256_file(path) != str(expected):
@@ -340,7 +349,52 @@ def _duplicate_line_rate(text: str) -> float:
     return (len(lines) - len(set(lines))) / len(lines) if lines else 0.0
 
 
+def _page_scores(item: Mapping[str, object], document) -> dict[str, float]:
+    raw_references = item.get("reference_page_texts")
+    if isinstance(raw_references, Sequence) and not isinstance(raw_references, (str, bytes)):
+        references = [str(value) for value in raw_references]
+    elif item.get("kind") == "image":
+        references = [str(item.get("reference", ""))]
+    else:
+        expected = max(1, int(item.get("reference_pages", 1)))
+        pages = {
+            segment.page_number
+            for segment in document.segments
+            if segment.page_number is not None and segment.text.strip()
+        }
+        return {"page_coverage": min(1.0, len(pages) / expected)}
 
+    predicted = {
+        page: "\n".join(
+            segment.text
+            for segment in document.segments
+            if segment.page_number == page and segment.text.strip()
+        )
+        for page in range(1, len(references) + 1)
+    }
+    populated = [value for value in predicted.values() if value.strip()]
+    correct_attribution = 0
+    same_page_scores: list[float] = []
+    for page, reference in enumerate(references, 1):
+        hypothesis = predicted[page]
+        same_page_scores.append(content_scores(reference, hypothesis)["content_f1"])
+        if not hypothesis.strip():
+            continue
+        similarities = [content_scores(value, hypothesis)["content_f1"] for value in references]
+        if int(np.argmax(similarities)) + 1 == page:
+            correct_attribution += 1
+    normalized = [" ".join(value.casefold().split()) for value in populated]
+    duplicate_rate = (
+        (len(normalized) - len(set(normalized))) / len(normalized) if normalized else 0.0
+    )
+    coverage = len(populated) / len(references)
+    return {
+        "page_coverage": coverage,
+        "page_content_f1": float(np.mean(same_page_scores)),
+        "page_attribution_accuracy": correct_attribution / len(references),
+        "missing_page_rate": 1.0 - coverage,
+        "duplicate_page_rate": duplicate_rate,
+    }
 
 def _directions(stage: str) -> dict[str, str]:
     result = {
@@ -352,13 +406,32 @@ def _directions(stage: str) -> dict[str, str]:
         "operational.peak_ram_mb": "min",
     }
     if stage in {"image", "pdf", "routing"}:
-        result.update({"page_coverage": "max", "block_structure_f1": "max"})
+        result.update(
+            {
+                "page_coverage": "max",
+                "page_content_f1": "max",
+                "page_attribution_accuracy": "max",
+                "missing_page_rate": "min",
+                "duplicate_page_rate": "min",
+                "block_structure_f1": "max",
+                "table_detection_f1": "max",
+                "table_content_f1": "max",
+                "table_structure_f1": "max",
+                "formula_detection_f1": "max",
+                "formula_latex_similarity": "max",
+            }
+        )
     if stage == "docx":
         result.update(
             {
                 "content_precision": "max",
                 "content_recall": "max",
                 "block_structure_f1": "max",
+                "table_detection_f1": "max",
+                "table_content_f1": "max",
+                "table_structure_f1": "max",
+                "formula_detection_f1": "max",
+                "formula_latex_similarity": "max",
             }
         )
     if stage == "audio":
@@ -368,6 +441,7 @@ def _directions(stage: str) -> dict[str, str]:
                 "hallucinated_text_rate": "min",
                 "timestamp_mae_seconds": "min",
                 "segment_boundary_mae_seconds": "min",
+                "timestamp_alignment_coverage": "max",
                 "operational.real_time_factor": "min",
             }
         )
@@ -429,6 +503,9 @@ def _device(stage, candidate, component_options, item) -> str:
         "faster-whisper-small-int8",
         "faster-whisper-small-float16",
         "faster-whisper-turbo-int8",
+        "distil-whisper-large-v3.5",
+        "parakeet-tdt-0.6b-v3",
+        "canary-qwen-2.5b",
     }:
         return "cuda"
     return "cpu"
@@ -456,9 +533,17 @@ def _model_lock(
     candidates: tuple[str, ...],
     component_options: Mapping[str, object],
 ) -> dict[str, dict[str, str]]:
+    prepared_engines = (
+        "docling",
+        "paddleocr",
+        "pp-structure",
+        "glm-ocr",
+        "mineru",
+        "olmocr",
+    )
     needs_lock = stage in {"audio", "video"} or any(
-        name.startswith(("paddleocr", "doctr")) for name in candidates
-    ) or str(component_options.get("image_engine", "")).startswith(("paddleocr", "doctr"))
+        name.startswith(prepared_engines) for name in candidates
+    ) or str(component_options.get("image_engine", "")).startswith(prepared_engines)
     if not needs_lock:
         return {}
     return load_extraction_model_lock(PROJECT_ROOT / "data/benchmarks/models/extraction.json")

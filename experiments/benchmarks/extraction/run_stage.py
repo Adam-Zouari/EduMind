@@ -8,6 +8,21 @@ from pathlib import Path
 from experiments.benchmarks.common.arguments import parser, resolved_candidates
 from experiments.benchmarks.extraction.runner import run
 
+ASR_SETTINGS = {
+    "openai-whisper-small-en": ("openai-whisper", "small.en", "float16"),
+    "distil-whisper-large-v3.5": (
+        "transformers-asr",
+        "distil-whisper/distil-large-v3.5",
+        "float16",
+    ),
+    "parakeet-tdt-0.6b-v3": (
+        "transformers-asr",
+        "nvidia/parakeet-tdt-0.6b-v3",
+        "bfloat16",
+    ),
+    "canary-qwen-2.5b": ("nemo-canary", "nvidia/canary-qwen-2.5b", "bfloat16"),
+}
+
 
 def main(stage: str, directory: Path) -> int:
     argument_parser = parser(f"Benchmark {stage} extraction")
@@ -75,28 +90,26 @@ def _component_options(image_summary: Path | None, audio_summary: Path | None) -
             if key != "vad" or not separator or value not in {"on", "off"}:
                 raise ValueError(f"Unsupported audio factor: {factor}")
             options["vad"] = value == "on"
-        if audio == "openai-whisper-small-en":
-            options.update(
-                {
-                    "audio_candidate": audio,
-                    "audio_engine": "openai-whisper",
-                    "audio_model": "small.en",
-                    "audio_compute_type": "float16",
-                }
-            )
-        elif audio.startswith("faster-whisper-"):
+        if audio.startswith("faster-whisper-"):
             value = audio.removeprefix("faster-whisper-")
             model, compute_type = value.rsplit("-", 1)
-            options.update(
-                {
-                    "audio_candidate": audio,
-                    "audio_engine": "faster-whisper",
-                    "audio_model": model if model == "turbo" else f"{model}.en",
-                    "audio_compute_type": compute_type,
-                }
+            settings = (
+                "faster-whisper",
+                model if model == "turbo" else f"{model}.en",
+                compute_type,
             )
         else:
-            raise ValueError(f"Unsupported audio selection: {audio}")
+            settings = ASR_SETTINGS.get(audio)
+            if settings is None:
+                raise ValueError(f"Unsupported audio selection: {audio}")
+        options.update(
+            {
+                "audio_candidate": audio,
+                "audio_engine": settings[0],
+                "audio_model": settings[1],
+                "audio_compute_type": settings[2],
+            }
+        )
     return options
 
 

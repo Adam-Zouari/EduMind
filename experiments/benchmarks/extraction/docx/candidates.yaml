@@ -1,2 +1,2 @@
 smoke: [python-docx]
-standard: [python-docx, mammoth, docling-docx, unstructured-docx]
+standard: [python-docx, mammoth, docling, mineru-2.5-pro]
