@@ -1,556 +1,392 @@
 # Benchmark candidate decisions
 
-Status: **approved candidate-selection specification; executable registries synchronized**
+Status: **public shortlist; local feasibility screening must be completed before the runnable benchmark registry is frozen**
 
-Evidence reviewed: **2026-07-21**
+Selection version: **benchmark-candidates-v7**
 
-This document answers two questions only:
+Evidence reviewed: **2026-08-23**
 
-1. Is a candidate included in the EduMind benchmark?
-2. Why is it included or excluded?
+Evidence artifacts:
 
-Every decision is `INCLUDE` or `EXCLUDE`. This document is the approved target list. Candidate files, downloaders, dependency guidance, typed extraction output, and implemented metrics are kept synchronized with it. Application defaults remain provisional and never change automatically.
+- `selection_evidence.csv` — SHA-256 `aec760fe24b8cbb981965405ce9bf719f1910ee6b391ecbf00be8e3141a0c672`
+- `source_snapshots.json` — SHA-256 `67895d55de86e565e10e1e80da57bfe45c40e31668da5a3dd0b8debcbaa3564d`
+- `selection_manifest.json` — verifies the names, byte counts, and hashes of the three companion artifacts; like any checksum manifest, it does not attempt to hash itself
 
-## How candidates are selected
+The Markdown stays readable; the evidence artifacts record the screened alternatives, scores, filters, source revisions where available, and dated snapshots used for the selection claims.
 
-A candidate is included when all of these are true:
+### How to read the evidence links
 
-- It is relevant to EduMind's actual task.
-- There is credible public evidence that it is worth testing.
-- It can run locally or on a self-hosted server.
-- Its license permits it to become the project default.
-- It answers a different question from the other candidates: quality, efficiency, architecture, or a necessary baseline.
+The package uses three kinds of links because they answer different questions:
 
-A candidate is excluded when it has an incompatible license, duplicates another candidate without stronger evidence, is obsolete, or evaluates a feature outside EduMind's scope.
+- A **public benchmark link** shows the benchmark definition, tasks, metric, and current public results. It explains what was measured.
+- A **pinned evidence link** opens the exact model card or result file used for a number in this document. It protects the audit from later edits to a mutable `main` page.
+- A **model or project link** establishes practical facts such as the model identifier, parameter count, license, supported output, and runtime instructions. It is not ranking evidence unless it also contains the cited benchmark table.
 
-Public benchmark rank is a filter, not the final decision. A leaderboard tells us which candidates deserve an EduMind run. EduMind's frozen data decides which one works best for EduMind.
+“At revision `abc123...`” means “at the exact Git commit identified by that hash.” Hugging Face model repositories, datasets, and GitHub documentation can change after review; a revision makes the cited state reproducible. A live leaderboard link is still included for convenient browsing, while the pinned result remains the source for the recorded number.
 
-## Are the internet benchmarks reliable?
+## Model-selection rule
 
-They are reliable enough to choose candidates, but none is sufficient to choose EduMind's final system.
+Competing model checkpoints have four selection paths:
 
-| Public benchmark | What is reliable about it | What it does not answer for EduMind |
+1. **Ranked candidate:** define the size tier first, freeze the complete comparison table used for that screen, apply the documented task/license filters, and select the highest-ranked eligible row. This means the table is complete for the recorded comparison claim; it does not mean every model on the internet was evaluated.
+2. **Unresolved challenger:** advance a model only when all of the following are recorded: exact model revision, eligible license, release before the evidence cutoff, a public task-specific result from MTEB/RTEB or another named benchmark, the same size tier as the ranked candidate, and a protocol mismatch that prevents a valid numerical comparison.
+3. **Benchmark control:** retain the current or established baseline even when it is not a public leader. Controls measure whether a candidate improves on the system EduMind is replacing.
+4. **Preliminary screening candidate:** when no task-specific public benchmark compares the current compact models under one protocol, use relevant but non-authoritative public evidence only to create a small local shortlist. Such a candidate is never called a public benchmark winner; EduMind's grounded local benchmark makes the actual selection.
+
+No score from one benchmark is numerically compared with a score from another benchmark. Missing comparability is resolved only by EduMind's frozen local benchmark. The exact source set, filters, rows, revisions, and decisions are recorded in the evidence artifacts; “best” means best inside that frozen screened set, not best across every model on the internet.
+
+For model rows, the evidence ledger uses only **include** or **exclude** as its decision. An included model can be a tier winner, a protocol-mismatched challenger, a preliminary screening candidate, or a required control. `size_tier` now contains only a parameter band or `N/A`; the separate `selection_role` field records the row's role, while `score_status` and `reason` explain its evidence and decision.
+
+Two special cases follow their own simpler rules. HHEM is a model checkpoint, but it is included only as the required automated faithfulness diagnostic; it is never a promotion candidate or authoritative judge. Vector-database products are not model checkpoints: they are included when they are self-hosted network servers, represent a useful architecture for EduMind, and can be evaluated through the common server benchmark. Their local conformance, retrieval quality, and operational results—not a model leaderboard—decide whether they remain candidates.
+
+### Evidence-ledger scope
+
+`selection_evidence.csv` records only externally sourced **model checkpoints** and **vector-database products**. It does not contain rows for internally defined experiment strategies such as chunking, dense/BM25/RRF retrieval, video keyframe selection, or normalization. Those strategies are hypotheses designed by EduMind and are specified in this Markdown and the experiment documentation; they do not have an upstream model revision or public leaderboard decision to record. The Docling control configuration is documented and snapshotted here for reproducibility, but is not a CSV model-selection row.
+
+This package selects model-backed components, complete extraction profiles, and vector-server products. It is not the candidate registry for every modality-level library or engine. The authoritative diagnostic candidate lists and procedures are maintained beside their runners in the [image](extraction/image/doc.md), [PDF](extraction/pdf/doc.md), [DOCX](extraction/docx/doc.md), [routing](extraction/routing/doc.md), and [normalization](extraction/normalization/doc.md) experiment documents. Those diagnostics inform a complete extraction profile but cannot be promoted alone as the application-wide extraction default.
+
+In the CSV, `quality_source_state` and `task_evidence_state` contain an immutable commit or digest when the source provides one. For mutable webpages or operational profiles, the field instead contains a dated snapshot or version note. `retrieved_date` remains the observation date. These source-state fields are audit metadata, not substitutes for the machine-local runnable artifact locks required before authoritative execution.
+
+`selection_role` uses explicit machine-readable values such as `ranked_candidate`, `unresolved_challenger`, `benchmark_control`, and `screened_alternative`. This keeps experimental role separate from model size and allows the ledger to be filtered without interpreting prose.
+
+The license filter is deliberately narrow: an included model must be self-hostable and its published terms must allow the intended EduMind use without requiring a paid hosted service. Non-commercial-only models are excluded because a benchmark winner must remain promotable into the application. License is an eligibility gate, never a quality score, and this engineering review is not legal advice.
+
+The size boundaries are **approximate model-size tiers used only to keep the shortlist compact and diverse**. They are not operational-cost tiers. Actual deployment cost depends on precision/quantization, architecture, embedding dimension, context length, runtime, batch size, RAM/VRAM behavior, and model residency.
+
+### Required benchmark controls
+
+| Component | Control | Purpose |
 |---|---|---|
-| [MTEB](https://huggingface.co/spaces/mteb/leaderboard) | Standard datasets, task definitions, metrics, and published result files make embedding comparisons reproducible. | Its overall score mixes retrieval with unrelated tasks. Public test sets may influence model development. It does not test EduMind's chunks, QASPER questions, evidence offsets, or 2,048-token context budget. |
-| [RTEB](https://huggingface.co/blog/rteb) | Retrieval-only evaluation and private datasets make it more relevant and harder to optimize against directly. | It still does not reproduce EduMind's scientific papers, chunk boundaries, prompts, or operational environment. |
-| [Open ASR Leaderboard](https://github.com/huggingface/open_asr_leaderboard) | Public evaluation code, a common normalizer, and multiple English speech datasets make WER comparisons meaningful. | It does not represent EduMind's exact educational recordings, accents, technical terms, noise, timestamp needs, or local runtime. |
-| [OmniDocBench](https://github.com/opendatalab/OmniDocBench) | A peer-reviewed, annotated document benchmark with official evaluation code for text, layout, tables, formulas, and reading order. | Its combined score is not EduMind's selection rule. It does not test EduMind's image mix, provenance contract, normalization, table/formula serialization for RAG, downstream questions, or runtime. |
-| [olmOCR-Bench](https://github.com/allenai/olmocr) | More than 7,000 reproducible tests over roughly 1,400 documents cover old scans, headers, multiple columns, tiny text, math, and tables. | It measures PDF linearization using category-specific tests, not EduMind's complete typed output, cell/formula provenance, downstream RAG quality, or operational environment. |
-| [VectorDBBench](https://github.com/zilliztech/vectordbbench) | Public workloads cover ingestion, search, filters, concurrency, and recall. | Results depend strongly on hardware, index settings, client/server versions, and filters. It is also sponsored by Zilliz, which develops Milvus. |
-| Official LLM model cards | They establish model size, license, supported inference modes, and broad capability evidence. | General knowledge and reasoning scores do not measure grounded answers, refusal, citation correctness, or the 30-second EduMind limit. |
+| Chunking | Token 256/32 | Current fixed-window chunking control. |
+| Embedding | `sentence-transformers/all-MiniLM-L6-v2` at `c9745ed1d9f207416be6d2e6f8de32d1f16199bf` | Current lightweight embedding control. |
+| Reranking | `cross-encoder/ms-marco-MiniLM-L6-v2` | Established legacy cross-encoder control. |
+| Generation | Ollama `qwen3:1.7b` digest `8f68893c685c3ddff2aa3fffce2aa60a30bb2da65ca488b61fff134a4d1730e7`, Q4_K_M | Current application generator control. |
+| Document extraction | Configuration-frozen Docling Standard profile | Unified parser with targeted formula-VLM enrichment; full-page VLM remains disabled. |
+| ASR | `openai/whisper-small.en` reference profile | Established English ASR control with timestamp output. |
+| Vector database | Chroma server | Current server baseline. |
 
-The answer is therefore:
+Controls are always run but never promoted merely because they are controls.
 
-- We do not manually repeat public leaderboards.
-- We use them to make a credible shortlist.
-- We benchmark the shortlist because EduMind has a different dataset, output contract, metrics, context budget, preprocessing pipeline, and execution environment.
-- If a public benchmark exactly matched all of those conditions, repeating it would be unnecessary. None currently does.
+### Selection evidence versus runnable artifacts
 
-MTEB's own [leaderboard guidance](https://huggingface.co/blog/Samoed/mteb-v3-leaderboard) also recommends selecting tasks that match the use case instead of following one global rank.
+This package freezes **why a candidate was selected**. An authoritative benchmark run additionally needs a runnable artifact lock that freezes **exactly what was executed**. The two must not be confused.
 
-## Chunking and embedding benchmark
+Before an authoritative run:
+
+- every Hugging Face model must resolve to a full commit and be recorded in `data/benchmarks/models/huggingface.json` or `extraction.json`;
+- every Ollama profile must record the full manifest digest, quantization, inference mode, context length, and sampling settings in `data/benchmarks/models/ollama.json`;
+- every vector-server image must resolve from its versioned tag to an immutable `repo@sha256:...` digest, with matching client versions, in `data/benchmarks/models/vectordb.json`; and
+- Docling must resolve to full commit `f2683c0b5aa14a53b74373b0640260891cdbc1b0`, and the RapidOCR package plus model-file checksums must be recorded.
+
+The preparation commands create these machine-local locks. A missing item blocks an authoritative run; it is never replaced by an unrecorded latest version. `source_snapshots.json` records which freeze items are already known and which remain required.
+
+### Component feasibility screen
+
+Before an interactive model enters the runnable benchmark registry, its exact deployment profile must:
+
+- complete 20 consecutive representative operations without OOM or crash;
+- avoid sustained OS paging/swapping;
+- avoid unintended model-weight CPU offload caused by insufficient GPU memory;
+- leave at least **25% of physical RAM and 25% of physical VRAM free** at steady state; and
+- record latency and throughput.
+
+The 25% threshold is an EduMind engineering headroom rule, not an external standard.
+
+Ingestion-time components must complete at least 10 representative files or 50 page-equivalents without OOM/crash, avoid sustained paging, remain below 90% peak RAM/VRAM utilization, and release resources after the job.
+
+### Complete-stack deployment gate
+
+Passing component screening independently is necessary but not sufficient. After component winners are chosen, EduMind must execute the **actual serving sequence** with the selected embedding model, vector database server, reranker, and generator using the intended model-residency/unloading policy.
+
+This is a deployment gate, not another candidate matrix. The stack is accepted only if the real application sequence avoids OOM and sustained paging/offload behavior and preserves the required system headroom. Peak RAM/VRAM and query latency are recorded under the actual policy. If models are intentionally unloaded between stages, their reload latency is part of the measurement.
+
+## Chunking and embeddings
 
 ### Embedding candidates
 
-| Candidate | Decision | Why |
+Primary public quality metric: retrieval-specific **nDCG@10 / Retrieval score**, not generic overall MTEB average.
+
+Approximate size tiers:
+
+- **≤350M**
+- **>350M–800M**
+- **>800M–1.5B**
+- **>1.5B–4.5B**
+
+| Size tier | Included candidates | Why they are included | Public benchmark |
+|---|---|---|---|
+| ≤350M | `Snowflake/snowflake-arctic-embed-m-v2.0` | Highest eligible English Retrieval result in the frozen ≤350M comparison table: **58.4**. Its exact model card confirms Apache-2.0 eligibility. | [MTEB model record](https://leaderboard.mteb.org/models/Snowflake/snowflake-arctic-embed-m-v2.0); [pinned IBM comparison](https://github.com/ibm-granite/granite-embedding-models/tree/250b8522ad2a7ea0c1e26f089d3de212390f614b); [pinned model card](https://huggingface.co/Snowflake/snowflake-arctic-embed-m-v2.0/blob/95c2741480856aa9666782eb4afe11959938017f/README.md) |
+| >350M–800M | `Qwen/Qwen3-Embedding-0.6B`; `Octen/Octen-Embedding-0.6B`; `codefuse-ai/F2LLM-v2-0.6B` | Qwen leads the directly comparable MTEB screen (**61.83 Retrieval**). Octen has a strong RTEB result and F2LLM has official MTEB task results, but neither exposes the same frozen aggregate as Qwen; the local benchmark must resolve them. | [Qwen MTEB record](https://leaderboard.mteb.org/models/Qwen/Qwen3-Embedding-0.6B); [RTEB leaderboard](https://leaderboard.mteb.org/benchmark/RTEB%28beta%29); [F2LLM MTEB record](https://leaderboard.mteb.org/models/codefuse-ai/F2LLM-v2-0.6B) |
+| >800M–1.5B | `nvidia/Nemotron-3-Embed-1B-BF16` | NVIDIA's comparable RTEB-16 table reports **72.38 average nDCG@10**, above the reviewed ~1B predecessors in that same table. The evidence ledger records **1.14B total** and approximately **872M active** parameters rather than rounding the same model differently across files. | [MTEB model record](https://leaderboard.mteb.org/models/nvidia/Nemotron-3-Embed-1B-BF16); [pinned RTEB table](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16/blame/c932836c54f75b7df5da0b0f519ea4cfd276a8e4/README.md) |
+| >1.5B–4.5B | `Qwen/Qwen3-Embedding-4B`; `Octen/Octen-Embedding-4B` | Qwen reports **68.46 MTEB English-v2 Retrieval**. Octen reports **0.7747 RTEB public mean**. Those values are from different protocols, so both are included and EduMind's benchmark decides. | [Qwen MTEB record](https://leaderboard.mteb.org/models/Qwen/Qwen3-Embedding-4B); [RTEB leaderboard](https://leaderboard.mteb.org/benchmark/RTEB%28beta%29) |
+
+F2LLM advances only as an unresolved challenger. Official task-level MTEB retrieval results exist at revision `54b4e2...`, but no directly comparable frozen English-v2 retrieval aggregate was verified. It is therefore not ranked above or below Qwen from public evidence.
+
+Exact recorded values and model-card evidence:
+
+- [Snowflake MTEB public model record](https://leaderboard.mteb.org/models/Snowflake/snowflake-arctic-embed-m-v2.0); the **58.4** comparison is pinned to IBM repository revision [`250b852...`](https://github.com/ibm-granite/granite-embedding-models/tree/250b8522ad2a7ea0c1e26f089d3de212390f614b), while the runnable identity and Apache-2.0 eligibility are pinned to Snowflake revision [`95c2741...`](https://huggingface.co/Snowflake/snowflake-arctic-embed-m-v2.0/blob/95c2741480856aa9666782eb4afe11959938017f/README.md)
+- [Qwen3-Embedding-0.6B MTEB table at revision `d43997...`](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B/blob/d43997c8a1046d1734f8d519effbb424a832a0a2/README.md)
+- [Qwen3-Embedding-4B at revision `af551a...`](https://huggingface.co/Qwen/Qwen3-Embedding-4B/blob/af551aabe3b5e18ade93393f15c5e6d26935ccae/README.md)
+- [Octen 0.6B at revision `d15b789...`](https://huggingface.co/Octen/Octen-Embedding-0.6B/blob/d15b7896589e85d23912d5a810a4cf0b8899d302/README.md)
+- [Octen 4B at revision `759a644...`](https://huggingface.co/Octen/Octen-Embedding-4B/blob/759a644bb948131d6da7a743b46a2d4bd5c8a82a/README.md)
+- [F2LLM-v2-0.6B at revision `54b4e2d...`](https://huggingface.co/codefuse-ai/F2LLM-v2-0.6B/blob/54b4e2dc74e01be7126d4cf5f016af6b21edc563/README.md)
+- [Nemotron-3-Embed-1B at revision `c932836...`](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16/blame/c932836c54f75b7df5da0b0f519ea4cfd276a8e4/README.md)
+- `selection_evidence.csv` for the exact comparability decisions.
+
+### Chunking candidates
+
+| Strategy | What it does | Why it is included |
 |---|---|---|
-| `sentence-transformers/all-MiniLM-L6-v2` | **INCLUDE** | It is the current production baseline, is small, and produces 384-dimensional vectors. Its [model card](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) documents a 256-wordpiece limit. Keeping it tells us how much newer models improve over the current inexpensive option. |
-| `infgrad/Jasper-Token-Compression-600M` | **INCLUDE** | It tests a genuinely different efficiency technique: internal token compression. The model shortens the hidden token sequence before later transformer computation; it does not shorten the source text or replace chunking. Its [MIT-licensed model card](https://huggingface.co/infgrad/Jasper-Token-Compression-600M) and [technical report](https://arxiv.org/abs/2511.14405) disclose the method. The author also discloses a remaining retrieval gap and degradation beyond 1,024 tokens, which is exactly why EduMind must measure quality and speed instead of accepting the headline. |
-| `Qwen/Qwen3-Embedding-0.6B` | **INCLUDE** | It is an established modern compact retrieval model and the uncompressed model-family comparison for Jasper. Qwen's [official family results](https://huggingface.co/Qwen/Qwen3-Embedding-4B) report strong MTEB English v2 retrieval and define the required query instructions. |
-| `nvidia/Nemotron-3-Embed-1B-BF16` | **INCLUDE** | It is a current retrieval-focused model near the practical 1B class. NVIDIA reports RTEB 72.4 and MMTEB retrieval 71.0 in its [release report](https://huggingface.co/blog/nvidia/nemotron-3-embed-wins-rteb). Its [model card](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16) defines 2,048-dimensional normalized embeddings and mandatory `query:` and `passage:` prefixes. |
-| `Qwen/Qwen3-Embedding-4B` | **INCLUDE** | It is a larger, established quality candidate. Qwen's published MTEB English v2 retrieval result is 68.46, above the 0.6B member in the same evaluation. It tests whether additional embedding capacity improves EduMind enough to justify the cost. |
-| `nvidia/Nemotron-3-Embed-8B-BF16` | **INCLUDE** | It is the current open retrieval quality ceiling in this list. NVIDIA reports RTEB 78.5 and MMTEB retrieval 75.5 at release, and its [model card](https://huggingface.co/nvidia/Nemotron-3-Embed-8B-BF16) is linked to the MTEB leaderboard. It is included to measure the maximum available quality, not because the provider result is accepted as EduMind evidence. |
-| `jinaai/jina-embeddings-v5-text-small` | **EXCLUDE** | Technically it is a strong candidate: its [model card](https://huggingface.co/jinaai/jina-embeddings-v5-text-small) reports MTEB English v2 71.7 with 677M parameters. However, the weights are CC BY-NC 4.0. A benchmark winner must be usable as an unrestricted production default, so a non-commercial model is excluded. |
-| `google/embeddinggemma-300m` | **INCLUDE** | It is the current small-model quality candidate rather than merely another old baseline. Google's [model card](https://huggingface.co/google/embeddinggemma-300m) reports MTEB English v2 mean-task 69.67 at 768 dimensions and supports smaller Matryoshka dimensions. It tests whether a current 300M model gives a better quality/size trade-off than MiniLM and the 600M candidates. Its Gemma license acceptance must be recorded. |
-| `BAAI/bge-base-en-v1.5` | **EXCLUDE** | It is an older baseline whose role is covered by MiniLM and whose quality role is covered by the newer Qwen and Nemotron candidates. |
-| `nomic-ai/nomic-embed-text-v1.5` | **EXCLUDE** | Its long-context advantage is not important for EduMind's 256-512-token chunks, and newer included candidates provide stronger retrieval evidence. |
+| Recursive character | Splits at headings, paragraphs, sentences, spaces, then characters as needed. | General boundary-aware strategy without requiring document-specific structure. |
+| Token 256/32 | 256-token chunks with 32-token overlap. | Short fixed-token candidate with low context waste. |
+| Token 384/64 | 384-token chunks with 64-token overlap. | Middle fixed-token candidate. |
+| Token 512/64 | 512-token chunks with 64-token overlap. | Larger-context fixed-token candidate. |
+| Sentence 8/2 | Groups eight sentences and overlaps two. | Linguistic-boundary alternative to token windows. |
+| Semantic | Uses embedding similarity to split at topic changes. | Tests topic-aware boundaries as a complete chunker–embedding configuration. |
+| Section-aware 512/64 | Respects headings, paragraphs, and lists before applying the token limit. | Tests whether document organization improves retrieval. |
+| Structure-aware 512/64 | Protects tables/formulas and splits large tables at row boundaries. | Tests preservation of educational structured content. |
 
-### What each chunking technique does
+**Semantic-chunking interpretation:** non-semantic chunkers keep boundaries fixed across embeddings, so embedding comparisons are relatively clean. Semantic chunking uses the tested embedding to create the boundaries and retrieve the chunks, so each result represents a **joint chunker–embedding pair** and cannot establish an isolated embedding or chunking effect.
 
-#### Recursive character
+## Retrieval and reranking
 
-The splitter tries separators in order, normally headings, paragraph breaks, newlines, sentences, spaces, and finally characters. It keeps natural boundaries when possible and falls back to smaller boundaries only when a block is too large.
+### Retrieval candidates
 
-Why include it: it is a robust, widely used baseline and Chroma's [chunking study](https://www.trychroma.com/research/evaluating-chunking) found that a correctly configured recursive splitter can be competitive.
-
-#### Token 256/32
-
-The tokenizer counts actual model tokens. Each chunk contains at most 256 tokens, and the next chunk repeats the final 32 tokens.
-
-Why include it: it is the current default, provides precise size control, and favors short factual passages. Overlap protects facts split at a boundary but increases chunk count and duplicate context.
-
-#### Token 384/64
-
-This is the same sliding-token technique with larger chunks and overlap.
-
-Why include it: it is a middle point between precise short chunks and more complete passages. Five chunks are close to the 2,048-token context budget after prompt overhead.
-
-#### Token 512/64
-
-Chunks hold more surrounding explanation while retaining a limited overlap.
-
-Why include it: NVIDIA's [multi-dataset chunking study](https://developer.nvidia.com/blog/finding-the-best-chunking-strategy-for-accurate-ai-responses/) found that 256-512 tokens often work well for factoid retrieval, while larger context can help analytical questions.
-
-#### Sentence 8/2
-
-The splitter groups eight detected sentences and repeats the final two sentences in the next chunk.
-
-Why include it: it never intentionally cuts a sentence in half and tests whether linguistic boundaries are more useful than fixed token boundaries. Its chunk sizes vary because sentence lengths vary.
-
-#### Semantic
-
-The splitter embeds consecutive sentences, measures similarity, and creates a boundary when the topic changes substantially. A fixed maximum token size prevents unbounded chunks.
-
-Why include it: it tests whether topic boundaries improve retrieval. The boundary embedding model and threshold must be frozen for every candidate so the comparison remains about chunking rather than an undocumented model change.
-
-#### Section-aware 512/64
-
-The splitter uses extracted headings, paragraphs, and lists first, then applies a 512-token limit within those sections. If reliable section structure is absent, it falls back deterministically to recursive/token splitting. Tables and formulas receive no special treatment beyond their position in the section.
-
-Why include it: it is the direct control for structure-aware chunking. Comparing the two with the same size, overlap, documents, and embedding isolates the effect of special table/formula handling instead of confusing that effect with ordinary section boundaries.
-
-#### Structure-aware 512/64
-
-The splitter uses extracted headings, paragraphs, lists, tables, and formulas before applying a 512-token target. A table remains atomic where the context budget permits; otherwise Markdown tables split only at row boundaries. The exact-offset contract prevents synthesizing a repeated header into a non-contiguous chunk, so header repetition is evaluated later as a representation variant instead of being hidden inside this chunker. A displayed formula remains with its identifier and nearby explanatory text when the token ceiling permits. Ordinary prose uses section boundaries and the 512/64 token rule. If reliable structure is absent, the splitter falls back deterministically to recursive/token splitting.
-
-Why include it: educational and academic documents have meaningful sections, tables, and equations. Flattening or cutting those structures arbitrarily can preserve most characters while destroying their meaning.
-
-### Why run the full chunker by embedder matrix?
-
-The earlier statement about avoiding a Cartesian explosion was too strong. Screening embeddings with only one chunker can miss interactions. For example, a model with a 256-token limit may look good with 256-token chunks and worse with 512-token chunks, while a long-context model may show the opposite pattern.
-
-The authoritative standard benchmark will therefore run all:
-
-```text
-8 chunkers x 7 included embedding models = 56 combinations
-```
-
-This is more reliable because it measures the interaction between chunk boundaries and embedding behavior. Every combination receives the same documents, questions, exact NumPy search, metrics, and paired bootstrap analysis. The full profile may run only the non-dominated combinations on larger data, but the standard selection run does not pre-eliminate combinations.
-
-## Retrieval strategy benchmark
-
-### What the retrieval strategies do
-
-#### Dense retrieval
-
-The query and chunks are converted to embedding vectors. Cosine similarity ranks chunks whose meanings are close, even when they do not share exact words.
-
-Strength: paraphrases and semantic similarity.
-
-Weakness: it can miss exact names, formulas written as text, identifiers, and rare technical terms.
-
-Decision: **INCLUDE** as the semantic baseline.
-
-#### BM25
-
-BM25 is lexical retrieval. It ranks chunks using matching terms, term frequency, document frequency, and length normalization.
-
-Strength: exact terminology, names, acronyms, and unusual words.
-
-Weakness: it does not understand paraphrases well.
-
-Decision: **INCLUDE** as the lexical baseline.
-
-#### Reciprocal-rank fusion
-
-Dense and BM25 each return a ranked list. RRF gives an item a score based on its rank in each list:
-
-```text
-RRF score = sum(1 / (constant + rank))
-```
-
-It combines ranks instead of adding incompatible cosine and BM25 scores.
-
-Strength: benefits from semantic and exact-word retrieval without score calibration.
-
-Decision: **INCLUDE**.
-
-#### RRF followed by reranking
-
-RRF retrieves a broad top 20. A reranker then reorders those 20 and the context packer selects the final chunks.
-
-Strength: a more accurate model spends compute only on a small candidate set.
-
-Weakness: additional latency and memory.
-
-Decision: **INCLUDE**.
-
-### What is a reranker?
-
-An embedding model encodes the query and each chunk separately. This is fast because chunk vectors can be stored in advance. A cross-encoder reranker reads the query and one candidate chunk together, allowing every query token to interact with every chunk token. This usually gives a better relevance judgment, but it must run again for every query-candidate pair.
-
-The reranker is not another database and stores no index. It only reorders the top results returned by dense/BM25/RRF retrieval.
+| Strategy | What it tests |
+|---|---|
+| Dense | Pure semantic retrieval using the tested embedding/chunker pair. |
+| BM25 | Lexical retrieval for exact terminology, names, and identifiers. |
+| RRF | Fusion of dense and BM25 ranks. |
+| RRF + reranker | Whether re-scoring the fused candidates improves evidence ordering enough to justify the extra cost. |
 
 ### Reranker candidates
 
-| Candidate | Decision | Why |
+The main reranker screen is a single **author-run public comparison**: MTEB English-v2 Retrieval, top-100 reranking, with mean nDCG@10 across six embedder pairings. It is not an independent official leaderboard result, but it is useful because one author evaluated all 23 rows under the same stated protocol. Despite its title, the Ettin article does **not** evaluate only Ettin: the table includes Qwen, Mixedbread, Jina, Alibaba GTE, IBM Granite, BAAI BGE, ZeroEntropy, MiniLM, and Ettin.
+
+| Size tier | Included candidate | Public result | Why it is included |
+|---|---|---:|---|
+| ≤200M | `cross-encoder/ettin-reranker-150m-v1` | **0.5994** mean nDCG@10 | Highest result in its tier in the complete 23-model common table. |
+| >200M–700M | `cross-encoder/ettin-reranker-400m-v1` | **0.6091** mean nDCG@10 | Highest result in its tier in the same table. |
+| >700M–1.5B | `cross-encoder/ettin-reranker-1b-v1` | **0.6114** mean nDCG@10 | Highest result in its tier in the same table. |
+| >1.5B–4.5B | `Qwen/Qwen3-Reranker-4B` | **0.6367** mean nDCG@10 | Highest result in its tier and overall in the same table. |
+
+The three Ettin models appear because they won their predefined tiers in a table containing many model families, not because the screen considered only Ettin. All ranked reranker candidates now come from one common protocol, which keeps the shortlist directly comparable. The MiniLM control is also run even though it is not a tier winner.
+
+Public evidence:
+
+- [Full 23-model reranker comparison, published 2026-05-19](https://huggingface.co/blog/ettin-reranker); [source pinned at `8dc6a4f...`](https://github.com/huggingface/blog/blob/8dc6a4f4bcdd9fe5ac2a107895b0515377691a17/ettin-reranker.md)
+- [MTEB English-v2 benchmark](https://leaderboard.mteb.org/benchmark/MTEB%28eng%2C%20v2%29)
+- EduMind runnable checkpoint revisions: [Ettin 150M `3b3282e...`](https://huggingface.co/cross-encoder/ettin-reranker-150m-v1/tree/3b3282e9bca7a60211a8b99e2936479703151a4f), [Ettin 400M `5dca362...`](https://huggingface.co/cross-encoder/ettin-reranker-400m-v1/tree/5dca36282a5d85f368d2544002513a29159b4c9e), [Ettin 1B `7d20e9b...`](https://huggingface.co/cross-encoder/ettin-reranker-1b-v1/tree/7d20e9baad17016fdf5549c08f69a2d7ca3e60c3), [Qwen3 Reranker 4B `22e6836...`](https://huggingface.co/Qwen/Qwen3-Reranker-4B/tree/22e683669bc0f0bd69640a1354a6d0aebcfeede5), and [MiniLM control `233902d...`](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2/tree/233902d25c440f23af6f7d6e94d2946bac0bee0a). These commits pin what EduMind will execute; the article does not identify the exact checkpoint commits used to produce its public scores.
+- `source_snapshots.json` contains the frozen table values used by this selection.
+
+The public nDCG values are therefore attributed to the pinned author-run article, not to the EduMind runnable commits. Results produced locally are attributed to the runnable commits.
+
+If Qwen3-Reranker-4B is benchmarked through a quantized conversion, the exact conversion is a separate deployment profile. A canonical full-precision public result must not be attributed automatically to that conversion.
+
+## Generation
+
+Task-specific grounded-QA and faithfulness evidence is preferred over a general capability score whenever it compares eligible current candidates under one protocol. No reviewed public benchmark does that for these three compact open-weight checkpoints on EduMind's complete target behavior: grounded answering from supplied evidence, faithfulness, correct refusal, citation production, answerability, completeness, and concise response quality.
+
+Artificial Analysis is therefore used only as **preliminary general-capability screening evidence**. Scores marked estimated are explicitly treated as estimates, and mutable rank counts such as `#1/44` or `#1/45` are not used. The recorded rows are a deliberately small set of plausible compact generators, not a systematic survey of the complete catalogue. Each included profile has a direct reason below; EduMind makes no claim that unrecorded models were exhaustively screened.
+
+Closer public benchmarks were reviewed before retaining that decision:
+
+| Benchmark | What it measures that is useful to EduMind | Why it cannot select this shortlist |
 |---|---|---|
-| `cross-encoder/ms-marco-MiniLM-L-6-v2` | **INCLUDE** | Small, established, and fast. It provides the latency baseline for cross-encoder reranking. |
-| `BAAI/bge-reranker-v2-m3` | **INCLUDE** | A modern conventional 0.6B cross-encoder from a different family. Its [model card](https://huggingface.co/BAAI/bge-reranker-v2-m3) describes a simple relevance-score interface and Apache-2.0 license. |
-| `Qwen/Qwen3-Reranker-0.6B` | **INCLUDE** | Compact current quality candidate. Qwen's [provider-run table](https://huggingface.co/Qwen/Qwen3-Reranker-4B) reports MTEB-R 65.80 versus 57.03 for BGE v2-m3 under the same retrieval setup. EduMind will verify that result independently. |
-| `Qwen/Qwen3-Reranker-4B` | **INCLUDE** | Quality candidate. The same Qwen table reports MTEB-R 69.76, providing a direct small-versus-large comparison within one family. |
-| `Qwen/Qwen3-Reranker-8B` | **EXCLUDE** | Qwen's own table reports MTEB-R 69.02, below its 4B model's 69.76, while requiring more compute. |
-| `jinaai/jina-reranker-v3` | **EXCLUDE** | Its non-commercial weight license prevents it from becoming the general production default. |
+| [ALCE](https://github.com/princeton-nlp/ALCE) | Answer correctness plus citation recall and precision on ASQA, QAMPARI, and ELI5. | Its published comparison predates and does not contain the three selected checkpoints under one protocol. |
+| [FaithJudge](https://github.com/vectara/FaithJudge) | Hallucination rate across RAGTruth and FaithBench summarization, QA, and data-to-text tasks. | It contains useful older compact models, but not MiniCPM5-1B, G9v3-3B, and Qwen3.5-4B together. |
+| [ChatRAG-Bench](https://huggingface.co/datasets/nvidia/ChatRAG-Bench) | Conversational QA over supplied documents, including unanswerable questions, tables, arithmetic, and long context. | It provides a benchmark dataset, but no common public result for the three selected checkpoints. |
+| [FACTS Grounding](https://www.kaggle.com/benchmarks/google/facts-grounding) | Long-form responses grounded in supplied documents. | Its leaderboard does not provide a comparable compact-model tier containing the three selected checkpoints. |
 
-The retrieval strategies are therefore dense, BM25, RRF, and RRF followed separately by each of the four included rerankers.
+These benchmarks are closer to EduMind than a general intelligence index. They cannot currently supply a common result for the selected compact checkpoints: choosing only models their authors happened to test would favor benchmark coverage rather than current model quality, while mixing scores from different protocols would create a false ranking. Public hosted latency is also not a valid proxy for the exact local quantization, runtime, context length, and hardware. Artificial Analysis is therefore used only to establish that the three profiles are credible quality points at approximately 1B, 3B, and 5B. **It does not select the final generator. EduMind's identical grounded-RAG benchmark and local latency/resource measurements do that.**
 
-## Generation benchmark
+Preliminary screen:
 
-### Why these Ollama models?
+| Role | Preliminary local candidate | Estimated AA Intelligence evidence | Why it is included |
+|---|---|---:|---|
+| Compact efficiency | `openbmb/MiniCPM5-1B` at `87179e5...`, reasoning | **12** | The reviewed AA table gives its reasoning and non-reasoning profiles the same estimated score. EduMind keeps only reasoning mode to test whether explicit deliberation improves grounded answers, citation selection, answerability, and completeness; its token and latency cost must still pass the local deployment gates. |
+| Mid-size reasoning | `ai9stars/G9v3-3B` at `d955344...`, reasoning | **16** | It is the strongest scored row in the reviewed ≤4B table and tests whether a 3B reasoning profile earns its additional runtime cost. |
+| Upper compact quality | `Qwen/Qwen3.5-4B` at `851bf6e...`, reasoning | **20** | Its direct AA page reports the strongest preliminary score of the three at 4.7B total parameters, so it is the compact quality ceiling. It is retained instead of the older Qwen3-4B-2507 profiles that AA marks deprecated in favor of Qwen3.5-4B. |
 
-Generation is selected on EduMind's grounded QA task, not by a general chat leaderboard. The list covers:
+The evidence artifact records the selected representatives and the nearby alternatives that were actually reviewed. It is an auditable record of this curated screen, not an exhaustive snapshot of the live Artificial Analysis catalogue. These public values justify a **preliminary shortlist only**; EduMind's grounded-RAG benchmark selects the final generator.
 
-- The current baseline.
-- A small and medium model from one strong family, with and without thinking.
-- Independent model families to avoid selecting only Qwen.
-- A larger reasoning ceiling.
+**Inference-mode policy:** the public value and its reasoning/non-reasoning mode are recorded together. Each included generator is run only in the mode shown in the table. MiniCPM's two public modes are tied, and EduMind deliberately keeps only reasoning mode to evaluate its possible grounded-RAG benefit against its runtime cost. G9v3 and Qwen3.5 are also kept in the reasoning profiles for which their recorded scores were reported. Modes are never averaged, silently changed, or allowed to inherit another mode's public score.
 
-| Ollama model/profile | Decision | Why |
-|---|---|---|
-| `qwen3:1.7b` | **INCLUDE** | It is installed and is the current production baseline. Without it, improvement cannot be measured. |
-| `qwen3.5:4b` direct | **INCLUDE** | Current compact Qwen model and likely latency-oriented contender. Ollama publishes the exact [4B tag](https://ollama.com/library/qwen3.5/tags). |
-| `qwen3.5:4b` thinking | **INCLUDE** | Same weights with reasoning enabled. Comparing it with direct mode isolates whether reasoning improves faithfulness/completeness enough to justify extra latency. |
-| `qwen3.5:9b` direct | **INCLUDE** | Tests the effect of more capacity in the same family without reasoning overhead. |
-| `qwen3.5:9b` thinking | **INCLUDE** | Tests the combined effect of more capacity and reasoning. The [official Qwen model card](https://huggingface.co/Qwen/Qwen3.5-9B) provides broad capability evidence, but EduMind decides RAG quality. |
-| `gemma4:12b-it-q4_K_M` | **INCLUDE** | Current independent Google family and replacement for the older Gemma 3 candidates. Google's [model card](https://huggingface.co/google/gemma-4-12B) reports current instruction/reasoning evaluations, and Ollama publishes the exact [Q4 tag](https://ollama.com/library/gemma4%3A12b-it-q4_K_M). |
-| `ministral-3:8b-instruct-2512-q4_K_M` | **INCLUDE** | Independent Mistral architecture in the middle-size range. Mistral's [model card](https://huggingface.co/mistralai/Ministral-3-8B-Instruct-2512) describes an Apache-2.0 edge-focused instruct model, and Ollama provides the [exact tag](https://ollama.com/library/ministral-3/tags). |
-| `gpt-oss:20b` low reasoning | **INCLUDE** | Independent large open-weight quality ceiling with lower reasoning cost. See the [official model card](https://huggingface.co/openai/gpt-oss-20b) and [Ollama tag](https://registry.ollama.com/library/gpt-oss/tags). |
-| `gpt-oss:20b` medium reasoning | **INCLUDE** | Same model with more reasoning effort, isolating the reasoning-quality/latency trade-off. |
-| Gemma 3 4B and 12B | **EXCLUDE** | Gemma 4 is their current successor and provides the same family comparison without maintaining obsolete profiles. |
-| Ministral 3 14B | **EXCLUDE** | The 8B Ministral already provides family diversity, while Gemma 12B and GPT-OSS 20B cover the larger-quality question. |
-| Qwen 3.6 27B/35B | **EXCLUDE** | They duplicate the Qwen family and large-model role without answering a new EduMind hypothesis. |
-
-Every included generation profile receives the same frozen contexts, prompt, output limit, seed, warmups, and question order. Generic benchmark scores only justify inclusion. Human grounded-answer evaluation chooses the winner.
-
-## Automated faithfulness diagnostic
-
-Faithfulness asks:
+Ollama `qwen3:1.7b` is retained as the application control independently of this public screen. Candidate profiles do not enter the runnable registry until their Ollama digest, quantization, reasoning mode, context length, and sampling settings are pinned.
 
-> Is every factual claim in the generated answer supported by the retrieved context?
-
-It is not the same as answer correctness:
-
-- A faithful answer can repeat incorrect information that exists in the source.
-- A correct answer can be unfaithful if it uses outside knowledge not present in the supplied context.
-- A complete answer must cover all required parts; faithfulness alone does not check that.
-- Citation F1 checks whether citations point to relevant contexts; faithfulness checks the claims themselves.
-
-The automated diagnostic receives a context as the premise and an answer or answer claim as the hypothesis. It returns a support score between 0 and 1. EduMind will use `vectara/hallucination_evaluation_model` (HHEM-2.1-Open) because its [model card](https://huggingface.co/vectara/hallucination_evaluation_model) evaluates RAG factual consistency on RAGTruth QA and summarization data.
+Public evidence:
 
-| Evaluator | Decision | Why |
-|---|---|---|
-| HHEM-2.1-Open | **INCLUDE** | It is local, Apache-2.0, small, and trained specifically for context-supported generation. |
-| Generic `cross-encoder/nli-deberta-v3-base` | **EXCLUDE** | General NLI is less directly matched to RAG hallucination detection, so it does not justify a separate authoritative metric. |
-| Hosted or paid LLM judge | **EXCLUDE** | It violates the local/no-paid-judge boundary and introduces an external model whose version may change. |
-
-Automated faithfulness remains secondary because the detector can make mistakes and may behave differently on scientific text. Its threshold must be calibrated against the blinded human labels, and the report must show agreement with humans. Human Faithfulness remains the primary metric.
-
-## Image and complete-document extraction benchmark
-
-### What OmniDocBench measures
+- [Artificial Analysis compact open-weight comparison](https://artificialanalysis.ai/models/open-source/tiny); Qwen3.5-4B is taken from its direct model page because AA reports approximately 4.7B total parameters and classifies models above 4B outside Tiny
+- [MiniCPM5-1B reasoning](https://artificialanalysis.ai/models/minicpm5-1b); the reviewed table also reports 12 for its non-reasoning profile, but only reasoning mode is included
+- [G9v3-3B](https://artificialanalysis.ai/models/g9v3-3b)
+- [Qwen3.5-4B](https://artificialanalysis.ai/models/qwen3-5-4b)
+- `source_snapshots.json` for the dated screening values.
 
-[OmniDocBench](https://github.com/opendatalab/OmniDocBench) contains diverse real document pages such as academic papers, textbooks, newspapers, reports, and handwritten notes. It annotates text, layout regions, tables, formulas, and reading order and provides official end-to-end and component evaluation code. Its methodology was published at [CVPR 2025](https://openaccess.thecvf.com/content/CVPR2025/html/Ouyang_OmniDocBench_Benchmarking_Diverse_PDF_Document_Parsing_with_Comprehensive_Annotations_CVPR_2025_paper.html).
+### Automated faithfulness diagnostic
 
-It is reliable for comparing document parsers under its dataset and scoring rules. Its overall score is not EduMind's selection score: EduMind retains text, table, formula, layout, provenance, downstream RAG, and operational measurements as separate dimensions instead of averaging them into one number.
+`vectara/hallucination_evaluation_model` remains an automated diagnostic, not the authoritative evaluator.
 
-### What olmOCR-Bench measures
+Its model card reports evaluation on human-annotated factual-consistency datasets, including RAGTruth-QA. The evidence ledger records **74.28% balanced accuracy** as the single primary scalar; the model card's **60.00% F1** remains a diagnostic value in the explanation. This supports saying **evaluated against human-annotated data**, not statistically calibrated.
 
-[olmOCR-Bench](https://github.com/allenai/olmocr) uses more than 7,000 tests across roughly 1,400 documents. Its categories include:
+- [Pinned HHEM model-card evaluation at revision `d3924de...`](https://huggingface.co/vectara/hallucination_evaluation_model/blob/d3924deeff88f76f9203ae18d11432c400c07f41/README.md)
 
-- ArXiv pages.
-- Old scans and old scans containing math.
-- Multi-column layouts.
-- Headers and footers.
-- Long tiny text.
-- Tables and a general base category.
+## Document extraction
 
-It is reliable for checking whether a parser linearizes difficult PDF content. It is not a substitute for EduMind's typed table/formula output, cell and expression provenance, CER/WER, page coverage, phone-photo evaluation, downstream RAG evaluation, or local operational measurements.
+This is the production-shaped, end-to-end extraction-profile screen. It asks which complete profile should handle a document and whether routing difficult pages to a visual fallback is worthwhile. It does not rank standalone OCR engines, native PDF libraries, or DOCX parsers; those remain modality-level diagnostic experiments linked in the package-scope section and cannot by themselves become the complete extraction default.
 
-### Why benchmark OCR again?
+The visual-fallback **numerical screen** contains full-document parsers with at most **1.5B parameters** in the pinned OmniDocBench v1.6 table. The 1.5B boundary defines a compact first-round fallback that tests a different architecture without immediately multiplying operational cost; it is not a claim that larger parsers are worse. PaddleOCR-VL-1.6 has the highest integrated score in that size-filtered table. Eligibility is checked separately: Paddle is the only inspected row for which the license, exact weights, self-hosted execution, and local inference path were all verified. MinerU2.5-Pro and GLM-OCR remain numerical context only. Paddle is therefore included as the single evidence-backed visual-fallback candidate, not declared the winner of a multi-candidate eligible comparison.
 
-EduMind needs answers that these public benchmarks do not provide:
+The extraction question remains architectural:
 
-- Separate English text, table, and formula quality so one content type cannot hide another's failures.
-- Clean scans, noisy scans, phone photos, perspective distortion, and low resolution.
-- Exact page, text-block, table-cell, and formula provenance used later for citations.
-- Behavior after EduMind preprocessing and normalization.
-- Local latency, RAM, VRAM, cold load, and failure rates.
-- Downstream degradation when extracted text, tables, and formulas are serialized and used by RAG.
-
-### Image candidates
-
-| Candidate | Decision | Why |
-|---|---|---|
-| Tesseract 5 LSTM | **INCLUDE** | Mature classic OCR baseline. It is inexpensive, transparent, and shows whether larger neural systems provide meaningful improvement. See the [official repository](https://github.com/tesseract-ocr/tesseract). |
-| PP-OCRv5 English mobile detection + recognition | **INCLUDE** | Compact conventional neural OCR and the efficiency member of the Paddle family. Paddle's [release notes](https://github.com/PaddlePaddle/PaddleOCR/releases) document the English model and Windows/local support. |
-| PP-OCRv5 English server detection + recognition | **INCLUDE** | Higher-capacity conventional OCR from the same family. Comparing mobile/server isolates the quality/latency trade-off without changing the overall OCR design. |
-| Docling | **INCLUDE** | Structured non-generative parser that represents text, tables, equations, hierarchy, and reading order in one document object. It tests a different architecture from conventional OCR and end-to-end VLMs. See the [official project](https://github.com/docling-project/docling). |
-| PP-StructureV3 | **INCLUDE** | Modular pipeline combining layout analysis, OCR, table recognition, formula recognition, chart understanding, reading-order restoration, and Markdown export. It answers whether specialized components beat a single document VLM. See the [official documentation](https://www.paddleocr.ai/main/en/version3.x/algorithm/PP-StructureV3/PP-StructureV3.html). |
-| `PaddlePaddle/PaddleOCR-VL-1.6` | **INCLUDE** | Compact complete-document VLM. Its [model card](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6) reports separate text, formula, table, and overall OmniDocBench v1.6 results and provides local inference. Provider results justify inclusion but do not decide EduMind's winner. |
-| `zai-org/GLM-OCR` | **INCLUDE** | Compact MIT-licensed document VLM whose official SDK combines layout analysis with text, table, and formula recognition and structured output. Its [model card](https://huggingface.co/zai-org/GLM-OCR) provides OmniDocBench evidence and local/self-hosted inference paths. |
-| `opendatalab/MinerU2.5-Pro-2605-1.2B` | **INCLUDE** | Complete document parser supporting images, PDFs, and DOCX with ordered Markdown/JSON, table-to-HTML, and formula-to-LaTeX output. It supplies a distinct end-to-end parsing pipeline. See the [official repository](https://github.com/opendatalab/MinerU) and [model card](https://huggingface.co/opendatalab/MinerU2.5-Pro-2605-1.2B). |
-| `allenai/olmOCR-2-7B-1025` | **INCLUDE** | Larger Apache-2.0 parser trained further on equations, tables, and difficult OCR cases. Its [model card](https://huggingface.co/allenai/olmOCR-2-7B-1025) reports category-specific olmOCR-Bench results. It is the large quality/compute comparison. |
-| `deepseek-ai/DeepSeek-OCR` | **EXCLUDE** | After adding PaddleOCR-VL, GLM-OCR, MinerU, and olmOCR, it duplicates the end-to-end document-VLM role without stronger current complete-document evidence or a unique production hypothesis. |
-| docTR `fast_base` + PARSeq | **EXCLUDE** | PP-OCRv5 already supplies conventional neural OCR baselines, while the included complete parsers cover structure. docTR no longer answers a unique question. |
-| Chandra 2 | **EXCLUDE** | It reports strong results, but its [repository](https://github.com/datalab-to/chandra) states that the weights have commercial self-hosting restrictions. |
-| Hosted OCR APIs | **EXCLUDE** | EduMind requires local, unpaid inference. |
-
-For Tesseract and PP-OCRv5, run raw, document, and photo preprocessing. Complete parsers use their official page pipeline and supported preprocessing; blindly applying the conventional OCR preprocessing factorial to VLMs would create an invalid comparison. Tesseract and PP-OCRv5 are valid text controls but cannot be promoted as complete defaults unless a complete candidate configuration adds structure recovery and passes the table/formula gates.
-
-## PDF complete-document benchmark
-
-The candidates are based on distinct PDF failure modes, not popularity:
-
-- Digital PDFs may already contain correct text.
-- Layout-aware native extraction may repair ordering.
-- Mixed/scanned PDFs require OCR.
-- Tables and formulas require structure-aware output rather than character recovery alone.
-- Complex pages may benefit from modular document pipelines or document VLMs.
-- A router may use different methods per page.
-
-| Candidate | Decision | Why |
-|---|---|---|
-| pypdf native extraction | **INCLUDE** | Minimal, fast native-text baseline for digital PDFs. |
-| pdfplumber native/layout extraction | **INCLUDE** | Tests whether character positions and layout-aware processing improve order and coverage over basic extraction. |
-| Docling | **INCLUDE** | Complete local structured parser with page layout, reading order, table structure, formulas, and a lossless document representation. |
-| PP-StructureV3 | **INCLUDE** | Modular structured pipeline and control for specialized layout, OCR, table, and formula components. |
-| PaddleOCR-VL-1.6 | **INCLUDE** | Compact complete-document VLM with current OmniDocBench text/table/formula evidence and local inference. |
-| `zai-org/GLM-OCR` | **INCLUDE** | Independent compact document VLM and complete SDK with structured output. |
-| `opendatalab/MinerU2.5-Pro-2605-1.2B` | **INCLUDE** | End-to-end PDF parser with ordered Markdown/JSON, tables, formulas, scanned-page detection, and OCR routing. |
-| `allenai/olmOCR-2-7B-1025` | **INCLUDE** | Larger PDF-parsing quality candidate. Its [model card](https://huggingface.co/allenai/olmOCR-2-7B-1025) reports 82.3 +/- 1.1 on olmOCR-Bench using the documented toolkit. |
-| Page-level native/OCR hybrid | **INCLUDE** | Tests whether native extraction on usable pages and OCR on bad/scanned pages beats always-native or always-OCR processing. |
-| DeepSeek-OCR | **EXCLUDE** | It duplicates the end-to-end VLM category after adding three stronger compact structured candidates and olmOCR's large quality comparison. |
-| Marker | **EXCLUDE** | It adds licensing and deployment constraints without a necessary role after Docling, PP-StructureV3, PaddleOCR-VL, GLM-OCR, MinerU, and olmOCR are included. |
-| Chandra 2 | **EXCLUDE** | Commercial self-hosting restrictions prevent unrestricted promotion. |
+> **Can one exact Docling Standard profile with targeted formula-VLM enrichment satisfy EduMind's normal document ingestion requirements, or is a full-document visual fallback worth its additional latency/resource cost on difficult pages?**
 
-The PDF benchmark scores the complete output while keeping dimensions separate:
+### Candidate A — Docling Standard unified profile
 
-- Text: CER, WER, coverage, block accuracy, and reading order.
-- Tables: detection, cell content, row/column/header relations, TEDS/TEDS-S, and deterministic Markdown/HTML serialization.
-- Formulas: detection, normalized LaTeX match/edit distance, symbol and expression-structure accuracy, and CDM where the reproducible evaluator is available.
-- Document integrity: page attribution, bounding boxes, source offsets, missing/duplicate elements, and deterministic ordering.
-- Downstream use: retrieval and answer quality stratified by text-, table-, formula-, and mixed-evidence questions.
-- Operations: latency, throughput, cold load, RAM, VRAM, temporary disk, and failure rate.
-
-EduMind does not use one weighted extraction score. A complete default must pass minimum gates for text, table, formula, provenance, and operational correctness; Pareto comparison follows only after those gates.
+**Decision: keep it as the required unified-parser control.** It is a good control configuration, not a claim that these settings are already optimal.
 
-## DOCX complete-document benchmark
+Configuration-frozen profile:
 
-There is no accepted public leaderboard matching EduMind's DOCX output contract, so selection is based on distinct parsing approaches.
+- Docling **v2.117.0**
+- release commit **`f2683c0b5aa14a53b74373b0640260891cdbc1b0`**
+- pipeline: **standard**, not the full-page VLM pipeline
+- output: canonical `DoclingDocument` JSON
+- OCR: **enabled**
+- OCR engine: **RapidOCR**
+- OCR language: **English**
+- OCR mode: **`pdf_aware_layout_regions`**
+- RapidOCR backend: **ONNX Runtime**
+- OCR render scale: **3.0**
+- table structure: **enabled**
+- TableFormer mode: **accurate**
+- table cell matching: **enabled**
+- formula enrichment: **enabled** (`do_formula_enrichment=True`)
+- code enrichment: **disabled**
+- DOCX: native Docling ingestion; no DOCX→PDF conversion
+- full-page Docling VLM pipeline: **disabled**
 
-| Candidate | Decision | Why |
-|---|---|---|
-| python-docx | **INCLUDE** | Direct OOXML baseline with little hidden processing. |
-| Mammoth | **INCLUDE** | Converts DOCX semantics to HTML/text and may preserve headings/lists better than raw paragraph traversal. |
-| Docling | **INCLUDE** | Unified structured representation that preserves tables, equations, hierarchy, and reading order across DOCX and PDF. |
-| MinerU | **INCLUDE** | Native DOCX-capable complete parser with ordered structured output, tables, and formulas; it supplies an independent end-to-end comparison. |
-| Unstructured DOCX partitioner | **EXCLUDE** | Once table and formula fidelity are required, Docling and MinerU cover the element-oriented complete-parser role with stronger structured-output evidence. |
+Formula enrichment is enabled because EduMind intends to preserve formulas and structure-aware chunking explicitly protects them. Docling documents formula enrichment as the step that analyzes formula items and extracts their LaTeX representation. It adds processing cost, so that cost is measured rather than hiding it by disabling a required capability.
 
-EduMind's verified DOCX dataset is the final evidence because a relevant public leaderboard does not exist. DOCX evaluation uses native OOXML as the reference and includes table-cell relations and Office Math expressions; candidates must not gain apparent accuracy by rendering every DOCX to an image unless that rendering is explicitly part of the measured candidate.
+The remaining choices are deliberate:
 
-### Effect on the RAG candidate list
+- `pdf_aware_layout_regions` keeps the PDF text layer when it is usable and sends image/non-text regions to OCR, which suits mixed digital/scanned documents better than forcing full-page OCR.
+- scale `3.0` is Docling's documented default (216 DPI from a 72-DPI page render), so it is a reproducible neutral control rather than a hidden tuning result.
+- TableFormer `accurate` with cell matching prioritizes table structure quality; its latency cost is measured.
+- the standard pipeline isolates targeted formula-region VLM enrichment inside a conventional document parser from full-document visual parsing.
 
-Adding tables and formulas changes the data and representation benchmark before it changes the embedding or generation shortlist:
+This profile should remain frozen during the first comparison. If it loses for a specific reason, a later configuration experiment may tune OCR engine, render scale, or table mode; changing them inside the candidate comparison would confound parser choice with configuration tuning.
 
-- The extraction contract must retain typed text, table, and formula elements with page, order, bounding boxes, and source provenance.
-- The chunking benchmark includes the structure-aware strategy defined above and evaluates Markdown tables, HTML tables, row-oriented text, normalized LaTeX, and formula-plus-explanation representations.
-- The RAG questions must be stratified into text, table, formula, and mixed-evidence cases so aggregate retrieval scores cannot hide a failure category.
-- Every existing embedding candidate receives the same representation variants. A specialized mathematical or multimodal embedding is added only if the text/LaTeX candidates demonstrably fail and the new model answers that specific hypothesis.
-- The generation shortlist remains unchanged, but complete-RAG evaluation adds table reasoning, formula preservation, structured citation correctness, and appropriate refusal cases.
-- Automated faithfulness remains diagnostic because a generic detector may not reliably judge mathematical equivalence or table relationships; blinded human review and deterministic structured checks remain primary.
+Pinned public evidence:
 
-This preserves a clean causal experiment: first select extraction and serialization, then measure retrieval, then measure grounded generation. It avoids attributing a broken table representation to the embedding model or LLM.
+- [Docling v2.117.0 release and commit `f2683c0...`](https://github.com/docling-project/docling/releases/tag/v2.117.0)
+- [OCR mode, 3.0 OCR scale, RapidOCR backend, TableFormer, and enrichment option definitions at `f2683c0...`](https://github.com/docling-project/docling/blob/f2683c0b5aa14a53b74373b0640260891cdbc1b0/docling/datamodel/pipeline_options.py)
+- [`pdf_aware_layout_regions` behavior at `f2683c0...`](https://github.com/docling-project/docling/blob/f2683c0b5aa14a53b74373b0640260891cdbc1b0/docling/models/base_ocr_model.py)
+- [TableFormer accurate/cell-matching guidance at `f2683c0...`](https://github.com/docling-project/docling/blob/f2683c0b5aa14a53b74373b0640260891cdbc1b0/docs/usage/model_catalog.md)
+- [Formula-to-LaTeX enrichment documentation at `f2683c0...`](https://github.com/docling-project/docling/blob/f2683c0b5aa14a53b74373b0640260891cdbc1b0/docs/usage/enrichments.md)
+- [`CodeFormulaVlmModel` wiring in the standard PDF pipeline at `f2683c0...`](https://github.com/docling-project/docling/blob/f2683c0b5aa14a53b74373b0640260891cdbc1b0/docling/pipeline/standard_pdf_pipeline.py)
 
-## Audio-to-text benchmark
+The selected Docling artifacts are frozen to `docling-project/docling-layout-heron@8f39ad3...`, `docling-project/TableFormerV2@51559fa...`, and `docling-project/CodeFormulaV2@ecedbe1...`. RapidOCR's engine package and model-file revisions are not yet frozen in this selection package. The profile is therefore **configuration-frozen, not fully artifact-frozen**. The runnable registry must pin those versions and checksums before an authoritative run; an unrecorded replacement is a different profile.
 
-The [Open ASR Leaderboard](https://github.com/huggingface/open_asr_leaderboard) supplies the initial evidence. All included models still run on EduMind's English educational audio because technical terms, noise, accents, timestamps, hallucinated speech, and local speed are application-specific.
+### Candidate B — specialized visual fallback
 
-| Candidate | Decision | Why |
-|---|---|---|
-| OpenAI Whisper `small.en` reference | **INCLUDE** | Reference implementation needed to separate model behavior from faster-whisper runtime behavior. |
-| faster-whisper `tiny.en` int8 | **INCLUDE** | Lowest-cost Whisper point. |
-| faster-whisper `base.en` int8 | **INCLUDE** | Current application baseline and middle efficiency point. |
-| faster-whisper `small.en` int8 | **INCLUDE** | Stronger Whisper model under memory-saving quantization. |
-| faster-whisper `small.en` float16 | **INCLUDE** | Same model family without int8, isolating precision effects. |
-| faster-whisper `turbo` int8 | **INCLUDE** | Whisper-family quality/speed ceiling. |
-| `distil-whisper/distil-large-v3.5` | **INCLUDE** | Distilled Whisper efficiency candidate. Its [model card](https://huggingface.co/distil-whisper/distil-large-v3.5) reports Open ASR mean WER 7.21 and its documented speed/accuracy comparison. |
-| `nvidia/parakeet-tdt-0.6b-v3` | **INCLUDE** | Non-Whisper FastConformer/TDT architecture, preventing a Whisper-only conclusion. Its [model card](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) includes Open ASR evaluation. |
-| `nvidia/canary-qwen-2.5b` | **INCLUDE** | Open ASR quality candidate. Its [model card](https://huggingface.co/nvidia/canary-qwen-2.5b) reports mean WER 5.63 with the leaderboard normalizer. |
-| Whisper large-v3 | **EXCLUDE** | Turbo, Distil-Whisper, and Canary already cover high-quality ASR while providing more useful efficiency or architecture comparisons. |
+`PaddlePaddle/PaddleOCR-VL-1.6`
 
-VAD off/on is tested only after model selection because VAD is a decoding/preprocessing strategy, not a separate ASR model.
+**Decision: keep it in the benchmark.** It is not required in production, but it is required to answer whether a specialized 0.9B full-document visual parser materially improves difficult pages containing scans, complex layouts, tables, or formulas. Removing it would leave only the unified-parser control and make the visual-fallback hypothesis untestable.
 
-## Video-to-text benchmark
+The reviewed official OmniDocBench v1.6_full table reports **96.34 overall** for PaddleOCR-VL-1.6 (0.9B), ahead of MinerU2.5-Pro (95.75) and GLM-OCR (95.22) in that integrated table.
 
-Video extraction combines audio transcription with visual text extraction.
+Newer submitted/self-reported claims that are not integrated into the same official table remain evidence-follow-up items rather than being silently promoted.
 
-| Candidate | Decision | Why |
-|---|---|---|
-| Fixed-interval keyframes | **INCLUDE** | Simple deterministic baseline; it can catch text even when there is no large visual scene change. |
-| Scene-change keyframes | **INCLUDE** | Avoids processing nearly identical frames and focuses OCR on visual transitions. |
-| Scene-change plus maximum-interval fallback | **INCLUDE** | Prevents missing slowly changing slides or persistent text while retaining scene-change efficiency. |
+The production decision is simple:
 
-The selected OCR and ASR models from their own benchmarks are used here. Re-running every OCR model against every ASR model would repeat component selection rather than answer a video-specific question.
+- if the frozen Docling profile meets quality requirements across EduMind's representative documents, use Docling only;
+- if a clearly defined difficult visual subset is materially better under PaddleOCR-VL and the extra cost is acceptable, use it as a targeted fallback.
 
-## Normalization and routing
+Its inclusion does not prejudge that decision. If it provides no meaningful local quality gain, or fails the resource/latency gate, it is not promoted.
 
-### What normalization means
-
-Extraction engines return imperfect text. Normalization is the deterministic post-processing between extraction and chunking. It can:
-
-- Normalize Unicode forms.
-- Normalize line endings and repeated whitespace.
-- Repair safe encoding artifacts.
-- Join words split by end-of-line hyphenation.
-- Remove repeated page headers and footers.
-
-Normalization is dangerous because an aggressive cleaner may delete real content, join separate words, or alter evidence offsets. That is why "cleaner-looking text" is not enough.
-
-| Normalization strategy | Decision | Why |
-|---|---|---|
-| Minimal | **INCLUDE** | Safe baseline: Unicode, line endings, and whitespace only. |
-| Conservative | **INCLUDE** | Adds repairs only when deterministic evidence supports them, such as a repeated header on many pages or a word split at a line boundary. |
-| Aggressive | **INCLUDE** | Deliberate challenger used to discover whether extra cleanup helps enough to justify accidental-deletion risk. It is rejected if preservation gates fail. |
-
-The benchmark uses Content Preservation Recall, Corruption Removal Precision/Recall/F1, accidental deletion/merge rate, determinism, and latency. It needs verified clean/corrupted pairs because no external leaderboard knows which characters EduMind is allowed to change.
-
-### What routing means
-
-Routing chooses which PDF extraction path processes a document or page.
-
-Examples:
-
-- A normal digital page should usually use native extraction.
-- A scanned page with no text layer needs OCR.
-- A PDF with broken encoded text may contain characters but still need OCR.
-- A mixed PDF may need native extraction on some pages and OCR on others.
-
-| Routing strategy | Decision | Why |
-|---|---|---|
-| Always native | **INCLUDE** | Fast control and correct policy for clean digital PDFs. |
-| Always OCR | **INCLUDE** | Control for scanned documents and a way to measure unnecessary OCR cost on digital pages. |
-| Document-level router | **INCLUDE** | Classifies the complete PDF as digital, scanned, or mixed and applies one main policy. |
-| Page-level hybrid router | **INCLUDE** | Evaluates every page and can combine native and OCR output in one document. This should be strongest on mixed PDFs but costs more routing logic. |
-
-Router Selection Accuracy measures whether the router chose the verified best path. Oracle regret measures how much quality was lost compared with an imaginary oracle that always chooses the best extractor for each page:
-
-```text
-quality regret = oracle quality - router quality
-```
-
-Fallback Success Rate measures whether a failed or unusable primary extraction is recovered by the fallback. Routing is benchmarked because a strong PDF default is likely a policy, not one universally best extractor.
-
-## Vector database benchmark
-
-This benchmark selects server software, not a model. The initial list remains deliberately small while covering four distinct architectures.
-
-| Server | Decision | Why |
-|---|---|---|
-| Chroma server | **INCLUDE** | Current provisional baseline. |
-| Qdrant server | **INCLUDE** | Purpose-built vector server with filtering and hybrid/sparse capabilities. |
-| Weaviate | **INCLUDE** | Purpose-built vector server with native BM25 and hybrid retrieval. |
-| PostgreSQL + pgvector | **INCLUDE** | Transactional relational alternative using SQL metadata, PostgreSQL text search, and vector indexes. |
-| Milvus | **EXCLUDE** | Its primary additional hypothesis is larger-scale/distributed vector operation. EduMind's current experiment does not need that extra system to compare the main architectural categories. |
-| OpenSearch | **EXCLUDE** | It is valuable when EduMind requires a general search/analytics platform, but that is not the current question. |
-| Embedded databases | **EXCLUDE** | The project decision is server-only retrieval. |
-
-Public database benchmarks select credible servers, but EduMind must run the comparison because recall, filtering, latency, concurrency, memory, and storage change with versions, indexes, dimensions, metadata, and hardware.
-
-## Final included lists
-
-### Embeddings
-
-- MiniLM L6 v2
-- EmbeddingGemma 300M
-- Jasper Token Compression 600M
-- Qwen3 Embedding 0.6B
-- Nemotron 3 Embed 1B BF16
-- Qwen3 Embedding 4B
-- Nemotron 3 Embed 8B BF16
-
-### Chunkers
-
-- Recursive character
-- Token 256/32
-- Token 384/64
-- Token 512/64
-- Sentence 8/2
-- Semantic
-- Section-aware 512/64
-- Structure-aware 512/64
-
-### Retrieval and reranking
-
-- Dense
-- BM25
-- RRF
-- RRF + MiniLM reranker
-- RRF + BGE v2-m3 reranker
-- RRF + Qwen3 0.6B reranker
-- RRF + Qwen3 4B reranker
-
-### Generation profiles
-
-- Qwen3 1.7B
-- Qwen3.5 4B direct
-- Qwen3.5 4B thinking
-- Qwen3.5 9B direct
-- Qwen3.5 9B thinking
-- Gemma 4 12B Q4
-- Ministral 3 8B Instruct Q4
-- GPT-OSS 20B low reasoning
-- GPT-OSS 20B medium reasoning
-
-### Image extraction
-
-- Tesseract 5
-- PP-OCRv5 English mobile
-- PP-OCRv5 English server
-- Docling
-- PP-StructureV3
-- PaddleOCR-VL-1.6
-- GLM-OCR
-- MinerU2.5-Pro 1.2B
-- olmOCR 2 7B
-
-### PDF extraction
-
-- pypdf
-- pdfplumber
-- Docling
-- PP-StructureV3
-- PaddleOCR-VL-1.6
-- GLM-OCR
-- MinerU2.5-Pro 1.2B
-- olmOCR 2 7B
-- Page-level native/OCR hybrid
-
-### DOCX extraction
-
-- python-docx
-- Mammoth
-- Docling
-- MinerU
-
-### Audio extraction
-
-- OpenAI Whisper small.en
-- faster-whisper tiny.en int8
-- faster-whisper base.en int8
-- faster-whisper small.en int8
-- faster-whisper small.en float16
-- faster-whisper turbo int8
-- Distil-Whisper large v3.5
-- Parakeet TDT 0.6B v3
-- Canary-Qwen 2.5B
-
-### Vector database servers
-
-- Chroma
-- Qdrant
-- Weaviate
-- PostgreSQL + pgvector
-
-## Implementation consequences
-
-The runnable YAML files, preparation commands, typed extraction contract, transparent table/formula metrics, and per-experiment documents now match this list. Authoritative extraction runs still require frozen licensed manifests with verified table/formula annotations and any official OmniDocBench evaluators claimed in the report. Metrics absent from the annotations remain omitted rather than filled with placeholder zeroes. Benchmark results never silently change application defaults.
+Public evidence:
+
+- [OmniDocBench v1.6_full table pinned at `193627a...`](https://github.com/opendatalab/OmniDocBench/blob/193627ae9e97d89188468ed1ee3b7a856ff76044/README.md)
+- [PaddleOCR-VL-1.6 documentation pinned at `2661c7c...`](https://github.com/PaddlePaddle/PaddleOCR/blob/2661c7c0ef5c613e8f93c6e93b2e052399f0f854/docs/version3.x/algorithm/PaddleOCR-VL/PaddleOCR-VL-1.6.en.md); model weights `c5630ab...`
+- `source_snapshots.json` for the frozen relevant OmniDocBench rows and metric formula.
+
+## Audio extraction
+
+Primary public quality metric: **`avg` WER** from the Open ASR Leaderboard English short-form file at pinned revision `a0c08d3...`. Lower is better.
+
+This is a short-form selection signal, not evidence that a candidate is best on lectures or other long recordings. The Open ASR project maintains separate short-form and long-form evaluation tracks. EduMind therefore retains all four selected tier representatives plus Whisper for a local long-form screen; no ASR model may be promoted from the short-form table alone. The local screen uses complete educational recordings and reports long-form WER, missing/hallucinated speech, timestamp MAE, real-time factor, and memory. Public long-form results may be added as supporting evidence when an exact selected checkpoint appears under a compatible pinned protocol, but scores from the two tracks are never merged.
+
+At the reviewed revision, the selected rows are:
+
+| Size tier | Candidate | `avg` WER | Task-capability reason |
+|---|---|---:|---|
+| ≤200M | `nvidia/canary-180m-flash` | **5.6914** | Compact candidate with documented word/segment timestamp support. |
+| >200M–800M | `nvidia/parakeet-tdt-0.6b-v2` | **4.8186** | Strongest reviewed eligible tier candidate with documented timestamp support. |
+| >800M–1.5B | `OpenMOSS-Team/MOSS-Transcribe-Diarize` | **4.7429** | Best reviewed candidate in the tier with verified timestamp output; a lower-WER row remained capability-unverified. |
+| >1.5B–3B | `Qwen/Qwen3-ASR-1.7B-hf` + `Qwen/Qwen3-ForcedAligner-0.6B` | **4.4257** for the ASR checkpoint | Best reviewed candidate in the tier with a verified timestamp path through the official forced aligner. |
+
+The Qwen entry is a **composite execution profile**. The WER belongs to the 2.04B-parameter ASR checkpoint, while timestamp production adds the 0.6B forced aligner, for 2.64B parameters across the two components. Parameter count is not converted into a guessed memory number: the benchmark records both component revisions, total model storage, each cold-load time, observed peak RAM/VRAM, whether the two models are resident together or sequentially, and complete ASR-plus-alignment latency.
+
+Evidence is now split correctly:
+
+- **quality evidence** → Open ASR leaderboard row;
+- **task-capability evidence** → the model/aligner documentation that establishes timestamp support.
+
+`openai/whisper-small.en` is also run as the established ASR control. “Timestamp support not documented” is recorded as **unverified**, not as proof that a model cannot produce timestamps.
+
+Public evidence:
+
+- [Open ASR Leaderboard (live)](https://huggingface.co/spaces/hf-audio/open_asr_leaderboard)
+- [Open ASR Leaderboard methodology and source](https://github.com/huggingface/open_asr_leaderboard)
+- [Open ASR results repository containing the separate short- and long-form tracks](https://huggingface.co/datasets/hf-audio/open-asr-leaderboard-results/tree/a0c08d3ac1ef99ea7148666061839b853cbfa89a)
+- [Open ASR result file at revision `a0c08d3...`](https://huggingface.co/datasets/hf-audio/open-asr-leaderboard-results/blob/a0c08d3ac1ef99ea7148666061839b853cbfa89a/english_short_latest.csv)
+- [Parakeet timestamp-support model card at revision `dcb0e1d...`](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2/blob/dcb0e1db8b2220830fecb8f60df74a88a34cb128/README.md)
+- [MOSS timestamp/diarization model card at revision `0844c4a...`](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize/blob/0844c4adb24300bc7c6cd91e379bc790f939f2d6/README.md)
+- [Whisper small.en pinned at `e872752...`](https://huggingface.co/openai/whisper-small.en/tree/e8727524f962ee844a7319d92be39ac1bd25655a)
+- [Canary 180M pinned at `b12ab41...`](https://huggingface.co/nvidia/canary-180m-flash/tree/b12ab418510d093e83890178fd0e8b0d0f7918a6)
+- [Qwen3-ASR pinned at `bcd2b5b...`](https://huggingface.co/Qwen/Qwen3-ASR-1.7B-hf/tree/bcd2b5b7f32b480ab5790554cfa8347f246a14f3) and [ForcedAligner pinned at `c7cbfc2...`](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B/tree/c7cbfc2048c462b0d63a45797104fc9db3ad62b7)
+- `source_snapshots.json` for the frozen ASR rows.
+
+The live leaderboard is useful for seeing newer submissions. The revision-pinned CSV is what makes the four recorded WER values reproducible: it identifies the exact result-file commit used during selection, even if the live leaderboard changes later.
+
+If timestamp support ceases to be an EduMind requirement, the shortlist must be regenerated because the task filter changes the winner in some tiers.
+
+## Video extraction
+
+These are alternatives for the same job: selecting frames for downstream visual extraction.
+
+| Strategy | Why it is included |
+|---|---|
+| Fixed interval | Deterministic coverage and predictable processing cost. |
+| Scene change | Reduces redundant frames by sampling visual transitions. |
+| Scene change + maximum interval | Adds fallback coverage when content changes gradually without a sharp scene transition. |
+
+The downstream visual parser is held fixed while comparing frame-selection strategies.
+
+## Normalization
+
+Normalization occurs after extraction and before chunking.
+
+| Strategy | Why it is included |
+|---|---|
+| Minimal | Unicode, line endings, and whitespace only. |
+| Conservative | Repairs common extraction artifacts while minimizing content-changing edits. |
+| Aggressive | Tests whether stronger cleanup is worth the higher risk of deleting or merging valid content. |
+
+## Vector database servers
+
+This benchmark compares **self-hosted network servers running on the benchmark machine**. Embedded/in-process modes are disabled so deployment mode does not confound the comparison. Vendor benchmarks are not used to rank the products because they rarely hold schema, filters, index settings, hardware, and client path constant. Official sources establish that each product can implement the required server workload; EduMind's conformance and retrieval benchmark provides the comparison.
+
+| Server | Frozen first-round profile | Why it is included | Official capability/deployment source |
+|---|---|---|---|
+| Chroma | `chromadb/chroma:1.5.9`; Python client `1.5.9` | Current HTTP-server baseline. | [Chroma Docker server](https://docs.trychroma.com/guides/deploy/docker) |
+| Qdrant | `qdrant/qdrant:v1.17.0`; Python client `1.18.0` | Purpose-built HNSW server with payload indexes and filtered search. | [Qdrant installation](https://qdrant.tech/documentation/installation/); [filter/index guidance](https://qdrant.tech/documentation/guides/) |
+| Weaviate | `cr.weaviate.io/semitechnologies/weaviate:1.38.2`; Python client `4.22.0` | Independent purpose-built HNSW server with structured filtering. | [Weaviate Docker deployment](https://docs.weaviate.io/deploy/installation-guides/docker-installation) |
+| PostgreSQL + pgvector | `pgvector/pgvector:0.8.2-pg17-bookworm`; Psycopg `3.3.4` | Relational/transactional design point with SQL metadata and HNSW cosine search. | [pgvector documentation](https://github.com/pgvector/pgvector/tree/v0.8.2) |
+
+These four cover the current baseline, two purpose-built vector servers, and one relational alternative. The server benchmark—not a vendor leaderboard—selects among them.
+
+Milvus and OpenSearch are explicitly **not included in the first round**. Milvus represents a scale/distributed-vector architecture, while OpenSearch represents a broader search-platform architecture. Both are valid self-hosted candidates, but adding them now would enlarge setup and tuning without answering a new first-round question beyond the four selected design points. Milvus is reconsidered when the tested corpus or concurrency requires its scale architecture; OpenSearch is reconsidered when search-platform features become a requirement. This is a scope decision, not a claim that either product is worse. [Milvus standalone deployment](https://milvus.io/docs/install_standalone-docker.md); [OpenSearch vector search](https://docs.opensearch.org/latest/vector-search/).
+
+This is an architectural eligibility screen rather than one of the four model-selection paths. A product is included only when it is self-hostable as a network server, adds a distinct relevant design point, has an implementable benchmark interface, and has a selected non-prerelease server profile. The selected versions are pinned comparison profiles, not claims that each is the newest available release. Passing the benchmark's real conformance gates is required before any performance comparison or promotion.
+
+The versioned image tags above identify the selected server releases, but tags alone are not immutable. `python experiments/benchmarks/prepare.py vectordb` must resolve them to `repo@sha256:...` digests and record the client versions before an authoritative run.

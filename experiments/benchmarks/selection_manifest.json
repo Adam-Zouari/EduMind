@@ -1,0 +1,33 @@
+{
+  "selection_version": "benchmark-candidates-v7",
+  "generated_date": "2026-08-23",
+  "evidence_cutoff": "2026-08-23",
+  "evidence_rows": 65,
+  "decision_counts": {
+    "include": 28,
+    "exclude": 37
+  },
+  "included_evidence_rows_by_component": {
+    "asr": 5,
+    "document_extraction": 1,
+    "embedding": 8,
+    "evaluator": 1,
+    "generator": 4,
+    "reranker": 5,
+    "vector_db": 4
+  },
+  "files": {
+    "model_selection.md": {
+      "sha256": "3a3f86d8f2baeed89ac7eace7e668000d0c8a38e2cf4dce6bb930a806479a0ce",
+      "bytes": 42606
+    },
+    "selection_evidence.csv": {
+      "sha256": "aec760fe24b8cbb981965405ce9bf719f1910ee6b391ecbf00be8e3141a0c672",
+      "bytes": 36180
+    },
+    "source_snapshots.json": {
+      "sha256": "67895d55de86e565e10e1e80da57bfe45c40e31668da5a3dd0b8debcbaa3564d",
+      "bytes": 45129
+    }
+  }
+}
