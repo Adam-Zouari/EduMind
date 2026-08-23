@@ -246,7 +246,7 @@ Face cache, and writes `data/benchmarks/models/huggingface.json`.
 | embedding | `nvidia/Nemotron-3-Embed-1B-BF16` | [model card](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16) |
 | embedding | `Qwen/Qwen3-Embedding-4B` | [model card](https://huggingface.co/Qwen/Qwen3-Embedding-4B) |
 | embedding quality ceiling | `nvidia/Nemotron-3-Embed-8B-BF16` | [model card](https://huggingface.co/nvidia/Nemotron-3-Embed-8B-BF16) |
-| reranker baseline | `cross-encoder/ms-marco-MiniLM-L-6-v2` | [canonical model card](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2) |
+| reranker baseline | `cross-encoder/ms-marco-MiniLM-L6-v2` | [canonical model card](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2) |
 | reranker | `BAAI/bge-reranker-v2-m3` | [model card](https://huggingface.co/BAAI/bge-reranker-v2-m3) |
 | reranker | `Qwen/Qwen3-Reranker-0.6B` | [model card](https://huggingface.co/Qwen/Qwen3-Reranker-0.6B) |
 | reranker quality ceiling | `Qwen/Qwen3-Reranker-4B` | [model card](https://huggingface.co/Qwen/Qwen3-Reranker-4B) |
@@ -265,7 +265,7 @@ python experiments/benchmarks/prepare.py huggingface-models --candidate Qwen/Qwe
 python experiments/benchmarks/prepare.py huggingface-models --candidate nvidia/Nemotron-3-Embed-1B-BF16
 python experiments/benchmarks/prepare.py huggingface-models --candidate Qwen/Qwen3-Embedding-4B
 python experiments/benchmarks/prepare.py huggingface-models --candidate nvidia/Nemotron-3-Embed-8B-BF16
-python experiments/benchmarks/prepare.py huggingface-models --candidate cross-encoder/ms-marco-MiniLM-L-6-v2
+python experiments/benchmarks/prepare.py huggingface-models --candidate cross-encoder/ms-marco-MiniLM-L6-v2
 python experiments/benchmarks/prepare.py huggingface-models --candidate BAAI/bge-reranker-v2-m3
 python experiments/benchmarks/prepare.py huggingface-models --candidate Qwen/Qwen3-Reranker-0.6B
 python experiments/benchmarks/prepare.py huggingface-models --candidate Qwen/Qwen3-Reranker-4B
