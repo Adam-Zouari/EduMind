@@ -225,7 +225,7 @@ def _grade(chunk: Chunk, evidence: Sequence[Mapping[str, object]]) -> float:
 
 def reranker_for(method: str, revisions: Mapping[str, str]) -> Reranker | None:
     model = {
-        "rrf-minilm-reranker": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        "rrf-minilm-reranker": "cross-encoder/ms-marco-MiniLM-L6-v2",
         "rrf-bge-v2-m3-reranker": "BAAI/bge-reranker-v2-m3",
         "rrf-qwen3-0.6b-reranker": "Qwen/Qwen3-Reranker-0.6B",
         "rrf-qwen3-4b-reranker": "Qwen/Qwen3-Reranker-4B",
