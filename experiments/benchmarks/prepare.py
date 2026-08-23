@@ -36,7 +36,7 @@ HUGGINGFACE_MODELS = (
     "nvidia/Nemotron-3-Embed-1B-BF16",
     "Qwen/Qwen3-Embedding-4B",
     "nvidia/Nemotron-3-Embed-8B-BF16",
-    "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    "cross-encoder/ms-marco-MiniLM-L6-v2",
     "BAAI/bge-reranker-v2-m3",
     "Qwen/Qwen3-Reranker-0.6B",
     "Qwen/Qwen3-Reranker-4B",
