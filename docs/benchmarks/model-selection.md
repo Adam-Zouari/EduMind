@@ -1,5 +1,9 @@
 # Benchmark candidate selection
 
+[Project overview](../../README.md) · [Documentation map](../README.md) ·
+[Benchmark overview](overview.md) · [Benchmark manual](methodology.md) ·
+[Selection evidence](../../experiments/benchmarks/selection_evidence.csv)
+
 Status: **public-evidence shortlist; EduMind's local benchmarks make the final decisions**
 
 Selection package: **benchmark-candidates**
@@ -28,7 +32,7 @@ The ranges in this document were added after inspecting the candidate sizes. The
 
 | File | Purpose | Example |
 |---|---|---|
-| `model_selection.md` | Reader-facing explanation of the method, candidates, strategies, and evidence. | The embedding table explains why Qwen, Octen, F2LLM, Nemotron, and Snowflake are included. |
+| `docs/benchmarks/model-selection.md` | Reader-facing explanation of the method, candidates, strategies, and evidence. | The embedding table explains why Qwen, Octen, F2LLM, Nemotron, and Snowflake are included. |
 | `selection_evidence.csv` | One machine-readable row for every model checkpoint or vector-database product that received an explicit include/exclude decision. | The Qwen3-Embedding-0.6B row records its public screening result, exact source, candidate revision, and decision. |
 
 ### `selection_evidence.csv` column reference
@@ -46,7 +50,7 @@ The ranges in this document were added after inspecting the candidate sizes. The
 | `benchmark_source_url` | Exact page or result file containing the public score. | A revision-pinned model card or result table. |
 | `benchmark_source_revision` | Exact commit, dataset revision, or benchmark version used for the score. | `d43997c8...` |
 | `candidate_source_url` | Official model/product page for the candidate that will be executed. | A pinned Hugging Face model page. |
-| `candidate_revision` | Exact checkpoint, Ollama digest, composite profile revisions, or selected server versions. | `d43997c8...` |
+| `candidate_revision` | Exact checkpoint, composite profile revisions, or selected server versions. | `d43997c8...` |
 | `license` | Recorded published license or terms label. | `Apache-2.0` |
 | `reviewed_date` | Date the evidence and candidate information were reviewed. | `2026-08-23` |
 | `reason` | Concise explanation for the decision and any important evidence limitation. | Qwen is kept as a strong candidate for direct local comparison. |
@@ -82,7 +86,7 @@ Candidate-specific links appear in the relevant table row. A benchmark shared by
 | Chunking | Token 256/32 | Current fixed-window chunking. |
 | Embedding | `sentence-transformers/all-MiniLM-L6-v2` at `c9745ed1d9f207416be6d2e6f8de32d1f16199bf` | Current lightweight embedding. |
 | Reranking | `cross-encoder/ms-marco-MiniLM-L6-v2` at `233902d25c440f23af6f7d6e94d2946bac0bee0a` | Established cross-encoder baseline. |
-| Generation | Ollama `qwen3:1.7b`, digest `8f68893c685c3ddff2aa3fffce2aa60a30bb2da65ca488b61fff134a4d1730e7`, Q4_K_M | Current application generator. |
+| Generation | [`Qwen/Qwen3-1.7B`](https://huggingface.co/Qwen/Qwen3-1.7B/tree/b9352fbb8ce704292730cf54b3b1dceb2a808738), thinking disabled | Small direct-checkpoint control executed through the same Hugging Face runtime as the candidates. |
 | Document extraction | Docling Standard baseline configuration | Current unified-parser reference. |
 | ASR | `openai/whisper-small.en` at `e8727524f962ee844a7319d92be39ac1bd25655a` | Established English ASR reference. |
 | Vector database | Chroma server | Current server baseline. |
@@ -164,7 +168,7 @@ Artificial Analysis is therefore used only to choose plausible compact quality p
 | ~1B | [`openbmb/MiniCPM5-1B`](https://huggingface.co/openbmb/MiniCPM5-1B/tree/87179e5c1f455ef22e6223592d2d61351b525bfc), reasoning | [Estimated AA score **12**](https://artificialanalysis.ai/models/minicpm5-1b) | Compact reasoning candidate; its quality, generated-token cost, and latency are measured locally. |
 | ~3B | [`ai9stars/G9v3-3B`](https://huggingface.co/ai9stars/G9v3-3B/tree/d9553445ff92dbce667381954c9699fbcbc924f9), reasoning | [Estimated AA score **16**](https://artificialanalysis.ai/models/g9v3-3b) | Middle-size quality point and strongest scored model in the reviewed ≤4B set. |
 | ~5B | [`Qwen/Qwen3.5-4B`](https://huggingface.co/Qwen/Qwen3.5-4B/tree/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a), reasoning | [Estimated AA score **20**](https://artificialanalysis.ai/models/qwen3-5-4b) | Upper compact quality point at approximately 4.7B total parameters. |
-| Control | Ollama `qwen3:1.7b`, Q4_K_M | Local application baseline | Measures whether any replacement improves the current application. |
+| Control | [`Qwen/Qwen3-1.7B`](https://huggingface.co/Qwen/Qwen3-1.7B/tree/b9352fbb8ce704292730cf54b3b1dceb2a808738), thinking disabled | Direct Hugging Face control | Smallest generator profile and common-runtime baseline. |
 
 ### Automated faithfulness diagnostic
 
@@ -202,7 +206,7 @@ The following settings stay fixed:
 |---|---|---|
 | Docling | v2.117.0, commit `f2683c0b5aa14a53b74373b0640260891cdbc1b0` | Keeps the implementation constant. |
 | OCR language | English | Matches the initial EduMind scope. |
-| OCR scale | `3.0` | Docling's documented default, equivalent to a 216-DPI render from a 72-DPI page. |
+| OCR scale | `3.0` | Uses one higher-resolution 216-DPI render for every OCR engine so rendering resolution does not confound their comparison. |
 | Table cell matching | enabled | Required to map recognized cells back to the document structure. |
 | Code enrichment | disabled | Code-specific extraction is not a current benchmark requirement. |
 | Output | canonical `DoclingDocument` JSON | Preserves text, structure, pages, tables, formulas, and provenance in one comparable representation. |
@@ -218,7 +222,7 @@ These settings are fixed because they define the common experimental environment
 - **Canonical output:** every configuration must produce the same `DoclingDocument` representation so text, structure, pages, tables, formulas, and provenance are compared consistently. Output format is an evaluation contract, not a quality candidate.
 - **Native DOCX ingestion:** DOCX already contains machine-readable text and structure. Rasterizing it would discard that information, introduce OCR and rendering errors, and test a different extraction architecture. A rendered-DOCX fallback must be evaluated separately if corrupted DOCX files become a requirement.
 
-The fixed values are controls for this experiment, not claims that they are universally optimal. A focused follow-up should vary one of them only when the first-stage results or a new product requirement provide a concrete reason. The separate image OCR experiment still matters because it measures standalone OCR; this matrix measures how OCR interacts with a complete document parser.
+The fixed values are controls for this experiment, not claims that they are universally optimal. A focused follow-up should vary one of them only when the first-stage results or a new product requirement provide a concrete reason.
 
 ### Complete architecture comparison
 
@@ -248,7 +252,7 @@ The public screen uses **`avg` WER** from the pinned Open ASR English short-form
 
 Shared quality source: [Open ASR methodology](https://github.com/huggingface/open_asr_leaderboard) and the [revision-pinned English short-form result file](https://huggingface.co/datasets/hf-audio/open-asr-leaderboard-results/blob/a0c08d3ac1ef99ea7148666061839b853cbfa89a/english_short_latest.csv).
 
-The Qwen profile contains a 2.04B ASR model and a 0.6B forced aligner, or 2.64B parameters across both components. The benchmark records whether they are resident together or loaded sequentially and measures the complete transcription-plus-alignment latency and memory.
+The Qwen profile contains a 2.04B ASR model and a 0.6B forced aligner, or 2.64B parameters across both components. They run sequentially: transcription completes and the ASR is unloaded before alignment starts. The benchmark still measures the complete transcription-plus-alignment latency and peak resources.
 
 Short-form public WER only creates the shortlist. Final ASR selection uses complete educational recordings and measures long-form WER, missing and hallucinated speech, timestamp MAE, real-time factor, latency, RAM, and VRAM.
 

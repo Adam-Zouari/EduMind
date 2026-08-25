@@ -1,5 +1,8 @@
 # Vector database server experiment
 
+[Benchmark overview](../overview.md) · [Benchmark manual](../methodology.md) ·
+[Candidate selection](../model-selection.md) · [Preparation guide](../../setup/installation.md)
+
 ## Question and candidates
 
 Which self-hosted server preserves exact-neighbor and metadata-filter correctness while providing the best latency, throughput, memory, and storage trade-off? The first comparison is Chroma 1.5.9, Qdrant 1.17.0, Weaviate 1.38.2, and PostgreSQL 17 with pgvector 0.8.2. Chroma is the provisional application default, not an assumed winner.
@@ -38,8 +41,6 @@ Latency is measured around the complete client call, so serialization and loopba
 A configuration is eligible only when ANN Recall@10 and filtered ANN Recall@10 are at least 0.99, all conformance checks equal 1, and the target-concurrency error rate is zero. Selection is Pareto-based; there is no weighted overall score. A smoke result, a lower latency obtained by silent flat search, or results from another unrecorded environment cannot justify promotion.
 
 The application remains on Chroma until a standard and full run plus the complete retrieval experiment justify an explicit change. This benchmark does not test clusters, cloud services, backups, rolling restarts, or multi-region behavior.
-
-Milvus and OpenSearch remain documented reserve categories: add them only when scale or search-platform requirements create a concrete new hypothesis, rather than expanding the initial matrix by default.
 
 After explicitly approving exactly one chunking/embedding pair and one retrieval strategy, run the complete query-path comparison on the two dense finalists plus Chroma:
 

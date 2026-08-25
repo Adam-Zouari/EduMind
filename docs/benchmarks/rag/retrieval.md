@@ -1,8 +1,11 @@
 # Retrieval and reranking benchmark
 
+[Benchmark overview](../overview.md) · [Benchmark manual](../methodology.md) ·
+[Chunking/embedding stage](chunking-embedding.md) · [Candidate selection](../model-selection.md)
+
 ## Question and candidates
 
-For up to three explicitly approved chunker/embedding pairs, which ranking strategy retrieves the best evidence? Compare dense, BM25, reciprocal-rank fusion of dense and BM25, and RRF followed separately by MiniLM, BGE v2-m3, Qwen3 0.6B, or Qwen3 4B reranking. BM25, RRF, and rerankers live only in experiments.
+For up to three explicitly approved chunker/embedding pairs, which ranking strategy retrieves the best evidence? Compare dense, BM25, reciprocal-rank fusion of dense and BM25, and RRF followed separately by MiniLM, Ettin 150M, Ettin 400M, Ettin 1B, or Qwen3 4B reranking. BM25, RRF, and rerankers live only in experiments.
 
 ## Data and procedure
 

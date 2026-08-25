@@ -1,5 +1,8 @@
 # Text-normalization benchmark
 
+[Benchmark overview](../overview.md) · [Benchmark manual](../methodology.md) ·
+[Dataset guide](datasets.md)
+
 ## Question and candidates
 
 How much repair can be applied without damaging legitimate content? Compare minimal Unicode/line-ending normalization, conservative whitespace/dehyphenation repair, and aggressive cleanup.
