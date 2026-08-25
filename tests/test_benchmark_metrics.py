@@ -23,8 +23,11 @@ from experiments.benchmarks.common.metrics import (
     token_f1,
     word_error_rate,
 )
-from experiments.benchmarks.common.text_metrics import content_scores, reading_order_accuracy
-from experiments.benchmarks.common.document_metrics import structured_document_scores
+from experiments.benchmarks.extraction.metrics import (
+    content_scores,
+    reading_order_accuracy,
+    structured_document_scores,
+)
 from edumind.extraction import (
     ExtractedDocument,
     ExtractedSegment,
@@ -32,7 +35,9 @@ from edumind.extraction import (
     SegmentKind,
     SourceKind,
 )
-from edumind.rag.text_chunker import build_chunking_strategy
+from experiments.benchmarks.rag.chunking_embedding.strategies import (
+    build_chunking_strategy,
+)
 from edumind.extraction.structured import markdown_segments
 
 
@@ -160,7 +165,7 @@ def test_section_and_structure_chunkers_return_exact_source_spans() -> None:
 
 
 def test_page_metrics_detect_wrong_page_attribution() -> None:
-    from experiments.benchmarks.extraction.runner import _page_scores
+    from experiments.benchmarks.extraction.metrics import page_scores
 
     text = "beta\nalpha"
     document = ExtractedDocument(
@@ -176,7 +181,7 @@ def test_page_metrics_detect_wrong_page_attribution() -> None:
         ),
         ExtractionProfile("fixture", "fixture", "1"),
     )
-    scores = _page_scores(
+    scores = page_scores(
         {"kind": "pdf", "reference_page_texts": ["alpha", "beta"]}, document
     )
     assert scores["page_coverage"] == 1.0

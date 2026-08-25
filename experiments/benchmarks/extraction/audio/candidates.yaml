@@ -1,11 +1,7 @@
-smoke: [faster-whisper-base-int8]
+smoke: [whisper-small-en-control]
 standard:
-  - openai-whisper-small-en
-  - faster-whisper-tiny-int8
-  - faster-whisper-base-int8
-  - faster-whisper-small-int8
-  - faster-whisper-small-float16
-  - faster-whisper-turbo-int8
-  - distil-whisper-large-v3.5
-  - parakeet-tdt-0.6b-v3
-  - canary-qwen-2.5b
+  - whisper-small-en-control
+  - canary-180m
+  - parakeet-tdt-0.6b-v2
+  - moss-transcribe-diarize
+  - qwen3-asr-1.7b-aligned

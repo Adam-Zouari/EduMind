@@ -1,4 +1,4 @@
-"""Transparent table and formula metrics for complete-document extraction."""
+"""Text, structure, table, formula, and timing metrics for extraction."""
 
 from __future__ import annotations
 
@@ -6,9 +6,154 @@ import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
 
+import numpy as np
+
 from edumind.extraction import ExtractedDocument, SegmentKind
 
-from .metrics import levenshtein, normalized_tokens
+from experiments.benchmarks.common.metrics import (
+    character_error_rate,
+    levenshtein,
+    normalized_tokens,
+    word_error_rate,
+)
+
+
+def base_scores(reference: str, hypothesis: str) -> dict[str, float]:
+    scores = content_scores(reference, hypothesis)
+    scores.update(block_scores(reference, hypothesis))
+    scores.update(
+        {
+            "character_error_rate": character_error_rate(reference, hypothesis),
+            "word_error_rate": word_error_rate(reference, hypothesis),
+            "reading_order_accuracy": reading_order_accuracy(reference, hypothesis),
+            "empty_output_rate": float(not hypothesis.strip()),
+            "word_accuracy": max(
+                0.0, 1.0 - min(1.0, word_error_rate(reference, hypothesis))
+            ),
+            "duplicate_text_rate": duplicate_line_rate(hypothesis),
+        }
+    )
+    return scores
+
+
+def page_scores(item: Mapping[str, object], document: ExtractedDocument) -> dict[str, float]:
+    raw_references = item.get("reference_page_texts")
+    if isinstance(raw_references, Sequence) and not isinstance(raw_references, (str, bytes)):
+        references = [str(value) for value in raw_references]
+    elif item.get("kind") == "image":
+        references = [str(item.get("reference", ""))]
+    else:
+        expected = max(1, int(item.get("reference_pages", 1)))
+        pages = {
+            segment.page_number
+            for segment in document.segments
+            if segment.page_number is not None and segment.text.strip()
+        }
+        return {"page_coverage": min(1.0, len(pages) / expected)}
+
+    predicted = {
+        page: "\n".join(
+            segment.text
+            for segment in document.segments
+            if segment.page_number == page and segment.text.strip()
+        )
+        for page in range(1, len(references) + 1)
+    }
+    populated = [value for value in predicted.values() if value.strip()]
+    correct_attribution = 0
+    same_page_scores: list[float] = []
+    for page, reference in enumerate(references, 1):
+        hypothesis = predicted[page]
+        same_page_scores.append(content_scores(reference, hypothesis)["content_f1"])
+        if not hypothesis.strip():
+            continue
+        similarities = [content_scores(value, hypothesis)["content_f1"] for value in references]
+        if int(np.argmax(similarities)) + 1 == page:
+            correct_attribution += 1
+    normalized = [" ".join(value.casefold().split()) for value in populated]
+    duplicate_rate = (
+        (len(normalized) - len(set(normalized))) / len(normalized) if normalized else 0.0
+    )
+    coverage = len(populated) / len(references)
+    return {
+        "page_coverage": coverage,
+        "page_content_f1": float(np.mean(same_page_scores)),
+        "page_attribution_accuracy": correct_attribution / len(references),
+        "missing_page_rate": 1.0 - coverage,
+        "duplicate_page_rate": duplicate_rate,
+    }
+
+
+def content_scores(reference: str, hypothesis: str) -> dict[str, float]:
+    reference_tokens = Counter(normalized_tokens(reference))
+    hypothesis_tokens = Counter(normalized_tokens(hypothesis))
+    overlap = sum((reference_tokens & hypothesis_tokens).values())
+    reference_total = sum(reference_tokens.values())
+    hypothesis_total = sum(hypothesis_tokens.values())
+    precision = overlap / hypothesis_total if hypothesis_total else 0.0
+    recall = overlap / reference_total if reference_total else float(not hypothesis_total)
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    missing = sum((reference_tokens - hypothesis_tokens).values()) / max(1, reference_total)
+    hallucinated = sum((hypothesis_tokens - reference_tokens).values()) / max(1, hypothesis_total)
+    return {
+        "content_precision": precision,
+        "content_recall": recall,
+        "content_f1": f1,
+        "missing_text_rate": missing,
+        "hallucinated_text_rate": hallucinated,
+    }
+
+
+def reading_order_accuracy(reference: str, hypothesis: str) -> float:
+    """Pairwise order accuracy over tokens occurring once in both texts."""
+    reference_tokens = normalized_tokens(reference)
+    hypothesis_tokens = normalized_tokens(hypothesis)
+    reference_counts, hypothesis_counts = Counter(reference_tokens), Counter(hypothesis_tokens)
+    shared = {
+        token
+        for token in reference_counts
+        if reference_counts[token] == 1 and hypothesis_counts[token] == 1
+    }
+    ordered = [token for token in reference_tokens if token in shared]
+    if len(ordered) < 2:
+        return float(reference_tokens == hypothesis_tokens)
+    positions = {token: index for index, token in enumerate(hypothesis_tokens) if token in shared}
+    correct = 0
+    pairs = 0
+    for left in range(len(ordered)):
+        for right in range(left + 1, len(ordered)):
+            pairs += 1
+            correct += positions[ordered[left]] < positions[ordered[right]]
+    return correct / pairs
+
+
+def block_scores(reference: str, hypothesis: str) -> dict[str, float]:
+    reference_blocks = Counter(_blocks(reference))
+    hypothesis_blocks = Counter(_blocks(hypothesis))
+    overlap = sum((reference_blocks & hypothesis_blocks).values())
+    precision = overlap / sum(hypothesis_blocks.values()) if hypothesis_blocks else 0.0
+    recall = overlap / sum(reference_blocks.values()) if reference_blocks else float(not hypothesis_blocks)
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    return {
+        "block_precision": precision,
+        "block_recall": recall,
+        "block_structure_f1": f1,
+    }
+
+
+def timestamp_mae(reference: Sequence[float], hypothesis: Sequence[float]) -> float:
+    if len(reference) != len(hypothesis) or not reference:
+        raise ValueError("Timestamp arrays must be non-empty and have equal length")
+    return sum(abs(left - right) for left, right in zip(reference, hypothesis)) / len(reference)
+
+
+def duplicate_line_rate(text: str) -> float:
+    lines = _blocks(text)
+    return (len(lines) - len(set(lines))) / len(lines) if lines else 0.0
+
+
+def _blocks(text: str) -> list[str]:
+    return [" ".join(line.casefold().split()) for line in text.splitlines() if line.strip()]
 
 
 def structured_document_scores(
