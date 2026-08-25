@@ -1,10 +1,11 @@
 """EduMind-AI package."""
 
 __all__ = [
+    "application",
     "common",
     "extraction",
-    "pipeline",
     "rag",
+    "ui",
 ]
 
 __version__ = "0.1.0"

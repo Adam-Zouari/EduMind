@@ -10,7 +10,7 @@ from pathlib import Path
 
 from edumind.common.config import load_settings
 from edumind.extraction import ExtractedDocument, ExtractionPipeline, ExtractionProfile
-from edumind.rag.rag_pipeline import RAGPipeline
+from edumind.rag.pipeline import RAGPipeline
 from edumind.rag.types import AnswerResult, IngestReport, RetrievalHit
 
 

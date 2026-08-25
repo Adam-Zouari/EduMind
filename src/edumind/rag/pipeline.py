@@ -2,31 +2,20 @@
 
 from __future__ import annotations
 
-import json
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from pathlib import Path
 
 from edumind.common.config import Settings, load_settings
+from edumind.common.models import load_model_lock, require_model
 from edumind.extraction import ExtractedDocument
 
-from .contracts import (
-    ChunkingStrategy,
-    GenerationProfile,
-    IndexManifest,
-    embedding_spec,
-)
+from .contracts import GenerationProfile, IndexManifest, embedding_spec
 from .document_processor import normalize_ingest_document
 from .embedder import Embedder
 from .errors import RAGConfigurationError
-from .llm_generator import OllamaGenerator
-from .text_chunker import (
-    SemanticChunkingStrategy,
-    TextChunker,
-    TokenChunkingStrategy,
-    build_chunking_strategy,
-)
+from .llm_generator import HuggingFaceGenerator
+from .text_chunker import TextChunker, TokenChunkingStrategy
 from .tokenizers import LazyHuggingFaceOffsetTokenizer, OffsetTokenizer, TiktokenOffsetTokenizer
 from .types import AnswerResult, IngestDocument, IngestReport, RetrievalHit, VectorStoreSettings
 from .vector_store import VectorStore
@@ -44,14 +33,19 @@ class RAGPipeline:
         tokenizer: OffsetTokenizer | None = None,
         embedder: Embedder | None = None,
         vector_store: VectorStore | None = None,
-        generator: OllamaGenerator | None = None,
+        generator: HuggingFaceGenerator | None = None,
     ) -> None:
         self.settings = settings or load_settings(config_path)
+        model_lock = load_model_lock(self.settings.models.lock_path)
+        embedding_snapshot = require_model(
+            model_lock, self.settings.embedding.model_name
+        )
         self.embedding_spec = embedding_spec(
             self.settings.embedding.model_name,
             document_device=self.settings.embedding.indexing_device,
             query_device=self.settings.embedding.query_device,
-            revision=self.settings.embedding.revision,
+            revision=embedding_snapshot.revision,
+            local_path=str(embedding_snapshot.path),
         )
         configured_contract = {
             "dimension": self.settings.embedding.dimension,
@@ -74,6 +68,7 @@ class RAGPipeline:
             LazyHuggingFaceOffsetTokenizer(
                 self.embedding_spec.tokenizer,
                 self.embedding_spec.revision,
+                self.embedding_spec.local_path,
             )
             if self.settings.chunking.tokenizer == "embedding"
             else TiktokenOffsetTokenizer(self.settings.chunking.tokenizer)
@@ -81,24 +76,12 @@ class RAGPipeline:
         self.embedder = embedder or Embedder(
             spec=self.embedding_spec, batch_size=self.settings.embedding.batch_size
         )
-        strategy: ChunkingStrategy
-        if self.settings.chunking.strategy in {"token", "token-384-64"}:
-            strategy = TokenChunkingStrategy(
-                self.tokenizer,
-                self.settings.chunking.chunk_size,
-                self.settings.chunking.chunk_overlap,
-                f"token-{self.settings.chunking.chunk_size}-{self.settings.chunking.chunk_overlap}",
-            )
-        elif self.settings.chunking.strategy == "semantic":
-            strategy = SemanticChunkingStrategy(
-                self.tokenizer,
-                self.embedder.embed_texts,
-                maximum_tokens=self.settings.chunking.chunk_size,
-            )
-        else:
-            strategy = build_chunking_strategy(
-                self.settings.chunking.strategy, tokenizer=self.tokenizer
-            )
+        strategy = TokenChunkingStrategy(
+            self.tokenizer,
+            self.settings.chunking.chunk_size,
+            self.settings.chunking.chunk_overlap,
+            f"token-{self.settings.chunking.chunk_size}-{self.settings.chunking.chunk_overlap}",
+        )
         self.text_chunker = TextChunker(strategy)
         self.vector_store = vector_store or VectorStore(
             VectorStoreSettings(
@@ -116,31 +99,24 @@ class RAGPipeline:
         )
         self.vector_store.ensure_manifest(self.index_manifest)
         self.retrieval_stack_name = "dense"
-        generation_digest = self.settings.generation.digest
-        if use_llm and generator is None and generation_digest == "unpinned":
-            generation_digest = _locked_ollama_digest(
-                self.settings.generation.model_lock_path,
+        self.llm_generator = generator
+        if self.llm_generator is None and use_llm:
+            generation_snapshot = require_model(
+                model_lock, self.settings.generation.model_name
+            )
+            generation_profile = GenerationProfile(
                 self.settings.generation.model_name,
+                generation_snapshot.revision,
+                str(generation_snapshot.path),
+                self.settings.generation.device,
+                self.settings.generation.dtype,
+                self.settings.generation.reasoning,
+                self.settings.generation.temperature,
+                self.settings.generation.seed,
+                self.settings.generation.context_tokens,
+                self.settings.generation.maximum_answer_tokens,
             )
-        generation_profile = GenerationProfile(
-            self.settings.generation.model_name,
-            generation_digest,
-            self.settings.generation.thinking,
-            self.settings.generation.temperature,
-            self.settings.generation.seed,
-            self.settings.generation.context_tokens,
-            self.settings.generation.maximum_answer_tokens,
-            self.settings.generation.keep_alive,
-        )
-        self.llm_generator = generator or (
-            OllamaGenerator(
-                generation_profile,
-                base_url=self.settings.generation.base_url,
-                timeout_seconds=self.settings.generation.timeout_seconds,
-            )
-            if use_llm
-            else None
-        )
+            self.llm_generator = HuggingFaceGenerator(generation_profile)
         self.top_k = self.settings.retrieval.top_k
 
     def ingest_document(
@@ -213,7 +189,7 @@ class RAGPipeline:
         return packed
 
     def generate_context(self, results: Sequence[RetrievalHit]) -> str:
-        return OllamaGenerator.build_context(results)
+        return HuggingFaceGenerator.build_context(results)
 
     def generate_answer(
         self,
@@ -306,20 +282,3 @@ def _citations_valid(answer: str, context_count: int) -> bool:
     citations = [int(value) for value in re.findall(r"\[(\d+)\]", answer)]
     refusal = "don't have enough evidence" in answer.lower()
     return refusal or bool(citations) and all(1 <= value <= context_count for value in citations)
-
-
-def _locked_ollama_digest(path: Path, model_name: str) -> str:
-    if not path.is_file():
-        raise RAGConfigurationError(
-            f"Missing Ollama model lock {path}; run "
-            "`python experiments/benchmarks/prepare.py ollama-models`"
-        )
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RAGConfigurationError(f"Cannot read Ollama model lock {path}: {exc}") from exc
-    models = payload.get("models", {})
-    digest = models.get(model_name) if isinstance(models, Mapping) else None
-    if not digest:
-        raise RAGConfigurationError(f"Ollama model lock has no digest for {model_name}")
-    return str(digest)

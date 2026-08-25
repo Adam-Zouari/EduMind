@@ -6,6 +6,7 @@ from .contracts import (
     GenerationProfile,
     IndexManifest,
 )
+from .pipeline import RAGPipeline
 from .types import AnswerResult, ChunkRecord, IngestDocument, IngestReport, RetrievalHit
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "IngestDocument",
     "IngestReport",
     "RetrievalHit",
+    "RAGPipeline",
 ]

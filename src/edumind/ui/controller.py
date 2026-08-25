@@ -8,14 +8,14 @@ import tempfile
 from collections.abc import Callable, MutableMapping
 from pathlib import Path
 
-from edumind.pipeline import (
+from edumind.application import (
     DocumentProcessResult,
     EduMindPipeline,
     PipelineQueryResult,
     ProgressEvent,
 )
 
-from apps.state import DocumentRecord, DocumentStatus
+from .state import DocumentRecord, DocumentStatus
 
 LOGGER = logging.getLogger(__name__)
 

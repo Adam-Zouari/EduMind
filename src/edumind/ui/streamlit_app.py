@@ -6,9 +6,9 @@ import logging
 
 import streamlit as st
 
-from edumind.pipeline import EduMindPipeline, ProgressEvent
+from edumind.application import EduMindPipeline, ProgressEvent
 
-from apps.controller import AppController, safe_error
+from edumind.ui.controller import AppController, safe_error
 
 LOGGER = logging.getLogger(__name__)
 
@@ -29,11 +29,11 @@ def _render_readiness(controller: AppController) -> None:
         readiness = controller.readiness()
         generation_ready = bool(readiness.get("generation_ready"))
         if generation_ready:
-            st.success("Extraction, index, and Ollama are ready.")
+            st.success("Extraction, index, and the local Hugging Face generator are ready.")
         else:
             st.warning(
-                "Index is ready, but Ollama is unavailable. Start Ollama and install "
-                "the configured model."
+                "Index is ready, but the pinned generator snapshot is unavailable. Run "
+                "`python experiments/benchmarks/prepare.py app-models`."
             )
     except Exception as exc:
         LOGGER.exception("Runtime readiness check failed")
