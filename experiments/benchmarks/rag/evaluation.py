@@ -10,9 +10,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from edumind.rag.contracts import embedding_spec
 from edumind.rag.embedder import Embedder
-from edumind.rag.text_chunker import build_chunking_strategy
 from edumind.rag.tokenizers import HuggingFaceOffsetTokenizer
 
 from experiments.benchmarks.common.contracts import DatasetManifest, SampleResult
@@ -27,6 +25,8 @@ from experiments.benchmarks.common.metrics import (
     relevance_grades,
     reciprocal_rank,
 )
+from experiments.benchmarks.rag.chunking_embedding.profiles import embedding_spec
+from experiments.benchmarks.rag.chunking_embedding.strategies import build_chunking_strategy
 from experiments.benchmarks.rag.methods import BM25, Reranker, reciprocal_rank_fusion
 
 
@@ -54,13 +54,15 @@ def evaluate(
     chunker_name: str,
     embedding_name: str,
     retrieval_name: str,
-    revisions: Mapping[str, str],
+    model_lock: Mapping[str, Mapping[str, object]],
     repetitions: int = 1,
 ) -> tuple[list[SampleResult], Mapping[str, float]]:
     indexed_at = time.perf_counter()
-    index = build_index(manifest, chunker_name, embedding_name, revisions, retrieval_name != "dense")
+    index = build_index(
+        manifest, chunker_name, embedding_name, model_lock, retrieval_name != "dense"
+    )
     indexing_seconds = time.perf_counter() - indexed_at
-    reranker = reranker_for(retrieval_name, revisions)
+    reranker = reranker_for(retrieval_name, model_lock)
     questions = [
         row
         for row in manifest.samples
@@ -77,7 +79,9 @@ def evaluate(
             orders.append(rank(index, str(question["question"]), retrieval_name, reranker))
             item_latencies.append(time.perf_counter() - started)
         order = orders[0]
-        selected = [index.chunks[position] for position in order[:10]]
+        # Keep all 20 retrieved candidates for the fixed-token-budget metric.
+        # Cutoff metrics below still use only their first 1/3/5/10 entries.
+        selected = [index.chunks[position] for position in order[:20]]
         latency = float(np.median(item_latencies))
         latencies.extend(item_latencies)
         metrics, retrieved_tokens = retrieval_metrics(question, selected, index.chunks, index.tokenizer)
@@ -123,14 +127,22 @@ def evaluate(
     }
 
 
-def build_index(manifest, chunker_name, embedding_name, revisions, with_bm25=True) -> ExactIndex:
-    revision = revisions[embedding_name]
+def build_index(manifest, chunker_name, embedding_name, model_lock, with_bm25=True) -> ExactIndex:
+    entry = model_lock[embedding_name]
+    revision = str(entry["revision"])
+    local_path = str(entry["model_path"])
     device = os.environ.get("EDUMIND_BENCHMARK_EMBEDDING_DEVICE", "cpu").strip() or "cpu"
     spec = embedding_spec(
-        embedding_name, revision=revision, document_device=device, query_device=device
+        embedding_name,
+        revision=revision,
+        local_path=local_path,
+        document_device=device,
+        query_device=device,
     )
     embedder = Embedder(spec=spec)
-    tokenizer = HuggingFaceOffsetTokenizer(spec.tokenizer, revision=revision)
+    tokenizer = HuggingFaceOffsetTokenizer(
+        spec.tokenizer, revision=revision, local_path=local_path
+    )
     chunker = build_chunking_strategy(
         chunker_name, tokenizer=tokenizer, embed_sentences=embedder.embed_texts
     )
@@ -223,14 +235,20 @@ def _grade(chunk: Chunk, evidence: Sequence[Mapping[str, object]]) -> float:
     return relevance_grades(matching, [(chunk.start, chunk.end)])[0]
 
 
-def reranker_for(method: str, revisions: Mapping[str, str]) -> Reranker | None:
+def reranker_for(
+    method: str, model_lock: Mapping[str, Mapping[str, object]]
+) -> Reranker | None:
     model = {
         "rrf-minilm-reranker": "cross-encoder/ms-marco-MiniLM-L6-v2",
-        "rrf-bge-v2-m3-reranker": "BAAI/bge-reranker-v2-m3",
-        "rrf-qwen3-0.6b-reranker": "Qwen/Qwen3-Reranker-0.6B",
+        "rrf-ettin-150m-reranker": "cross-encoder/ettin-reranker-150m-v1",
+        "rrf-ettin-400m-reranker": "cross-encoder/ettin-reranker-400m-v1",
+        "rrf-ettin-1b-reranker": "cross-encoder/ettin-reranker-1b-v1",
         "rrf-qwen3-4b-reranker": "Qwen/Qwen3-Reranker-4B",
     }.get(method)
-    return Reranker(model, revisions[model]) if model else None
+    if model is None:
+        return None
+    entry = model_lock[model]
+    return Reranker(model, str(entry["revision"]), str(entry["model_path"]))
 
 
 RETRIEVAL_DIRECTIONS = {

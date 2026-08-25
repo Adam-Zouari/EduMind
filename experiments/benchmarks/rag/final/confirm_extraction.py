@@ -14,7 +14,7 @@ from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.contracts import BenchmarkPlan
 from experiments.benchmarks.common.datasets import load_manifest
 from experiments.benchmarks.common.runner import run_benchmark
-from experiments.benchmarks.prepare import load_model_lock
+from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
 from experiments.benchmarks.rag.evaluation import build_index
 from experiments.benchmarks.rag.generation.evaluate import evaluate_candidate
 
@@ -31,6 +31,7 @@ def main() -> int:
         help="chunker@@embedding@@retrieval@@generator@@top_k=N",
     )
     parser.add_argument("--no-mlflow", action="store_true")
+    parser.add_argument("--device", choices=("cpu", "cuda"), required=True)
     arguments = parser.parse_args()
 
     reference = load_manifest(arguments.reference_manifest)
@@ -38,11 +39,13 @@ def main() -> int:
     _validate_pair(reference.samples, extracted.samples)
     chunker, embedding, retrieval, generator, top_k_value = arguments.candidate.split("@@", 4)
     top_k = int(top_k_value.removeprefix("top_k="))
-    revisions = load_model_lock(PROJECT_ROOT / "data/benchmarks/models/huggingface.json")
-    digests = load_model_lock(PROJECT_ROOT / "data/benchmarks/models/ollama.json")
+    model_lock = load_selected_model_lock(
+        PROJECT_ROOT / "data/benchmarks/models/selected.json"
+    )
+    revisions = model_revisions(model_lock)
     manifests = {"verified-reference": reference, "selected-extraction": extracted}
     indexes = {
-        name: build_index(manifest, chunker, embedding, revisions, with_bm25=True)
+        name: build_index(manifest, chunker, embedding, model_lock, with_bm25=True)
         for name, manifest in manifests.items()
     }
     plan = BenchmarkPlan(
@@ -61,12 +64,12 @@ def main() -> int:
         lambda name: evaluate_candidate(
             generator,
             manifests[name],
-            digests,
-            revisions,
+            model_lock,
             final_index=indexes[name],
             retrieval_method=retrieval,
             top_k=top_k,
             repetitions=plan.repetitions,
+            device=arguments.device,
         ),
         dataset_checksum=stable_hash(
             {"reference": reference.fingerprint, "extracted": extracted.fingerprint}
@@ -82,9 +85,9 @@ def main() -> int:
             "citation_f1": "max",
             "hhem_faithfulness": "max",
             "operational.p95_latency_seconds": "min",
-            "operational.combined_process_ollama_memory_gb": "min",
+            "operational.peak_process_memory_gb": "min",
         },
-        revisions={**revisions, **digests, "frozen_system": arguments.candidate},
+        revisions={**revisions, "frozen_system": arguments.candidate},
         no_mlflow=arguments.no_mlflow,
     )
     print(

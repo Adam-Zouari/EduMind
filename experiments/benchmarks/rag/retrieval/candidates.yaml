@@ -4,6 +4,7 @@ standard:
   - bm25
   - rrf
   - rrf-minilm-reranker
-  - rrf-bge-v2-m3-reranker
-  - rrf-qwen3-0.6b-reranker
+  - rrf-ettin-150m-reranker
+  - rrf-ettin-400m-reranker
+  - rrf-ettin-1b-reranker
   - rrf-qwen3-4b-reranker

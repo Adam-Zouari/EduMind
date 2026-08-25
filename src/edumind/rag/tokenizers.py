@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import bisect
 from typing import Protocol
 
@@ -20,6 +21,15 @@ class TiktokenOffsetTokenizer:
     """Tiktoken with UTF-8 byte-to-character boundary reconstruction."""
 
     def __init__(self, encoding_name: str = "cl100k_base") -> None:
+        from edumind.common.paths import PROJECT_ROOT
+
+        cache_directory = PROJECT_ROOT / "data/benchmarks/downloads/tiktoken"
+        if not (cache_directory / f"{encoding_name}.ready").is_file():
+            raise RuntimeError(
+                f"Tiktoken encoding {encoding_name} is not prepared locally; run a model "
+                "preparation target before this benchmark."
+            )
+        os.environ.setdefault("TIKTOKEN_CACHE_DIR", str(cache_directory))
         try:
             import tiktoken
         except ModuleNotFoundError as exc:
@@ -58,19 +68,19 @@ class TiktokenOffsetTokenizer:
 
 
 class HuggingFaceOffsetTokenizer:
-    def __init__(self, model_name: str, revision: str = "main") -> None:
+    def __init__(
+        self, model_name: str, revision: str = "main", local_path: str | None = None
+    ) -> None:
         try:
             from transformers import AutoTokenizer
         except ModuleNotFoundError as exc:
             raise RuntimeError(
                 "transformers is required for exact model-tokenizer chunking"
             ) from exc
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            model_name,
-            revision=revision,
-            use_fast=True,
-            local_files_only=True,
-        )
+        options = {"use_fast": True, "local_files_only": True}
+        if local_path is None:
+            options["revision"] = revision
+        self.tokenizer = AutoTokenizer.from_pretrained(local_path or model_name, **options)
         if not self.tokenizer.is_fast:
             raise RuntimeError(f"Tokenizer {model_name} does not expose exact offset mappings")
         self.name = f"huggingface:{model_name}@{revision}"
@@ -90,16 +100,21 @@ class HuggingFaceOffsetTokenizer:
 class LazyHuggingFaceOffsetTokenizer:
     """Defer optional tokenizer loading until the first indexing/query operation."""
 
-    def __init__(self, model_name: str, revision: str) -> None:
+    def __init__(
+        self, model_name: str, revision: str, local_path: str | None = None
+    ) -> None:
         self.model_name = model_name
         self.revision = revision
+        self.local_path = local_path
         self.name = f"huggingface:{model_name}@{revision}"
         self._runtime: HuggingFaceOffsetTokenizer | None = None
 
     def _get(self) -> HuggingFaceOffsetTokenizer:
         if self._runtime is None:
             try:
-                self._runtime = HuggingFaceOffsetTokenizer(self.model_name, self.revision)
+                self._runtime = HuggingFaceOffsetTokenizer(
+                    self.model_name, self.revision, self.local_path
+                )
             except OSError as exc:
                 raise RuntimeError(
                     f"Tokenizer {self.model_name}@{self.revision} is not prepared locally. "

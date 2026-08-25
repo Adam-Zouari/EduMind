@@ -10,7 +10,7 @@ from experiments.benchmarks.common.arguments import parser, resolved_candidates
 from experiments.benchmarks.common.contracts import BenchmarkPlan
 from experiments.benchmarks.common.datasets import load_manifest
 from experiments.benchmarks.common.runner import run_benchmark
-from experiments.benchmarks.prepare import load_model_lock
+from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
 from experiments.benchmarks.rag.evaluation import build_index
 from experiments.benchmarks.rag.generation.evaluate import evaluate_candidate
 
@@ -30,7 +30,13 @@ argument_parser.add_argument("--retrieval-summary", type=Path)
 argument_parser.add_argument("--generation-summary", type=Path)
 argument_parser.add_argument("--review-results", type=Path)
 argument_parser.add_argument("--confirm-locked-test", action="store_true")
+argument_parser.add_argument(
+    "--device", choices=("cpu", "cuda"), help="Whole-model generator device"
+)
 arguments = argument_parser.parse_args()
+if arguments.profile in {"standard", "full"} and arguments.device is None:
+    argument_parser.error("standard/full final RAG requires explicit --device cpu|cuda")
+device = arguments.device or "cpu"
 manifest_path = arguments.manifest or PROJECT_ROOT / (
     "data/benchmarks/rag/smoke.json"
     if arguments.profile == "smoke"
@@ -68,8 +74,10 @@ if arguments.profile == "full":
             f"Locked test v1 was already consumed; see {locked_marker}. "
             "Create a new benchmark version before another test evaluation."
         )
-digests = load_model_lock(PROJECT_ROOT / "data/benchmarks/models/ollama.json")
-revisions = load_model_lock(PROJECT_ROOT / "data/benchmarks/models/huggingface.json")
+model_lock = load_selected_model_lock(
+    PROJECT_ROOT / "data/benchmarks/models/selected.json"
+)
+revisions = model_revisions(model_lock)
 indexes = {}
 plan = BenchmarkPlan(
     "rag",
@@ -91,17 +99,17 @@ def evaluate(candidate):
     pair = (chunker, embedding)
     if pair not in indexes:
         indexes[pair] = build_index(
-            manifest, chunker, embedding, revisions, with_bm25=True
+            manifest, chunker, embedding, model_lock, with_bm25=True
         )
     return evaluate_candidate(
         generator,
         manifest,
-        digests,
-        revisions,
+        model_lock,
         final_index=indexes[pair],
         retrieval_method=retrieval,
         top_k=int(top_k_value.removeprefix("top_k=")),
         repetitions=plan.repetitions,
+        device=device,
     )
 
 result = run_benchmark(
@@ -120,14 +128,14 @@ result = run_benchmark(
         "answerability_balanced_accuracy": "max",
         "hhem_faithfulness": "max",
         "operational.p95_latency_seconds": "min",
-        "operational.combined_process_ollama_memory_gb": "min",
+        "operational.peak_process_memory_gb": "min",
     },
     gates={
         "malformed_output_rate": ("min", 0.0),
         "operational.p95_latency_seconds": ("min", 30.0),
-        "operational.combined_process_ollama_memory_gb": ("min", 28.0),
+        "operational.peak_process_memory_gb": ("min", 28.0),
     },
-    revisions={**revisions, **digests},
+    revisions=revisions,
     no_mlflow=arguments.no_mlflow,
 )
 print(json.dumps({"run_id": result.run_id, "artifacts": str(result.artifact_directory)}, indent=2))

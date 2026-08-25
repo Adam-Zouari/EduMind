@@ -23,13 +23,16 @@ class ExtractionSettings:
     cache_enabled: bool = True
     cache_directory: Path = Path("artifacts/extraction/cache")
     maximum_upload_bytes: int = 100 * 1024 * 1024
-    model_lock_path: Path = Path("data/benchmarks/models/extraction.json")
+
+
+@dataclass(frozen=True)
+class ModelSettings:
+    lock_path: Path = Path("data/benchmarks/models/selected.json")
 
 
 @dataclass(frozen=True)
 class EmbeddingSettings:
     model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
-    revision: str = "c9745ed1d9f207416be6d2e6f8de32d1f16199bf"
     dimension: int = 384
     indexing_device: str = "cpu"
     query_device: str = "cpu"
@@ -67,21 +70,19 @@ class RetrievalSettings:
 
 @dataclass(frozen=True)
 class GenerationSettings:
-    model_name: str = "qwen3:1.7b"
-    digest: str = "unpinned"
-    base_url: str = "http://127.0.0.1:11434"
-    thinking: str = "off"
+    model_name: str = "Qwen/Qwen3-1.7B"
+    device: str = "cpu"
+    dtype: str = "auto"
+    reasoning: bool = False
     temperature: float = 0.0
     seed: int = 42
     context_tokens: int = 8192
     maximum_answer_tokens: int = 256
-    timeout_seconds: int = 120
-    keep_alive: str | int = "5m"
-    model_lock_path: Path = Path("data/benchmarks/models/ollama.json")
 
 
 @dataclass(frozen=True)
 class Settings:
+    models: ModelSettings = field(default_factory=ModelSettings)
     extraction: ExtractionSettings = field(default_factory=ExtractionSettings)
     embedding: EmbeddingSettings = field(default_factory=EmbeddingSettings)
     chunking: ChunkingSettings = field(default_factory=ChunkingSettings)
@@ -134,8 +135,8 @@ def _merge(target: dict[str, Any], update: Mapping[str, object]) -> None:
 def _apply_environment(raw: dict[str, Any]) -> None:
     values = {
         "EDUMIND_VECTOR_ENDPOINT": ("vector", "endpoint"),
-        "EDUMIND_OLLAMA_URL": ("generation", "base_url"),
-        "EDUMIND_OLLAMA_MODEL": ("generation", "model_name"),
+        "EDUMIND_MODEL_LOCK": ("models", "lock_path"),
+        "EDUMIND_GENERATION_DEVICE": ("generation", "device"),
     }
     for variable, (section, key) in values.items():
         value = os.getenv(variable)
@@ -169,12 +170,44 @@ def _path(value: object, default: Path) -> Path:
 
 
 def _build(raw: Mapping[str, object]) -> Settings:
+    models = _section(raw, "models")
     extraction = _section(raw, "extraction")
     embedding = _section(raw, "embedding")
     chunking = _section(raw, "chunking")
     vector = _section(raw, "vector")
     retrieval = _section(raw, "retrieval")
     generation = _section(raw, "generation")
+
+    unknown_models = sorted(set(models) - {"lock_path"})
+    if unknown_models:
+        raise ConfigurationError("Unknown model settings: " + ", ".join(unknown_models))
+    if "model_lock_path" in extraction:
+        raise ConfigurationError(
+            "extraction.model_lock_path was replaced by models.lock_path"
+        )
+    obsolete_embedding = sorted({"revision", "model_path"} & embedding.keys())
+    if obsolete_embedding:
+        raise ConfigurationError(
+            "Embedding snapshots are resolved through models.lock_path; remove: "
+            + ", ".join(obsolete_embedding)
+        )
+
+    allowed_generation_keys = {
+        "model_name",
+        "device",
+        "dtype",
+        "reasoning",
+        "temperature",
+        "seed",
+        "context_tokens",
+        "maximum_answer_tokens",
+    }
+    unknown_generation = sorted(set(generation) - allowed_generation_keys)
+    if unknown_generation:
+        raise ConfigurationError(
+            "Unknown direct Hugging Face generation settings: "
+            + ", ".join(unknown_generation)
+        )
 
     obsolete_vector_keys = {
         "persist_directory",
@@ -194,6 +227,9 @@ def _build(raw: Mapping[str, object]) -> Settings:
     chunk_overlap = _integer(chunking, "chunk_overlap", 32, 0)
     if chunk_overlap >= chunk_size:
         raise ConfigurationError("chunk_overlap must be smaller than chunk_size")
+    chunking_strategy = str(chunking.get("strategy", "token"))
+    if chunking_strategy != "token":
+        raise ConfigurationError("The provisional application supports only token chunking")
     top_k = _integer(retrieval, "top_k", 5)
     candidate_k = _integer(retrieval, "candidate_k", 20)
     if candidate_k < top_k:
@@ -213,8 +249,19 @@ def _build(raw: Mapping[str, object]) -> Settings:
     distance = str(vector.get("distance_metric", "cosine"))
     if similarity != distance or similarity not in {"cosine", "dot"}:
         raise ConfigurationError("Embedding similarity and vector distance must match")
+    generation_device = str(generation.get("device", "cpu"))
+    if generation_device not in {"cpu", "cuda"}:
+        raise ConfigurationError("generation.device must be 'cpu' or 'cuda'")
+    generation_dtype = str(generation.get("dtype", "auto"))
+    if generation_dtype != "auto":
+        raise ConfigurationError("generation.dtype must be 'auto' for native checkpoints")
 
     return Settings(
+        models=ModelSettings(
+            lock_path=_path(
+                models.get("lock_path"), Path("data/benchmarks/models/selected.json")
+            )
+        ),
         extraction=ExtractionSettings(
             cache_enabled=bool(extraction.get("cache_enabled", True)),
             cache_directory=_path(
@@ -223,14 +270,9 @@ def _build(raw: Mapping[str, object]) -> Settings:
             maximum_upload_bytes=_integer(
                 extraction, "maximum_upload_bytes", 100 * 1024 * 1024
             ),
-            model_lock_path=_path(
-                extraction.get("model_lock_path"),
-                Path("data/benchmarks/models/extraction.json"),
-            ),
         ),
         embedding=EmbeddingSettings(
             model_name=str(embedding.get("model_name", EmbeddingSettings.model_name)),
-            revision=str(embedding.get("revision", EmbeddingSettings.revision)),
             dimension=_integer(embedding, "dimension", 384),
             indexing_device=str(embedding.get("indexing_device", "cpu")),
             query_device=str(embedding.get("query_device", "cpu")),
@@ -242,7 +284,7 @@ def _build(raw: Mapping[str, object]) -> Settings:
             batch_size=_integer(embedding, "batch_size", 32),
         ),
         chunking=ChunkingSettings(
-            strategy=str(chunking.get("strategy", "token")),
+            strategy=chunking_strategy,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             tokenizer=str(chunking.get("tokenizer", "embedding")),
@@ -260,19 +302,13 @@ def _build(raw: Mapping[str, object]) -> Settings:
             context_token_budget=_integer(retrieval, "context_token_budget", 2048),
         ),
         generation=GenerationSettings(
-            model_name=str(generation.get("model_name", "qwen3:1.7b")),
-            digest=str(generation.get("digest", "unpinned")),
-            base_url=str(generation.get("base_url", "http://127.0.0.1:11434")),
-            thinking=str(generation.get("thinking", "off")),
+            model_name=str(generation.get("model_name", GenerationSettings.model_name)),
+            device=generation_device,
+            dtype=generation_dtype,
+            reasoning=bool(generation.get("reasoning", False)),
             temperature=float(generation.get("temperature", 0.0)),
             seed=_integer(generation, "seed", 42, 0),
             context_tokens=_integer(generation, "context_tokens", 8192),
             maximum_answer_tokens=_integer(generation, "maximum_answer_tokens", 256),
-            timeout_seconds=_integer(generation, "timeout_seconds", 120),
-            keep_alive=generation.get("keep_alive", "5m"),  # type: ignore[arg-type]
-            model_lock_path=_path(
-                generation.get("model_lock_path"),
-                Path("data/benchmarks/models/ollama.json"),
-            ),
         ),
     )

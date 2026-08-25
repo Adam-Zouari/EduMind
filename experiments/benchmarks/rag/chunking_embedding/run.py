@@ -9,7 +9,7 @@ from experiments.benchmarks.common.arguments import parser, resolved_candidates
 from experiments.benchmarks.common.contracts import BenchmarkPlan
 from experiments.benchmarks.common.datasets import load_manifest
 from experiments.benchmarks.common.runner import run_benchmark
-from experiments.benchmarks.prepare import load_model_lock
+from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
 from experiments.benchmarks.rag.evaluation import RETRIEVAL_DIRECTIONS, evaluate
 
 directory = Path(__file__).parent
@@ -21,7 +21,10 @@ manifest_path = arguments.manifest or PROJECT_ROOT / (
 )
 manifest = load_manifest(manifest_path)
 candidates = resolved_candidates(directory / "candidates.yaml", arguments.profile, arguments.shortlist)
-revisions = load_model_lock(PROJECT_ROOT / "data/benchmarks/models/huggingface.json")
+model_lock = load_selected_model_lock(
+    PROJECT_ROOT / "data/benchmarks/models/selected.json"
+)
+revisions = model_revisions(model_lock)
 plan = BenchmarkPlan(
     "rag",
     "chunking-embedding",
@@ -35,7 +38,7 @@ plan = BenchmarkPlan(
 result = run_benchmark(
     plan,
     lambda candidate: evaluate(
-        manifest, *candidate.split("|", 1), "dense", revisions, plan.repetitions
+        manifest, *candidate.split("|", 1), "dense", model_lock, plan.repetitions
     ),
     dataset_checksum=manifest.fingerprint,
     directions=RETRIEVAL_DIRECTIONS,

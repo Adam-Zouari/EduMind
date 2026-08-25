@@ -88,14 +88,16 @@ class Embedder:
                 raise RAGConfigurationError(
                     "sentence-transformers is required; install requirements/app.lock"
                 ) from exc
+            source = self.spec.local_path or self.spec.model_name
             kwargs: dict[str, object] = {
-                "revision": self.spec.revision,
                 "device": device,
                 "local_files_only": True,
             }
+            if self.spec.local_path is None:
+                kwargs["revision"] = self.spec.revision
             if self.spec.trust_remote_code:
                 kwargs["trust_remote_code"] = True
-            model = SentenceTransformer(self.spec.model_name, **kwargs)
+            model = SentenceTransformer(source, **kwargs)
             model.max_seq_length = self.spec.maximum_length
             self._models[device] = model
         return self._models[device]

@@ -1,7 +1,7 @@
 smoke:
   - token-256-32|sentence-transformers/all-MiniLM-L6-v2
 
-# The standard run is intentionally the complete 8 x 7 matrix. Screening an
+# The standard run is intentionally the complete 8 x 8 matrix. Screening an
 # embedding with only one chunker can hide chunker/model interactions.
 standard:
   matrix:
@@ -16,9 +16,10 @@ standard:
       - structure-aware-512-64
     embedding:
       - sentence-transformers/all-MiniLM-L6-v2
-      - google/embeddinggemma-300m
-      - infgrad/Jasper-Token-Compression-600M
+      - Snowflake/snowflake-arctic-embed-m-v2.0
+      - codefuse-ai/F2LLM-v2-0.6B
+      - Octen/Octen-Embedding-0.6B
       - Qwen/Qwen3-Embedding-0.6B
       - nvidia/Nemotron-3-Embed-1B-BF16
+      - Octen/Octen-Embedding-4B
       - Qwen/Qwen3-Embedding-4B
-      - nvidia/Nemotron-3-Embed-8B-BF16

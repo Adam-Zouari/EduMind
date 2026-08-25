@@ -11,12 +11,13 @@ nvidia-ml-py==13.610.43
 datasets==5.0.0
 huggingface-hub==1.23.0
 rank-bm25==0.2.2
-openai-whisper==20250625
 paddleocr==3.7.0
 paddlepaddle==3.3.1
 paddlex[ocr]==3.7.0
-docling==2.113.0
-mammoth==1.12.0
+docling[easyocr,rapidocr,vlm]==2.117.0
+nemo_toolkit[asr]==3.0.0
+qwen-asr==0.0.6
+moss-transcribe-diarize @ git+https://github.com/OpenMOSS/MOSS-Transcribe-Diarize.git@e607537b1b870475e7898969d40b864de8b691b6
 accelerate==1.12.0
 soundfile==0.13.1
 

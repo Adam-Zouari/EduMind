@@ -1,17 +1,18 @@
-"""Pinned-profile Ollama generation with citation-grounded prompts."""
+"""Pinned local Hugging Face generation with citation-grounded prompts."""
 
 from __future__ import annotations
 
-import json
+import gc
+import re
+import threading
 import time
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
-import requests
-
 from .contracts import GenerationProfile
-from .errors import OllamaConnectionError, OllamaRequestError
+from .errors import GenerationError, ModelLoadError
 from .types import RetrievalHit
 
 DEFAULT_SYSTEM_PROMPT = """You are a careful study assistant.
@@ -31,39 +32,25 @@ class GenerationMeasurement:
     generation_seconds: float
     prompt_tokens: int
     answer_tokens: int
-    reasoning_words_estimate: int
+    reasoning_tokens: int
+    generated_tokens: int
     tokens_per_second: float
 
 
-class OllamaGenerator:
-    def __init__(
-        self,
-        profile: GenerationProfile,
-        *,
-        base_url: str = "http://127.0.0.1:11434",
-        timeout_seconds: int = 120,
-        session: requests.Session | None = None,
-    ) -> None:
+class HuggingFaceGenerator:
+    """Load one exact local checkpoint without quantization or device offload."""
+
+    def __init__(self, profile: GenerationProfile) -> None:
         self.profile = profile
         self.model_name = profile.model_name
-        self.base_url = base_url.rstrip("/")
-        self.timeout_seconds = timeout_seconds
-        self.session = session or requests.Session()
-        self._digest_validated = profile.digest == "unpinned"
+        self._model: Any | None = None
+        self._tokenizer: Any | None = None
+        self._processor: Any | None = None
+        self._torch: Any | None = None
 
     def health_check(self) -> bool:
-        try:
-            response = self.session.get(f"{self.base_url}/api/tags", timeout=5)
-            return response.ok
-        except requests.RequestException:
-            return False
-
-    def list_models(self) -> list[str]:
-        payload = self._request("GET", "/api/tags")
-        models = payload.get("models", [])
-        if not isinstance(models, Sequence):
-            return []
-        return [str(item.get("name", "")) for item in models if isinstance(item, Mapping)]
+        path = Path(self.profile.model_path)
+        return path.is_dir() and (path / "config.json").is_file()
 
     def generate(
         self,
@@ -73,13 +60,8 @@ class OllamaGenerator:
         system_prompt: str | None = None,
         stream: bool = False,
     ) -> str | Iterator[str]:
-        self._validate_digest()
-        prompt = self._prompt(query, context, system_prompt)
-        payload = self._payload(prompt, stream=stream)
-        if stream:
-            return self._stream(payload)
-        response = self._request("POST", "/api/generate", json=payload)
-        return str(response.get("response", "")).strip()
+        measurement = self._generate_measured(query, context, system_prompt)
+        return iter((measurement.answer,)) if stream else measurement.answer
 
     def generate_with_results(
         self,
@@ -88,8 +70,12 @@ class OllamaGenerator:
         system_prompt: str | None = None,
         stream: bool = False,
     ) -> str:
-        context = self.build_context(results)
-        output = self.generate(query, context, system_prompt=system_prompt, stream=stream)
+        output = self.generate(
+            query,
+            self.build_context(results),
+            system_prompt=system_prompt,
+            stream=stream,
+        )
         return "".join(output) if not isinstance(output, str) else output
 
     def generate_measured_with_results(
@@ -98,94 +84,185 @@ class OllamaGenerator:
         results: Sequence[RetrievalHit],
         system_prompt: str | None = None,
     ) -> GenerationMeasurement:
-        """Stream one answer while retaining timings/counts, never a reasoning trace."""
-        self._validate_digest()
-        prompt = self._prompt(query, self.build_context(results), system_prompt)
-        payload = self._payload(prompt, stream=True)
-        started = time.perf_counter()
-        first_token_at: float | None = None
-        answer_parts: list[str] = []
-        reasoning_words_estimate = 0
-        final: Mapping[str, object] = {}
-        try:
-            with self.session.post(
-                f"{self.base_url}/api/generate",
-                json=dict(payload),  # type: ignore[arg-type]
-                stream=True,
-                timeout=self.timeout_seconds,
-            ) as response:
-                response.raise_for_status()
-                for line in response.iter_lines():
-                    if not line:
-                        continue
-                    item = json.loads(line)
-                    if not isinstance(item, Mapping):
-                        continue
-                    response_text = str(item.get("response", ""))
-                    thinking_text = str(item.get("thinking", ""))
-                    if response_text and first_token_at is None:
-                        first_token_at = time.perf_counter()
-                    if response_text:
-                        answer_parts.append(response_text)
-                    if thinking_text:
-                        reasoning_words_estimate += len(thinking_text.split())
-                    final = item
-        except requests.ConnectionError as exc:
-            raise OllamaConnectionError(
-                f"Ollama is unavailable at {self.base_url}. Start Ollama and install "
-                f"{self.model_name}."
-            ) from exc
-        except requests.RequestException as exc:
-            raise OllamaRequestError("Ollama streaming request failed") from exc
-        finished = time.perf_counter()
-        generation_seconds = _duration_seconds(final.get("eval_duration"))
-        answer_tokens = _integer(final.get("eval_count"))
-        return GenerationMeasurement(
-            "".join(answer_parts).strip(),
-            finished - started,
-            (first_token_at or finished) - started,
-            _duration_seconds(final.get("load_duration")),
-            _duration_seconds(final.get("prompt_eval_duration")),
-            generation_seconds,
-            _integer(final.get("prompt_eval_count")),
-            answer_tokens,
-            reasoning_words_estimate,
-            answer_tokens / generation_seconds if generation_seconds > 0 else 0.0,
+        return self._generate_measured(
+            query, self.build_context(results), system_prompt
         )
+
+    def _generate_measured(
+        self, query: str, context: str, system_prompt: str | None
+    ) -> GenerationMeasurement:
+        load_seconds = self._ensure_loaded()
+        assert self._model is not None and self._tokenizer is not None and self._torch is not None
+        messages = [
+            {"role": "system", "content": system_prompt or DEFAULT_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": f"Evidence:\n{context}\n\nQuestion: {query}\nAnswer with citations:",
+            },
+        ]
+        prompt = self._chat_prompt(messages)
+        encoded = (
+            self._processor(
+                text=prompt,
+                return_tensors="pt",
+                truncation=True,
+                max_length=self.profile.context_tokens,
+            )
+            if self._processor is not None
+            else self._tokenizer(
+                prompt,
+                return_tensors="pt",
+                truncation=True,
+                max_length=self.profile.context_tokens,
+            )
+        )
+        encoded = {name: value.to(self.profile.device) for name, value in encoded.items()}
+        prompt_tokens = int(encoded["input_ids"].shape[-1])
+        self._torch.manual_seed(self.profile.seed)
+        if self.profile.device.startswith("cuda"):
+            self._torch.cuda.manual_seed_all(self.profile.seed)
+            self._torch.cuda.reset_peak_memory_stats()
+
+        from transformers import TextIteratorStreamer
+
+        streamer = TextIteratorStreamer(
+            self._tokenizer,
+            skip_prompt=True,
+            skip_special_tokens=True,
+            timeout=600,
+        )
+        errors: list[BaseException] = []
+        generation_options: dict[str, object] = {
+            **encoded,
+            "streamer": streamer,
+            "max_new_tokens": self.profile.maximum_answer_tokens,
+            "do_sample": self.profile.temperature > 0,
+            "pad_token_id": self._tokenizer.eos_token_id,
+        }
+        if self.profile.temperature > 0:
+            generation_options["temperature"] = self.profile.temperature
+
+        def run() -> None:
+            try:
+                with self._torch.inference_mode():
+                    self._model.generate(**generation_options)
+            except BaseException as exc:
+                errors.append(exc)
+                streamer.on_finalized_text("", stream_end=True)
+
+        started = time.perf_counter()
+        worker = threading.Thread(target=run, name="edumind-hf-generation", daemon=True)
+        worker.start()
+        first_token_at: float | None = None
+        pieces: list[str] = []
+        for text in streamer:
+            if text and first_token_at is None:
+                first_token_at = time.perf_counter()
+            pieces.append(text)
+        worker.join()
+        finished = time.perf_counter()
+        if errors:
+            raise GenerationError(
+                f"Generation failed for {self.profile.model_name}: {errors[0]}"
+            ) from errors[0]
+
+        raw_answer = "".join(pieces).strip()
+        answer, reasoning_text = _visible_answer(raw_answer)
+        generated_tokens = len(
+            self._tokenizer.encode(raw_answer, add_special_tokens=False)
+        )
+        answer_tokens = len(self._tokenizer.encode(answer, add_special_tokens=False))
+        reasoning_tokens = len(
+            self._tokenizer.encode(reasoning_text, add_special_tokens=False)
+        )
+        first = first_token_at or finished
+        prompt_seconds = first - started
+        generation_seconds = max(finished - first, 0.0)
+        return GenerationMeasurement(
+            answer=answer,
+            total_seconds=finished - started,
+            time_to_first_token_seconds=prompt_seconds,
+            load_seconds=load_seconds,
+            prompt_evaluation_seconds=prompt_seconds,
+            generation_seconds=generation_seconds,
+            prompt_tokens=prompt_tokens,
+            answer_tokens=answer_tokens,
+            reasoning_tokens=reasoning_tokens,
+            generated_tokens=generated_tokens,
+            tokens_per_second=generated_tokens / max(generation_seconds, 1e-9),
+        )
+
+    def _chat_prompt(self, messages: list[dict[str, str]]) -> str:
+        assert self._tokenizer is not None
+        template_owner = self._processor or self._tokenizer
+        options: dict[str, object] = {
+            "tokenize": False,
+            "add_generation_prompt": True,
+        }
+        options["enable_thinking"] = self.profile.reasoning
+        try:
+            return str(template_owner.apply_chat_template(messages, **options))
+        except TypeError as exc:
+            raise ModelLoadError(
+                f"The pinned chat template for {self.model_name} does not support its "
+                "declared reasoning profile"
+            ) from exc
+
+    def _ensure_loaded(self) -> float:
+        if self._model is not None:
+            return 0.0
+        path = Path(self.profile.model_path)
+        if not path.is_dir():
+            raise ModelLoadError(
+                f"Pinned model is missing at {path}; run `python "
+                "experiments/benchmarks/prepare.py app-models` or `all-models`."
+            )
+        started = time.perf_counter()
+        try:
+            self._torch, self._model, self._tokenizer, self._processor = (
+                self._load_components(path)
+            )
+            self._model = self._model.to(self.profile.device)
+            self._model.eval()
+        except Exception as exc:
+            self.unload()
+            raise ModelLoadError(
+                f"Cannot load pinned model {self.model_name} on {self.profile.device}: {exc}"
+            ) from exc
+        return time.perf_counter() - started
+
+    def _load_components(self, path: Path) -> tuple[Any, Any, Any, Any | None]:
+        """Load the production causal-LM profile from an exact local snapshot."""
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained(path, local_files_only=True)
+        model = AutoModelForCausalLM.from_pretrained(
+            path,
+            local_files_only=True,
+            torch_dtype=self.profile.dtype,
+        )
+        return torch, model, tokenizer, None
 
     def unload(self) -> None:
-        """Explicitly unload the selected model between benchmark candidates."""
-        self._request(
-            "POST",
-            "/api/generate",
-            json={"model": self.profile.model_name, "keep_alive": 0, "stream": False},
-        )
+        self._model = None
+        self._tokenizer = None
+        self._processor = None
+        torch = self._torch
+        self._torch = None
+        gc.collect()
+        if torch is not None and torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def runtime_memory(self) -> dict[str, float]:
-        """Return Ollama-reported loaded-model allocation; omit unavailable fields."""
-        payload = self._request("GET", "/api/ps")
-        rows = payload.get("models", [])
-        if not isinstance(rows, Sequence):
+        if self._torch is None or not self.profile.device.startswith("cuda"):
             return {}
-        row = next(
-            (
-                value
-                for value in rows
-                if isinstance(value, Mapping)
-                and str(value.get("name", value.get("model", ""))) == self.profile.model_name
-            ),
-            None,
-        )
-        if not isinstance(row, Mapping):
-            return {}
-        result = {}
-        size = _integer(row.get("size"))
-        size_vram = _integer(row.get("size_vram"))
-        if size:
-            result["ollama_model_memory_gb"] = size / (1024**3)
-        if size_vram:
-            result["ollama_model_vram_mb"] = size_vram / (1024**2)
-        return result
+        return {
+            "model_peak_vram_mb": float(self._torch.cuda.max_memory_allocated())
+            / (1024**2),
+            "model_reserved_vram_mb": float(self._torch.cuda.max_memory_reserved())
+            / (1024**2),
+        }
 
     @staticmethod
     def build_context(results: Sequence[RetrievalHit]) -> str:
@@ -194,103 +271,10 @@ class OllamaGenerator:
             for index, hit in enumerate(results, start=1)
         )
 
-    def _payload(self, prompt: str, *, stream: bool) -> dict[str, object]:
-        options: dict[str, object] = {
-            "temperature": self.profile.temperature,
-            "seed": self.profile.seed,
-            "num_ctx": self.profile.context_tokens,
-            "num_predict": self.profile.maximum_answer_tokens,
-        }
-        payload: dict[str, object] = {
-            "model": self.profile.model_name,
-            "prompt": prompt,
-            "stream": stream,
-            "options": options,
-            "keep_alive": self.profile.keep_alive,
-        }
-        if self.profile.thinking != "off":
-            payload["think"] = self.profile.thinking
-        return payload
 
-    @staticmethod
-    def _prompt(query: str, context: str, system_prompt: str | None) -> str:
-        return (
-            f"{system_prompt or DEFAULT_SYSTEM_PROMPT}\n\n"
-            f"Evidence:\n{context}\n\nQuestion: {query}\nAnswer with citations:"
-        )
-
-    def _validate_digest(self) -> None:
-        if self._digest_validated:
-            return
-        payload = self._request("GET", "/api/tags")
-        rows = payload.get("models", [])
-        installed = (
-            {
-                str(item.get("name")): str(item.get("digest"))
-                for item in rows
-                if isinstance(item, Mapping)
-            }
-            if isinstance(rows, Sequence)
-            else {}
-        )
-        actual = installed.get(self.profile.model_name)
-        if actual is None:
-            raise OllamaRequestError(
-                f"Pinned Ollama model is missing: {self.profile.model_name}. Run model preparation."
-            )
-        if actual != self.profile.digest:
-            raise OllamaRequestError(
-                f"Ollama digest mismatch for {self.profile.model_name}; expected "
-                f"{self.profile.digest}, received {actual}. Re-run preparation and benchmarks."
-            )
-        self._digest_validated = True
-
-    def _request(self, method: str, path: str, **kwargs: Any) -> Mapping[str, object]:
-        try:
-            response = self.session.request(
-                method, f"{self.base_url}{path}", timeout=self.timeout_seconds, **kwargs
-            )
-            response.raise_for_status()
-        except requests.ConnectionError as exc:
-            raise OllamaConnectionError(
-                f"Ollama is unavailable at {self.base_url}. Start Ollama and install "
-                f"{self.model_name}."
-            ) from exc
-        except requests.RequestException as exc:
-            raise OllamaRequestError(f"Ollama request failed for model {self.model_name}") from exc
-        payload = response.json()
-        if not isinstance(payload, Mapping):
-            raise OllamaRequestError("Ollama returned a non-object response")
-        return payload
-
-    def _stream(self, payload: Mapping[str, object]) -> Iterator[str]:
-        try:
-            with self.session.post(
-                f"{self.base_url}/api/generate",
-                json=dict(payload),  # type: ignore[arg-type]
-                stream=True,
-                timeout=self.timeout_seconds,
-            ) as response:
-                response.raise_for_status()
-                for line in response.iter_lines():
-                    if not line:
-                        continue
-                    item = json.loads(line)
-                    text = item.get("response", "")
-                    if text:
-                        yield str(text)
-        except requests.RequestException as exc:
-            raise OllamaRequestError("Ollama streaming request failed") from exc
-
-
-def _duration_seconds(value: object) -> float:
-    return _integer(value) / 1_000_000_000
-
-
-def _integer(value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
-        return 0
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
+def _visible_answer(text: str) -> tuple[str, str]:
+    reasoning = re.findall(r"<think>(.*?)</think>", text, flags=re.DOTALL | re.IGNORECASE)
+    visible = re.sub(
+        r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE
+    ).strip()
+    return visible or text.strip(), "\n".join(reasoning).strip()

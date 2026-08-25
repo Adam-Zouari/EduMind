@@ -1,4 +1,4 @@
-"""Measured Ollama generation over frozen or retrieved contexts."""
+"""Measured direct Hugging Face generation over frozen or retrieved contexts."""
 
 from __future__ import annotations
 
@@ -8,9 +8,6 @@ from collections.abc import Mapping, Sequence
 
 import numpy as np
 
-from edumind.common.config import load_settings
-from edumind.rag.contracts import GenerationProfile
-from edumind.rag.llm_generator import OllamaGenerator
 from edumind.rag.tokenizers import TiktokenOffsetTokenizer
 from edumind.rag.types import RetrievalHit
 
@@ -28,23 +25,15 @@ from experiments.benchmarks.rag.evaluation import (
     reranker_for,
     retrieval_metrics,
 )
-
-MODEL_NAMES = {
-    "qwen3:1.7b": "qwen3:1.7b",
-    "qwen3.5:4b-direct": "qwen3.5:4b-q4_K_M",
-    "qwen3.5:4b-thinking": "qwen3.5:4b-q4_K_M",
-    "qwen3.5:9b-direct": "qwen3.5:9b-q4_K_M",
-    "qwen3.5:9b-thinking": "qwen3.5:9b-q4_K_M",
-    "gemma4:12b-it-q4_K_M": "gemma4:12b-it-q4_K_M",
-    "ministral-3:8b-instruct-2512-q4_K_M": "ministral-3:8b-instruct-2512-q4_K_M",
-    "gpt-oss:20b-low": "gpt-oss:20b",
-    "gpt-oss:20b-medium": "gpt-oss:20b",
-}
+from experiments.benchmarks.rag.generation.models import (
+    GENERATOR_PROFILES,
+    generator_for,
+)
 
 
 class LocalFaithfulness:
-    def __init__(self, revision: str) -> None:
-        self.revision = revision
+    def __init__(self, model_path: str) -> None:
+        self.model_path = model_path
         self.model = None
 
     def score(self, context: str, answer: str) -> float:
@@ -54,8 +43,7 @@ class LocalFaithfulness:
             from transformers import AutoModelForSequenceClassification
 
             self.model = AutoModelForSequenceClassification.from_pretrained(
-                "vectara/hallucination_evaluation_model",
-                revision=self.revision,
+                self.model_path,
                 local_files_only=True,
                 trust_remote_code=True,
             )
@@ -66,13 +54,13 @@ class LocalFaithfulness:
 def evaluate_candidate(
     candidate: str,
     manifest: DatasetManifest,
-    digests: Mapping[str, str],
-    model_revisions: Mapping[str, str],
+    model_lock: Mapping[str, Mapping[str, object]],
     *,
     final_index: ExactIndex | None = None,
     retrieval_method: str = "frozen",
     top_k: int = 5,
     repetitions: int = 1,
+    device: str = "cpu",
 ):
     questions = _questions(manifest, 24)
     documents = {
@@ -80,13 +68,13 @@ def evaluate_candidate(
         for row in manifest.samples
         if row.get("kind") == "document"
     }
-    generator = _generator(candidate, digests)
+    generator = generator_for(candidate, model_lock, device)
     tokenizer = TiktokenOffsetTokenizer()
     faithfulness = LocalFaithfulness(
-        model_revisions["vectara/hallucination_evaluation_model"]
+        str(model_lock["vectara/hallucination_evaluation_model"]["model_path"])
     )
     retrieval_reranker = (
-        reranker_for(retrieval_method, model_revisions) if final_index is not None else None
+        reranker_for(retrieval_method, model_lock) if final_index is not None else None
     )
     context_cache: dict[str, tuple[list[RetrievalHit], str, float]] = {}
     context_questions = questions[:1] if final_index is not None else questions
@@ -244,8 +232,11 @@ def evaluate_candidate(
         "tokens_per_second": float(np.mean([row.tokens_per_second for row in measurements])),
         "answers_per_minute": 60.0 / max(float(np.mean(total_latencies)), 1e-9),
         "mean_answer_tokens": float(np.mean([row.answer_tokens for row in measurements])),
-        "mean_reasoning_words_estimate": float(
-            np.mean([row.reasoning_words_estimate for row in measurements])
+        "mean_reasoning_tokens": float(
+            np.mean([row.reasoning_tokens for row in measurements])
+        ),
+        "mean_generated_tokens": float(
+            np.mean([row.generated_tokens for row in measurements])
         ),
         "cold_load_seconds": cold.load_seconds,
         **runtime_memory,
@@ -254,17 +245,6 @@ def evaluate_candidate(
         **refusal,
         "human_review_required": 1.0,
     }
-
-
-def _generator(candidate: str, digests: Mapping[str, str]) -> OllamaGenerator:
-    model = MODEL_NAMES[candidate]
-    thinking = "medium" if candidate.endswith("medium") else "low" if candidate.endswith("low") else "on" if candidate.endswith("thinking") else "off"
-    settings = load_settings().generation
-    return OllamaGenerator(
-        GenerationProfile(model, digests[model], thinking, 0.0, 42, 8192, 256),
-        base_url=settings.base_url,
-        timeout_seconds=settings.timeout_seconds,
-    )
 
 
 def _frozen_hits(question, documents, tokenizer) -> tuple[list[RetrievalHit], str, float]:
@@ -384,7 +364,7 @@ def _clean_answer(answer: str) -> str:
 
 
 def _is_refusal(answer: str) -> bool:
-    normalized = answer.casefold().replace("’", "'")
+    normalized = answer.casefold().replace("\u2019", "'")
     return bool(
         re.search(
             r"(?:don't|do not) have enough evidence|insufficient evidence|"

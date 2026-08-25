@@ -14,14 +14,13 @@ import pandas as pd
 
 from edumind.common.artifacts import (
     atomic_write_json,
-    git_provenance,
-    hardware_summary,
     sha256_file,
     stable_hash,
 )
 from edumind.common.paths import PROJECT_ROOT
 
 from .contracts import BenchmarkPlan, BenchmarkResult, CandidateResult, SampleResult
+from .provenance import git_provenance, hardware_summary
 from .resources import ResourceMonitor
 from .metrics import paired_bootstrap_interval
 from .statistics import aggregate_samples
@@ -194,14 +193,6 @@ def _run_candidate(
             )
             metrics = {**metrics, **candidate_metrics}
             operational = {**operational, **resources.metrics()}
-            if (
-                "peak_process_memory_gb" in operational
-                and "ollama_model_memory_gb" in operational
-            ):
-                operational["combined_process_ollama_memory_gb"] = (
-                    operational["peak_process_memory_gb"]
-                    + operational["ollama_model_memory_gb"]
-                )
             result = CandidateResult(
                 candidate,
                 "success",

@@ -6,29 +6,40 @@ import re
 import subprocess
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
-from ..contracts import ExtractedDocument, ExtractedSegment, ExtractionRequest, SourceKind
+from ..contracts import (
+    ExtractedDocument,
+    ExtractedSegment,
+    ExtractionRequest,
+    Extractor,
+    SourceKind,
+)
 from ..errors import ExtractionBackendError
-from .audio import AudioExtractor
+from .audio import WhisperExtractor
 from .base import build_document
-from .image import ImageExtractor
-from .pdf import STRUCTURED_IMAGE_ENGINES
-from .structured_document import StructuredDocumentExtractor
+from .document import DoclingExtractor
 
 
 class VideoExtractor:
     supported_kinds = frozenset({SourceKind.VIDEO})
 
-    def __init__(self, keyframes: str = "hybrid") -> None:
+    def __init__(
+        self,
+        keyframes: str = "hybrid",
+        *,
+        audio_factory: Callable[[str, str], Extractor] | None = None,
+        image_factory: Callable[[str, str], Extractor] | None = None,
+    ) -> None:
         self.keyframes = keyframes
         self.name = f"video-{keyframes}"
         self.revision = "ffmpeg-system"
-        self._audio_extractors: dict[tuple[str, str, str], AudioExtractor] = {}
-        self._image_extractors: dict[
-            tuple[str, str], ImageExtractor | StructuredDocumentExtractor
-        ] = {}
+        self._audio_factory = audio_factory or _production_audio_factory
+        self._image_factory = image_factory or _production_image_factory
+        self._audio_extractors: dict[str, Extractor] = {}
+        self._image_extractors: dict[str, Extractor] = {}
 
     def extract(self, request: ExtractionRequest, kind: SourceKind) -> ExtractedDocument:
         if request.profile is None:
@@ -50,29 +61,40 @@ class VideoExtractor:
                         str(audio_path),
                     ]
                 )
-                audio_engine = str(request.options.get("audio_engine", "faster-whisper"))
-                audio_model = str(request.options.get("audio_model", "base.en"))
-                audio_compute_type = str(request.options.get("audio_compute_type", "int8"))
+                audio_engine = str(
+                    request.options.get("audio_candidate", "whisper-small-en-control")
+                )
+                audio_revision = str(request.options.get("audio_revision", "from-lock"))
                 audio_profile = replace(
                     request.profile,
-                    engine=f"{audio_engine}-{audio_model}-{audio_compute_type}",
+                    engine=audio_engine,
+                    engine_revision=audio_revision,
                     routing="video-audio",
                 )
+                audio_options = {
+                    **request.options,
+                    **{
+                        key.removeprefix("audio_"): value
+                        for key, value in request.options.items()
+                        if key.startswith("audio_")
+                    },
+                }
                 audio_request = ExtractionRequest.from_path(
                     audio_path,
                     source_kind=SourceKind.AUDIO,
                     profile=audio_profile,
-                    options=request.options,
+                    options=audio_options,
                 )
-                audio_key = (audio_engine, audio_model, audio_compute_type)
-                if audio_key not in self._audio_extractors:
-                    self._audio_extractors[audio_key] = AudioExtractor(*audio_key)
-                audio_extractor = self._audio_extractors[audio_key]
+                if audio_engine not in self._audio_extractors:
+                    self._audio_extractors[audio_engine] = self._audio_factory(
+                        audio_engine, audio_revision
+                    )
+                audio_extractor = self._audio_extractors[audio_engine]
                 audio = audio_extractor.extract(audio_request, SourceKind.AUDIO)
                 frames = self._extract_frames(request.source_path, directory)
                 visual_segments: list[tuple[str, float | None]] = []
-                image_engine = str(request.options.get("image_engine", "tesseract-5"))
-                image_revision = str(request.options.get("image_revision", "5"))
+                image_engine = str(request.options.get("image_engine", "docling-standard"))
+                image_revision = str(request.options.get("image_revision", "from-lock"))
                 image_profile = replace(
                     request.profile,
                     engine=image_engine,
@@ -82,20 +104,25 @@ class VideoExtractor:
                     ),
                     routing="video-keyframe",
                 )
-                image_key = (image_engine, image_revision)
-                if image_key not in self._image_extractors:
-                    self._image_extractors[image_key] = (
-                        StructuredDocumentExtractor(*image_key)
-                        if image_engine in STRUCTURED_IMAGE_ENGINES
-                        else ImageExtractor(*image_key)
+                if image_engine not in self._image_extractors:
+                    self._image_extractors[image_engine] = self._image_factory(
+                        image_engine, image_revision
                     )
-                image_extractor = self._image_extractors[image_key]
+                image_extractor = self._image_extractors[image_engine]
+                image_options = {
+                    **request.options,
+                    **{
+                        key.removeprefix("image_"): value
+                        for key, value in request.options.items()
+                        if key.startswith("image_")
+                    },
+                }
                 for frame, timestamp in frames:
                     image_request = ExtractionRequest.from_path(
                         frame,
                         source_kind=SourceKind.IMAGE,
                         profile=image_profile,
-                        options=request.options,
+                        options=image_options,
                     )
                     text = image_extractor.extract(image_request, SourceKind.IMAGE).text.strip()
                     if text:
@@ -115,7 +142,7 @@ class VideoExtractor:
             timestamps=timestamps,
             metadata={
                 "keyframe_policy": self.keyframes,
-                "audio_engine": f"{audio_engine}-{audio_model}-{audio_compute_type}",
+                "audio_engine": audio_engine,
                 "image_engine": image_engine,
                 "audio_segment_count": len(audio.segments),
                 "visual_segment_count": len(visual_segments),
@@ -169,3 +196,15 @@ class VideoExtractor:
         subprocess.run(
             ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *arguments], check=True
         )
+
+
+def _production_audio_factory(engine: str, revision: str) -> Extractor:
+    if engine != "whisper-small-en-control":
+        raise ValueError(f"Audio candidate is not promoted to production: {engine}")
+    return WhisperExtractor(revision)
+
+
+def _production_image_factory(engine: str, revision: str) -> Extractor:
+    if engine != "docling-standard":
+        raise ValueError(f"Document parser is not promoted to production: {engine}")
+    return DoclingExtractor(revision)

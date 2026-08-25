@@ -9,7 +9,7 @@ from experiments.benchmarks.common.arguments import load_candidates, parser, res
 from experiments.benchmarks.common.contracts import BenchmarkPlan
 from experiments.benchmarks.common.datasets import load_manifest
 from experiments.benchmarks.common.runner import run_benchmark
-from experiments.benchmarks.prepare import load_model_lock
+from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
 from experiments.benchmarks.rag.evaluation import RETRIEVAL_DIRECTIONS, evaluate
 
 
@@ -53,7 +53,10 @@ else:
     candidates = tuple(
         f"{pair.replace('|', '@@', 1)}@@{method}" for pair in pairs for method in methods
     )
-revisions = load_model_lock(PROJECT_ROOT / "data/benchmarks/models/huggingface.json")
+model_lock = load_selected_model_lock(
+    PROJECT_ROOT / "data/benchmarks/models/selected.json"
+)
+revisions = model_revisions(model_lock)
 plan = BenchmarkPlan(
     "rag",
     "retrieval",
@@ -69,7 +72,7 @@ result = run_benchmark(
     lambda candidate: evaluate(
         manifest,
         *candidate.split("@@", 2),
-        revisions,
+        model_lock,
         plan.repetitions,
     ),
     dataset_checksum=manifest.fingerprint,

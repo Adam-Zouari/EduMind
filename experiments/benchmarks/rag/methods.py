@@ -6,6 +6,14 @@ import re
 import os
 from collections.abc import Sequence
 
+RERANKER_MAX_LENGTH = {
+    "cross-encoder/ms-marco-MiniLM-L6-v2": 512,
+    "cross-encoder/ettin-reranker-150m-v1": 7999,
+    "cross-encoder/ettin-reranker-400m-v1": 7999,
+    "cross-encoder/ettin-reranker-1b-v1": 7999,
+    "Qwen/Qwen3-Reranker-4B": 8192,
+}
+
 
 class BM25:
     def __init__(self, documents: Sequence[str]) -> None:
@@ -29,24 +37,27 @@ def reciprocal_rank_fusion(rankings: Sequence[Sequence[int]], limit: int, rrf_k:
 
 
 class Reranker:
-    def __init__(self, model: str, revision: str) -> None:
+    def __init__(self, model: str, revision: str, model_path: str) -> None:
         self.model_name = model
         self.revision = revision
+        self.model_path = model_path
         self.model = None
 
     def rank(self, query: str, documents: Sequence[str]) -> list[int]:
         if self.model is None:
             if self.model_name.startswith("Qwen/"):
-                self.model = _QwenReranker(self.model_name, self.revision)
+                self.model = _QwenReranker(
+                    self.model_name, self.revision, self.model_path
+                )
             else:
                 from sentence_transformers import CrossEncoder
 
                 self.model = CrossEncoder(
-                    self.model_name,
-                    revision=self.revision,
+                    self.model_path,
                     device=os.environ.get("EDUMIND_BENCHMARK_RERANKER_DEVICE", "cpu"),
                     local_files_only=True,
-                    trust_remote_code=self.model_name.startswith("BAAI/"),
+                    trust_remote_code=False,
+                    max_length=RERANKER_MAX_LENGTH[self.model_name],
                 )
         scores = (
             self.model.predict(query, documents)
@@ -59,14 +70,13 @@ class Reranker:
 class _QwenReranker:
     """Generative yes/no relevance scoring required by Qwen3-Reranker."""
 
-    def __init__(self, model_name: str, revision: str) -> None:
+    def __init__(self, model_name: str, revision: str, model_path: str) -> None:
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
         self.torch = torch
         self.tokenizer = AutoTokenizer.from_pretrained(
-            model_name,
-            revision=revision,
+            model_path,
             local_files_only=True,
             trust_remote_code=True,
             padding_side="left",
@@ -76,8 +86,7 @@ class _QwenReranker:
         self.device = os.environ.get("EDUMIND_BENCHMARK_RERANKER_DEVICE", "cpu")
         dtype = torch.bfloat16 if self.device.startswith("cuda") else torch.float32
         self.model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            revision=revision,
+            model_path,
             local_files_only=True,
             trust_remote_code=True,
             torch_dtype=dtype,
@@ -105,7 +114,7 @@ class _QwenReranker:
                 prompts[start : start + 4],
                 padding=True,
                 truncation=True,
-                max_length=2048,
+                max_length=RERANKER_MAX_LENGTH["Qwen/Qwen3-Reranker-4B"],
                 return_tensors="pt",
             )
             encoded = {key: value.to(self.device) for key, value in encoded.items()}

@@ -1,5 +1,5 @@
 smoke:
-  - token-256-32@@sentence-transformers/all-MiniLM-L6-v2@@dense@@qwen3:1.7b@@top_k=3
+  - token-256-32@@sentence-transformers/all-MiniLM-L6-v2@@dense@@qwen3-1.7b-control@@top_k=3
 standard:
-  - token-256-32@@sentence-transformers/all-MiniLM-L6-v2@@dense@@qwen3:1.7b@@top_k=3
-  - token-256-32@@sentence-transformers/all-MiniLM-L6-v2@@dense@@qwen3:1.7b@@top_k=5
+  - token-256-32@@sentence-transformers/all-MiniLM-L6-v2@@dense@@qwen3-1.7b-control@@top_k=3
+  - token-256-32@@sentence-transformers/all-MiniLM-L6-v2@@dense@@qwen3-1.7b-control@@top_k=5

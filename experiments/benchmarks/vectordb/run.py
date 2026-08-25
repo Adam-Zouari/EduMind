@@ -200,7 +200,7 @@ def _workloads(profile: str, embedding_summary: Path | None):
 
 def _real_corpus(summary_path: Path) -> Corpus:
     from experiments.benchmarks.common.datasets import load_manifest
-    from experiments.benchmarks.prepare import load_model_lock
+    from experiments.benchmarks.preparation.models import load_selected_model_lock
     from experiments.benchmarks.rag.evaluation import build_index
 
     payload = json.loads(summary_path.read_text(encoding="utf-8"))
@@ -211,8 +211,10 @@ def _real_corpus(summary_path: Path) -> Corpus:
         )
     chunker, embedding = str(selected[0]).split("|", 1)
     manifest = load_manifest(PROJECT_ROOT / "data/benchmarks/rag/rag-selection-validation.json")
-    revisions = load_model_lock(PROJECT_ROOT / "data/benchmarks/models/huggingface.json")
-    index = build_index(manifest, chunker, embedding, revisions, with_bm25=False)
+    model_lock = load_selected_model_lock(
+        PROJECT_ROOT / "data/benchmarks/models/selected.json"
+    )
+    index = build_index(manifest, chunker, embedding, model_lock, with_bm25=False)
     questions = [row for row in manifest.samples if row.get("kind") == "question"][:1_000]
     query_vectors = np.asarray(
         [index.embedder.embed_query(str(row["question"])) for row in questions], dtype=np.float32

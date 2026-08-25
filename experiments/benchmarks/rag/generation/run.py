@@ -9,11 +9,18 @@ from experiments.benchmarks.common.arguments import parser, resolved_candidates
 from experiments.benchmarks.common.contracts import BenchmarkPlan
 from experiments.benchmarks.common.datasets import load_manifest
 from experiments.benchmarks.common.runner import run_benchmark
-from experiments.benchmarks.prepare import load_model_lock
+from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
 from experiments.benchmarks.rag.generation.evaluate import evaluate_candidate
 
 directory = Path(__file__).parent
-arguments = parser("Benchmark Ollama generation on frozen oracle contexts").parse_args()
+argument_parser = parser("Benchmark direct Hugging Face generation on frozen contexts")
+argument_parser.add_argument(
+    "--device", choices=("cpu", "cuda"), help="Whole-model device shared by every candidate"
+)
+arguments = argument_parser.parse_args()
+if arguments.profile in {"standard", "full"} and arguments.device is None:
+    argument_parser.error("standard/full generation requires explicit --device cpu|cuda")
+device = arguments.device or "cpu"
 manifest_path = arguments.manifest or PROJECT_ROOT / (
     "data/benchmarks/rag/smoke.json"
     if arguments.profile == "smoke"
@@ -21,8 +28,10 @@ manifest_path = arguments.manifest or PROJECT_ROOT / (
 )
 manifest = load_manifest(manifest_path)
 candidates = resolved_candidates(directory / "candidates.yaml", arguments.profile, arguments.shortlist)
-digests = load_model_lock(PROJECT_ROOT / "data/benchmarks/models/ollama.json")
-revisions = load_model_lock(PROJECT_ROOT / "data/benchmarks/models/huggingface.json")
+model_lock = load_selected_model_lock(
+    PROJECT_ROOT / "data/benchmarks/models/selected.json"
+)
+revisions = model_revisions(model_lock)
 plan = BenchmarkPlan(
     "rag",
     "generation",
@@ -36,7 +45,11 @@ plan = BenchmarkPlan(
 result = run_benchmark(
     plan,
     lambda candidate: evaluate_candidate(
-        candidate, manifest, digests, revisions, repetitions=plan.repetitions
+        candidate,
+        manifest,
+        model_lock,
+        repetitions=plan.repetitions,
+        device=device,
     ),
     dataset_checksum=manifest.fingerprint,
     directions={
@@ -44,14 +57,14 @@ result = run_benchmark(
         "answerability_balanced_accuracy": "max",
         "hhem_faithfulness": "max",
         "operational.p95_latency_seconds": "min",
-        "operational.combined_process_ollama_memory_gb": "min",
+        "operational.peak_process_memory_gb": "min",
     },
     gates={
         "malformed_output_rate": ("min", 0.0),
         "operational.p95_latency_seconds": ("min", 30.0),
-        "operational.combined_process_ollama_memory_gb": ("min", 28.0),
+        "operational.peak_process_memory_gb": ("min", 28.0),
     },
-    revisions={**revisions, **digests},
+    revisions=revisions,
     no_mlflow=arguments.no_mlflow,
 )
 print(json.dumps({"run_id": result.run_id, "artifacts": str(result.artifact_directory)}, indent=2))

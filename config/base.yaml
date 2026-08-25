@@ -1,13 +1,14 @@
 # Provisional application defaults. Experiments never modify this file automatically.
+models:
+  lock_path: data/benchmarks/models/selected.json
+
 extraction:
   cache_enabled: true
   cache_directory: artifacts/extraction/cache
   maximum_upload_bytes: 104857600
-  model_lock_path: data/benchmarks/models/extraction.json
 
 embedding:
   model_name: sentence-transformers/all-MiniLM-L6-v2
-  revision: c9745ed1d9f207416be6d2e6f8de32d1f16199bf
   dimension: 384
   indexing_device: cpu
   query_device: cpu
@@ -37,14 +38,11 @@ retrieval:
   context_token_budget: 2048
 
 generation:
-  model_name: qwen3:1.7b
-  digest: unpinned
-  base_url: http://127.0.0.1:11434
-  thinking: "off"
+  model_name: Qwen/Qwen3-1.7B
+  device: cpu
+  dtype: auto
+  reasoning: false
   temperature: 0.0
   seed: 42
   context_tokens: 8192
   maximum_answer_tokens: 256
-  timeout_seconds: 120
-  keep_alive: 5m
-  model_lock_path: data/benchmarks/models/ollama.json

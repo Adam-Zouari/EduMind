@@ -13,12 +13,14 @@ class EmbeddingSpec:
     model_name: str
     revision: str
     tokenizer: str
+    local_path: str | None
     query_prefix: str
     document_prefix: str
     normalize: bool
     dimension: int
     similarity: str
     maximum_length: int
+    pooling: str
     document_device: str = "cpu"
     query_device: str = "cpu"
     interface: str = "encode"
@@ -35,86 +37,16 @@ class EmbeddingSpec:
 EMBEDDING_SPECS: dict[str, EmbeddingSpec] = {
     "sentence-transformers/all-MiniLM-L6-v2": EmbeddingSpec(
         "sentence-transformers/all-MiniLM-L6-v2",
-        "main",
+        "from-lock",
         "sentence-transformers/all-MiniLM-L6-v2",
+        None,
         "",
         "",
         True,
         384,
         "cosine",
         256,
-    ),
-    "google/embeddinggemma-300m": EmbeddingSpec(
-        "google/embeddinggemma-300m",
-        "main",
-        "google/embeddinggemma-300m",
-        "task: search result | query: ",
-        "title: none | text: ",
-        True,
-        768,
-        "cosine",
-        2048,
-        interface="query-document",
-    ),
-    "infgrad/Jasper-Token-Compression-600M": EmbeddingSpec(
-        "infgrad/Jasper-Token-Compression-600M",
-        "main",
-        "infgrad/Jasper-Token-Compression-600M",
-        "",
-        "",
-        True,
-        1024,
-        "cosine",
-        1024,
-        query_prompt_name="query",
-        trust_remote_code=True,
-        encode_options=(("compression_ratio", 0.3333),),
-    ),
-    "Qwen/Qwen3-Embedding-0.6B": EmbeddingSpec(
-        "Qwen/Qwen3-Embedding-0.6B",
-        "main",
-        "Qwen/Qwen3-Embedding-0.6B",
-        "Instruct: Retrieve relevant educational evidence\nQuery: ",
-        "",
-        True,
-        1024,
-        "cosine",
-        32768,
-    ),
-    "nvidia/Nemotron-3-Embed-1B-BF16": EmbeddingSpec(
-        "nvidia/Nemotron-3-Embed-1B-BF16",
-        "main",
-        "nvidia/Nemotron-3-Embed-1B-BF16",
-        "query: ",
-        "passage: ",
-        True,
-        2048,
-        "cosine",
-        32768,
-        interface="query-document",
-    ),
-    "Qwen/Qwen3-Embedding-4B": EmbeddingSpec(
-        "Qwen/Qwen3-Embedding-4B",
-        "main",
-        "Qwen/Qwen3-Embedding-4B",
-        "Instruct: Retrieve relevant educational evidence\nQuery: ",
-        "",
-        True,
-        2560,
-        "cosine",
-        32768,
-    ),
-    "nvidia/Nemotron-3-Embed-8B-BF16": EmbeddingSpec(
-        "nvidia/Nemotron-3-Embed-8B-BF16",
-        "main",
-        "nvidia/Nemotron-3-Embed-8B-BF16",
-        "query: ",
-        "passage: ",
-        True,
-        4096,
-        "cosine",
-        32768,
-        interface="query-document",
+        "mean",
     ),
 }
 
@@ -125,6 +57,7 @@ def embedding_spec(
     document_device: str = "cpu",
     query_device: str = "cpu",
     revision: str | None = None,
+    local_path: str | None = None,
 ) -> EmbeddingSpec:
     try:
         spec = EMBEDDING_SPECS[name]
@@ -134,6 +67,7 @@ def embedding_spec(
         **{
             **asdict(spec),
             "revision": revision or spec.revision,
+            "local_path": local_path or spec.local_path,
             "document_device": document_device,
             "query_device": query_device,
         }
@@ -143,13 +77,15 @@ def embedding_spec(
 @dataclass(frozen=True)
 class GenerationProfile:
     model_name: str
-    digest: str
-    thinking: str
+    revision: str
+    model_path: str
+    device: str
+    dtype: str
+    reasoning: bool
     temperature: float
     seed: int
     context_tokens: int
     maximum_answer_tokens: int
-    keep_alive: str | int = "5m"
 
     @property
     def fingerprint(self) -> str:

@@ -15,9 +15,9 @@ class MetadataFilterError(ValueError):
     """Raised when metadata filters are unsupported or malformed."""
 
 
-class OllamaConnectionError(ConnectionError):
-    """Raised when the Ollama service cannot be reached."""
+class ModelLoadError(RuntimeError):
+    """Raised when a pinned local model cannot be loaded exactly as configured."""
 
 
-class OllamaRequestError(RuntimeError):
-    """Raised when an Ollama request fails."""
+class GenerationError(RuntimeError):
+    """Raised when local Hugging Face generation fails."""

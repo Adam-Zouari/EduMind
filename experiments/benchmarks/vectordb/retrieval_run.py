@@ -17,7 +17,7 @@ from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.contracts import BenchmarkPlan, SampleResult
 from experiments.benchmarks.common.datasets import load_manifest
 from experiments.benchmarks.common.runner import run_benchmark
-from experiments.benchmarks.prepare import load_model_lock
+from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
 from experiments.benchmarks.rag.evaluation import (
     RETRIEVAL_DIRECTIONS,
     build_index,
@@ -44,9 +44,12 @@ def main() -> int:
     candidates = _finalists(database_payload)
     chunker_name, embedding_name = embedding.split("|", 1)
     manifest = load_manifest(PROJECT_ROOT / "data/benchmarks/rag/rag-selection-validation.json")
-    revisions = load_model_lock(PROJECT_ROOT / "data/benchmarks/models/huggingface.json")
+    model_lock = load_selected_model_lock(
+        PROJECT_ROOT / "data/benchmarks/models/selected.json"
+    )
+    revisions = model_revisions(model_lock)
     vector_revisions = image_lock()
-    index = build_index(manifest, chunker_name, embedding_name, revisions, with_bm25=True)
+    index = build_index(manifest, chunker_name, embedding_name, model_lock, with_bm25=True)
     bm25 = BM25([chunk.text for chunk in index.chunks])
     by_id = {chunk.identifier: position for position, chunk in enumerate(index.chunks)}
     plan = BenchmarkPlan(
@@ -61,7 +64,7 @@ def main() -> int:
 
     def evaluate(candidate):
         verify_image(candidate, vector_revisions[f"image:{candidate}"])
-        reranker = reranker_for(retrieval, revisions)
+        reranker = reranker_for(retrieval, model_lock)
         config = _config(database_payload, candidate, index.vectors.shape[1])
         adapter = create(candidate, config)
         try:

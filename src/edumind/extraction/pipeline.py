@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import time
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 
 from edumind.common.config import Settings, load_settings
+from edumind.common.models import load_model_lock
 
 from .cache import ExtractionCache
 from .contracts import ExtractedDocument, ExtractionProfile, ExtractionRequest, SourceKind
@@ -17,145 +17,86 @@ from .normalization import normalize_document
 from .registry import ExtractorRegistration, ExtractorRegistry
 
 DEFAULT_PROFILE_BY_KIND = {
-    SourceKind.IMAGE: ExtractionProfile("image-baseline", "tesseract-5", "5", "document"),
+    SourceKind.IMAGE: ExtractionProfile(
+        "document-control-image",
+        "docling-standard",
+        "from-lock",
+        options={
+            "ocr_engine": "rapidocr",
+            "ocr_mode": "full_page",
+            "table_mode": "fast",
+            "formula_enrichment": False,
+        },
+    ),
     SourceKind.PDF: ExtractionProfile(
-        "pdf-hybrid-baseline", "hybrid-pdf", "1", "document", routing="page-hybrid"
+        "document-control-pdf",
+        "docling-standard",
+        "from-lock",
+        options={
+            "ocr_engine": "rapidocr",
+            "ocr_mode": "pdf_aware_layout_regions",
+            "table_mode": "fast",
+            "formula_enrichment": False,
+        },
     ),
     SourceKind.DOCX: ExtractionProfile(
-        "docx-baseline", "python-docx", "1", normalization="conservative"
+        "document-control-docx",
+        "docling-standard",
+        "from-lock",
+        normalization="conservative",
     ),
     SourceKind.AUDIO: ExtractionProfile(
-        "audio-baseline",
-        "faster-whisper-base-int8",
+        "audio-control",
+        "whisper-small-en-control",
         "from-lock",
         device="cpu",
     ),
     SourceKind.VIDEO: ExtractionProfile(
-        "video-baseline", "video-hybrid", "from-lock", device="cpu", routing="hybrid"
+        "video-control",
+        "video-hybrid",
+        "ffmpeg-system",
+        device="cpu",
+        routing="hybrid",
+        options={
+            "audio_candidate": "whisper-small-en-control",
+            "image_engine": "docling-standard",
+            "ocr_engine": "rapidocr",
+            "ocr_mode": "full_page",
+            "table_mode": "fast",
+            "formula_enrichment": False,
+        },
     ),
+}
+
+LOCK_CANDIDATE_BY_ENGINE = {
+    "docling-standard": "docling-standard",
+    "whisper-small-en-control": "openai/whisper-small.en",
 }
 
 
 def build_default_registry() -> ExtractorRegistry:
-    from .extractors.audio import AudioExtractor
-    from .extractors.docx import DOCXExtractor
-    from .extractors.image import ImageExtractor
-    from .extractors.pdf import PDFExtractor
-    from .extractors.structured_document import StructuredDocumentExtractor
+    from .extractors.audio import WhisperExtractor
+    from .extractors.document import DoclingExtractor
     from .extractors.video import VideoExtractor
 
     registry = ExtractorRegistry()
     registrations: list[ExtractorRegistration] = [
         ExtractorRegistration(
-            "tesseract-5",
-            frozenset({SourceKind.IMAGE}),
-            lambda: ImageExtractor("tesseract-5", "5"),
+            "docling-standard",
+            frozenset({SourceKind.IMAGE, SourceKind.PDF, SourceKind.DOCX}),
+            lambda: DoclingExtractor("from-lock"),
         ),
         ExtractorRegistration(
-            "paddleocr-v5-mobile",
-            frozenset({SourceKind.IMAGE}),
-            lambda: ImageExtractor("paddleocr-v5-mobile", "v5"),
-        ),
-        ExtractorRegistration(
-            "paddleocr-v5-server",
-            frozenset({SourceKind.IMAGE}),
-            lambda: ImageExtractor("paddleocr-v5-server", "v5"),
-        ),
-        ExtractorRegistration(
-            "pypdf", frozenset({SourceKind.PDF}), lambda: PDFExtractor("pypdf")
-        ),
-        ExtractorRegistration(
-            "pdfplumber",
-            frozenset({SourceKind.PDF}),
-            lambda: PDFExtractor("pdfplumber"),
-        ),
-        ExtractorRegistration(
-            "hybrid-pdf",
-            frozenset({SourceKind.PDF}),
-            lambda: PDFExtractor("hybrid-pdf", "1"),
-        ),
-        ExtractorRegistration(
-            "ocr-pdf",
-            frozenset({SourceKind.PDF}),
-            lambda: PDFExtractor("ocr-pdf", "1"),
-        ),
-        ExtractorRegistration(
-            "python-docx",
-            frozenset({SourceKind.DOCX}),
-            lambda: DOCXExtractor("python-docx", "1"),
-        ),
-        ExtractorRegistration(
-            "mammoth",
-            frozenset({SourceKind.DOCX}),
-            lambda: DOCXExtractor("mammoth"),
-        ),
-        ExtractorRegistration(
-            "openai-whisper-small-en",
+            "whisper-small-en-control",
             frozenset({SourceKind.AUDIO}),
-            lambda: AudioExtractor("openai-whisper", "small.en", "float16"),
+            lambda: WhisperExtractor("from-lock"),
+        ),
+        ExtractorRegistration(
+            "video-hybrid",
+            frozenset({SourceKind.VIDEO}),
+            lambda: VideoExtractor("hybrid"),
         ),
     ]
-    for name, kinds in (
-        ("docling", frozenset({SourceKind.IMAGE, SourceKind.PDF, SourceKind.DOCX})),
-        ("pp-structure-v3", frozenset({SourceKind.IMAGE, SourceKind.PDF})),
-        ("paddleocr-vl-1.6", frozenset({SourceKind.IMAGE, SourceKind.PDF})),
-        ("glm-ocr", frozenset({SourceKind.IMAGE, SourceKind.PDF})),
-        ("mineru-2.5-pro", frozenset({SourceKind.IMAGE, SourceKind.PDF, SourceKind.DOCX})),
-        ("olmocr-2-7b", frozenset({SourceKind.IMAGE, SourceKind.PDF})),
-    ):
-        registrations.append(
-            ExtractorRegistration(
-                name, kinds, lambda engine=name: StructuredDocumentExtractor(engine)
-            )
-        )
-    for name, model, compute_type in (
-        ("faster-whisper-tiny-int8", "tiny.en", "int8"),
-        ("faster-whisper-base-int8", "base.en", "int8"),
-        ("faster-whisper-small-int8", "small.en", "int8"),
-        ("faster-whisper-small-float16", "small.en", "float16"),
-        ("faster-whisper-turbo-int8", "turbo", "int8"),
-    ):
-        registrations.append(
-            ExtractorRegistration(
-                name,
-                frozenset({SourceKind.AUDIO}),
-                lambda model=model, compute_type=compute_type: AudioExtractor(
-                    "faster-whisper", model, compute_type
-                ),
-            )
-        )
-    for name, engine, model, compute_type in (
-        (
-            "distil-whisper-large-v3.5",
-            "transformers-asr",
-            "distil-whisper/distil-large-v3.5",
-            "float16",
-        ),
-        (
-            "parakeet-tdt-0.6b-v3",
-            "transformers-asr",
-            "nvidia/parakeet-tdt-0.6b-v3",
-            "bfloat16",
-        ),
-        ("canary-qwen-2.5b", "nemo-canary", "nvidia/canary-qwen-2.5b", "bfloat16"),
-    ):
-        registrations.append(
-            ExtractorRegistration(
-                name,
-                frozenset({SourceKind.AUDIO}),
-                lambda engine=engine, model=model, compute_type=compute_type: AudioExtractor(
-                    engine, model, compute_type
-                ),
-            )
-        )
-    for routing in ("fixed", "scene", "hybrid"):
-        registrations.append(
-            ExtractorRegistration(
-                f"video-{routing}",
-                frozenset({SourceKind.VIDEO}),
-                lambda routing=routing: VideoExtractor(routing),
-            )
-        )
     for registration in registrations:
         registry.register(registration)
     return registry
@@ -236,25 +177,40 @@ class ExtractionPipeline:
 
     def _prepare_profile(
         self, profile: ExtractionProfile
-    ) -> tuple[ExtractionProfile, dict[str, str]]:
-        lock_path = self.settings.extraction.model_lock_path
+    ) -> tuple[ExtractionProfile, dict[str, object]]:
+        lock_path = self.settings.models.lock_path
         if not lock_path.is_file():
             if profile.engine_revision == "from-lock":
                 raise RuntimeError(
                     f"Missing extraction model lock {lock_path}; run `python "
-                    "experiments/benchmarks/prepare.py extraction-models`"
+                    "experiments/benchmarks/prepare.py app-models`"
                 )
             return profile, {}
-        try:
-            payload = json.loads(lock_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise RuntimeError(f"Cannot read extraction model lock {lock_path}: {exc}") from exc
-        models = payload.get("models", {})
-        if not isinstance(models, Mapping):
-            raise RuntimeError(f"Malformed extraction model lock: {lock_path}")
-        candidate = (
-            "faster-whisper-base-int8" if profile.engine.startswith("video-") else profile.engine
-        )
+        models = load_model_lock(lock_path)
+        if profile.engine.startswith("video-"):
+            if profile.options.get("audio_model_path") and profile.options.get(
+                "image_model_path"
+            ):
+                return profile, {}
+            audio_engine = str(profile.options.get("audio_candidate", "whisper-small-en-control"))
+            image_engine = str(profile.options.get("image_engine", "docling-standard"))
+            audio_entry = models.get(LOCK_CANDIDATE_BY_ENGINE[audio_engine], {})
+            image_entry = models.get(LOCK_CANDIDATE_BY_ENGINE[image_engine], {})
+            if not isinstance(audio_entry, Mapping) or not isinstance(image_entry, Mapping):
+                raise RuntimeError("Video component entries are malformed in selected.json")
+            return profile, {
+                "audio_revision": str(audio_entry.get("revision", "")),
+                "image_revision": str(image_entry.get("revision", "")),
+                **{
+                    f"audio_{key}": value
+                    for key, value in _lock_options(audio_entry).items()
+                },
+                **{
+                    f"image_{key}": value
+                    for key, value in _lock_options(image_entry).items()
+                },
+            }
+        candidate = LOCK_CANDIDATE_BY_ENGINE.get(profile.engine, profile.engine)
         entry = models.get(candidate, {})
         if not isinstance(entry, Mapping):
             raise RuntimeError(f"Malformed model lock entry for {candidate}")
@@ -271,8 +227,20 @@ class ExtractionPipeline:
                 f"{profile.engine_revision}, model lock has {locked_revision}. Rebuild the "
                 "profile or prepare the expected model revision."
             )
-        return profile, {
-            str(key): str(value)
-            for key, value in entry.items()
-            if str(key).endswith("_path") or str(key).endswith("_dir")
-        }
+        return profile, _lock_options(entry)
+
+
+def _lock_options(entry: Mapping[str, object]) -> dict[str, object]:
+    options = {
+        str(key): value
+        for key, value in entry.items()
+        if str(key).endswith("_path") or str(key).endswith("_dir")
+    }
+    submodels = entry.get("submodels", [])
+    if isinstance(submodels, list):
+        for submodel in submodels:
+            if not isinstance(submodel, Mapping):
+                continue
+            if submodel.get("role") == "forced-aligner":
+                options["aligner_model_path"] = str(submodel.get("model_path", ""))
+    return options
