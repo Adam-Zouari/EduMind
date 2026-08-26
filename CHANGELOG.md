@@ -2,8 +2,9 @@
 
 ## Unreleased
 
-- Reworked the README and documentation hierarchy around project purpose, reader
-  tasks, architecture, setup, experiment order, and authoritative sources.
+- Reworked the documentation hierarchy around project purpose, architecture,
+  setup, experiment methodology, exact metrics, and one benchmark runbook;
+  removed duplicate stage pages and command copies.
 - Aligned production with Docling Standard, Whisper `small.en`, MiniLM, Chroma HTTP,
   and direct pinned Hugging Face Qwen3 1.7B controls.
 - Kept experiment implementation, candidates, metrics, and MLflow logging under

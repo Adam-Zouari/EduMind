@@ -4,68 +4,22 @@
 [Complete preparation guide](installation.md) ·
 [Application internals](../architecture/ui.md)
 
-This page is the short application-only path. Use the complete preparation guide
-when installing system tools, all benchmark candidates, datasets, or vector-server
-images.
+This page is the application operations guide. Complete the one-time
+[installation and model preparation](installation.md) first.
 
-## 1. Prerequisites
+## 1. Activate the environment
 
-The complete application needs Python 3.11, Git, Docker Desktop with Compose,
-FFmpeg for audio/video inputs, and enough disk space for the pinned application
-models. The provisional generator runs on CPU, so CUDA is optional. Tesseract is
-needed by one document-benchmark configuration, not by the current RapidOCR
-application profile.
-
-Verify the required external programs:
+Run from the repository root:
 
 ```powershell
-py -3.11 --version
-git --version
-docker version
-docker compose version
-ffmpeg -version
-```
-
-If any command is missing, follow the
-[installation guide](installation.md#1-system-requirements).
-
-## 2. Create the environment
-
-Run these commands from the repository root. Do not install the project into a
-global Python environment.
-
-```powershell
-py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements/app.lock
-python -m pip install -e . --no-deps
-python -m pip check
 ```
 
-The editable installation makes source changes immediately visible; no wheel
-rebuild is needed.
+If `.venv` or `data/benchmarks/models/selected.json` is missing, return to the
+[installation guide](installation.md); this page does not duplicate environment
+creation or download instructions.
 
-## 3. Prepare application models
-
-Preview the exact downloads:
-
-```powershell
-python experiments/benchmarks/prepare.py app-models --dry-run
-```
-
-Then download Docling Standard artifacts, Whisper `small.en`, MiniLM, and Hugging
-Face Qwen3 1.7B:
-
-```powershell
-python experiments/benchmarks/prepare.py app-models
-```
-
-Models are stored under `data/benchmarks/downloads/`; the command generates
-`data/benchmarks/models/selected.json`. Interrupted Hugging Face downloads can be
-rerun and resume through their local transfer metadata.
-
-## 4. Start Chroma
+## 2. Start Chroma
 
 Docker Desktop must already be running.
 
@@ -77,7 +31,7 @@ docker compose -f infrastructure/chroma.yml ps
 Chroma binds to `127.0.0.1:8001`. Do not start the four-server vector benchmark
 Compose project at the same time because its Chroma service uses the same port.
 
-## 5. Start Streamlit
+## 3. Start Streamlit
 
 ```powershell
 streamlit run src/edumind/ui/streamlit_app.py
@@ -87,7 +41,7 @@ Upload a supported image, PDF, DOCX, audio, or video file, wait for extraction a
 indexing, then ask a question. Answers should cite the numbered evidence shown by
 the interface.
 
-## 6. Stop the application dependencies
+## 4. Stop the application dependencies
 
 Stop Streamlit with `Ctrl+C`, then stop Chroma:
 

@@ -157,15 +157,22 @@ python experiments/benchmarks/prepare.py assets `
   --output data/benchmarks/raw/document
 ```
 
-Create `document-validation.json` and `document-locked-test.json` under `data/benchmarks/extraction/`. Each sample needs an ID, `kind` (`image`, `pdf`, or `docx`), repository-relative `source_path`, verified `reference`, `asset_sha256`, source license/revision, and `document_family`. Add page text and canonical structure annotations when their dependent metrics are claimed.
+Create `document-development.json`, `document-validation.json`, and
+`document-locked-test.json` under `data/benchmarks/extraction/`. Each sample needs
+an ID, `kind` (`image`, `pdf`, or `docx`), repository-relative `source_path`,
+verified `reference`, `asset_sha256`, source license/revision, and
+`document_family`. Add page text and canonical structure annotations when their
+dependent metrics are claimed.
 
 ### Audio and video
 
 Use [Open ASR Leaderboard datasets/methodology](https://github.com/huggingface/open_asr_leaderboard) as public screening context, then prepare EduMind-specific educational recordings with verified transcripts and timestamps. Store manifests as:
 
 ```text
+data/benchmarks/extraction/audio-development.json
 data/benchmarks/extraction/audio-validation.json
 data/benchmarks/extraction/audio-locked-test.json
+data/benchmarks/extraction/video-development.json
 data/benchmarks/extraction/video-validation.json
 data/benchmarks/extraction/video-locked-test.json
 ```
@@ -186,60 +193,24 @@ python experiments/benchmarks/prepare.py vectordb
 
 The compared servers are [Chroma](https://docs.trychroma.com/guides/deploy/docker), [Qdrant](https://qdrant.tech/documentation/installation/), [Weaviate](https://docs.weaviate.io/deploy/installation-guides/docker-installation), and [PostgreSQL with pgvector](https://github.com/pgvector/pgvector). The command writes `data/benchmarks/models/vectordb.json` and a digest-based Compose environment.
 
-Start all benchmark servers explicitly:
+Server start/stop commands belong to the
+[benchmark runbook](../benchmarks/running.md#6-run-vector-server-experiments) and
+[application run guide](running.md#2-start-chroma). Servers bind to loopback
+ports, and benchmark data remains separate from application data.
 
-```powershell
-docker compose -f experiments/benchmarks/vectordb/compose.yml up -d
-docker compose -f experiments/benchmarks/vectordb/compose.yml ps
-```
+## 6. Next steps
 
-Start only provisional Chroma for the application:
+Installation and preparation are now complete:
 
-```powershell
-docker compose -f infrastructure/chroma.yml up -d
-```
+- use [Running the application](running.md) for daily start, stop, readiness, and
+  troubleshooting commands;
+- use the [benchmark runbook](../benchmarks/running.md) for MLflow, experiment
+  order, decision files, and every benchmark command.
 
-Servers bind to loopback ports. Keep benchmark server data separate from application data.
+The command references are kept in those pages so changing a CLI does not
+require updating several copies.
 
-## 6. Run the application
-
-Copy `.env.example` to `.env` only when overrides are necessary. Then:
-
-```powershell
-docker compose -f infrastructure/chroma.yml up -d
-streamlit run src/edumind/ui/streamlit_app.py
-```
-
-The provisional path is Docling Standard (RapidOCR, PDF-aware regions for PDFs, full-page OCR for images, TableFormer fast, formulas off), Whisper `small.en`, token 256/32, MiniLM, dense Chroma retrieval, and direct Hugging Face Qwen3 1.7B on CPU.
-
-## 7. Run benchmarks
-
-Start local MLflow in a separate terminal:
-
-```powershell
-mlflow ui --backend-store-uri sqlite:///mlflow.db
-```
-
-Representative commands:
-
-```powershell
-python experiments/benchmarks/extraction/document/run.py --profile standard --phase configuration
-python experiments/benchmarks/extraction/audio/run.py --profile standard --device cuda
-python experiments/benchmarks/extraction/video/run.py --profile standard --document-selection DOCUMENT_DECISION --audio-selection AUDIO_DECISION
-python experiments/benchmarks/extraction/normalization/run.py --profile standard
-
-python experiments/benchmarks/rag/chunking_embedding/run.py --profile standard
-python experiments/benchmarks/rag/retrieval/run.py --profile standard --embedding-selection EMBEDDING_DECISION
-python experiments/benchmarks/rag/generation/run.py --profile standard --device cuda
-python experiments/benchmarks/rag/final/run.py --profile standard --retrieval-selection RETRIEVAL_DECISION --generation-selection GENERATION_DECISION --device cuda
-
-python experiments/benchmarks/vectordb/run.py --profile smoke
-python experiments/benchmarks/vectordb/run.py --profile standard
-```
-
-Use `--no-mlflow` only for debugging. Use `--shortlist DECISION_JSON` for full profiles. The decision must reference a complete standard/full `summary.json`, name the engineer and date, and explain the choice. A full run never silently expands to all candidates.
-
-## 8. Verification checklist
+## 7. Verification checklist
 
 Before using a run as comparative evidence:
 

@@ -39,12 +39,6 @@ can be checked without duplicating business logic in the view.
 - Starting the UI never starts Docker or downloads models.
 - User-visible errors are safe; full exceptions remain in local logs.
 
-## Run
-
-```powershell
-docker compose -f infrastructure/chroma.yml up -d
-streamlit run src/edumind/ui/streamlit_app.py
-```
-
-Follow the [run instructions](../setup/running.md) if the model lock,
-model directories, external tools, or Chroma server have not been prepared.
+Operational commands and troubleshooting belong in the
+[run instructions](../setup/running.md); this page describes UI responsibilities
+only.

@@ -1,51 +1,53 @@
 # EduMind documentation map
 
-This page is the index for the repository's documentation. Start with the
-[project README](../README.md) if you do not yet know what EduMind does or how the
-application and benchmark program relate.
+Start with the [project README](../README.md) for the project's purpose, current
+status, and shortest application start. This page maps each detailed question to
+one document so the same instructions are not maintained in several places.
 
-## Choose documentation by task
+## Setup and operation
 
-| If you want to... | Read... |
+| Task | Document |
 |---|---|
-| Install all system tools, Python dependencies, models, datasets, and servers | [Complete installation and preparation guide](setup/installation.md) |
-| Start or stop the current Streamlit application | [Application run instructions](setup/running.md) |
-| Understand component boundaries and data flow | [Technical architecture](architecture/overview.md) |
-| Understand the Streamlit UI/controller | [Application documentation](architecture/ui.md) |
-| Understand extraction types, routing, caching, and provenance | [Extraction implementation](architecture/extraction.md) |
-| Understand chunking, embedding, retrieval, and generation defaults | [RAG implementation](architecture/rag.md) |
-| Understand the end-to-end in-process pipeline | [Pipeline implementation](architecture/application.md) |
-| Understand benchmark profiles, artifacts, and commands | [Benchmark overview](benchmarks/overview.md) |
-| Understand statistical validity and promotion rules | [Benchmark manual](benchmarks/methodology.md) |
-| Review why models and vector servers were included | [Model-selection rationale](benchmarks/model-selection.md) |
-| Inspect the machine-readable selection decisions | [Selection evidence](../experiments/benchmarks/selection_evidence.csv) |
-| Prepare extraction datasets and manifests | [Extraction dataset guide](benchmarks/extraction/datasets.md) |
-| Make a contribution | [Contributing guide](../CONTRIBUTING.md) |
-| Review notable repository changes | [Changelog](../CHANGELOG.md) |
-| Review the project license | [MIT license](../LICENSE) |
+| Install system tools, environments, dependencies, models, datasets, and servers | [Installation and preparation](setup/installation.md) |
+| Start, stop, check, or troubleshoot the current application | [Running the application](setup/running.md) |
 
-## Experiment documentation
+## Production architecture
 
-Experiment code and machine-readable inputs remain under `experiments/benchmarks/`.
-The matching reader documentation is centralized here so it is easy to navigate.
-
-| Area | Experiment document |
+| Question | Document |
 |---|---|
-| Extraction | [Document](benchmarks/extraction/document.md), [audio](benchmarks/extraction/audio.md), [video](benchmarks/extraction/video.md), [normalization](benchmarks/extraction/normalization.md) |
-| RAG | [Chunking and embedding](benchmarks/rag/chunking-embedding.md), [retrieval and reranking](benchmarks/rag/retrieval.md), [generation](benchmarks/rag/generation.md), [final RAG](benchmarks/rag/final-rag.md) |
-| Systems | [Vector database servers](benchmarks/systems/vector-databases.md) |
+| What are the main boundaries and data flows? | [Architecture overview](architecture/overview.md) |
+| How does the end-to-end application orchestrator behave? | [Application pipeline](architecture/application.md) |
+| How are documents, audio, and video extracted? | [Extraction subsystem](architecture/extraction.md) |
+| How do chunking, embedding, retrieval, and generation work in production? | [RAG subsystem](architecture/rag.md) |
+| How is Streamlit state separated from application logic? | [User interface](architecture/ui.md) |
 
-## Which document is authoritative?
+## Experiments
 
-- `config/base.yaml` is the production runtime configuration.
-- `benchmarks/model-selection.md` explains candidate-selection policy.
-- `experiments/benchmarks/selection_evidence.csv` is authoritative for included model identities and
-  immutable revisions.
-- Each experiment's `candidates.yaml` is authoritative for that
-  experiment's runtime matrix.
-- Frozen dataset manifests are authoritative for samples, splits, checksums, and
-  provenance.
-- MLflow plus the generated benchmark artifacts are authoritative for what a run
-  actually measured.
+| Question | Document |
+|---|---|
+| How does the benchmark program fit together? | [Benchmark overview](benchmarks/overview.md) |
+| What runs in each experiment, in what order, on which data, and why? | [Experiment methodology](benchmarks/methodology.md) |
+| What does each metric mean and how is it calculated? | [Metric reference](benchmarks/metrics.md) |
+| Why was each candidate included? | [Model-selection rationale](benchmarks/model-selection.md) |
+| Which commands prepare and run experiments? | [Benchmark runbook](benchmarks/running.md) |
+| How are extraction datasets acquired and described? | [Extraction dataset guide](benchmarks/extraction/datasets.md) |
+| What are the machine-readable model decisions and revisions? | [`selection_evidence.csv`](../experiments/benchmarks/selection_evidence.csv) |
 
-Documentation explains these sources; it does not override them.
+## Project maintenance
+
+- [Contributing](../CONTRIBUTING.md) explains how to change code and documentation.
+- [Changelog](../CHANGELOG.md) records notable changes.
+- [License](../LICENSE) contains the MIT terms.
+
+## Machine-readable authorities
+
+Human documentation explains the system; it does not override executable
+inputs:
+
+- `config/base.yaml` defines provisional production settings.
+- `experiments/benchmarks/selection_evidence.csv` defines included model
+  identities and immutable revisions.
+- Each experiment's `candidates.yaml` defines its runtime matrix.
+- Frozen dataset manifests define samples, splits, checksums, and provenance.
+- `data/benchmarks/models/selected.json` records prepared local model paths.
+- MLflow and run artifacts record what an experiment actually executed.
