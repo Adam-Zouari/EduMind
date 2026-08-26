@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import os
+import pickle
 from collections.abc import Sequence
 
 RERANKER_MAX_LENGTH = {
@@ -22,6 +23,10 @@ class BM25:
         except ModuleNotFoundError as exc:
             raise RuntimeError("Install requirements/benchmarks.lock for BM25") from exc
         self.model = BM25Okapi([_tokens(text) for text in documents])
+
+    @property
+    def storage_bytes(self) -> int:
+        return len(pickle.dumps(self.model, protocol=pickle.HIGHEST_PROTOCOL))
 
     def rank(self, query: str, limit: int) -> list[tuple[int, float]]:
         scores = self.model.get_scores(_tokens(query))

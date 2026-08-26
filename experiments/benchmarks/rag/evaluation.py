@@ -44,8 +44,8 @@ class Chunk:
 @dataclass
 class ExactIndex:
     chunks: list[Chunk]
-    vectors: np.ndarray
-    embedder: Embedder
+    vectors: np.ndarray | None
+    embedder: Embedder | None
     tokenizer: HuggingFaceOffsetTokenizer
     bm25: BM25 | None
 
@@ -58,9 +58,16 @@ def evaluate(
     model_lock: Mapping[str, Mapping[str, object]],
     repetitions: int = 1,
 ) -> tuple[list[SampleResult], Mapping[str, float]]:
+    needs_dense = retrieval_name != "bm25"
+    needs_bm25 = retrieval_name != "dense"
     indexed_at = time.perf_counter()
     index = build_index(
-        manifest, chunker_name, embedding_name, model_lock, retrieval_name != "dense"
+        manifest,
+        chunker_name,
+        embedding_name,
+        model_lock,
+        with_dense=needs_dense,
+        with_bm25=needs_bm25,
     )
     indexing_seconds = time.perf_counter() - indexed_at
     reranker = reranker_for(retrieval_name, model_lock)
@@ -124,11 +131,21 @@ def evaluate(
         "p95_chunk_tokens": float(np.quantile(token_counts, 0.95)),
         "p50_latency_seconds": float(np.median(latencies)),
         "p95_latency_seconds": float(np.quantile(latencies, 0.95)),
-        "storage_bytes": float(index.vectors.nbytes),
+        "storage_bytes": float(
+            (index.vectors.nbytes if index.vectors is not None else 0)
+            + (index.bm25.storage_bytes if index.bm25 is not None else 0)
+        ),
     }
 
 
-def build_index(manifest, chunker_name, embedding_name, model_lock, with_bm25=True) -> ExactIndex:
+def build_index(
+    manifest,
+    chunker_name,
+    embedding_name,
+    model_lock,
+    with_bm25=True,
+    with_dense=True,
+) -> ExactIndex:
     entry = model_lock[embedding_name]
     revision = str(entry["revision"])
     local_path = str(entry["model_path"])
@@ -140,12 +157,14 @@ def build_index(manifest, chunker_name, embedding_name, model_lock, with_bm25=Tr
         document_device=device,
         query_device=device,
     )
-    embedder = build_embedder(spec)
+    embedder = build_embedder(spec) if with_dense or chunker_name == "semantic" else None
     tokenizer = HuggingFaceOffsetTokenizer(
         spec.tokenizer, revision=revision, local_path=local_path
     )
     chunker = build_chunking_strategy(
-        chunker_name, tokenizer=tokenizer, embed_sentences=embedder.embed_texts
+        chunker_name,
+        tokenizer=tokenizer,
+        embed_sentences=embedder.embed_texts if embedder is not None else None,
     )
     chunks: list[Chunk] = []
     for document in (row for row in manifest.samples if row.get("kind") == "document"):
@@ -154,7 +173,11 @@ def build_index(manifest, chunker_name, embedding_name, model_lock, with_bm25=Tr
             chunks.append(
                 Chunk(f"{document['id']}:{index}", str(document["id"]), text[start:end], start, end, tokens)
             )
-    vectors = embedder.embed_texts([chunk.text for chunk in chunks])
+    vectors = (
+        embedder.embed_texts([chunk.text for chunk in chunks])
+        if with_dense and embedder is not None
+        else None
+    )
     return ExactIndex(
         chunks,
         vectors,
@@ -165,6 +188,13 @@ def build_index(manifest, chunker_name, embedding_name, model_lock, with_bm25=Tr
 
 
 def rank(index: ExactIndex, query: str, method: str, reranker: Reranker | None = None) -> list[int]:
+    if method == "bm25":
+        if index.bm25 is None:
+            raise RuntimeError("This index was built without BM25")
+        return [identifier for identifier, _ in index.bm25.rank(query, 20)]
+
+    if index.vectors is None or index.embedder is None:
+        raise RuntimeError("This index was built without dense vectors")
     dense_scores = index.vectors @ index.embedder.embed_query(query)
     dense = list(np.argsort(-dense_scores)[:20])
     if method == "dense":
@@ -172,8 +202,6 @@ def rank(index: ExactIndex, query: str, method: str, reranker: Reranker | None =
     if index.bm25 is None:
         raise RuntimeError("This index was built without BM25")
     lexical = [identifier for identifier, _ in index.bm25.rank(query, 20)]
-    if method == "bm25":
-        return lexical
     fused = reciprocal_rank_fusion([dense, lexical], 20)
     if reranker is None:
         return fused
