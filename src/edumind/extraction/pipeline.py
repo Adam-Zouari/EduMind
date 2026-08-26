@@ -8,7 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from edumind.common.config import Settings, load_settings
-from edumind.common.models import load_model_lock
+from edumind.common.models import load_model_lock, require_model
 
 from .cache import ExtractionCache
 from .contracts import ExtractedDocument, ExtractionProfile, ExtractionRequest, SourceKind
@@ -194,40 +194,34 @@ class ExtractionPipeline:
                 return profile, {}
             audio_engine = str(profile.options.get("audio_candidate", "whisper-small-en-control"))
             image_engine = str(profile.options.get("image_engine", "docling-standard"))
-            audio_entry = models.get(LOCK_CANDIDATE_BY_ENGINE[audio_engine], {})
-            image_entry = models.get(LOCK_CANDIDATE_BY_ENGINE[image_engine], {})
-            if not isinstance(audio_entry, Mapping) or not isinstance(image_entry, Mapping):
-                raise RuntimeError("Video component entries are malformed in selected.json")
+            audio = require_model(models, LOCK_CANDIDATE_BY_ENGINE[audio_engine])
+            image = require_model(models, LOCK_CANDIDATE_BY_ENGINE[image_engine])
             return profile, {
-                "audio_revision": str(audio_entry.get("revision", "")),
-                "image_revision": str(image_entry.get("revision", "")),
+                "audio_revision": audio.revision,
+                "image_revision": image.revision,
                 **{
                     f"audio_{key}": value
-                    for key, value in _lock_options(audio_entry).items()
+                    for key, value in _lock_options(audio.values).items()
                 },
                 **{
                     f"image_{key}": value
-                    for key, value in _lock_options(image_entry).items()
+                    for key, value in _lock_options(image.values).items()
                 },
             }
         candidate = LOCK_CANDIDATE_BY_ENGINE.get(profile.engine, profile.engine)
-        entry = models.get(candidate, {})
-        if not isinstance(entry, Mapping):
-            raise RuntimeError(f"Malformed model lock entry for {candidate}")
-        locked_revision = entry.get("revision")
-        if locked_revision and profile.engine_revision == "from-lock":
-            profile = replace(profile, engine_revision=str(locked_revision))
+        snapshot = require_model(models, candidate)
+        if profile.engine_revision == "from-lock":
+            profile = replace(profile, engine_revision=snapshot.revision)
         if (
-            locked_revision
-            and not profile.engine.startswith("video-")
-            and str(locked_revision) != profile.engine_revision
+            not profile.engine.startswith("video-")
+            and snapshot.revision != profile.engine_revision
         ):
             raise RuntimeError(
                 f"Extraction profile revision mismatch for {candidate}: profile has "
-                f"{profile.engine_revision}, model lock has {locked_revision}. Rebuild the "
+                f"{profile.engine_revision}, model lock has {snapshot.revision}. Rebuild the "
                 "profile or prepare the expected model revision."
             )
-        return profile, _lock_options(entry)
+        return profile, _lock_options(snapshot.values)
 
 
 def _lock_options(entry: Mapping[str, object]) -> dict[str, object]:
