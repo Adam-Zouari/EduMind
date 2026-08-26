@@ -74,6 +74,6 @@ class BenchmarkResult:
     plan: BenchmarkPlan
     provenance: Mapping[str, object]
     candidates: tuple[CandidateResult, ...]
-    pareto_candidates: tuple[str, ...]
-    authoritative: bool
+    complete: bool
+    completion_problems: tuple[str, ...]
     artifact_directory: Path

@@ -42,6 +42,7 @@ def run(
     manifest_path: Path | None = None,
     no_mlflow: bool = False,
     component_options: Mapping[str, object] | None = None,
+    decision_files: Mapping[str, Path] | None = None,
 ) -> BenchmarkResult:
     if stage not in STAGES:
         raise ValueError(f"Unknown extraction stage: {stage}")
@@ -165,11 +166,45 @@ def run(
         plan,
         evaluate,
         dataset_checksum=manifest.fingerprint,
-        directions=evaluator.directions(),
-        gates={"determinism": ("max", 1.0)},
+        directions=_metric_directions(stage, profile, evaluator.directions()),
+        primary_metric={
+            "document": "content_f1",
+            "audio": "word_error_rate",
+            "video": "complete_content_recall",
+            "normalization": "content_preservation_recall",
+        }[stage],
         revisions={name: str(value.get("revision", "")) for name, value in model_lock.items()},
+        decision_files=decision_files,
         no_mlflow=no_mlflow,
     )
+
+
+def _metric_directions(
+    stage: str, profile: str, directions: Mapping[str, str]
+) -> dict[str, str]:
+    """Declare smoke metrics explicitly; standard/full require the complete contract."""
+
+    if profile != "smoke":
+        return dict(directions)
+    common = {
+        "character_error_rate",
+        "word_error_rate",
+        "content_f1",
+        "reading_order_accuracy",
+        "operational.p95_latency_seconds",
+        "operational.peak_ram_mb",
+    }
+    stage_specific = {
+        "document": {"page_coverage"},
+        "audio": set(),
+        "video": {"transcript_word_error_rate", "complete_content_recall"},
+        "normalization": {
+            "content_preservation_recall",
+            "corruption_removal_f1",
+        },
+    }[stage]
+    required = common | stage_specific
+    return {name: direction for name, direction in directions.items() if name in required}
 
 
 def _extract_once(stage, candidate, item, model_lock, component_options, pipeline):
@@ -328,4 +363,3 @@ def _lock_paths(entry: Mapping[str, object]) -> dict[str, object]:
             if isinstance(submodel, Mapping) and submodel.get("role") == "forced-aligner":
                 result["aligner_model_path"] = str(submodel.get("model_path", ""))
     return result
-

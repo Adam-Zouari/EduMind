@@ -15,11 +15,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.contracts import BenchmarkPlan, SampleResult
+from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.datasets import load_manifest
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
 from experiments.benchmarks.rag.evaluation import (
-    RETRIEVAL_DIRECTIONS,
+    RETRIEVAL_QUALITY_DIRECTIONS,
     build_index,
     reranker_for,
     retrieval_metrics,
@@ -32,16 +33,19 @@ from experiments.benchmarks.vectordb.docker_metrics import image_lock, verify_im
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Compare complete retrieval on DB finalists")
-    parser.add_argument("--database-summary", type=Path, required=True)
-    parser.add_argument("--embedding-summary", type=Path, required=True)
-    parser.add_argument("--retrieval-summary", type=Path, required=True)
+    parser.add_argument("--database-selection", type=Path, required=True)
+    parser.add_argument("--embedding-selection", type=Path, required=True)
+    parser.add_argument("--retrieval-selection", type=Path, required=True)
     parser.add_argument("--profile", choices=("standard", "full"), default="standard")
     parser.add_argument("--no-mlflow", action="store_true")
     arguments = parser.parse_args()
-    database_payload = _payload(arguments.database_summary)
-    embedding = _single_selection(arguments.embedding_summary)
-    retrieval = _single_selection(arguments.retrieval_summary)
-    candidates = _finalists(database_payload)
+    database_decision = load_engineer_decision(
+        arguments.database_selection, minimum=2, maximum=3
+    )
+    database_payload = _payload(database_decision.source_summary)
+    embedding = _single_selection(arguments.embedding_selection)
+    retrieval = _single_selection(arguments.retrieval_selection)
+    candidates = database_decision.selected_candidates
     chunker_name, embedding_name = embedding.split("|", 1)
     manifest = load_manifest(PROJECT_ROOT / "data/benchmarks/rag/rag-selection-validation.json")
     model_lock = load_selected_model_lock(
@@ -171,13 +175,23 @@ def main() -> int:
         plan,
         evaluate,
         dataset_checksum=manifest.fingerprint,
-        directions=RETRIEVAL_DIRECTIONS,
-        gates={"target_concurrency_success": ("max", 1.0)},
+        directions={
+            **RETRIEVAL_QUALITY_DIRECTIONS,
+            "operational.p50_latency_seconds": "min",
+            "operational.p95_latency_seconds": "min",
+            "target_concurrency_success": "max",
+        },
+        primary_metric="ndcg_at_5",
         revisions={**revisions, **vector_revisions},
+        decision_files={
+            "database": arguments.database_selection,
+            "embedding": arguments.embedding_selection,
+            "retrieval": arguments.retrieval_selection,
+        },
         no_mlflow=arguments.no_mlflow,
     )
     print(json.dumps({"run_id": result.run_id, "artifacts": str(result.artifact_directory)}, indent=2))
-    return 0 if all(row.status == "success" for row in result.candidates) else 2
+    return 0 if result.complete else 2
 
 
 def _payload(path: Path):
@@ -185,24 +199,7 @@ def _payload(path: Path):
 
 
 def _single_selection(path: Path) -> str:
-    values = _payload(path).get("pareto_candidates")
-    if not isinstance(values, list) or len(values) != 1:
-        raise ValueError(f"{path} must contain exactly one explicitly approved pareto_candidate")
-    return str(values[0])
-
-
-def _finalists(payload) -> tuple[str, ...]:
-    pareto = [str(value) for value in payload.get("pareto_candidates", [])]
-    alternatives = [value for value in pareto if value != "chroma"]
-    if len(alternatives) > 2:
-        raise ValueError(
-            "Dense summary has more than two non-Chroma Pareto candidates; "
-            "explicitly approve the finalists first"
-        )
-    finalists = [*alternatives, "chroma"]
-    if len(finalists) < 2:
-        raise ValueError("Dense benchmark summary has fewer than two eligible finalists")
-    return tuple(dict.fromkeys(finalists))
+    return load_engineer_decision(path, exact=1).selected_candidates[0]
 
 
 def _config(payload, candidate, dimension):

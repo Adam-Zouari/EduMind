@@ -15,8 +15,8 @@ from experiments.benchmarks.common.contracts import BenchmarkPlan
 from experiments.benchmarks.common.datasets import load_manifest
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
-from experiments.benchmarks.rag.evaluation import build_index
-from experiments.benchmarks.rag.generation.evaluate import evaluate_candidate
+from experiments.benchmarks.rag.evaluation import RETRIEVAL_QUALITY_DIRECTIONS, build_index
+from experiments.benchmarks.rag.generation.evaluate import GENERATION_DIRECTIONS, evaluate_candidate
 
 
 def main() -> int:
@@ -74,19 +74,8 @@ def main() -> int:
         dataset_checksum=stable_hash(
             {"reference": reference.fingerprint, "extracted": extracted.fingerprint}
         ),
-        directions={
-            "ndcg_at_3": "max",
-            "ndcg_at_5": "max",
-            "context_recall_at_3": "max",
-            "context_recall_at_5": "max",
-            "context_precision_at_3": "max",
-            "context_precision_at_5": "max",
-            "context_recall_at_2048_tokens": "max",
-            "citation_f1": "max",
-            "hhem_faithfulness": "max",
-            "operational.p95_latency_seconds": "min",
-            "operational.peak_process_memory_gb": "min",
-        },
+        directions={**GENERATION_DIRECTIONS, **RETRIEVAL_QUALITY_DIRECTIONS},
+        primary_metric="citation_f1",
         revisions={**revisions, "frozen_system": arguments.candidate},
         no_mlflow=arguments.no_mlflow,
     )
@@ -96,7 +85,7 @@ def main() -> int:
             indent=2,
         )
     )
-    return 0 if all(candidate.status == "success" for candidate in result.candidates) else 2
+    return 0 if result.complete else 2
 
 
 def _validate_pair(reference_samples, extracted_samples) -> None:

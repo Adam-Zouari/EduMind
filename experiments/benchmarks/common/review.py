@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import random
 from pathlib import Path
 
 import pandas as pd
 
 from edumind.common.artifacts import atomic_write_json, stable_hash
+
+from .decisions import load_engineer_decision
+from .tracking import DEFAULT_TRACKING_URI
 
 RUBRIC_FIELDS = (
     "human_faithfulness",
@@ -21,28 +25,22 @@ RUBRIC_FIELDS = (
 
 
 def export_review(
-    summary_path: Path,
+    selection_path: Path,
     output_path: Path,
     *,
     finalist_count: int = 3,
     question_count: int = 20,
     seed: int = 42,
 ) -> Path:
+    decision = load_engineer_decision(selection_path, exact=finalist_count)
+    summary_path = decision.source_summary
     payload = json.loads(summary_path.read_text(encoding="utf-8"))
-    successful = [
-        candidate
+    by_name = {
+        str(candidate.get("candidate")): candidate
         for candidate in payload.get("candidates", [])
         if candidate.get("status") == "success"
-    ]
-    pareto = list(payload.get("pareto_candidates", []))
-    ordered = sorted(
-        successful,
-        key=lambda item: (
-            0 if item.get("candidate") in pareto else 1,
-            -float(item.get("metrics", {}).get("citation_f1", 0)),
-            float(item.get("operational", {}).get("p95_latency_seconds", float("inf"))),
-        ),
-    )[:finalist_count]
+    }
+    ordered = [by_name[name] for name in decision.selected_candidates]
     if len(ordered) != finalist_count:
         raise ValueError(f"Human review requires exactly {finalist_count} successful finalists")
     for candidate in ordered:
@@ -92,6 +90,8 @@ def export_review(
         output_path.with_suffix(".identity.json"),
         {
             "run_id": payload.get("run_id"),
+            "mlflow_run_id": payload.get("mlflow_run_id"),
+            "engineer_selection": str(selection_path),
             "items": identity_map,
             "expected_judgments": finalist_count * question_count,
             "finalist_count": finalist_count,
@@ -155,7 +155,9 @@ def import_review(review_path: Path, identity_path: Path | None = None) -> dict[
         },
         "complete": True,
     }
-    atomic_write_json(review_path.with_suffix(".results.json"), summary)
+    results_path = review_path.with_suffix(".results.json")
+    atomic_write_json(results_path, summary)
+    _log_review_to_mlflow(review_path, identity_file, results_path, identity, summary)
     return summary
 
 
@@ -201,3 +203,43 @@ def _load_samples(run_directory: Path, candidate: str) -> list[dict[str, object]
         }
         for row in rows
     ]
+
+
+def _log_review_to_mlflow(
+    review_path: Path,
+    identity_path: Path,
+    results_path: Path,
+    identity: dict[str, object],
+    summary: dict[str, object],
+) -> None:
+    run_id = identity.get("mlflow_run_id")
+    if not isinstance(run_id, str) or not run_id or run_id.startswith("no-mlflow:"):
+        return
+    try:
+        import mlflow
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "This review belongs to an MLflow benchmark run, but MLflow is not installed"
+        ) from exc
+    mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", DEFAULT_TRACKING_URI))
+    metrics = {"human_review.judgment_count": float(summary["judgment_count"])}
+    candidates = summary.get("candidates", {})
+    if isinstance(candidates, dict):
+        for candidate, values in candidates.items():
+            if not isinstance(values, dict):
+                continue
+            prefix = _safe_metric_name(str(candidate))
+            for metric, value in values.items():
+                metrics[f"human_review.{prefix}.{metric}"] = float(value)
+    with mlflow.start_run(run_id=run_id):
+        mlflow.log_metrics(metrics)
+        for path in (review_path, identity_path, results_path):
+            mlflow.log_artifact(str(path), artifact_path="human-review")
+
+
+def _safe_metric_name(value: str) -> str:
+    safe = "".join(
+        character if character.isalnum() or character in "-_." else "_"
+        for character in value
+    )
+    return safe[:100]

@@ -8,32 +8,31 @@ from edumind.common.paths import PROJECT_ROOT
 from edumind.common.artifacts import atomic_write_json
 from experiments.benchmarks.common.arguments import parser, resolved_candidates
 from experiments.benchmarks.common.contracts import BenchmarkPlan
+from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.datasets import load_manifest
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
-from experiments.benchmarks.rag.evaluation import build_index
-from experiments.benchmarks.rag.generation.evaluate import evaluate_candidate
-
-def _selections(path: Path, maximum: int) -> tuple[str, ...]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    values = payload.get("pareto_candidates")
-    if not isinstance(values, list) or not values:
-        raise ValueError(f"{path} has no Pareto candidates")
-    if len(values) > maximum:
-        raise ValueError(f"{path} must be explicitly reduced to at most {maximum} candidates")
-    return tuple(str(value) for value in values)
-
+from experiments.benchmarks.rag.evaluation import RETRIEVAL_QUALITY_DIRECTIONS, build_index
+from experiments.benchmarks.rag.generation.evaluate import GENERATION_DIRECTIONS, evaluate_candidate
 
 directory = Path(__file__).parent
 argument_parser = parser("Benchmark shortlisted complete RAG systems")
-argument_parser.add_argument("--retrieval-summary", type=Path)
-argument_parser.add_argument("--generation-summary", type=Path)
+argument_parser.add_argument("--retrieval-selection", type=Path)
+argument_parser.add_argument("--generation-selection", type=Path)
 argument_parser.add_argument("--review-results", type=Path)
 argument_parser.add_argument("--confirm-locked-test", action="store_true")
 argument_parser.add_argument(
     "--device", choices=("cpu", "cuda"), help="Whole-model generator device"
 )
 arguments = argument_parser.parse_args()
+if (
+    arguments.profile == "standard"
+    and arguments.shortlist is None
+    and (arguments.retrieval_selection is None or arguments.generation_selection is None)
+):
+    argument_parser.error(
+        "standard final RAG requires --retrieval-selection and --generation-selection"
+    )
 if arguments.profile in {"standard", "full"} and arguments.device is None:
     argument_parser.error("standard/full final RAG requires explicit --device cpu|cuda")
 device = arguments.device or "cpu"
@@ -44,11 +43,15 @@ manifest_path = arguments.manifest or PROJECT_ROOT / (
 )
 manifest = load_manifest(manifest_path)
 candidates = resolved_candidates(directory / "candidates.yaml", arguments.profile, arguments.shortlist)
-if arguments.shortlist is None and (arguments.retrieval_summary or arguments.generation_summary):
-    if not arguments.retrieval_summary or not arguments.generation_summary:
-        raise ValueError("Provide both --retrieval-summary and --generation-summary")
-    retrievals = _selections(arguments.retrieval_summary, 3)
-    generators = _selections(arguments.generation_summary, 3)
+if arguments.shortlist is None and (arguments.retrieval_selection or arguments.generation_selection):
+    if not arguments.retrieval_selection or not arguments.generation_selection:
+        raise ValueError("Provide both --retrieval-selection and --generation-selection")
+    retrievals = load_engineer_decision(
+        arguments.retrieval_selection, maximum=3
+    ).selected_candidates
+    generators = load_engineer_decision(
+        arguments.generation_selection, maximum=3
+    ).selected_candidates
     candidates = tuple(
         f"{retrieval}@@{generator}@@top_k={top_k}"
         for retrieval in retrievals
@@ -116,30 +119,22 @@ result = run_benchmark(
     plan,
     evaluate,
     dataset_checksum=manifest.fingerprint,
-    directions={
-        "ndcg_at_3": "max",
-        "ndcg_at_5": "max",
-        "context_recall_at_3": "max",
-        "context_recall_at_5": "max",
-        "context_precision_at_3": "max",
-        "context_precision_at_5": "max",
-        "context_recall_at_2048_tokens": "max",
-        "citation_f1": "max",
-        "answerability_balanced_accuracy": "max",
-        "hhem_faithfulness": "max",
-        "operational.p95_latency_seconds": "min",
-        "operational.peak_process_memory_gb": "min",
-    },
-    gates={
-        "malformed_output_rate": ("min", 0.0),
-        "operational.p95_latency_seconds": ("min", 30.0),
-        "operational.peak_process_memory_gb": ("min", 28.0),
-    },
+    directions={**GENERATION_DIRECTIONS, **RETRIEVAL_QUALITY_DIRECTIONS},
+    primary_metric="citation_f1",
     revisions=revisions,
+    decision_files={
+        name: path
+        for name, path in {
+            "shortlist": arguments.shortlist,
+            "retrieval": arguments.retrieval_selection,
+            "generation": arguments.generation_selection,
+        }.items()
+        if path is not None
+    },
     no_mlflow=arguments.no_mlflow,
 )
 print(json.dumps({"run_id": result.run_id, "artifacts": str(result.artifact_directory)}, indent=2))
-if arguments.profile == "full" and all(row.status == "success" for row in result.candidates):
+if arguments.profile == "full" and result.complete:
     atomic_write_json(
         locked_marker,
         {
@@ -149,4 +144,4 @@ if arguments.profile == "full" and all(row.status == "success" for row in result
             "artifact_directory": str(result.artifact_directory),
         },
     )
-raise SystemExit(0 if all(row.status == "success" for row in result.candidates) else 2)
+raise SystemExit(0 if result.complete else 2)

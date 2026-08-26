@@ -30,6 +30,43 @@ from experiments.benchmarks.rag.generation.models import (
     generator_for,
 )
 
+GENERATION_DIRECTIONS = {
+    "exact_match": "max",
+    "token_f1": "max",
+    "rouge_l": "max",
+    "citation_precision": "max",
+    "citation_recall": "max",
+    "citation_f1": "max",
+    "answerability_correct": "max",
+    "answerability_balanced_accuracy": "max",
+    "hhem_faithfulness": "max",
+    "refusal_precision": "max",
+    "refusal_recall": "max",
+    "refusal_f1": "max",
+    "unsupported_answer_rate": "min",
+    "malformed_output_rate": "min",
+    "determinism": "max",
+    "human_review_required": "max",
+    "operational.p50_latency_seconds": "min",
+    "operational.p95_latency_seconds": "min",
+    "operational.p50_retrieval_seconds": "min",
+    "operational.p95_retrieval_seconds": "min",
+    "operational.p50_generation_seconds": "min",
+    "operational.p95_generation_seconds": "min",
+    "operational.p50_time_to_first_token_seconds": "min",
+    "operational.p95_time_to_first_token_seconds": "min",
+    "operational.mean_prompt_evaluation_seconds": "min",
+    "operational.mean_model_generation_seconds": "min",
+    "operational.mean_prompt_tokens": "min",
+    "operational.tokens_per_second": "max",
+    "operational.answers_per_minute": "max",
+    "operational.mean_answer_tokens": "min",
+    "operational.mean_reasoning_tokens": "min",
+    "operational.mean_generated_tokens": "min",
+    "operational.cold_load_seconds": "min",
+    "operational.peak_process_memory_gb": "min",
+}
+
 
 class LocalFaithfulness:
     def __init__(self, model_path: str) -> None:

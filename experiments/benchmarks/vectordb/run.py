@@ -16,6 +16,7 @@ from edumind.common.paths import PROJECT_ROOT
 from edumind.common.artifacts import sha256_file, stable_hash
 from experiments.benchmarks.common.arguments import resolved_candidates
 from experiments.benchmarks.common.contracts import BenchmarkPlan, SampleResult
+from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.vectordb.adapters import Config, Record, create
 from experiments.benchmarks.vectordb.conformance import _finish_index, check
@@ -32,23 +33,20 @@ def main() -> int:
     parser.add_argument("--profile", choices=("smoke", "standard", "full"), default="smoke")
     parser.add_argument("--shortlist", type=Path)
     parser.add_argument(
-        "--embedding-summary",
+        "--embedding-selection",
         type=Path,
-        help="required for full: chunking/embedding summary.json used to rebuild real vectors",
+        help="required for full: engineer-selected chunking/embedding pair",
     )
     parser.add_argument("--no-mlflow", action="store_true")
     arguments = parser.parse_args()
     candidates = resolved_candidates(DIRECTORY / "candidates.yaml", arguments.profile, arguments.shortlist)
-    if arguments.profile == "full":
-        alternatives = [candidate for candidate in candidates if candidate != "chroma"]
-        if len(alternatives) > 2:
-            raise ValueError("Approve at most two non-Chroma vector finalists before full")
-        candidates = tuple(dict.fromkeys([*alternatives, "chroma"]))
+    if arguments.profile == "full" and len(candidates) > 3:
+        raise ValueError("Select at most three vector-database finalists before full")
     revisions = image_lock()
-    workloads = _workloads(arguments.profile, arguments.embedding_summary)
+    workloads = _workloads(arguments.profile, arguments.embedding_selection)
     dataset_name = "+".join(name for name, _ in workloads)
-    if arguments.embedding_summary is not None:
-        dataset_name += f"@{sha256_file(arguments.embedding_summary)[:12]}"
+    if arguments.embedding_selection is not None:
+        dataset_name += f"@{sha256_file(arguments.embedding_selection)[:12]}"
     plan = BenchmarkPlan(
         "vectordb-server-v4",
         "dense-ann",
@@ -68,9 +66,20 @@ def main() -> int:
         with DockerMonitor(candidate) as docker:
             for workload_number, (name, corpus) in enumerate(workloads):
                 size, dimension = len(corpus.vectors), corpus.vectors.shape[1]
-                config, trial_count, unsupported = _select_config(candidate, corpus, arguments.profile)
+                config, trials, unsupported = _select_config(
+                    candidate, corpus, arguments.profile
+                )
+                trial_count = len(trials) + len(unsupported)
                 operational[f"{name}.tuning_trials"] = float(trial_count)
                 operational[f"{name}.unsupported_configurations"] = float(len(unsupported))
+                for trial_config, trial_recall, trial_p95 in trials:
+                    trial_name = (
+                        f"{name}.tuning_m{trial_config.m}_"
+                        f"construction{trial_config.ef_construction}_"
+                        f"search{trial_config.ef_search}"
+                    )
+                    operational[f"{trial_name}.ann_recall_at_10"] = trial_recall
+                    operational[f"{trial_name}.p95_latency_seconds"] = trial_p95
                 for unsupported_config in unsupported:
                     key = (
                         f"{name}.unsupported_m{unsupported_config.m}_"
@@ -151,36 +160,47 @@ def main() -> int:
             [{"name": name, "fingerprint": corpus.fingerprint} for name, corpus in workloads]
         ),
         directions={
+            "ann_recall_at_1": "max",
+            "ann_recall_at_3": "max",
+            "ann_recall_at_5": "max",
             "ann_recall_at_10": "max",
+            "filtered_ann_recall_at_1": "max",
+            "filtered_ann_recall_at_3": "max",
+            "filtered_ann_recall_at_5": "max",
             "filtered_ann_recall_at_10": "max",
+            "filter_correctness": "max",
+            "empty_filter_correctness": "max",
+            "health_correctness": "max",
+            "cosine_correctness": "max",
+            "compound_filter_correctness": "max",
+            "dimension_rejection_correctness": "max",
+            "duplicate_id_correctness": "max",
+            "replacement_correctness": "max",
+            "deletion_correctness": "max",
+            "restart_persistence_correctness": "max",
+            "ann_index_verified": "max",
+            "ann_index_verified_after_restart": "max",
+            "target_concurrency_success": "max",
             "operational.peak_server_memory_bytes": "min",
             "operational.persistent_storage_bytes": "min",
         },
-        gates={
-            "ann_recall_at_10": ("max", 0.99),
-            "filtered_ann_recall_at_10": ("max", 0.99),
-            "filter_correctness": ("max", 1.0),
-            "empty_filter_correctness": ("max", 1.0),
-            "health_correctness": ("max", 1.0),
-            "cosine_correctness": ("max", 1.0),
-            "compound_filter_correctness": ("max", 1.0),
-            "dimension_rejection_correctness": ("max", 1.0),
-            "duplicate_id_correctness": ("max", 1.0),
-            "replacement_correctness": ("max", 1.0),
-            "deletion_correctness": ("max", 1.0),
-            "restart_persistence_correctness": ("max", 1.0),
-            "ann_index_verified": ("max", 1.0),
-            "ann_index_verified_after_restart": ("max", 1.0),
-            "target_concurrency_success": ("max", 1.0),
-        },
+        primary_metric="ann_recall_at_10",
         revisions=revisions,
+        decision_files={
+            name: path
+            for name, path in {
+                "shortlist": arguments.shortlist,
+                "embedding": arguments.embedding_selection,
+            }.items()
+            if path is not None
+        },
         no_mlflow=arguments.no_mlflow,
     )
     print(json.dumps({"run_id": result.run_id, "artifacts": str(result.artifact_directory)}, indent=2))
-    return 0 if all(row.status == "success" for row in result.candidates) else 2
+    return 0 if result.complete else 2
 
 
-def _workloads(profile: str, embedding_summary: Path | None):
+def _workloads(profile: str, embedding_selection: Path | None):
     if profile == "smoke":
         return (("smoke-1k-d384", clustered(1_000, 384, 50)),)
     if profile == "standard":
@@ -188,9 +208,9 @@ def _workloads(profile: str, embedding_summary: Path | None):
             ("standard-100k-d384", clustered(100_000, 384, 500)),
             ("standard-100k-d1024", clustered(100_000, 1_024, 500)),
         )
-    if embedding_summary is None:
-        raise ValueError("Full vector benchmark requires --embedding-summary SUMMARY_JSON")
-    real = _real_corpus(embedding_summary)
+    if embedding_selection is None:
+        raise ValueError("Full vector benchmark requires --embedding-selection DECISION_JSON")
+    real = _real_corpus(embedding_selection)
     dimension = real.vectors.shape[1]
     return (
         ("full-real-selected", real),
@@ -198,18 +218,13 @@ def _workloads(profile: str, embedding_summary: Path | None):
     )
 
 
-def _real_corpus(summary_path: Path) -> Corpus:
+def _real_corpus(selection_path: Path) -> Corpus:
     from experiments.benchmarks.common.datasets import load_manifest
     from experiments.benchmarks.preparation.models import load_selected_model_lock
     from experiments.benchmarks.rag.evaluation import build_index
 
-    payload = json.loads(summary_path.read_text(encoding="utf-8"))
-    selected = payload.get("pareto_candidates")
-    if not isinstance(selected, list) or len(selected) != 1:
-        raise ValueError(
-            "Embedding summary must contain exactly one approved pareto_candidate before full DB testing"
-        )
-    chunker, embedding = str(selected[0]).split("|", 1)
+    selected = load_engineer_decision(selection_path, exact=1).selected_candidates[0]
+    chunker, embedding = selected.split("|", 1)
     manifest = load_manifest(PROJECT_ROOT / "data/benchmarks/rag/rag-selection-validation.json")
     model_lock = load_selected_model_lock(
         PROJECT_ROOT / "data/benchmarks/models/selected.json"
@@ -237,9 +252,9 @@ def _real_corpus(summary_path: Path) -> Corpus:
         metadata,
         stable_hash(
             {
-                "embedding_summary": sha256_file(summary_path),
+                "embedding_selection": sha256_file(selection_path),
                 "manifest": manifest.fingerprint,
-                "selected": selected[0],
+                "selected": selected,
                 "vector_count": len(index.vectors),
                 "query_count": len(query_vectors),
             }
@@ -293,11 +308,19 @@ def _select_config(candidate, corpus, profile):
         finally:
             if adapter is not None:
                 adapter.close()
+    if not trials:
+        raise RuntimeError(f"{candidate} could not execute any declared HNSW configuration")
     passing = [trial for trial in trials if trial[1] >= 0.99]
-    if not passing:
-        raise RuntimeError(f"{candidate} has no supported HNSW configuration reaching Recall@10 >= 0.99")
-    selected = min(passing, key=lambda trial: (trial[2], trial[0].m, trial[0].ef_search))[0]
-    return selected, len(configurations), unsupported
+    if passing:
+        selected_trial = min(
+            passing, key=lambda trial: (trial[2], trial[0].m, trial[0].ef_search)
+        )
+    else:
+        # A low recall result is evidence, not a failed experiment. Measure the
+        # highest-recall supported profile so the engineer can review it.
+        selected_trial = max(trials, key=lambda trial: (trial[1], -trial[2]))
+    selected = selected_trial[0]
+    return selected, trials, unsupported
 
 
 def _measure(adapter, corpus, workload, profile, repetitions):

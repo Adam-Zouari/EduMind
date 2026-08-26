@@ -42,8 +42,10 @@ result = run_benchmark(
     ),
     dataset_checksum=manifest.fingerprint,
     directions=RETRIEVAL_DIRECTIONS,
+    primary_metric="ndcg_at_5",
     revisions=revisions,
+    decision_files={"shortlist": arguments.shortlist} if arguments.shortlist else None,
     no_mlflow=arguments.no_mlflow,
 )
 print(json.dumps({"run_id": result.run_id, "artifacts": str(result.artifact_directory)}, indent=2))
-raise SystemExit(0 if all(row.status == "success" for row in result.candidates) else 2)
+raise SystemExit(0 if result.complete else 2)

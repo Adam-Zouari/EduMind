@@ -16,7 +16,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Export or import blinded RAG review")
     commands = parser.add_subparsers(dest="command", required=True)
     export = commands.add_parser("export")
-    export.add_argument("summary", type=Path)
+    export.add_argument("selection", type=Path)
     export.add_argument("output", type=Path)
     export.add_argument("--finalists", type=int, default=3)
     export.add_argument("--questions", type=int, default=20)
@@ -26,7 +26,7 @@ def main() -> int:
     if arguments.command == "export":
         print(
             export_review(
-                arguments.summary,
+                arguments.selection,
                 arguments.output,
                 finalist_count=arguments.finalists,
                 question_count=arguments.questions,

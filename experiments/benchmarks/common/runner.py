@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import random
 import time
 import uuid
@@ -45,11 +46,13 @@ def run_benchmark(
     *,
     dataset_checksum: str,
     directions: Mapping[str, str],
-    gates: Mapping[str, tuple[str, float]] | None = None,
+    primary_metric: str,
     revisions: Mapping[str, str] | None = None,
+    decision_files: Mapping[str, Path] | None = None,
     no_mlflow: bool = False,
     artifact_root: Path = Path("artifacts/benchmarks"),
 ) -> BenchmarkResult:
+    _validate_metric_contract(directions, primary_metric)
     run_name = f"{plan.suite}-{plan.stage}-{time.strftime('%Y%m%d-%H%M%S')}"
     run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     directory = artifact_root / plan.suite / plan.stage / run_id
@@ -67,13 +70,23 @@ def run_benchmark(
             if path.is_file()
         },
         "seed": plan.seed,
+        "engineer_decisions": {
+            name: {"path": str(path.resolve()), "sha256": sha256_file(path)}
+            for name, path in (decision_files or {}).items()
+        },
     }
     plan_path = directory / "plan.json"
     provenance_path = directory / "provenance.json"
-    atomic_write_json(plan_path, asdict(plan))
+    metric_contract = {
+        "primary_metric": primary_metric,
+        "directions": dict(directions),
+        "required_metrics": list(directions),
+    }
+    plan_payload = {**asdict(plan), "metric_contract": metric_contract}
+    atomic_write_json(plan_path, plan_payload)
     atomic_write_json(provenance_path, provenance)
     tracking = tracker(disabled=no_mlflow, experiment=f"EduMind / {plan.suite}")
-    run_fingerprint = stable_hash({"plan": asdict(plan), "provenance": provenance})
+    run_fingerprint = stable_hash({"plan": plan_payload, "provenance": provenance})
     results: list[CandidateResult] = []
     order = list(plan.candidates)
     random.Random(plan.seed).shuffle(order)
@@ -85,6 +98,8 @@ def run_benchmark(
                 "dataset": plan.dataset,
                 "dataset_checksum": dataset_checksum,
                 "seed": plan.seed,
+                "primary_metric": primary_metric,
+                "required_metrics": json.dumps(list(directions)),
                 "run_fingerprint": run_fingerprint,
                 "git_commit": provenance["git"].get("commit"),
                 "git_dirty": provenance["git"].get("dirty"),
@@ -92,111 +107,123 @@ def run_benchmark(
                 "hardware": json.dumps(provenance["hardware"], sort_keys=True),
                 "model_revisions": json.dumps(provenance["model_revisions"], sort_keys=True),
                 "dependency_locks": json.dumps(provenance["dependency_locks"], sort_keys=True),
+                "engineer_decisions": json.dumps(
+                    provenance["engineer_decisions"], sort_keys=True
+                ),
             }
         )
         tracking.artifact(plan_path)
         tracking.artifact(provenance_path)
+        for decision_name, decision_path in (decision_files or {}).items():
+            tracking.artifact(decision_path, f"engineer-decisions/{decision_name}")
         for candidate in order:
             results.append(
                 _run_candidate(
-                    plan, candidate, evaluator, directory, tracking, run_fingerprint
+                    plan,
+                    candidate,
+                    evaluator,
+                    directory,
+                    tracking,
+                    run_fingerprint,
+                    tuple(directions),
                 )
             )
 
         successful = [result for result in results if result.status == "success"]
-        rows = {
-            result.candidate: {
-                **result.metrics,
-                **{f"operational.{key}": value for key, value in result.operational.items()},
-            }
-            for result in successful
-        }
-        failures = {
-            name: _failed_gates(row, gates or {})
-            for name, row in rows.items()
-            if _failed_gates(row, gates or {})
-        }
-        eligible = {name: row for name, row in rows.items() if name not in failures}
-        available_directions = {
-            name: direction
-            for name, direction in directions.items()
-            if all(name in row for row in eligible.values())
-        }
-        pareto = (
-            _interval_aware_pareto(
-                eligible,
-                {result.candidate: result for result in successful},
-                available_directions,
-            )
-            if plan.profile in {"standard", "full"} and eligible
-            else []
-        )
+        problems = _completion_problems(plan, results)
+        complete = not problems
         summary = {
             "run_id": run_id,
             "fingerprint": run_fingerprint,
             "mlflow_run_id": mlflow_run_id,
             "plan": asdict(plan),
+            "metric_contract": metric_contract,
             "provenance": provenance,
             "candidates": [_payload(result, include_samples=False) for result in results],
-            "gate_failures": failures,
-            "pareto_candidates": pareto,
             "paired_comparisons": _paired_comparisons(
                 successful,
-                available_directions,
+                directions,
                 resamples=500 if plan.profile == "smoke" else plan.bootstrap_resamples,
                 seed=plan.seed,
             ),
-            "authoritative": plan.profile in {"standard", "full"} and bool(eligible),
+            "complete": complete,
+            "completion": {
+                "planned_candidates": len(plan.candidates),
+                "successful_candidates": len(successful),
+                "failed_candidates": len(plan.candidates) - len(successful),
+                "sample_count": len(successful[0].samples) if successful else 0,
+                "problems": problems,
+            },
+            "selection": {
+                "made_by_runner": False,
+                "instruction": (
+                    "Review the MLflow child runs and artifacts. After a complete standard/full "
+                    "run, record any advancement in a separate engineer-decision JSON file."
+                ),
+            },
         }
         summary_path = directory / "summary.json"
         atomic_write_json(summary_path, summary)
         tracking.artifact(summary_path)
+        tracking.metrics(
+            {
+                "benchmark_complete": float(complete),
+                "successful_candidates": float(len(successful)),
+                "failed_candidates": float(len(plan.candidates) - len(successful)),
+            }
+        )
     return BenchmarkResult(
         run_id,
         plan,
         provenance,
         tuple(results),
-        tuple(pareto),
-        bool(summary["authoritative"]),
+        complete,
+        tuple(problems),
         directory,
     )
 
 
 def _run_candidate(
-    plan, candidate, evaluator, directory, tracking, run_fingerprint
+    plan,
+    candidate,
+    evaluator,
+    directory,
+    tracking,
+    run_fingerprint,
+    required_metrics,
 ) -> CandidateResult:
-    try:
-        with tracking.run(candidate, nested=True):
+    samples: list[SampleResult] = []
+    metrics: dict[str, float] = {}
+    intervals: dict[str, dict[str, float]] = {}
+    operational: dict[str, float] = {}
+    fingerprint = stable_hash({"run": run_fingerprint, "candidate": candidate})
+    with tracking.run(candidate, nested=True):
+        try:
             tracking.parameters({"candidate": candidate, "profile": plan.profile})
-            try:
-                with ResourceMonitor() as resources:
-                    evaluated = evaluator(candidate)
-                    samples, operational = evaluated[:2]
-                    candidate_metrics = evaluated[2] if len(evaluated) == 3 else {}
-                    if len(evaluated) >= 4:
-                        candidate_metrics = evaluated[2]
-                        tracking.parameters(evaluated[3])
-            except Exception as exc:
-                tracking.parameters(
-                    {
-                        "candidate_status": "failed",
-                        "candidate_error": f"{type(exc).__name__}: {exc}",
-                    }
-                )
-                raise
+            resources = ResourceMonitor()
+            with resources:
+                evaluated = evaluator(candidate)
+            samples = list(evaluated[0])
+            operational = {**dict(evaluated[1]), **resources.metrics()}
+            candidate_metrics = dict(evaluated[2]) if len(evaluated) >= 3 else {}
+            if len(evaluated) >= 4:
+                tracking.parameters(evaluated[3])
             if not samples:
                 raise RuntimeError("Candidate produced no samples")
+            _validate_sample_ids(samples)
+            sample_path = _write_samples(directory, candidate, samples)
+            tracking.artifact(sample_path)
             metrics, intervals = aggregate_samples(
                 samples,
                 resamples=500 if plan.profile == "smoke" else plan.bootstrap_resamples,
                 seed=plan.seed,
             )
             metrics = {**metrics, **candidate_metrics}
-            operational = {**operational, **resources.metrics()}
+            _validate_required_metrics(metrics, operational, required_metrics)
             result = CandidateResult(
                 candidate,
                 "success",
-                stable_hash({"run": run_fingerprint, "candidate": candidate}),
+                fingerprint,
                 metrics,
                 intervals,
                 tuple(samples),
@@ -213,28 +240,44 @@ def _run_candidate(
                     **{f"operational.{key}": value for key, value in operational.items()},
                 }
             )
-            sample_path = _write_samples(directory, candidate, samples)
-            tracking.artifact(sample_path)
+            tracking.parameters({"candidate_status": "success"})
             candidate_path = directory / "candidates" / f"{_safe(candidate)}.json"
             atomic_write_json(candidate_path, _payload(result, include_samples=False))
             tracking.artifact(candidate_path)
             return result
-    except Exception as exc:
-        result = CandidateResult(
-            candidate,
-            "failed",
-            stable_hash({"run": run_fingerprint, "candidate": candidate}),
-            {},
-            {},
-            (),
-            {},
-            f"{type(exc).__name__}: {exc}",
-        )
-        atomic_write_json(
-            directory / "candidates" / f"{_safe(candidate)}.json",
-            _payload(result, include_samples=False),
-        )
-        return result
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            result = CandidateResult(
+                candidate,
+                "failed",
+                fingerprint,
+                metrics,
+                intervals,
+                tuple(samples),
+                operational,
+                error,
+            )
+            tracking.parameters({"candidate_status": "failed", "candidate_error": error})
+            partial_metrics = {
+                **metrics,
+                **{f"operational.{key}": value for key, value in operational.items()},
+            }
+            tracking.metrics(
+                {
+                    key: float(value)
+                    for key, value in partial_metrics.items()
+                    if _finite_number(value)
+                }
+            )
+            if samples:
+                sample_path = directory / "samples" / f"{_safe(candidate)}.parquet"
+                if not sample_path.is_file():
+                    sample_path = _write_samples(directory, candidate, samples)
+                tracking.artifact(sample_path)
+            candidate_path = directory / "candidates" / f"{_safe(candidate)}.json"
+            atomic_write_json(candidate_path, _payload(result, include_samples=False))
+            tracking.artifact(candidate_path)
+            return result
 
 
 def _write_samples(directory: Path, candidate: str, samples: list[SampleResult]) -> Path:
@@ -263,81 +306,83 @@ def _safe(value: str) -> str:
     return "".join(character if character.isalnum() or character in "-_." else "_" for character in value)
 
 
-def _failed_gates(
-    values: Mapping[str, float], gates: Mapping[str, tuple[str, float]]
-) -> list[str]:
-    failures: list[str] = []
-    for metric, (direction, threshold) in gates.items():
-        value = values.get(metric)
-        if value is None:
-            failures.append(f"{metric}:missing")
-        elif direction == "max" and value < threshold:
-            failures.append(f"{metric}<{threshold}")
-        elif direction == "min" and value > threshold:
-            failures.append(f"{metric}>{threshold}")
-    return failures
-
-
-def _interval_aware_pareto(rows, results, directions) -> list[str]:
-    """Pareto set with overlapping quality intervals treated as ties.
-
-    If every quality objective overlaps for a pair, the documented operational
-    tie-break order is applied lexicographically: p95 latency, RAM, then storage.
-    """
+def _validate_metric_contract(directions: Mapping[str, str], primary_metric: str) -> None:
     if not directions:
-        return list(rows)
-    names = list(rows)
-    selected = []
-    for candidate in names:
-        if not any(
-            other != candidate
-            and _dominates(other, candidate, rows, results, directions)
-            for other in names
-        ):
-            selected.append(candidate)
-    return selected
+        raise ValueError("A benchmark must declare at least one required metric")
+    invalid = sorted(name for name, direction in directions.items() if direction not in {"min", "max"})
+    if invalid:
+        raise ValueError(f"Metrics have invalid directions: {', '.join(invalid)}")
+    if primary_metric not in directions:
+        raise ValueError("primary_metric must be one of the benchmark's required metrics")
 
 
-def _dominates(left, right, rows, results, directions) -> bool:
-    quality = [name for name in directions if not name.startswith("operational.")]
-    all_quality_tied = bool(quality) and all(
-        _quality_tied(results[left], results[right], name) for name in quality
-    )
-    if all_quality_tied:
-        for metric in (
-            "operational.p95_latency_seconds",
-            "operational.peak_ram_mb",
-            "operational.storage_bytes",
-            "operational.persistent_storage_bytes",
-        ):
-            if metric not in rows[left] or metric not in rows[right]:
-                continue
-            if rows[left][metric] != rows[right][metric]:
-                return rows[left][metric] < rows[right][metric]
-        return False
-
-    at_least_as_good = True
-    strictly_better = False
-    for metric, direction in directions.items():
-        if metric in quality and _quality_tied(results[left], results[right], metric):
-            continue
-        left_value, right_value = rows[left][metric], rows[right][metric]
-        better_or_equal = left_value >= right_value if direction == "max" else left_value <= right_value
-        better = left_value > right_value if direction == "max" else left_value < right_value
-        at_least_as_good &= better_or_equal
-        strictly_better |= better
-    return at_least_as_good and strictly_better
+def _validate_sample_ids(samples: list[SampleResult]) -> None:
+    identifiers = [sample.sample_id for sample in samples]
+    if any(not identifier for identifier in identifiers):
+        raise ValueError("Every sample result must have a non-empty sample_id")
+    duplicates = sorted({value for value in identifiers if identifiers.count(value) > 1})
+    if duplicates:
+        raise ValueError(f"Candidate produced duplicate sample IDs: {', '.join(duplicates[:10])}")
 
 
-def _quality_tied(left: CandidateResult, right: CandidateResult, metric: str) -> bool:
-    left_interval = left.intervals.get(metric)
-    right_interval = right.intervals.get(metric)
-    if not left_interval or not right_interval:
-        return False
-    return not (
-        float(left_interval["upper"]) < float(right_interval["lower"])
-        or float(right_interval["upper"]) < float(left_interval["lower"])
-    )
+def _validate_required_metrics(metrics, operational, required_metrics) -> None:
+    values = {
+        **metrics,
+        **{f"operational.{name}": value for name, value in operational.items()},
+    }
+    missing = [name for name in required_metrics if name not in values]
+    invalid = [
+        name for name in required_metrics if name in values and not _finite_number(values[name])
+    ]
+    problems = []
+    if missing:
+        problems.append("missing: " + ", ".join(missing))
+    if invalid:
+        problems.append("non-finite: " + ", ".join(invalid))
+    if problems:
+        raise ValueError("Required metric contract failed (" + "; ".join(problems) + ")")
+
+
+def _finite_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _completion_problems(plan: BenchmarkPlan, results: list[CandidateResult]) -> list[str]:
+    problems: list[str] = []
+    returned = [result.candidate for result in results]
+    if returned != list(dict.fromkeys(returned)):
+        problems.append("runner returned duplicate candidate results")
+    missing_candidates = sorted(set(plan.candidates) - set(returned))
+    unexpected_candidates = sorted(set(returned) - set(plan.candidates))
+    if missing_candidates:
+        problems.append("missing candidate results: " + ", ".join(missing_candidates))
+    if unexpected_candidates:
+        problems.append("unexpected candidate results: " + ", ".join(unexpected_candidates))
+
+    failed = [result for result in results if result.status != "success"]
+    for result in failed:
+        problems.append(f"candidate {result.candidate} failed: {result.error or 'unknown error'}")
+
+    successful = [result for result in results if result.status == "success"]
+    if successful:
+        reference = {sample.sample_id for sample in successful[0].samples}
+        for result in successful[1:]:
+            observed = {sample.sample_id for sample in result.samples}
+            if observed != reference:
+                missing = sorted(reference - observed)
+                extra = sorted(observed - reference)
+                detail = []
+                if missing:
+                    detail.append("missing " + ", ".join(missing[:10]))
+                if extra:
+                    detail.append("extra " + ", ".join(extra[:10]))
+                problems.append(
+                    f"candidate {result.candidate} evaluated a different sample set "
+                    f"({' ; '.join(detail)})"
+                )
+    elif plan.candidates:
+        problems.append("no candidate completed successfully")
+    return problems
 
 
 def _paired_comparisons(results, directions, *, resamples: int, seed: int):

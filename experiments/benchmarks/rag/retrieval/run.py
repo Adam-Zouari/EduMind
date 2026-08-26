@@ -7,32 +7,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.arguments import load_candidates, parser, resolved_candidates
 from experiments.benchmarks.common.contracts import BenchmarkPlan
+from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.datasets import load_manifest
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
 from experiments.benchmarks.rag.evaluation import RETRIEVAL_DIRECTIONS, evaluate
 
 
-def _summary_selections(path: Path, *, maximum: int) -> tuple[str, ...]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    values = payload.get("pareto_candidates")
-    if not isinstance(values, list) or not values:
-        raise ValueError(f"{path} has no Pareto candidates")
-    if len(values) > maximum:
-        raise ValueError(
-            f"{path} has {len(values)} candidates; explicitly approve at most {maximum} first"
-        )
-    return tuple(str(value) for value in values)
-
-
 directory = Path(__file__).parent
 argument_parser = parser("Benchmark retrieval and reranking strategies")
 argument_parser.add_argument(
-    "--embedding-summary",
+    "--embedding-selection",
     type=Path,
-    help="chunking/embedding summary.json; its Pareto pairs are crossed with retrieval methods",
+    help="engineer decision selecting up to three chunking/embedding pairs",
 )
 arguments = argument_parser.parse_args()
+if arguments.profile == "standard" and arguments.embedding_selection is None:
+    argument_parser.error("standard retrieval requires --embedding-selection DECISION_JSON")
 manifest_path = arguments.manifest or PROJECT_ROOT / (
     "data/benchmarks/rag/smoke.json"
     if arguments.profile == "smoke"
@@ -46,8 +37,10 @@ if arguments.shortlist:
 else:
     methods = load_candidates(directory / "candidates.yaml", arguments.profile)
     pairs = (
-        _summary_selections(arguments.embedding_summary, maximum=3)
-        if arguments.embedding_summary
+        load_engineer_decision(
+            arguments.embedding_selection, maximum=3
+        ).selected_candidates
+        if arguments.embedding_selection
         else ("token-256-32|sentence-transformers/all-MiniLM-L6-v2",)
     )
     candidates = tuple(
@@ -77,8 +70,17 @@ result = run_benchmark(
     ),
     dataset_checksum=manifest.fingerprint,
     directions=RETRIEVAL_DIRECTIONS,
+    primary_metric="ndcg_at_5",
     revisions=revisions,
+    decision_files={
+        name: path
+        for name, path in {
+            "shortlist": arguments.shortlist,
+            "embedding": arguments.embedding_selection,
+        }.items()
+        if path is not None
+    },
     no_mlflow=arguments.no_mlflow,
 )
 print(json.dumps({"run_id": result.run_id, "artifacts": str(result.artifact_directory)}, indent=2))
-raise SystemExit(0 if all(row.status == "success" for row in result.candidates) else 2)
+raise SystemExit(0 if result.complete else 2)

@@ -252,14 +252,45 @@ def reranker_for(
     return Reranker(model, str(entry["revision"]), str(entry["model_path"]))
 
 
-RETRIEVAL_DIRECTIONS = {
+RETRIEVAL_QUALITY_DIRECTIONS = {
+    "mrr": "max",
+    "precision_at_1": "max",
+    "precision_at_3": "max",
+    "precision_at_5": "max",
+    "precision_at_10": "max",
+    "recall_at_1": "max",
+    "recall_at_3": "max",
+    "recall_at_5": "max",
+    "recall_at_10": "max",
+    "hit_rate_at_1": "max",
+    "hit_rate_at_3": "max",
+    "hit_rate_at_5": "max",
+    "hit_rate_at_10": "max",
+    "map_at_3": "max",
+    "map_at_5": "max",
+    "map_at_10": "max",
     "ndcg_at_3": "max",
     "ndcg_at_5": "max",
+    "ndcg_at_10": "max",
+    "context_precision_at_1": "max",
     "context_recall_at_3": "max",
     "context_recall_at_5": "max",
     "context_precision_at_3": "max",
     "context_precision_at_5": "max",
+    "context_precision_at_10": "max",
+    "context_recall_at_1": "max",
+    "context_recall_at_10": "max",
     "context_recall_at_2048_tokens": "max",
+    "determinism": "max",
+}
+
+RETRIEVAL_DIRECTIONS = {
+    **RETRIEVAL_QUALITY_DIRECTIONS,
+    "operational.indexing_seconds": "min",
+    "operational.chunk_count": "min",
+    "operational.mean_chunk_tokens": "min",
+    "operational.p95_chunk_tokens": "min",
+    "operational.p50_latency_seconds": "min",
     "operational.p95_latency_seconds": "min",
     "operational.storage_bytes": "min",
 }

@@ -6,19 +6,20 @@ import json
 from pathlib import Path
 
 from experiments.benchmarks.common.arguments import parser, resolved_candidates
+from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.extraction.common import run
 
 def main(stage: str, directory: Path) -> int:
     argument_parser = parser(f"Benchmark {stage} extraction")
     argument_parser.add_argument(
-        "--document-summary",
+        "--document-selection",
         type=Path,
-        help="summary.json containing exactly one approved document-parser candidate",
+        help="engineer decision selecting exactly one document-parser candidate",
     )
     argument_parser.add_argument(
-        "--audio-summary",
+        "--audio-selection",
         type=Path,
-        help="summary.json containing exactly one approved audio ASR candidate",
+        help="engineer decision selecting exactly one audio ASR candidate",
     )
     argument_parser.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
     if stage == "document":
@@ -27,13 +28,13 @@ def main(stage: str, directory: Path) -> int:
         )
     arguments = argument_parser.parse_args()
     if arguments.profile != "smoke" and stage == "video":
-        if arguments.document_summary is None:
+        if arguments.document_selection is None:
             raise ValueError(
-                f"video {arguments.profile} requires --document-summary so parsing is frozen"
+                f"video {arguments.profile} requires --document-selection so parsing is frozen"
             )
-    if arguments.profile != "smoke" and stage == "video" and arguments.audio_summary is None:
+    if arguments.profile != "smoke" and stage == "video" and arguments.audio_selection is None:
         raise ValueError(
-            f"video {arguments.profile} requires --audio-summary so ASR is frozen"
+            f"video {arguments.profile} requires --audio-selection so ASR is frozen"
         )
     if stage == "document" and arguments.phase == "architecture":
         if arguments.shortlist is None:
@@ -57,19 +58,28 @@ def main(stage: str, directory: Path) -> int:
         manifest_path=arguments.manifest,
         no_mlflow=arguments.no_mlflow,
         component_options=_component_options(
-            arguments.document_summary, arguments.audio_summary, arguments.device
+            arguments.document_selection, arguments.audio_selection, arguments.device
         ),
+        decision_files={
+            name: path
+            for name, path in {
+                "shortlist": arguments.shortlist,
+                "document": arguments.document_selection,
+                "audio": arguments.audio_selection,
+            }.items()
+            if path is not None
+        },
     )
     print(json.dumps({"run_id": result.run_id, "artifacts": str(result.artifact_directory)}, indent=2))
-    return 0 if all(candidate.status == "success" for candidate in result.candidates) else 2
+    return 0 if result.complete else 2
 
 
 def _component_options(
-    document_summary: Path | None, audio_summary: Path | None, device: str
+    document_selection: Path | None, audio_selection: Path | None, device: str
 ) -> dict[str, object]:
     options: dict[str, object] = {"device": device}
-    if document_summary:
-        document = _one_selection(document_summary)
+    if document_selection:
+        document = _one_selection(document_selection)
         factors = document.split("|")
         options["image_engine"] = factors[0]
         for factor in factors[1:]:
@@ -82,15 +92,11 @@ def _component_options(
                     "formula": "image_formula_enrichment",
                 }[key]
             ] = value == "on" if key == "formula" else value
-    if audio_summary:
-        audio_selection = _one_selection(audio_summary)
+    if audio_selection:
+        audio_selection = _one_selection(audio_selection)
         options["audio_candidate"] = audio_selection
     return options
 
 
 def _one_selection(path: Path) -> str:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    values = payload.get("pareto_candidates")
-    if not isinstance(values, list) or len(values) != 1:
-        raise ValueError(f"{path} must contain exactly one explicitly approved candidate")
-    return str(values[0])
+    return load_engineer_decision(path, exact=1).selected_candidates[0]

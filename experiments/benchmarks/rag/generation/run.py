@@ -10,7 +10,7 @@ from experiments.benchmarks.common.contracts import BenchmarkPlan
 from experiments.benchmarks.common.datasets import load_manifest
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
-from experiments.benchmarks.rag.generation.evaluate import evaluate_candidate
+from experiments.benchmarks.rag.generation.evaluate import GENERATION_DIRECTIONS, evaluate_candidate
 
 directory = Path(__file__).parent
 argument_parser = parser("Benchmark direct Hugging Face generation on frozen contexts")
@@ -52,20 +52,11 @@ result = run_benchmark(
         device=device,
     ),
     dataset_checksum=manifest.fingerprint,
-    directions={
-        "citation_f1": "max",
-        "answerability_balanced_accuracy": "max",
-        "hhem_faithfulness": "max",
-        "operational.p95_latency_seconds": "min",
-        "operational.peak_process_memory_gb": "min",
-    },
-    gates={
-        "malformed_output_rate": ("min", 0.0),
-        "operational.p95_latency_seconds": ("min", 30.0),
-        "operational.peak_process_memory_gb": ("min", 28.0),
-    },
+    directions=GENERATION_DIRECTIONS,
+    primary_metric="citation_f1",
     revisions=revisions,
+    decision_files={"shortlist": arguments.shortlist} if arguments.shortlist else None,
     no_mlflow=arguments.no_mlflow,
 )
 print(json.dumps({"run_id": result.run_id, "artifacts": str(result.artifact_directory)}, indent=2))
-raise SystemExit(0 if all(row.status == "success" for row in result.candidates) else 2)
+raise SystemExit(0 if result.complete else 2)

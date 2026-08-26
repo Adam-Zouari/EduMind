@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import argparse
-import json
 from collections.abc import Mapping, Sequence
 from itertools import product
 from pathlib import Path
 
 import yaml
+
+from .decisions import load_engineer_decision
 
 
 def parser(description: str) -> argparse.ArgumentParser:
@@ -18,7 +19,7 @@ def parser(description: str) -> argparse.ArgumentParser:
     result.add_argument(
         "--shortlist",
         type=Path,
-        help="summary.json whose Pareto candidates replace candidates.yaml (normally for full)",
+        help="engineer decision JSON whose selected candidates replace candidates.yaml",
     )
     result.add_argument("--no-mlflow", action="store_true", help="Debug without MLflow logging")
     return result
@@ -54,11 +55,7 @@ def resolved_candidates(path: Path, profile: str, shortlist: Path | None) -> tup
     if shortlist is None:
         if profile == "full":
             raise ValueError(
-                "Full profiles run explicitly approved finalists only; provide --shortlist SUMMARY_JSON"
+                "Full profiles run engineer-selected finalists only; provide --shortlist DECISION_JSON"
             )
         return load_candidates(path, profile)
-    payload = json.loads(shortlist.read_text(encoding="utf-8"))
-    values = payload.get("pareto_candidates")
-    if not isinstance(values, list) or not values or not all(isinstance(value, str) for value in values):
-        raise ValueError(f"{shortlist} has no non-empty pareto_candidates list")
-    return tuple(values)
+    return load_engineer_decision(shortlist).selected_candidates

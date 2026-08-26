@@ -17,7 +17,7 @@ class Tracker(Protocol):
 
     def parameters(self, values: Mapping[str, object]) -> None: ...
     def metrics(self, values: Mapping[str, float]) -> None: ...
-    def artifact(self, path: Path) -> None: ...
+    def artifact(self, path: Path, artifact_path: str | None = None) -> None: ...
 
 
 class NoTracking:
@@ -32,8 +32,8 @@ class NoTracking:
     def metrics(self, values: Mapping[str, float]) -> None:
         del values
 
-    def artifact(self, path: Path) -> None:
-        del path
+    def artifact(self, path: Path, artifact_path: str | None = None) -> None:
+        del path, artifact_path
 
 
 class MLflowTracking:
@@ -60,8 +60,8 @@ class MLflowTracking:
     def metrics(self, values: Mapping[str, float]) -> None:
         self.mlflow.log_metrics({key: float(value) for key, value in values.items()})
 
-    def artifact(self, path: Path) -> None:
-        self.mlflow.log_artifact(str(path))
+    def artifact(self, path: Path, artifact_path: str | None = None) -> None:
+        self.mlflow.log_artifact(str(path), artifact_path=artifact_path)
 
 
 def tracker(*, disabled: bool, experiment: str) -> Tracker:

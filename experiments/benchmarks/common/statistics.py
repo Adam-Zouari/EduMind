@@ -1,4 +1,4 @@
-"""Aggregation, confidence intervals, gates, and Pareto selection."""
+"""Aggregate per-sample metrics and confidence intervals."""
 
 from __future__ import annotations
 
