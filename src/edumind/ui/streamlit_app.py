@@ -134,11 +134,13 @@ def main() -> None:
         controller = _controller()
     except Exception as exc:
         LOGGER.exception("Application startup failed")
-        st.error(safe_error(exc))
-        st.info(
-            "Start the provisional database with `docker compose -f "
-            "infrastructure/chroma.yml up -d`, then reload this page."
-        )
+        message = safe_error(exc)
+        st.error(message)
+        if "Chroma" in message:
+            st.info(
+                "Start the provisional database with `docker compose -f "
+                "infrastructure/chroma.yml up -d`, then reload this page."
+            )
         st.stop()
     _render_readiness(controller)
     upload_tab, query_tab, documents_tab = st.tabs(["Extract & index", "Ask", "Documents"])

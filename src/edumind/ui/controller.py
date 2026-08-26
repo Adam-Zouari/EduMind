@@ -14,6 +14,10 @@ from edumind.application import (
     PipelineQueryResult,
     ProgressEvent,
 )
+from edumind.common.config import ConfigurationError
+from edumind.common.models import ModelPreparationError
+from edumind.extraction.errors import ExtractionError
+from edumind.rag.errors import ModelLoadError, RAGConfigurationError
 
 from .state import DocumentRecord, DocumentStatus
 
@@ -106,7 +110,15 @@ class AppController:
 
 
 def safe_error(exc: Exception) -> str:
-    name = type(exc).__name__
-    if name in {"MissingDependencyError", "RAGConfigurationError"}:
+    if isinstance(exc, ExtractionError):
+        if exc.detail and "prepare.py app-models" in exc.detail:
+            return exc.detail
+        return exc.public_message
+    if isinstance(
+        exc,
+        (ConfigurationError, ModelPreparationError, ModelLoadError, RAGConfigurationError),
+    ):
+        return str(exc)
+    if isinstance(exc, FileNotFoundError) and "prepare.py app-models" in str(exc):
         return str(exc)
     return "Processing failed. Check the local application logs for details."
