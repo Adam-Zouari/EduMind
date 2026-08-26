@@ -143,6 +143,12 @@ class VectorStore:
     def get_collection_count(self) -> int:
         return int(self.collection.count())
 
+    def health_check(self) -> bool:
+        try:
+            return bool(self.client.heartbeat())
+        except Exception:
+            return False
+
     def reset_collection(self) -> None:
         try:
             self.client.delete_collection(name=self.collection_name)

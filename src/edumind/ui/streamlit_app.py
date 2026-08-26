@@ -27,14 +27,12 @@ def _records() -> dict[str, dict[str, object]]:
 def _render_readiness(controller: AppController) -> None:
     try:
         readiness = controller.readiness()
-        generation_ready = bool(readiness.get("generation_ready"))
-        if generation_ready:
+        if readiness.get("ready"):
             st.success("Extraction, index, and the local Hugging Face generator are ready.")
         else:
-            st.warning(
-                "Index is ready, but the pinned generator snapshot is unavailable. Run "
-                "`python experiments/benchmarks/prepare.py app-models`."
-            )
+            st.warning("Runtime preparation is incomplete.")
+            for problem in readiness.get("problems", []):
+                st.caption(str(problem))
     except Exception as exc:
         LOGGER.exception("Runtime readiness check failed")
         st.error(f"Runtime not ready: {exc}")

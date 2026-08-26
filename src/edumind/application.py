@@ -61,6 +61,7 @@ class EduMindPipeline:
         settings = load_settings(config_path) if extraction is None or rag is None else None
         self.extraction = extraction or ExtractionPipeline(settings)
         self.rag = rag or RAGPipeline(settings=settings, use_llm=use_llm)
+        self.generation_required = use_llm
 
     def process_file(
         self,
@@ -134,14 +135,30 @@ class EduMindPipeline:
         return PipelineQueryResult(query, hits, answer, timings, warnings)
 
     def readiness(self) -> dict[str, object]:
+        extraction = self.extraction.readiness()
         stats = self.rag.get_stats()
+        generation_ready = bool(stats.get("generation_ready"))
+        problems = list(
+            dict.fromkeys(
+                [
+                    *[str(value) for value in extraction.get("errors", {}).values()],
+                    *[str(value) for value in stats.get("problems", [])],
+                ]
+            )
+        )
+        if self.generation_required and not generation_ready:
+            problem = "The configured generator is not ready"
+            if not any("generator" in value.casefold() for value in problems):
+                problems.append(problem)
         return {
-            "ready": True,
+            "ready": bool(extraction.get("ready"))
+            and bool(stats.get("ready"))
+            and (not self.generation_required or generation_ready),
+            "problems": problems,
             "extraction_sources": self.extraction.supported_sources(),
+            "extraction": extraction,
             "rag": stats,
-            "generation_ready": self.rag.llm_generator.health_check()
-            if self.rag.llm_generator
-            else False,
+            "generation_ready": generation_ready,
         }
 
     def reset_index(self) -> None:

@@ -175,6 +175,15 @@ class ExtractionPipeline:
     def supported_sources(self) -> dict[str, list[str]]:
         return {kind.value: self.registry.names(kind) for kind in SourceKind}
 
+    def readiness(self) -> dict[str, object]:
+        errors: dict[str, str] = {}
+        for kind, profile in DEFAULT_PROFILE_BY_KIND.items():
+            try:
+                self._prepare_profile(profile)
+            except Exception as exc:
+                errors[kind.value] = str(exc)
+        return {"ready": not errors, "errors": errors}
+
     def _prepare_profile(
         self, profile: ExtractionProfile
     ) -> tuple[ExtractionProfile, dict[str, object]]:

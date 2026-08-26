@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
+from pathlib import Path
 
 from edumind.common.config import Settings, load_settings
 from edumind.common.models import load_model_lock, require_model
@@ -234,11 +235,35 @@ class RAGPipeline:
 
     def get_stats(self) -> dict[str, object]:
         manifest = self.vector_store.load_index_manifest()
+        embedding_ready = bool(self.embedding_spec.local_path) and Path(
+            str(self.embedding_spec.local_path)
+        ).is_dir()
+        vector_ready = self.vector_store.health_check()
+        total_chunks: int | None = None
+        if vector_ready:
+            try:
+                total_chunks = self.vector_store.get_collection_count()
+            except Exception:
+                vector_ready = False
+        generation_ready = (
+            self.llm_generator.health_check() if self.llm_generator is not None else False
+        )
+        problems = []
+        if not embedding_ready:
+            problems.append("The pinned embedding snapshot is unavailable")
+        if not vector_ready:
+            problems.append(f"Chroma is unavailable at {self.vector_store.endpoint}")
+        if manifest is None:
+            problems.append("The vector index manifest is unavailable")
+        if self.llm_generator is not None and not generation_ready:
+            problems.append("The pinned generator snapshot is unavailable")
         return {
-            "ready": True,
-            "total_chunks": self.vector_store.get_collection_count(),
+            "ready": not problems,
+            "problems": problems,
+            "total_chunks": total_chunks,
             "embedding_model": self.embedding_spec.model_name,
             "embedding_dimension": self.embedding_spec.dimension,
+            "embedding_ready": embedding_ready,
             "chunking_strategy": self.text_chunker.strategy.name,
             "retrieval_strategy": self.retrieval_stack_name,
             "context_token_budget": self.settings.retrieval.context_token_budget,
@@ -246,6 +271,8 @@ class RAGPipeline:
             "vector_endpoint": self.vector_store.endpoint,
             "model_loaded": self.embedder.model_loaded,
             "llm_enabled": self.llm_generator is not None,
+            "generation_ready": generation_ready,
+            "vector_ready": vector_ready,
             "index_compatibility_key": manifest.compatibility_key if manifest else None,
         }
 
