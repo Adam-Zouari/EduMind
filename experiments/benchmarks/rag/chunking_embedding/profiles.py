@@ -54,7 +54,7 @@ EXPERIMENTAL_EMBEDDING_SPECS: dict[str, EmbeddingSpec] = {
         "from-lock",
         "Qwen/Qwen3-Embedding-0.6B",
         None,
-        "Instruct: Retrieve relevant educational evidence\nQuery: ",
+        "Instruct: Retrieve relevant educational evidence\nQuery:",
         "",
         True,
         1024,
@@ -94,7 +94,7 @@ EXPERIMENTAL_EMBEDDING_SPECS: dict[str, EmbeddingSpec] = {
         "from-lock",
         "Qwen/Qwen3-Embedding-4B",
         None,
-        "Instruct: Retrieve relevant educational evidence\nQuery: ",
+        "Instruct: Retrieve relevant educational evidence\nQuery:",
         "",
         True,
         2560,
@@ -134,4 +134,3 @@ def embedding_spec(
             "query_device": query_device,
         }
     )
-

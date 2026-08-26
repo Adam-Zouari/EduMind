@@ -26,6 +26,7 @@ from experiments.benchmarks.common.metrics import (
     reciprocal_rank,
 )
 from experiments.benchmarks.rag.chunking_embedding.profiles import embedding_spec
+from experiments.benchmarks.rag.chunking_embedding.models import build_embedder
 from experiments.benchmarks.rag.chunking_embedding.strategies import build_chunking_strategy
 from experiments.benchmarks.rag.methods import BM25, Reranker, reciprocal_rank_fusion
 
@@ -139,7 +140,7 @@ def build_index(manifest, chunker_name, embedding_name, model_lock, with_bm25=Tr
         document_device=device,
         query_device=device,
     )
-    embedder = Embedder(spec=spec)
+    embedder = build_embedder(spec)
     tokenizer = HuggingFaceOffsetTokenizer(
         spec.tokenizer, revision=revision, local_path=local_path
     )
