@@ -1,172 +1,735 @@
-# EduMind benchmark manual
+# How the EduMind experiments work
 
-[Project overview](../../README.md) · [Documentation map](../README.md) ·
-[Benchmark overview and commands](overview.md) ·
-[Candidate-selection rationale](model-selection.md)
+[Benchmark overview](overview.md) · [Metric definitions](metrics.md) ·
+[Run commands](running.md) · [Candidate rationale](model-selection.md)
 
-Read this document when you need to judge whether an EduMind experiment supports
-a conclusion. For installation and downloads, use the
-[installation guide](../setup/installation.md). For one stage's candidates and
-metrics, use its page under `docs/benchmarks/`.
-
-## 1. Purpose
-
-EduMind uses experiments to produce evidence for an engineer to choose components; public leaderboards only choose which candidates are worth running. A complete result applies only to the recorded dataset, software revisions, hardware, device, and protocol. Benchmarks never choose a winner or edit production configuration.
-
-The selection package has two files:
-
-- `docs/benchmarks/model-selection.md` explains candidate screening and the included strategies.
-- `experiments/benchmarks/selection_evidence.csv` records every model/vector-server decision and immutable runnable revision.
-
-Executable YAML registries contain settings and included candidate IDs. `prepare.py` resolves those IDs into project-local snapshots and writes `data/benchmarks/models/selected.json`. Excluded evidence rows cannot become executable through preparation.
-
-## 2. Profiles
-
-`smoke` runs tiny real paths with one repetition. It detects missing dependencies and broken contracts but provides no comparative evidence. `standard` runs every approved candidate on development or validation data, includes warmups, and measures three repetitions. `full` runs engineer-selected finalists on larger or locked workloads; it requires `--shortlist DECISION_JSON` where a previous decision is expected.
-
-## 3. Reproducibility
-
-Each run records:
-
-- dataset name, split, checksum, source revision, license, preprocessing version, and selected IDs;
-- candidate settings and exact model revisions or server digests;
-- Git state, dependency versions, seed 42, hardware, and devices;
-- candidate/query ordering, warmups, repetitions, and failures;
-- per-sample output before aggregation.
-
-Documents or papers, not chunks/questions, are assigned to splits. Exact and near-duplicate checks prevent leakage. Evidence spans are verified against normalized text and represented by half-open offsets `[start, end)`.
-
-MLflow creates one parent run per invocation and one child per candidate. Every candidate's scalar aggregates and confidence intervals are MLflow metrics; plans, provenance, summaries, candidate errors, and per-sample Parquet are artifacts. The parent logs whether the comparison is complete. Partial evidence remains visible but cannot be used as the source of a downstream decision.
-
-## 4. Completion, statistics, and engineering decisions
-
-Standard/full compute 95% confidence intervals using 10,000 paired bootstrap resamples with seed 42. The document, paper, recording, or query is the resampling unit. Holm correction is applied only when a report makes formal claims across several pairwise tests.
-
-Every stage declares one **main metric** to make its central question obvious in MLflow and reports all other required quality, correctness, and operational metrics beside it. The main metric is not an automatic score or winner rule.
-
-A comparison is complete only when every planned candidate finishes, returns the same unique sample IDs, and supplies every finite metric declared in that stage's metric contract. A low quality score, slow latency, or failed correctness check is still a successfully measured result. A crash, missing sample, duplicate sample ID, missing metric, or non-finite metric makes the whole comparison incomplete. Whatever was produced remains in MLflow and the artifact directory for diagnosis.
-
-The runner calculates confidence intervals and paired differences but produces no gate result, eligibility label, Pareto set, ranking, recommendation, or promotion. An engineer reviews the complete standard/full run in MLflow and records any advancement in a separate JSON file:
-
-```json
-{
-  "schema_version": 1,
-  "source_summary": "../artifacts/benchmarks/rag/chunking-embedding/RUN/summary.json",
-  "source_run_id": "RUN",
-  "selected_candidates": ["token-256-32|MODEL"],
-  "selected_by": "engineer name",
-  "selected_date": "2026-08-26",
-  "reason": "Why this trade-off fits the next experiment."
-}
-```
-
-The loader verifies that the source is a complete standard/full run and that every selected ID succeeded in it. Smoke runs cannot be selected. `--shortlist`, `--embedding-selection`, and the other `--*-selection` arguments consume these engineer-authored files. Each downstream parent run logs the decision file under `engineer-decisions/` and records its SHA-256 in provenance.
-
-## 5. Document extraction
-
-Images, PDFs, and DOCX are evaluated through complete document parsers and one canonical structured output. It retains normalized text, pages, reading order, tables, formulas, bounding boxes where available, source identity, parser revision, warnings, and provenance.
-
-The development phase evaluates exactly 24 Docling Standard configurations:
+The experiments form a sequence. First compare extraction components. Separately,
+compare chunker/embedding pairs, then retrieval methods and vector servers.
+Generation is tested on fixed evidence so retrieval cannot influence it. Finally,
+combine the approved retrieval and generation profiles and review their answers.
 
 ```text
-OCR engine {RapidOCR, Tesseract, EasyOCR}
-× OCR mode {PDF-aware regions, full page}
-× TableFormer {fast, accurate}
-× formula enrichment {off, on}
+1. Document extraction: configuration on development, architectures on validation
+2. Audio extraction: all candidates on development, finalists on validation
+3. Text normalization: all profiles on development, finalists on validation
+1 + 2 + 3 --> 4. Video keyframes with parser, ASR, and normalization frozen
+
+5. Chunking x embedding --> 6. Retrieval and reranking
+6 --> 7. Real vector-server retrieval
+
+8. Generation on fixed evidence (independent of retrieval)
+
+selected server + selected retrieval + selected generator
+--> 9. Final RAG on validation + blinded human review
+--> 10. Extraction-to-RAG confirmation on separate non-locked data
+--> 11. Exactly one locked-test run
 ```
 
-OCR engine tests recognizer integration; OCR mode tests preservation of native PDF text versus complete raster recognition; TableFormer tests table quality/cost; formula enrichment tests CodeFormula value/cost. Their Cartesian product is necessary because these options interact.
+Document extraction, audio, normalization, chunking/embedding, the synthetic
+vector-server workload, and generation can start independently. Video waits for
+a document parser, ASR, and normalization profile. Retrieval waits for
+chunking/embedding. Real server retrieval waits for a retrieval stack. Final RAG
+waits for one selected server, retrieval stack, and generator.
 
-Docling 2.117.0, English, OCR scale 3.0, table-cell matching, canonical output, code enrichment off, and native DOCX ingestion stay fixed. They define the experimental environment or output requirements rather than a current product question.
+`smoke` checks that a small real path works and cannot support a selection.
+`standard` compares every candidate on development data. `full` compares only
+engineer-selected finalists on validation data. Standard/full use seed 42, retain
+per-sample results, and report 95% bootstrap confidence intervals. The locked
+test is reserved for the one final system.
 
-The engineer selects Standard configurations for the architecture comparison with Granite Docling 258M and PaddleOCR-VL-1.6. The latter two test independent visual-parser architectures, not isolated OCR recognition.
+Every comparison gives its candidates the same samples. MLflow stores the exact
+settings, revisions, data checksum, hardware, aggregate metrics, confidence
+intervals, and per-sample results. The engineer chooses what continues; the
+runner never chooses a winner or changes the application configuration.
 
-The target corpus covers clean/noisy scans, phone photos, digital/scanned/mixed PDFs, broken encodings, slides, academic layouts, headings, lists, captions, embedded images, tables, and formulas. Split membership is document-family isolated. Required annotations depend on claimed metrics.
+Metrics are labeled **primary**, **secondary**, **diagnostic**, or
+**operational**. Primary metrics answer the experiment's central question.
+Secondary metrics provide important supporting evidence. Diagnostics explain
+failure modes but do not select a candidate alone. Operational metrics measure
+latency, throughput, and resources.
 
-Primary quality includes CER, WER, Content F1, Reading Order Accuracy, Page Coverage/Attribution, Block Structure F1, Table Detection/Content/Structure F1, Formula Detection F1, and formula similarity. Operational output includes cold load, p50/p95 page/document latency, throughput, RAM, VRAM, and temporary disk.
+## 1. Document extraction
 
-## 6. Audio extraction
+Which complete parser best converts educational images, PDFs, and DOCX files into
+accurate text and useful structure, including pages, reading order, tables, and
+formulas?
 
-Candidates are Whisper `small.en` control, Canary 180M, Parakeet TDT 0.6B v2, MOSS Transcribe-Diarize, and Qwen3 ASR 1.7B with Qwen3 ForcedAligner 0.6B. All execute exact local snapshots on a common requested device.
+OCR is not tested as an isolated product. It is tested inside the document
+pipeline because OCR, native PDF text, layout detection, tables, formulas, and
+reading order affect one another.
 
-Qwen transcription and forced alignment execute sequentially. The ASR is released before loading the aligner, but complete latency and peak resources cover the entire operation. This prevents the composite profile from hiding alignment cost.
+### Phase A: 24 Docling Standard configurations
 
-The corpus covers clean and noisy English speech, accents, technical vocabulary, multiple speakers, and longer educational recordings. Primary metrics are WER, CER, Timestamp MAE, Segment Boundary MAE, missing/hallucinated speech, and timestamp coverage. Real-Time Factor, p50/p95 latency, cold load, throughput, RAM, and VRAM measure operation.
-
-## 7. Video extraction
-
-Video freezes the selected ASR and visual parser, then compares fixed-interval keyframes, scene-change keyframes, and scene change with maximum-interval fallback. This isolates frame selection.
-
-Metrics are Transcript WER, Visual Text Precision/Recall/F1, duplicate visual text, Audio/Visual Alignment MAE, Complete Content Recall, Real-Time Factor, latency, resource use, and temporary disk. Missing timestamp annotations omit the dependent metric rather than fabricating zero.
-
-## 8. Normalization
-
-Minimal normalization changes Unicode, line endings, and whitespace. Conservative normalization repairs common extraction artifacts with preservation priority. Aggressive normalization tests stronger cleanup and its deletion/merge risk.
-
-For reference `R`, observed text `O`, and normalized text `N`, the benchmark compares edit distance before and after. Content Preservation Recall and Corruption Removal Precision/Recall/F1 are primary. CER/WER, content precision/recall/F1, repeated text, determinism, and latency are diagnostic. At least 200 document-family-isolated cases are required for standard/full.
-
-## 9. Chunking and embeddings
-
-The 64-pair matrix crosses:
-
-- recursive character;
-- token 256/32, 384/64, and 512/64;
-- sentence 8/2;
-- semantic;
-- section-aware 512/64;
-- structure-aware 512/64;
-
-with MiniLM, Snowflake Arctic Embed M v2, F2LLM v2 0.6B, Octen 0.6B/4B, Qwen3 Embedding 0.6B/4B, and Nemotron Embed 1B.
-
-Each embedding profile freezes its query/document interface or prefix, tokenizer limit, checkpoint pooling behavior, vector normalization, dimension, and cosine similarity. Semantic chunking uses the tested embedding both to detect topic boundaries and retrieve chunks, so it is intentionally evaluated as a complete pair.
-
-Exact NumPy retrieval removes vector-server ANN error. Chunk/evidence overlap is clamped non-negative, and overlapping retrieved intervals are merged before Context Recall.
-
-The main metric is nDCG@5. The remaining required metrics are nDCG@3, Context Recall@3/@5, rank-aware Context Precision@3/@5, Context Recall under 2,048 tokens, Precision/Recall/Hit Rate at 1/3/5/10, MAP@3/@5/@10, MRR, nDCG@10, chunk statistics, indexing time, latency, memory, and storage. An engineer may select up to three pairs for retrieval testing.
-
-## 10. Retrieval and reranking
-
-The retrieval stage freezes engineer-selected chunker–embedding pairs and compares dense retrieval, BM25, RRF of dense and BM25 ranks, and RRF followed by each approved reranker. RRF fuses ranks rather than incompatible raw scores. Rerankers rescore the top 20 passages with the query.
-
-The rerankers are MiniLM control, Ettin 150M/400M/1B, and Qwen3 Reranker 4B. Their exact scoring interfaces and tokenizer limits are part of the candidate profile. Quality metrics match the chunking stage; reranker latency and memory are added. An engineer may select up to three retrieval stacks for final RAG.
-
-## 11. Vector databases
-
-The first server comparison contains Chroma, Qdrant, Weaviate, and PostgreSQL/pgvector. NumPy is only the exact-neighbor oracle. Identical precomputed normalized float32 vectors, IDs, metadata, filters, query order, and cosine contracts are supplied to every server.
-
-Conformance checks health, dimension rejection, compound and empty filters, replacement without stale chunks, deletion, persistence after restart, schema incompatibility, and actual ANN-index existence/use. Each check is reported as evidence. A zero score does not make the run incomplete unless the server failure prevents the remaining measurements from running.
-
-Smoke uses 1,000 vectors and 50 queries at concurrency 1. Standard uses 100,000 vectors at 384 and 1,024 dimensions, 500 queries, concurrency 1/8/32, and filter selectivity near 50%/10%/1%. Full uses selected real vectors plus 1,000,000 synthetic clustered vectors, 1,000 queries, concurrency 1/8/32/64, and filters down to 0.1%.
-
-The main metric is ANN Recall@10. Filtered and unfiltered ANN Recall@1/@3/@5/@10, filter and lifecycle correctness, p50/p95/p99 latency, throughput/error rate, build and incremental ingestion throughput, memory, storage, and restart/readiness time are also required. The engineer judges the measured trade-offs; the runner applies no pass threshold.
-
-## 12. Generation
-
-The frozen-context screen compares Qwen3 1.7B thinking-off control, MiniCPM5 1B reasoning, G9v3 3B reasoning, and Qwen3.5 4B reasoning. All run through direct Hugging Face loaders with official chat templates, native checkpoint dtype, no quantization or offload, temperature 0, seed 42, 8,192 context tokens, 256 answer tokens, and the same whole-model device.
-
-Human Faithfulness, Answer Correctness, Completeness, Citation Precision/Recall/F1, and Answerability Balanced Accuracy are primary. Exact Match, Token F1, ROUGE-L, HHEM faithfulness, refusal behavior, unsupported answers, malformed output, and determinism are diagnostic. HHEM is not an authoritative evaluator.
-
-Operational metrics include load time, TTFT, prompt evaluation, total p50/p95, answer tokens, tokens/second, answers/minute, RAM, and VRAM. Models are unloaded and memory is cleaned between candidates.
-
-## 13. Final RAG and human review
-
-Only engineer-selected components enter the complete-system comparison. Each request includes retrieval, optional rank fusion/reranking, 2,048-token context packing, prompting, and direct generation. Component and end-to-end timings remain separately visible.
-
-Three anonymous systems produce answers for 20 stratified questions, yielding 60 blinded judgments. Reviewers score Faithfulness, Answer Correctness, Completeness, Citation Accuracy, and answerability on the documented rubric. Judgments are imported and validated before system identities are revealed.
-
-One selected stack is evaluated once on the locked test. Any subsequent tuning creates a new benchmark version.
-
-## 14. Extraction-to-RAG confirmation
-
-After extraction and RAG selection, the same verified raw documents are run through:
+The first phase compares:
 
 ```text
-verified reference text → selected RAG
-selected extracted text → selected RAG
+OCR engine:          RapidOCR, Tesseract, EasyOCR                 (3)
+OCR mode:            PDF-aware regions, full page                 (2)
+TableFormer mode:    fast, accurate                               (2)
+Formula enrichment: off, on                                      (2)
+                                                                  ───
+Total:               3 × 2 × 2 × 2 = 24 configurations
 ```
 
-The report contains deltas in retrieval quality, human answer quality, citation F1, and end-to-end latency. This measures extraction-induced degradation without using downstream results to retroactively tune the locked component comparisons.
+Why these settings vary:
 
-## 15. Invalid conclusions
+| Setting | Why it is tested |
+|---|---|
+| OCR engine | Recognition quality, bounding boxes, speed, and device use differ. RapidOCR is the production control, Tesseract is a classical CPU comparison, and EasyOCR is a separate neural implementation. |
+| PDF-aware versus full-page OCR | PDF-aware mode can preserve correct native text and OCR only necessary regions. Full-page OCR can recover scans or broken encodings but may duplicate correct native text. |
+| TableFormer fast versus accurate | Tests the speed/quality trade-off in row and column reconstruction. |
+| Formula enrichment off versus on | Tests whether specialized formula recovery justifies its additional load, latency, and memory. |
 
-Do not claim that smoke results establish quality or speed; a public leaderboard winner is the EduMind winner; different public metrics are numerically comparable; a component winner is automatically the best complete stack; automated faithfulness replaces human review; a result generalizes to unrecorded hardware; or a benchmark changes production without approval.
+The following stay fixed so the experiment remains understandable: Docling
+2.117.0, English, OCR scale 3.0, table-cell matching enabled, code enrichment
+disabled, canonical structured output, and native DOCX ingestion.
+
+### Phase B: parser architectures
+
+After reviewing Phase A, the selected Docling configurations are compared with:
+
+| Parser | Why it is included |
+|---|---|
+| Selected Docling Standard configuration | Conventional OCR, layout, table, and formula pipeline control. |
+| Granite Docling 258M | Compact visual parser integrated with Docling; tests a different architecture. |
+| PaddleOCR-VL-1.6 | Independent visual document parser, so the comparison is not limited to Docling implementations. |
+
+The visual-parser comparison uses images and PDFs. DOCX remains native Docling
+input instead of being rasterized merely to accommodate visual models.
+
+### Data
+
+Smoke uses two committed images, two PDFs, and two DOCX files. The authoritative
+corpus target is:
+
+| Modality | Total | Development | Validation | Locked |
+|---|---:|---:|---:|---:|
+| Images/pages | 120 | 72 | 24 | 24 |
+| PDFs | 60 | 36 | 12 | 12 |
+| DOCX | 45 | 27 | 9 | 9 |
+
+The reviewed source pool is OmniDocBench, olmOCR-Bench, PureDocBench, and
+EduMind-specific verified samples. The frozen manifests—not the source-pool
+names—define the actual cases and record every selected ID, source revision,
+license, checksum, and document family. An authoritative run cannot be claimed
+until those manifests and references are complete.
+
+The corpus covers:
+
+- clean and degraded images;
+- digital, scanned, mixed, and broken-encoding PDFs;
+- phone photos, low resolution, skew, and multiple columns;
+- headings, paragraphs, lists, captions, and reading order;
+- tables and formulas with explicit structural references;
+- native DOCX documents.
+
+Every sample includes verified text. Page, table, formula, and layout metrics are
+calculated only when the required annotations exist. Every report shows the
+number of annotated samples behind each conditional metric; a structure metric
+with too few annotations remains descriptive rather than selection evidence.
+
+### Execution
+
+The two phases use different splits:
+
+```text
+development:
+24 Docling Standard configurations
+→ engineer selects configuration finalists
+
+validation:
+Docling finalists + Granite Docling + PaddleOCR-VL
+→ engineer selects the document parser
+```
+
+Within each phase, every candidate processes the same deterministically shuffled
+manifest three times after one cold item and warmups. Output is converted to the
+common structured-document format before scoring. Parser comparison is performed
+before the separately selected cleanup profile is applied, except for fixed
+canonical Unicode and line-ending normalization required by every candidate.
+
+### Metrics and why they are used
+
+| Role | Metrics | Why they are needed |
+|---|---|---|
+| Primary | Content F1, Reading Order Accuracy, Page Content F1; Table Structure F1 and Formula LaTeX Similarity on annotated subsets | Measures complete content, ordering, page assignment, and the two important structured-content types. |
+| Secondary | CER, WER, Content Precision/Recall, Page Coverage, Page Attribution Accuracy, Block F1, Table Detection F1, Table Content F1, Formula Detection F1, Formula Exact Match | Explains whether a primary result came from transcription, coverage, detection, or exact reconstruction. |
+| Diagnostic | Missing Text Rate, Hallucinated Text Rate, Empty Output Rate, Duplicate Text Rate, Duplicate Page Rate, block/table/formula precision and recall | Locates omission, unsupported-output, duplication, and precision-versus-recall failures. |
+| Operational | Cold first-extraction time, p50/p95 item latency, items/minute, peak RAM, peak VRAM, determinism | Shows execution cost and repeatability. |
+
+An engineer reviews quality, latency, and resources, then records the Docling
+configuration finalists and parser-architecture finalists. The approved document
+parser is combined with the approved normalization profile before video and
+downstream extraction are evaluated.
+
+## 2. Audio extraction
+
+Which English speech-to-text profile produces the most accurate educational
+transcript with timestamps suitable for navigation and citations?
+
+### Models
+
+| Model/profile | Why it is included |
+|---|---|
+| Whisper `small.en` | Established English control with timestamp output. |
+| Canary 180M | Compact timestamp-capable challenger. |
+| Parakeet TDT 0.6B v2 | Mid-size profile with word, segment, and character timestamps. |
+| MOSS Transcribe-Diarize | Tests transcription with diarization-oriented segment output. |
+| Qwen3 ASR 1.7B + ForcedAligner 0.6B | Strong transcription candidate whose separate aligner provides timestamps. |
+
+For Qwen, transcription runs first. Its ASR model is unloaded before the forced
+aligner runs. The benchmark still measures transcription plus alignment as one
+complete candidate.
+
+### Data
+
+Smoke uses two committed audio clips. The authoritative corpus contains 90
+English clips split 54 development, 18 validation, and 18 locked. It includes:
+
+- verified transcripts;
+- complete audio duration;
+- segment or word timestamps;
+- clean and noisy speech;
+- accents and multiple speakers;
+- technical and educational vocabulary.
+
+The exact recordings are fixed by the licensed asset plan and manifests, which
+record source, revision, selected clip interval, license, checksum, duration, and
+speaker/document family. The public Open ASR material is screening context, not a
+substitute for this frozen educational corpus.
+
+### Execution
+
+```text
+development: all ASR candidates on the same 54 clips
+→ engineer selects finalists
+
+validation: ASR finalists on the same 18 clips
+→ engineer selects the ASR profile
+```
+
+Every candidate uses the same requested device and fixed audio preprocessing.
+Each run loads the exact model, transcribes, performs alignment when required,
+converts output to timestamped segments, and repeats three times. Candidate text
+is scored before the separately selected cleanup profile is applied.
+
+### Metrics and why they are used
+
+| Role | Metrics | Why they are needed |
+|---|---|---|
+| Primary | WER, Timestamp MAE, Timestamp Alignment Coverage | Measures transcription accuracy and whether useful timestamps are both accurate and sufficiently complete. |
+| Secondary | CER, Segment Boundary MAE, Missing Speech Rate, Hallucinated Speech Rate | Reveals technical-term errors, boundary errors, dropped speech, and unsupported speech. |
+| Diagnostic | Determinism | Checks whether repeated transcripts and timestamps remain stable. |
+| Operational | Real-Time Factor, cold load, p50/p95 clip latency, peak RAM, peak VRAM | Measures complete transcription/alignment cost. |
+
+The engineer approves the ASR profiles that provide the best useful combination
+of transcription, timestamp quality, and execution cost. The selected ASR is
+frozen for video extraction.
+
+## 3. Text normalization
+
+How much deterministic cleanup should be applied after extraction without
+deleting or merging legitimate educational content?
+
+### Profiles
+
+| Profile | What it does | Why it is included |
+|---|---|---|
+| Minimal | Unicode normalization, line-ending repair, null/soft-hyphen removal, final trim | Safe baseline. |
+| Conservative | Minimal plus dehyphenation and restrained whitespace cleanup | Expected production trade-off. |
+| Aggressive | Conservative plus stronger page-label and newline cleanup | Tests whether more cleanup helps or becomes destructive. |
+
+### Data and execution
+
+Smoke uses the committed observed/reference text pairs. The authoritative set
+contains at least 200 verified cases split by document family into 120
+development, 40 validation, and 40 locked cases.
+
+All three profiles receive the same development cases. After the engineer selects
+finalists, those profiles receive the same validation cases. Every output is
+compared with the verified clean reference and repeated three times.
+
+### Metrics and why they are used
+
+| Role | Metrics | Why they are needed |
+|---|---|---|
+| Primary | Content Preservation Recall, Corruption Removal F1 | Cleanup must preserve valid content while repairing real corruption. |
+| Secondary | Corruption Removal Precision/Recall, WER | Separates unnecessary edits from missed repairs and shows final word error. |
+| Diagnostic | CER, Content F1, Missing/Hallucinated Text Rate, Duplicate Text Rate, determinism | Explains character errors, deletion, unsupported additions, repeated text, and instability. |
+| Operational | p50/p95 latency | Confirms that deterministic cleanup remains inexpensive. |
+
+The selected profile is applied after the selected document parser or ASR and
+before video combination, indexing, and extraction-to-RAG confirmation.
+
+## 4. Video extraction
+
+With the document parser and ASR fixed, which keyframe policy recovers useful
+on-screen text without processing too many duplicate frames?
+
+### Candidates
+
+| Policy | Behavior | Why it is included |
+|---|---|---|
+| Fixed interval | One frame every ten seconds | Predictable-cost baseline. |
+| Scene change | A frame when FFmpeg scene score exceeds 0.35 | Avoids repeatedly parsing unchanged slides. |
+| Hybrid | Scene changes plus the first frame and a maximum ten-second gap | Recovers gradual changes that do not trigger a strong scene cut. |
+
+### Data
+
+Smoke uses two committed videos. The authoritative set contains 30 educational
+videos split 18 development, 6 validation, and 6 locked. Every video has a
+verified transcript, duration, visible text, and visual timestamps. The set
+includes slides, screen recordings, presenter video, gradual text changes, and
+repeated scenes. Exact sources, revisions, licenses, clip intervals, and checksums
+are frozen in the manifests.
+
+### Execution
+
+```text
+video
+├─ FFmpeg extracts mono 16 kHz audio → frozen selected ASR
+└─ FFmpeg extracts candidate keyframes → frozen selected document parser
+        ↓
+apply the selected normalization profile
+→ combine timestamped audio and visual segments
+→ compare with transcript and visible-text references
+```
+
+Only the keyframe policy changes. Reopening parser or ASR selection here would
+make it unclear whether a difference came from frame selection, OCR, or speech
+recognition. All three policies run on development; engineer-selected finalists
+then run on validation.
+
+### Metrics and why they are used
+
+| Role | Metrics | Why they are needed |
+|---|---|---|
+| Primary | Visual Text F1, Complete Content Recall, Audio/Visual Alignment MAE | Measures visible-text quality, total recovered educational content, and timestamp usefulness. |
+| Secondary | Visual Text Precision/Recall, Duplicate Visual Text Rate, Timestamp Coverage | Separates missing text from extra or repeated frames and shows whether alignment coverage is adequate. |
+| Diagnostic | Frozen-ASR Transcript WER, recorded once for the shared ASR output | Confirms the audio input to every policy; it is not used to compare keyframe policies because it is constant. |
+| Operational | Real-Time Factor, cold load, p50/p95 video latency, peak RAM, peak VRAM | Measures complete extraction cost. |
+
+The selected keyframe policy joins the selected parser and ASR as the provisional
+video-extraction profile.
+
+## 5. Chunking and embedding
+
+Which complete chunker/embedding pair retrieves verified educational evidence
+best?
+
+Chunking and embedding are evaluated together. A chunker cannot be scored until
+its chunks are represented and ranked, and an embedding cannot be judged without
+the passages it embeds.
+
+### Chunking strategies
+
+| Strategy | What it tests |
+|---|---|
+| Recursive character 1000/200 | Cheap textual separators without tokenizer dependence. |
+| Token 256/32 | Short, focused passages with modest overlap. |
+| Token 384/64 | Middle fixed-token trade-off. |
+| Token 512/64 | More local context per chunk. |
+| Sentence 8/2 | Linguistic boundaries instead of fixed token windows. |
+| Semantic | Topic-change boundaries based on adjacent-sentence embedding similarity. |
+| Section-aware 512/64 | Preserves authored Markdown sections before splitting oversized sections. |
+| Structure-aware 512/64 | Preserves headings, tables, formulas, and table-row boundaries where possible. |
+
+### Embedding models
+
+| Model | Role in the comparison |
+|---|---|
+| MiniLM L6 v2 | Lightweight production control. |
+| Snowflake Arctic Embed M v2 | Strong small-model retrieval candidate with a long input limit. |
+| F2LLM v2 0.6B | Alternative 0.6B retrieval architecture. |
+| Octen Embedding 0.6B | Strong 0.6B retrieval challenger. |
+| Qwen3 Embedding 0.6B | Strong directly comparable 0.6B candidate using documented last-token pooling. |
+| Nemotron 3 Embed 1B | Larger nearby-size retrieval candidate. |
+| Octen Embedding 4B | Upper-size challenger. |
+| Qwen3 Embedding 4B | Upper-size quality candidate using the same documented Qwen retrieval recipe. |
+
+Full public evidence and exact revisions are in
+[model-selection.md](model-selection.md).
+
+### Data
+
+The RAG corpus uses pinned QASPER papers plus EduMind's verified structured
+evidence set:
+
+| Split | Papers | Used for |
+|---|---:|---|
+| Development | 100 | Standard component comparison |
+| Validation | 40 | Full finalist comparison |
+| Locked test | 40 | One final complete system only |
+
+Each question stores answerability, accepted answers, evidence type, and exact
+half-open evidence offsets. The structured supplement contains table, formula,
+and mixed-evidence questions because QASPER is primarily text.
+
+### Execution
+
+Standard evaluates all:
+
+```text
+8 chunkers × 8 embeddings = 64 complete pairs
+```
+
+For every pair:
+
+```text
+split documents into chunks with exact source offsets
+→ embed every chunk
+→ embed each question
+→ rank with exact NumPy cosine search
+→ retain the top 20
+→ compare retrieved spans with verified evidence spans
+```
+
+Exact NumPy search removes vector-database approximation from this experiment.
+For semantic chunking, the tested embedding also creates the boundaries; that
+result intentionally represents the complete semantic-chunker/embedding pair.
+
+### Metrics and why they are used
+
+| Role | Metrics | Why they are needed |
+|---|---|---|
+| Primary | nDCG@3/@5, rank-aware Context Precision@3/@5, Context Recall@3/@5, Context Recall under 2,048 tokens | Measures early graded ranking, context cleanliness, evidence-span coverage, and coverage at equal context cost. |
+| Secondary | nDCG@10, Hit Rate@5/@10, MRR | Shows deeper ranking and whether at least one useful passage appears. |
+| Diagnostic | Precision/Recall@1/@3/@5/@10, MAP@3/@5/@10, Hit Rate@1/@3, Context Precision/Recall@1/@10 | Helps explain behavior, but binary chunk relevance depends on candidate-created boundaries. |
+| Evidence slices | Primary metrics repeated for text, table, formula, and mixed questions | Reveals candidates that work well only on the majority evidence type. |
+| Operational | Chunk count, mean/p95 chunk tokens, indexing time, p50/p95 query latency, vector storage, RAM, VRAM, determinism | Explains the storage and execution cost behind retrieval quality. |
+
+Chunk-level Recall and MAP are comparable within one fixed chunker. Across
+different chunkers, the number of relevant chunks changes with the boundaries,
+so decisions use span-based Context Recall and graded nDCG instead.
+
+The engineer approves up to three complete chunker/embedding pairs. No separate
+embedding winner or chunker winner is required.
+
+## 6. Retrieval and reranking
+
+For the approved chunker/embedding pairs, do exact-term search, rank fusion, or a
+learned reranker improve the ordering enough to justify their cost?
+
+### Strategies
+
+| Strategy | What runs | Why it is included |
+|---|---|---|
+| Dense | Cosine ranking from the selected embedding | Semantic baseline. |
+| BM25 | Lexical ranking from word frequency and rarity | Finds names, exact terminology, identifiers, and codes. |
+| RRF | Dense top 20 + BM25 top 20 combined by reciprocal ranks | Combines rankings without mixing incompatible raw scores. |
+| RRF + reranker | RRF top 20 reordered by a query/passage model | Tests deeper relevance scoring before final context packing. |
+
+RRF is tested with these rerankers:
+
+- MiniLM cross-encoder control;
+- Ettin 150M;
+- Ettin 400M;
+- Ettin 1B;
+- Qwen3 Reranker 4B.
+
+Together with Dense, BM25, and RRF, this produces eight retrieval methods for
+each selected chunker/embedding pair.
+
+### Data and execution
+
+The experiment uses the same frozen QASPER-plus-structured corpus and evidence
+offsets as the previous stage.
+
+```text
+use an approved chunker/embedding pair
+→ retrieve dense top 20, BM25 top 20, or both
+→ apply RRF when required
+→ rerank the fused top 20 when required
+→ pack results under 2,048 tokens
+→ compare the final ranking with verified evidence
+```
+
+Dense-only does not secretly build BM25. BM25-only does not embed queries unless
+the selected semantic chunker requires its embedding to create boundaries.
+
+### Metrics and why they are used
+
+The metric roles stay the same as in chunking/embedding so changing only the
+retrieval strategy remains interpretable:
+
+- **Primary:** nDCG@3/@5, Context Precision@3/@5, Context Recall@3/@5, and
+  Context Recall under 2,048 tokens.
+- **Secondary:** nDCG@10, Hit Rate@5/@10, and MRR.
+- **Diagnostic:** conventional Precision/Recall/Hit Rate at the remaining
+  cutoffs, MAP@3/@5/@10, Context Precision/Recall@1/@10, determinism, and the
+  primary metrics split by evidence type.
+- **Operational:** total retrieval p50/p95 latency, indexing time, retrieved
+  tokens, chunk distribution, storage, RAM, and VRAM.
+
+Reranker time is included in total retrieval latency. Binary chunk Recall and MAP
+are not used to compare different chunkers because their denominators change with
+chunk boundaries.
+
+The engineer approves up to three complete retrieval stacks. A stack contains
+the chunker, embedding, retrieval method, and reranker when applicable.
+
+## 7. Vector database servers
+
+Which networked vector server preserves nearest-neighbour and filter correctness
+while providing the most useful latency, concurrency, ingestion, memory, and
+storage trade-off?
+
+### Servers
+
+| Server | Why it is included |
+|---|---|
+| Chroma server | Current provisional production baseline. |
+| Qdrant server | Purpose-built vector server with payload filtering. |
+| Weaviate | Independent vector-server architecture with structured filters. |
+| PostgreSQL + pgvector | Transactional relational alternative with JSON metadata and HNSW. |
+
+All servers receive identical precomputed vectors and metadata. They never create
+embeddings internally.
+
+### Data and configurations
+
+| Profile | Workload |
+|---|---|
+| Smoke | 1,000 vectors at dimension 384; 50 queries; concurrency 1 |
+| Standard | 100,000 vectors at dimensions 384 and 1,024; 500 queries; concurrency 1/8/32 |
+| Full | Selected real embeddings plus 1,000,000 clustered vectors; up to 1,000 queries; concurrency 1/8/32/64 |
+
+Synthetic vectors contain clusters and 5% near-duplicates. Metadata creates
+filters matching approximately 50%, 10%, 1%, and in full 0.1% of records.
+
+Standard/full test supported HNSW combinations of:
+
+```text
+m:                     16 or 32
+construction breadth:  100 or 200
+search breadth:         64 or 128
+```
+
+This makes sure one server is not compared with an unnecessarily weak default.
+Unsupported settings are recorded rather than silently replaced.
+Every supported configuration remains visible in MLflow; the runner does not
+automatically choose the database winner.
+
+### Execution
+
+The experiment has three steps.
+
+#### A. Conformance
+
+The real server is checked for health, cosine behavior, wrong-dimension
+rejection, compound filters, empty filters, duplicate-ID replacement, complete
+document replacement, deletion, real ANN-index use, persistence after restart,
+and index availability after restart. These are validity checks. A server that
+fails one is reported as non-conformant rather than assigned a misleading
+performance rank.
+
+#### B. Dense ANN performance
+
+```text
+NumPy computes exact top neighbours
+→ server returns approximate neighbours
+→ compare returned IDs with the exact IDs
+→ repeat unfiltered and filtered queries
+→ repeat at each configured concurrency
+```
+
+#### C. Real retrieval
+
+After the engineer chooses database finalists and one retrieval stack, every
+finalist stores the same real chunks and vectors. The complete retrieval strategy
+is rerun so database ANN behavior is connected to actual RAG quality. The
+engineer then approves one server profile for Final RAG.
+
+### Metrics and why they are used
+
+| Role | Metrics | Why they are needed |
+|---|---|---|
+| Validity checks | Health, cosine behavior, dimension rejection, compound/empty filters, replacement, deletion, persistence, restart, and ANN-index verification | Determines whether results are trustworthy; these are not quality scores. |
+| Primary | ANN Recall@3/@5/@10, Filtered ANN Recall@3/@5/@10, Filter Correctness, Empty-Filter Correctness | Measures preservation of exact neighbours and metadata behavior at application-relevant depths. |
+| Secondary | ANN and Filtered ANN Recall@1, complete RAG nDCG@3/@5 and Context Recall/Precision@3/@5 | Shows rank-one behavior and whether ANN results preserve real evidence retrieval. |
+| Diagnostic | Unfiltered/filtered p50 latency, first query after restart | Explains typical and cold-query behavior. |
+| Operational | Unfiltered/filtered p95/p99, throughput and error rate at each concurrency, build time and vectors/second, incremental upsert/delete throughput, restart readiness, peak server RAM, persistent storage | Measures tail latency, load handling, ingestion, restart, memory, and disk cost. |
+
+The database report remains separate evidence. It shows which server should be
+used by the final benchmark, but the benchmark never changes the current Chroma
+production default automatically.
+
+## 8. Generation
+
+Which local Hugging Face generator produces the best grounded, cited answer when
+every model receives exactly the same verified evidence?
+
+### Models
+
+| Model/profile | Why it is included |
+|---|---|
+| Qwen3 1.7B, thinking disabled | Small production control. |
+| MiniCPM5 1B, reasoning enabled | Compact reasoning candidate. |
+| G9v3 3B, reasoning enabled | Middle-size general-capability candidate. |
+| Qwen3.5 4B, reasoning enabled | Upper compact quality candidate. |
+
+No trustworthy public benchmark compares all four under EduMind's grounded QA,
+citation, refusal, faithfulness, and local-latency protocol. Public evidence made
+the shortlist; this experiment makes them directly comparable.
+
+### Data
+
+Standard uses 24 development questions balanced across answerability, answer
+type, and evidence type as an initial screen. Full evaluates only
+engineer-selected generator finalists on the complete frozen validation question
+set; it is not limited to 24 questions.
+
+- Answerable questions receive their verified numbered evidence blocks.
+- Unanswerable questions receive text from their document that does not answer
+  the question.
+- Retrieval is not run in this stage.
+
+Using frozen evidence prevents a good generator from being penalized by a poor
+retriever.
+
+### Execution
+
+Every generator uses its exact pinned local snapshot, official chat template,
+the same CPU or CUDA device, native checkpoint dtype, temperature 0, seed 42,
+8,192 context tokens, and at most 256 generated tokens. No model receives hidden
+quantization or CPU/GPU offload.
+
+```text
+unload previous generator
+→ cold-load candidate
+→ run two warmups
+→ give every candidate the same question and numbered evidence
+→ generate three times
+→ separate hidden reasoning from visible answer
+→ validate citations and compare with accepted answers
+```
+
+### Metrics and why they are used
+
+| Role | Metrics | Why they are needed |
+|---|---|---|
+| Primary | Citation Precision/Recall/F1 on answerable questions, Answerability Balanced Accuracy, Unsupported Answer Rate, Malformed Output Rate | Measures evidence use, answer/refusal decisions, unsupported answers, and protocol failures without penalizing correct refusals for having no citations. |
+| Secondary | Token F1 | Provides partial answer-correctness evidence before human review. |
+| Diagnostic | Exact Match, ROUGE-L, Refusal Precision/Recall/F1, HHEM on substantive non-refusal answers, determinism, prompt/answer/reasoning token counts | Explains lexical similarity, refusal errors, automated support estimates, stability, and verbosity. HHEM never replaces human Faithfulness. |
+| Operational | Cold load, Time to First Token, generation time, total p50/p95 latency, tokens/second, peak RAM, peak VRAM | Separates startup, responsiveness, decoding speed, total latency, and memory. |
+
+The engineer approves up to three generator profiles after inspecting automatic
+quality, citation/refusal behavior, latency, and resources. Human review happens
+only after retrieval and generation are combined.
+
+## 9. Final RAG and human review
+
+Which complete retrieval-and-generation system gives the best evidence-backed
+answers when every component runs together?
+
+### Systems tested
+
+Standard crosses only approved finalists:
+
+```text
+1 approved vector-server profile
+× up to 3 retrieval stacks
+× up to 3 generators
+× top_k {3, 5}
+= at most 18 complete systems
+```
+
+### Data and execution
+
+Final RAG uses the validation manifest. For every question, the complete path
+runs:
+
+```text
+chunk document
+→ embed chunks and question
+→ store/query dense vectors through the approved server
+→ apply BM25/RRF/reranking selected for the stack
+→ pack top 3 or top 5 under 2,048 context tokens
+→ number the evidence blocks
+→ generate the answer and citations
+```
+
+For `top_k=3`, retrieval quality is reported at 3. For `top_k=5`, it is reported
+at 3 and 5. Final RAG does not report @10 from a list that contains only three or
+five passages; the dedicated retrieval experiment owns @10 conclusions.
+
+Final RAG reports nDCG, Context Precision, Context Recall, and token-budget recall
+at the available cutoff; the primary and secondary generation metrics from
+Experiment 8; and retrieval, generation, server-call, and complete end-to-end
+p50/p95 latency. RAM and VRAM remain operational measurements.
+
+### Human review
+
+The engineer chooses exactly three successful complete systems. The exporter
+selects 20 common questions and creates:
+
+```text
+20 questions × 3 anonymous systems = 60 anonymous answer items
+```
+
+One reviewer scores all 60 answer items while system identity remains hidden. The
+reviewer sees the question, answer, accepted answer, and evidence. Each answer
+receives:
+
+| Human metric | Scale | What it measures |
+|---|---:|---|
+| Faithfulness | 0–2 | Whether every material claim is supported by the supplied evidence. |
+| Answer Correctness | 0–2 | Whether the answer is correct for the question. |
+| Completeness | 0–2 | Whether all essential parts are covered. |
+| Citation Accuracy | 0–2 | Whether citations are attached to the right claims and evidence blocks. |
+| Answerability Correctness | 0–1 | Whether the system correctly answered or refused. |
+
+This is single-reviewer evidence, so the report does not claim inter-reviewer
+reliability. After ratings are imported and validated, system identities are
+revealed and the engineer selects exactly one complete system. A future
+multi-reviewer study must define overlap, agreement, and adjudication separately.
+
+## 10. Extraction-to-RAG confirmation
+
+How much does real extraction reduce the quality of the selected RAG system?
+
+### Execution
+
+Two versions of the same documents and questions are compared:
+
+```text
+verified reference text → frozen selected RAG
+selected extracted text → the same frozen selected RAG
+```
+
+Question IDs, document IDs, questions, model profiles, prompt, and retrieval
+strategy remain identical. The selected parser, ASR, normalization profile, and
+vector server are part of the extracted-text path. Each text version keeps its
+own evidence offsets because extraction can change length and layout.
+
+This comparison uses a separate frozen confirmation manifest derived without
+locked-test questions. It may describe deployment risk, but it cannot reopen
+component selection after the system has been frozen.
+
+### Metrics
+
+The experiment reports the paired extracted-minus-reference difference for:
+
+- **Retrieval:** nDCG, Context Precision, and Context Recall at the system's
+  actual top-K, plus Context Recall under 2,048 tokens.
+- **Generation:** Token F1, answerable-only Citation Precision/Recall/F1,
+  Answerability Balanced Accuracy, Unsupported Answer Rate, and Malformed Output
+  Rate.
+- **Diagnostics:** refusal metrics, HHEM on substantive answers, and per-question
+  error inspection.
+- **Operational:** server-call, retrieval, generation, and complete p50/p95
+  latency.
+
+This experiment does not select the extractor again. It quantifies the downstream
+cost of extraction after component selection.
+
+## 11. Locked test
+
+After Final RAG review and extraction confirmation are complete, the one frozen
+system runs exactly once on the locked-test manifest. The selected parser, ASR,
+normalization, chunker, embedding, retrieval method, vector server, generator,
+prompt, and context settings cannot change between confirmation and this run.
+
+The locked result is the final unbiased estimate. It is not used for more tuning.
+If the system changes after the result is inspected, a new benchmark and locked
+dataset version are required.
