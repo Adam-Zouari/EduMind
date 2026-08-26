@@ -18,7 +18,7 @@ from experiments.benchmarks.common.arguments import resolved_candidates
 from experiments.benchmarks.common.contracts import BenchmarkPlan, SampleResult
 from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.runner import run_benchmark
-from experiments.benchmarks.vectordb.adapters import Config, Record, create
+from experiments.benchmarks.vectordb.adapters import Config, InvalidIndexState, Record, create
 from experiments.benchmarks.vectordb.conformance import _finish_index, check
 from experiments.benchmarks.vectordb.docker_metrics import DockerMonitor, image_lock, verify_image
 from experiments.benchmarks.vectordb.workload import clustered, exact_ids, recall, records
@@ -303,6 +303,8 @@ def _select_config(candidate, corpus, profile):
                 latencies.append(time.perf_counter() - started)
                 recalls.append(recall(hits, expected, 10))
             trials.append((config, statistics.fmean(recalls), float(np.quantile(latencies, 0.95))))
+        except InvalidIndexState:
+            raise
         except Exception:
             unsupported.append(config)
         finally:

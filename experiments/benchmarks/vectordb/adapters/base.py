@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from typing import Protocol
 
 
+class InvalidIndexState(RuntimeError):
+    """The server index cannot be trusted for the requested benchmark trial."""
+
+
 @dataclass(frozen=True)
 class Config:
     dimension: int

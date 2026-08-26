@@ -1,6 +1,6 @@
 """Factory for the four benchmark-only vector server adapters."""
 
-from .base import Adapter, Config, Hit, Record
+from .base import Adapter, Config, Hit, InvalidIndexState, Record
 from .chroma import Chroma
 from .pgvector import PgVector
 from .qdrant import Qdrant
@@ -20,4 +20,4 @@ def create(name: str, config: Config) -> Adapter:
         raise ValueError(f"Unknown vector server candidate: {name}") from exc
 
 
-__all__ = ["Adapter", "Config", "Hit", "Record", "create"]
+__all__ = ["Adapter", "Config", "Hit", "InvalidIndexState", "Record", "create"]

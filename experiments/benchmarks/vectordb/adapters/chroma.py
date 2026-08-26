@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from .base import Config, Hit, Record, ensure_dimension
+from .base import Config, Hit, InvalidIndexState, Record, ensure_dimension
 
 
 class Chroma:
@@ -25,11 +25,16 @@ class Chroma:
         return bool(self.client.heartbeat())
 
     def reset(self) -> None:
+        from chromadb.errors import NotFoundError
+
+        self.collection = None
         try:
             self.client.delete_collection(self.config.collection)
-        except Exception:
+        except NotFoundError:
             pass
-        self.collection = self.client.get_or_create_collection(
+        except Exception as exc:
+            raise InvalidIndexState("Chroma could not delete the previous collection") from exc
+        self.collection = self.client.create_collection(
             self.config.collection,
             metadata={"hnsw:space": "cosine"},
             configuration={
@@ -41,6 +46,7 @@ class Chroma:
                 }
             },
         )
+        self.index_info()
 
     def upsert(self, records: Sequence[Record]) -> None:
         ensure_dimension(self.config, records)
@@ -83,12 +89,28 @@ class Chroma:
         return int(self._collection().count())
 
     def index_info(self) -> Mapping[str, object]:
-        value = getattr(self._collection(), "configuration_json", None)
-        if value is None:
-            value = getattr(self._collection(), "configuration", None)
-        if "hnsw" not in str(value).casefold():
-            raise RuntimeError("Chroma did not report an HNSW index")
-        return {"type": "hnsw", "configuration": str(value)}
+        value = getattr(self._collection(), "configuration", None)
+        if not isinstance(value, Mapping):
+            value = getattr(self._collection(), "configuration_json", None)
+        if not isinstance(value, Mapping):
+            raise InvalidIndexState("Chroma did not report its collection configuration")
+        hnsw = value.get("hnsw")
+        if not isinstance(hnsw, Mapping):
+            raise InvalidIndexState("Chroma did not report an HNSW index")
+        expected = {
+            "space": "cosine",
+            "max_neighbors": self.config.m,
+            "ef_construction": self.config.ef_construction,
+            "ef_search": self.config.ef_search,
+        }
+        mismatches = {
+            name: {"expected": expected_value, "actual": hnsw.get(name)}
+            for name, expected_value in expected.items()
+            if hnsw.get(name) != expected_value
+        }
+        if mismatches:
+            raise InvalidIndexState(f"Chroma HNSW configuration mismatch: {mismatches}")
+        return {"type": "hnsw", "configuration": dict(hnsw)}
 
     def close(self) -> None:
         closer = getattr(self.client, "close", None)
