@@ -4,7 +4,7 @@
 [Benchmark overview](overview.md) · [Benchmark manual](methodology.md) ·
 [Selection evidence](../../experiments/benchmarks/selection_evidence.csv)
 
-Status: **public-evidence shortlist; EduMind's local benchmarks make the final decisions**
+Status: **public-evidence shortlist; EduMind's local benchmarks inform the engineer's final decisions**
 
 Selection package: **benchmark-candidates**
 
@@ -20,7 +20,7 @@ Candidate selection follows the same practical sequence for each component:
 4. **Keep different resource scales.** After reviewing the available models, they are organized into approximate parameter-size groups so the local benchmark compares compact, middle, and higher-quality options. These groups describe the reviewed shortlist; they were not fixed before the search.
 5. **Prefer comparable evidence.** When candidates were tested under the same public protocol, the strongest eligible representatives are kept. When promising models use incompatible protocols, both may be kept and compared locally instead of comparing unlike public scores.
 6. **Keep a control.** The current or established baseline is always included so the experiment can measure whether changing the component is worthwhile.
-7. **Decide locally.** Public evidence creates the shortlist. EduMind's frozen dataset, metrics, latency, and resource measurements determine the result.
+7. **Decide locally.** Public evidence creates the shortlist. An engineer reviews EduMind's frozen-dataset quality, latency, and resource measurements to make the final decision.
 
 Scores from different benchmarks are never combined or compared numerically. An MTEB Retrieval score, an RTEB score, an Artificial Analysis score, and WER answer different questions.
 
@@ -226,7 +226,7 @@ The fixed values are controls for this experiment, not claims that they are univ
 
 ### Complete architecture comparison
 
-The non-dominated Docling Standard configurations advance to an end-to-end comparison:
+The Docling Standard configurations selected by the engineer advance to an end-to-end comparison:
 
 | Candidate | Configuration | Why it is included | Evidence |
 |---|---|---|---|

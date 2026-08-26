@@ -36,11 +36,13 @@ python experiments/benchmarks/prepare.py vectordb
 
 - `smoke` uses tiny real paths and one repetition. It proves wiring only.
 - `standard` runs the approved candidates on validation data with warmups and three repetitions.
-- `full` accepts an explicit `--shortlist` and expands the workload for finalists.
+- `full` accepts an explicit engineer-authored `--shortlist DECISION_JSON` and expands the workload for finalists.
 
-MLflow is enabled by default. Each invocation creates one parent run and one child per candidate. Every completed child logs scalar metrics plus `plan.json`, `provenance.json`, `summary.json`, and per-sample Parquet. Failures remain visible and cannot be reused as completed evidence.
+MLflow is enabled by default. Each invocation creates one parent run and one child per candidate. The parent logs `plan.json`, `provenance.json`, `summary.json`, and completion counts. Each child logs its scalar metrics, confidence intervals, candidate JSON, and per-sample Parquet. Failures remain visible with their errors and partial artifacts.
 
-Standard/full retain fixed seed 42, frozen manifests, document-level split isolation, checksums, randomized execution order, per-sample output, 10,000 paired bootstrap resamples, 95% intervals, and hard gates followed by Pareto selection. There is no weighted overall score. Holm correction is used only for formal multiple-comparison claims.
+Downstream parent runs also log the engineer decision files they consume. Imported blinded-review judgments and aggregate human metrics are attached to the original final-RAG parent run. `--no-mlflow` is only a debugging path.
+
+Standard/full retain fixed seed 42, frozen manifests, document-level split isolation, checksums, randomized execution order, per-sample output, 10,000 paired bootstrap resamples, and 95% intervals. The runner verifies completeness and computes comparisons but never chooses a winner. Holm correction is used only for formal multiple-comparison claims.
 
 ## Recommended experiment order
 
@@ -57,20 +59,20 @@ Standard/full retain fixed seed 42, frozen manifests, document-level split isola
 | 9 | Final RAG and human review | approved retrieval and generator finalists | [Final RAG](rag/final-rag.md) |
 
 Independent component stages can be prepared in parallel, but downstream stages
-must receive explicit summary artifacts where shown. Passing a smoke run does not
-create such an approval.
+must receive engineer-authored decision files where shown. Passing a smoke run does not
+support such a decision.
 
 ## Direct commands
 
 ```powershell
 python experiments/benchmarks/extraction/document/run.py --profile standard --phase configuration
 python experiments/benchmarks/extraction/audio/run.py --profile standard --device cuda
-python experiments/benchmarks/extraction/video/run.py --profile standard --document-summary DOCUMENT_SUMMARY --audio-summary AUDIO_SUMMARY
+python experiments/benchmarks/extraction/video/run.py --profile standard --document-selection DOCUMENT_DECISION --audio-selection AUDIO_DECISION
 python experiments/benchmarks/extraction/normalization/run.py --profile standard
 python experiments/benchmarks/rag/chunking_embedding/run.py --profile standard
-python experiments/benchmarks/rag/retrieval/run.py --profile standard --embedding-summary EMBEDDING_SUMMARY
+python experiments/benchmarks/rag/retrieval/run.py --profile standard --embedding-selection EMBEDDING_DECISION
 python experiments/benchmarks/rag/generation/run.py --profile standard --device cuda
-python experiments/benchmarks/rag/final/run.py --profile standard --retrieval-summary RETRIEVAL_SUMMARY --generation-summary GENERATION_SUMMARY --device cuda
+python experiments/benchmarks/rag/final/run.py --profile standard --retrieval-selection RETRIEVAL_DECISION --generation-selection GENERATION_DECISION --device cuda
 python experiments/benchmarks/vectordb/run.py --profile standard
 ```
 

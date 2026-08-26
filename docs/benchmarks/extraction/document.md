@@ -28,14 +28,17 @@ code-extraction, or DOCX-conversion question.
 ```powershell
 python experiments/benchmarks/extraction/document/run.py --profile smoke
 python experiments/benchmarks/extraction/document/run.py --profile standard --phase configuration
-python experiments/benchmarks/extraction/document/run.py --profile standard --phase architecture --shortlist SUMMARY_JSON
+python experiments/benchmarks/extraction/document/run.py --profile standard --phase architecture --shortlist CONFIGURATION_DECISION_JSON
 ```
 
-The architecture phase compares the non-dominated Standard configurations with
+The architecture phase compares the engineer-selected Standard configurations with
 Granite Docling 258M and PaddleOCR-VL-1.6. Primary metrics are CER, WER, reading
 order, page attribution, block/table/formula quality, and content F1. Operational
 metrics include p50/p95 latency, throughput, RAM, and VRAM. Standard/full retain
 per-document results and paired bootstrap confidence intervals.
+
+Content F1 is the main metric shown for navigation in MLflow. It does not outweigh
+the structure, table, formula, page, or operational results and does not choose a parser.
 
 The architecture comparison uses the common image/PDF subset because Granite and
 Paddle are visual parsers. DOCX remains native Docling input and is measured in the

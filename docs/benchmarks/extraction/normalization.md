@@ -17,14 +17,14 @@ Content Preservation Recall is normalized reference-token recall after normaliza
 
 The formula is intentionally conservative: changes that do not reduce reference edit distance receive no credit. It does not label individual semantic deletions, so no separate accidental-deletion or merge metric is claimed without span annotations.
 
-Standard/full produce per-case 95% bootstrap intervals and use preservation/determinism gates before Pareto selection.
+Standard/full produce per-case 95% bootstrap intervals. The main metric is Content Preservation Recall; the runner verifies complete evidence but does not select a profile.
 
 ## Commands and limits
 
 ```powershell
 python experiments/benchmarks/extraction/normalization/run.py --profile smoke --no-mlflow
 python experiments/benchmarks/extraction/normalization/run.py --profile standard
-python experiments/benchmarks/extraction/normalization/run.py --profile full --shortlist SUMMARY_JSON
+python experiments/benchmarks/extraction/normalization/run.py --profile full --shortlist DECISION_JSON
 ```
 
 Normalization quality alone does not prove downstream retrieval or answer improvement.

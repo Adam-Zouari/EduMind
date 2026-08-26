@@ -17,8 +17,10 @@ The same manifest, device, preprocessing, question order, and repetitions apply 
 
 Word Error Rate and Character Error Rate are lower-better edit distances after common normalization. Timestamp Mean Absolute Error measures absolute timestamp deviation in seconds. Segment Boundary MAE measures start/end error. Missing and hallucinated speech rates separate deletions from unsupported output. Timestamp Alignment Coverage prevents a model from appearing accurate by returning only a few timestamps. Operational metrics are Real-Time Factor, p50/p95 clip latency, throughput, cold load, RAM, and VRAM.
 
+Word Error Rate is the main metric in MLflow. The runner still requires all other declared metrics and leaves the final trade-off to the engineer.
+
 ```powershell
 python experiments/benchmarks/extraction/audio/run.py --profile smoke --device cpu
 python experiments/benchmarks/extraction/audio/run.py --profile standard --device cuda
-python experiments/benchmarks/extraction/audio/run.py --profile full --shortlist SUMMARY_JSON --device cuda
+python experiments/benchmarks/extraction/audio/run.py --profile full --shortlist DECISION_JSON --device cuda
 ```

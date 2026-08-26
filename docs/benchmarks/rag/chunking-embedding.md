@@ -23,12 +23,12 @@ Retrieved intervals are merged before evidence recall so overlapping chunks cann
 
 ## Metrics
 
-Primary metrics are nDCG@3/@5, Context Recall@3/@5, rank-aware Context Precision@3/@5, and Context Recall under 2,048 retrieved tokens. Diagnostics are Precision, Recall, Hit Rate, and Context Precision/Recall at 1/3/5/10; MAP@3/@5/@10; MRR; and nDCG@10. Operational output includes chunk count, token distribution, indexing time, embedding storage, and p50/p95 query latency.
+The main metric is nDCG@5. The other required quality metrics are nDCG@3, Context Recall@3/@5, rank-aware Context Precision@3/@5, and Context Recall under 2,048 retrieved tokens. Diagnostics are Precision, Recall, Hit Rate, and Context Precision/Recall at 1/3/5/10; MAP@3/@5/@10; MRR; and nDCG@10. Operational output includes chunk count, token distribution, indexing time, embedding storage, and p50/p95 query latency.
 
-At most three non-dominated pairs advance. Pairwise quality intervals are considered before latency, memory, and storage tie-breaks.
+The runner reports paired intervals and no ranking. After reviewing the complete MLflow run, an engineer may record at most three pairs in a decision file for the retrieval experiment.
 
 ```powershell
 python experiments/benchmarks/rag/chunking_embedding/run.py --profile smoke
 python experiments/benchmarks/rag/chunking_embedding/run.py --profile standard
-python experiments/benchmarks/rag/chunking_embedding/run.py --profile full --shortlist SUMMARY_JSON
+python experiments/benchmarks/rag/chunking_embedding/run.py --profile full --shortlist DECISION_JSON
 ```

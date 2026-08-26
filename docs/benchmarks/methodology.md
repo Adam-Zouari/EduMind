@@ -11,7 +11,7 @@ metrics, use its page under `docs/benchmarks/`.
 
 ## 1. Purpose
 
-EduMind uses experiments to choose components; public leaderboards only choose which candidates are worth running. A result is authoritative only for the recorded dataset, software revisions, hardware, device, and protocol. Benchmarks never edit production configuration.
+EduMind uses experiments to produce evidence for an engineer to choose components; public leaderboards only choose which candidates are worth running. A complete result applies only to the recorded dataset, software revisions, hardware, device, and protocol. Benchmarks never choose a winner or edit production configuration.
 
 The selection package has two files:
 
@@ -22,11 +22,11 @@ Executable YAML registries contain settings and included candidate IDs. `prepare
 
 ## 2. Profiles
 
-`smoke` runs tiny real paths with one repetition. It detects missing dependencies and broken contracts but provides no comparative evidence. `standard` runs every approved candidate on development or validation data, includes warmups, and measures three repetitions. `full` runs explicit finalists on larger or locked workloads; it always requires `--shortlist` where a previous selection is expected.
+`smoke` runs tiny real paths with one repetition. It detects missing dependencies and broken contracts but provides no comparative evidence. `standard` runs every approved candidate on development or validation data, includes warmups, and measures three repetitions. `full` runs engineer-selected finalists on larger or locked workloads; it requires `--shortlist DECISION_JSON` where a previous decision is expected.
 
 ## 3. Reproducibility
 
-Each authoritative run records:
+Each run records:
 
 - dataset name, split, checksum, source revision, license, preprocessing version, and selected IDs;
 - candidate settings and exact model revisions or server digests;
@@ -36,13 +36,31 @@ Each authoritative run records:
 
 Documents or papers, not chunks/questions, are assigned to splits. Exact and near-duplicate checks prevent leakage. Evidence spans are verified against normalized text and represented by half-open offsets `[start, end)`.
 
-MLflow creates one parent run per invocation and one child per candidate. Scalar aggregates and confidence intervals are MLflow metrics; plans, provenance, summaries, and per-sample Parquet are artifacts. Only completed successful fingerprints are reusable.
+MLflow creates one parent run per invocation and one child per candidate. Every candidate's scalar aggregates and confidence intervals are MLflow metrics; plans, provenance, summaries, candidate errors, and per-sample Parquet are artifacts. The parent logs whether the comparison is complete. Partial evidence remains visible but cannot be used as the source of a downstream decision.
 
-## 4. Statistics and selection
+## 4. Completion, statistics, and engineering decisions
 
 Standard/full compute 95% confidence intervals using 10,000 paired bootstrap resamples with seed 42. The document, paper, recording, or query is the resampling unit. Holm correction is applied only when a report makes formal claims across several pairwise tests.
 
-Candidates first pass correctness and resource gates, then enter a Pareto comparison. No weighted overall score is calculated. When quality intervals overlap, the tie-break order is lower p95 latency, lower memory, then lower storage. A smoke run cannot promote a candidate.
+Every stage declares one **main metric** to make its central question obvious in MLflow and reports all other required quality, correctness, and operational metrics beside it. The main metric is not an automatic score or winner rule.
+
+A comparison is complete only when every planned candidate finishes, returns the same unique sample IDs, and supplies every finite metric declared in that stage's metric contract. A low quality score, slow latency, or failed correctness check is still a successfully measured result. A crash, missing sample, duplicate sample ID, missing metric, or non-finite metric makes the whole comparison incomplete. Whatever was produced remains in MLflow and the artifact directory for diagnosis.
+
+The runner calculates confidence intervals and paired differences but produces no gate result, eligibility label, Pareto set, ranking, recommendation, or promotion. An engineer reviews the complete standard/full run in MLflow and records any advancement in a separate JSON file:
+
+```json
+{
+  "schema_version": 1,
+  "source_summary": "../artifacts/benchmarks/rag/chunking-embedding/RUN/summary.json",
+  "source_run_id": "RUN",
+  "selected_candidates": ["token-256-32|MODEL"],
+  "selected_by": "engineer name",
+  "selected_date": "2026-08-26",
+  "reason": "Why this trade-off fits the next experiment."
+}
+```
+
+The loader verifies that the source is a complete standard/full run and that every selected ID succeeded in it. Smoke runs cannot be selected. `--shortlist`, `--embedding-selection`, and the other `--*-selection` arguments consume these engineer-authored files. Each downstream parent run logs the decision file under `engineer-decisions/` and records its SHA-256 in provenance.
 
 ## 5. Document extraction
 
@@ -61,7 +79,7 @@ OCR engine tests recognizer integration; OCR mode tests preservation of native P
 
 Docling 2.117.0, English, OCR scale 3.0, table-cell matching, canonical output, code enrichment off, and native DOCX ingestion stay fixed. They define the experimental environment or output requirements rather than a current product question.
 
-Non-dominated Standard configurations advance to an architecture comparison with Granite Docling 258M and PaddleOCR-VL-1.6. The latter two test independent visual-parser architectures, not isolated OCR recognition.
+The engineer selects Standard configurations for the architecture comparison with Granite Docling 258M and PaddleOCR-VL-1.6. The latter two test independent visual-parser architectures, not isolated OCR recognition.
 
 The target corpus covers clean/noisy scans, phone photos, digital/scanned/mixed PDFs, broken encodings, slides, academic layouts, headings, lists, captions, embedded images, tables, and formulas. Split membership is document-family isolated. Required annotations depend on claimed metrics.
 
@@ -104,23 +122,23 @@ Each embedding profile freezes its query/document interface or prefix, tokenizer
 
 Exact NumPy retrieval removes vector-server ANN error. Chunk/evidence overlap is clamped non-negative, and overlapping retrieved intervals are merged before Context Recall.
 
-Primary metrics are nDCG@3/@5, Context Recall@3/@5, rank-aware Context Precision@3/@5, and Context Recall under 2,048 tokens. Diagnostics include Precision/Recall/Hit Rate at 1/3/5/10, MAP@3/@5/@10, MRR, nDCG@10, chunk statistics, indexing time, latency, memory, and storage. At most three non-dominated pairs advance.
+The main metric is nDCG@5. The remaining required metrics are nDCG@3, Context Recall@3/@5, rank-aware Context Precision@3/@5, Context Recall under 2,048 tokens, Precision/Recall/Hit Rate at 1/3/5/10, MAP@3/@5/@10, MRR, nDCG@10, chunk statistics, indexing time, latency, memory, and storage. An engineer may select up to three pairs for retrieval testing.
 
 ## 10. Retrieval and reranking
 
-The retrieval stage freezes shortlisted chunker–embedding pairs and compares dense retrieval, BM25, RRF of dense and BM25 ranks, and RRF followed by each approved reranker. RRF fuses ranks rather than incompatible raw scores. Rerankers rescore the top 20 passages with the query.
+The retrieval stage freezes engineer-selected chunker–embedding pairs and compares dense retrieval, BM25, RRF of dense and BM25 ranks, and RRF followed by each approved reranker. RRF fuses ranks rather than incompatible raw scores. Rerankers rescore the top 20 passages with the query.
 
-The rerankers are MiniLM control, Ettin 150M/400M/1B, and Qwen3 Reranker 4B. Their exact scoring interfaces and tokenizer limits are part of the candidate profile. Quality metrics match the chunking stage; reranker latency and memory are added. At most three non-dominated retrieval stacks advance.
+The rerankers are MiniLM control, Ettin 150M/400M/1B, and Qwen3 Reranker 4B. Their exact scoring interfaces and tokenizer limits are part of the candidate profile. Quality metrics match the chunking stage; reranker latency and memory are added. An engineer may select up to three retrieval stacks for final RAG.
 
 ## 11. Vector databases
 
 The first server comparison contains Chroma, Qdrant, Weaviate, and PostgreSQL/pgvector. NumPy is only the exact-neighbor oracle. Identical precomputed normalized float32 vectors, IDs, metadata, filters, query order, and cosine contracts are supplied to every server.
 
-Conformance checks health, dimension rejection, compound and empty filters, replacement without stale chunks, deletion, persistence after restart, schema incompatibility, and actual ANN-index existence/use. A failure excludes a candidate from performance selection.
+Conformance checks health, dimension rejection, compound and empty filters, replacement without stale chunks, deletion, persistence after restart, schema incompatibility, and actual ANN-index existence/use. Each check is reported as evidence. A zero score does not make the run incomplete unless the server failure prevents the remaining measurements from running.
 
 Smoke uses 1,000 vectors and 50 queries at concurrency 1. Standard uses 100,000 vectors at 384 and 1,024 dimensions, 500 queries, concurrency 1/8/32, and filter selectivity near 50%/10%/1%. Full uses selected real vectors plus 1,000,000 synthetic clustered vectors, 1,000 queries, concurrency 1/8/32/64, and filters down to 0.1%.
 
-Primary correctness is ANN and filtered ANN Recall@1/@3/@5/@10, filter correctness, and lifecycle correctness. Operational metrics include p50/p95/p99 latency, throughput/error rate, build and incremental ingestion throughput, memory, storage, and restart/readiness time. Recall@10 and filtered Recall@10 must be at least 0.99; every lifecycle check must equal 1.
+The main metric is ANN Recall@10. Filtered and unfiltered ANN Recall@1/@3/@5/@10, filter and lifecycle correctness, p50/p95/p99 latency, throughput/error rate, build and incremental ingestion throughput, memory, storage, and restart/readiness time are also required. The engineer judges the measured trade-offs; the runner applies no pass threshold.
 
 ## 12. Generation
 
@@ -132,7 +150,7 @@ Operational metrics include load time, TTFT, prompt evaluation, total p50/p95, a
 
 ## 13. Final RAG and human review
 
-Only shortlisted components enter the complete-system comparison. Each request includes retrieval, optional rank fusion/reranking, 2,048-token context packing, prompting, and direct generation. Component and end-to-end timings remain separately visible.
+Only engineer-selected components enter the complete-system comparison. Each request includes retrieval, optional rank fusion/reranking, 2,048-token context packing, prompting, and direct generation. Component and end-to-end timings remain separately visible.
 
 Three anonymous systems produce answers for 20 stratified questions, yielding 60 blinded judgments. Reviewers score Faithfulness, Answer Correctness, Completeness, Citation Accuracy, and answerability on the documented rubric. Judgments are imported and validated before system identities are revealed.
 

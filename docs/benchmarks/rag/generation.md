@@ -15,12 +15,14 @@ The runner selects up to 24 development questions balanced across evidence and a
 
 ## Metrics
 
-Authoritative quality comes from blinded Human Faithfulness, Human Answer Correctness, Human Completeness, Citation Precision/Recall/F1, and Answerability Balanced Accuracy. Automated diagnostics include Exact Match, Token F1, ROUGE-L, pinned HHEM faithfulness, refusal precision/recall/F1, unsupported-answer rate, malformed-output rate, and determinism.
+Citation F1 is the main metric for this frozen-context screen. Answerability Balanced Accuracy, Exact Match, Token F1, ROUGE-L, pinned HHEM faithfulness, refusal precision/recall/F1, unsupported-answer rate, malformed-output rate, and determinism provide the rest of the automated evidence. Final system selection additionally uses blinded Human Faithfulness, Human Answer Correctness, Human Completeness, and Citation Accuracy.
 
 Operational metrics include cold load, visible-answer TTFT, total p50/p95 latency, prompt and output tokens, prompt evaluation time, generation time, tokens/second, answers/minute, process RAM, and VRAM. HHEM is diagnostic and never replaces human review.
+
+The runner requires the declared metrics but does not combine them into a score or select a model.
 
 ```powershell
 python experiments/benchmarks/rag/generation/run.py --profile smoke
 python experiments/benchmarks/rag/generation/run.py --profile standard --device cuda
-python experiments/benchmarks/rag/generation/run.py --profile full --shortlist SUMMARY_JSON --device cuda
+python experiments/benchmarks/rag/generation/run.py --profile full --shortlist DECISION_JSON --device cuda
 ```
