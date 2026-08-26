@@ -70,6 +70,8 @@ def main() -> int:
             top_k=top_k,
             repetitions=plan.repetitions,
             device=arguments.device,
+            bootstrap_resamples=plan.bootstrap_resamples,
+            bootstrap_seed=plan.seed,
         ),
         dataset_checksum=stable_hash(
             {"reference": reference.fingerprint, "extracted": extracted.fingerprint}

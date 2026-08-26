@@ -231,3 +231,36 @@ def paired_bootstrap_interval(
         confidence,
     )
 
+
+def balanced_accuracy_interval(
+    labels: Sequence[bool],
+    predictions: Sequence[bool],
+    *,
+    resamples: int = 10_000,
+    seed: int = 42,
+    confidence: float = 0.95,
+) -> ConfidenceInterval:
+    """Stratified bootstrap that preserves both answerability classes."""
+    if len(labels) != len(predictions):
+        raise ValueError("Labels and predictions must have equal length")
+    correct_by_class = [
+        np.asarray(
+            [prediction == label for truth, prediction in zip(labels, predictions, strict=True) if truth == label],
+            dtype=float,
+        )
+        for label in (False, True)
+    ]
+    if any(not len(values) for values in correct_by_class):
+        raise ValueError("Balanced Accuracy requires both answerability classes")
+    random_state = np.random.default_rng(seed)
+    bootstrap = np.zeros(resamples, dtype=float)
+    for values in correct_by_class:
+        indices = random_state.integers(0, len(values), size=(resamples, len(values)))
+        bootstrap += values[indices].mean(axis=1) / 2.0
+    alpha = (1.0 - confidence) / 2.0
+    return ConfidenceInterval(
+        balanced_accuracy(labels, predictions),
+        float(np.quantile(bootstrap, alpha)),
+        float(np.quantile(bootstrap, 1.0 - alpha)),
+        confidence,
+    )

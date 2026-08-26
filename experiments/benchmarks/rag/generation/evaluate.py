@@ -13,7 +13,7 @@ from edumind.rag.types import RetrievalHit
 
 from experiments.benchmarks.common.contracts import DatasetManifest, SampleResult
 from experiments.benchmarks.common.metrics import (
-    balanced_accuracy,
+    balanced_accuracy_interval,
     citation_scores,
     exact_match,
     rouge_l,
@@ -98,6 +98,8 @@ def evaluate_candidate(
     top_k: int = 5,
     repetitions: int = 1,
     device: str = "cpu",
+    bootstrap_resamples: int = 10_000,
+    bootstrap_seed: int = 42,
 ):
     questions = _questions(manifest, 24)
     documents = {
@@ -239,6 +241,7 @@ def evaluate_candidate(
                 sample_latency,
                 {
                     "answerable": answerable,
+                    "predicted_answerable": predicted_answerable,
                     "question": question["question"],
                     "reference_answer": " | ".join(references),
                     "generated_answer": answer,
@@ -254,6 +257,12 @@ def evaluate_candidate(
     runtime_memory = generator.runtime_memory()
     generator.unload()
     refusal = _refusal_scores(labels, predictions)
+    answerability_interval = balanced_accuracy_interval(
+        labels,
+        predictions,
+        resamples=bootstrap_resamples,
+        seed=bootstrap_seed,
+    )
     return samples, {
         "p50_latency_seconds": float(np.median(total_latencies)),
         "p95_latency_seconds": float(np.quantile(total_latencies, 0.95)),
@@ -278,9 +287,16 @@ def evaluate_candidate(
         "cold_load_seconds": cold.load_seconds,
         **runtime_memory,
     }, {
-        "answerability_balanced_accuracy": balanced_accuracy(labels, predictions),
+        "answerability_balanced_accuracy": answerability_interval.estimate,
         **refusal,
         "human_review_required": 1.0,
+    }, {}, {
+        "answerability_balanced_accuracy": {
+            "estimate": answerability_interval.estimate,
+            "lower": answerability_interval.lower,
+            "upper": answerability_interval.upper,
+            "confidence": answerability_interval.confidence,
+        }
     }
 
 

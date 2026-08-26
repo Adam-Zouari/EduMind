@@ -36,6 +36,13 @@ Evaluator = Callable[
         Mapping[str, float],
         Mapping[str, float],
         Mapping[str, object],
+    ]
+    | tuple[
+        list[SampleResult],
+        Mapping[str, float],
+        Mapping[str, float],
+        Mapping[str, object],
+        Mapping[str, Mapping[str, float]],
     ],
 ]
 
@@ -208,6 +215,7 @@ def _run_candidate(
             candidate_metrics = dict(evaluated[2]) if len(evaluated) >= 3 else {}
             if len(evaluated) >= 4:
                 tracking.parameters(evaluated[3])
+            candidate_intervals = dict(evaluated[4]) if len(evaluated) >= 5 else {}
             if not samples:
                 raise RuntimeError("Candidate produced no samples")
             _validate_sample_ids(samples)
@@ -219,6 +227,7 @@ def _run_candidate(
                 seed=plan.seed,
             )
             metrics = {**metrics, **candidate_metrics}
+            intervals = {**intervals, **candidate_intervals}
             _validate_required_metrics(metrics, operational, required_metrics)
             result = CandidateResult(
                 candidate,

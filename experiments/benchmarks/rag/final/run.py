@@ -113,6 +113,8 @@ def evaluate(candidate):
         top_k=int(top_k_value.removeprefix("top_k=")),
         repetitions=plan.repetitions,
         device=device,
+        bootstrap_resamples=plan.bootstrap_resamples,
+        bootstrap_seed=plan.seed,
     )
 
 result = run_benchmark(

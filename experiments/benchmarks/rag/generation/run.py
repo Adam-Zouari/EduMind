@@ -50,6 +50,8 @@ result = run_benchmark(
         model_lock,
         repetitions=plan.repetitions,
         device=device,
+        bootstrap_resamples=plan.bootstrap_resamples,
+        bootstrap_seed=plan.seed,
     ),
     dataset_checksum=manifest.fingerprint,
     directions=GENERATION_DIRECTIONS,

@@ -5,6 +5,7 @@ import pytest
 from experiments.benchmarks.common.metrics import (
     average_precision_at_k,
     balanced_accuracy,
+    balanced_accuracy_interval,
     character_error_rate,
     citation_scores,
     context_precision_at_k,
@@ -83,6 +84,14 @@ def test_metric_edge_cases_and_directions() -> None:
     with pytest.raises(ValueError, match="equal length"):
         balanced_accuracy([True], [])
     assert balanced_accuracy([], []) == 0.0
+    balanced = balanced_accuracy_interval(
+        [True, True, True, False],
+        [True, True, True, True],
+        resamples=500,
+        seed=42,
+    )
+    assert balanced.estimate == 0.5
+    assert balanced.lower == balanced.upper == 0.5
     paired = paired_bootstrap_interval([2, 4], [1, 1], resamples=100)
     assert paired.estimate == 2.0
     with pytest.raises(ValueError, match="non-empty"):
