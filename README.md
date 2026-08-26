@@ -120,7 +120,10 @@ approved candidate shortlist
 component benchmarks on frozen local data
       |
       v
-correctness gates + confidence intervals + Pareto set
+complete per-sample evidence + confidence intervals in MLflow
+      |
+      v
+engineer-authored component decisions
       |
       v
 final RAG comparison + blinded human review
@@ -152,7 +155,7 @@ does not contaminate another decision:
 | 6 | Retrieval + reranking | Do BM25, RRF, or rerankers improve the shortlisted pairs? | [Retrieval](docs/benchmarks/rag/retrieval.md) |
 | 7 | Vector servers | Which server preserves recall/filter correctness and performs well under load? | [Vector databases](docs/benchmarks/systems/vector-databases.md) |
 | 8 | Generation | Which local generator gives the best grounded, cited answer from frozen evidence? | [Generation](docs/benchmarks/rag/generation.md) |
-| 9 | Final RAG | Which shortlisted complete system wins automated and blinded human evaluation? | [Final RAG](docs/benchmarks/rag/final-rag.md) |
+| 9 | Final RAG | What evidence should the engineer use to choose among complete systems? | [Final RAG](docs/benchmarks/rag/final-rag.md) |
 
 `smoke` profiles verify that a real path runs; they are not performance evidence.
 `standard` profiles compare the approved candidates. `full` profiles run explicit

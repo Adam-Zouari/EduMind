@@ -17,8 +17,8 @@ Streamlit -> EduMindPipeline -> extraction -> chunking/embedding
 
 Experiments
 frozen datasets -> approved candidates -> per-sample metrics/resources
-                -> confidence intervals/Pareto set -> human review
-                -> explicit recommendation (never an automatic config change)
+                -> completeness checks/confidence intervals -> engineer review
+                -> explicit engineer decision (never an automatic config change)
 ```
 
 This separation prevents benchmark candidates, partially implemented strategies,

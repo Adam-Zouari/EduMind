@@ -225,23 +225,23 @@ Representative commands:
 ```powershell
 python experiments/benchmarks/extraction/document/run.py --profile standard --phase configuration
 python experiments/benchmarks/extraction/audio/run.py --profile standard --device cuda
-python experiments/benchmarks/extraction/video/run.py --profile standard --document-summary DOCUMENT_SUMMARY --audio-summary AUDIO_SUMMARY
+python experiments/benchmarks/extraction/video/run.py --profile standard --document-selection DOCUMENT_DECISION --audio-selection AUDIO_DECISION
 python experiments/benchmarks/extraction/normalization/run.py --profile standard
 
 python experiments/benchmarks/rag/chunking_embedding/run.py --profile standard
-python experiments/benchmarks/rag/retrieval/run.py --profile standard --embedding-summary EMBEDDING_SUMMARY
+python experiments/benchmarks/rag/retrieval/run.py --profile standard --embedding-selection EMBEDDING_DECISION
 python experiments/benchmarks/rag/generation/run.py --profile standard --device cuda
-python experiments/benchmarks/rag/final/run.py --profile standard --retrieval-summary RETRIEVAL_SUMMARY --generation-summary GENERATION_SUMMARY --device cuda
+python experiments/benchmarks/rag/final/run.py --profile standard --retrieval-selection RETRIEVAL_DECISION --generation-selection GENERATION_DECISION --device cuda
 
 python experiments/benchmarks/vectordb/run.py --profile smoke
 python experiments/benchmarks/vectordb/run.py --profile standard
 ```
 
-Use `--no-mlflow` only for debugging. Use `--shortlist summary.json` for full profiles. A full run never silently expands to all candidates.
+Use `--no-mlflow` only for debugging. Use `--shortlist DECISION_JSON` for full profiles. The decision must reference a complete standard/full `summary.json`, name the engineer and date, and explain the choice. A full run never silently expands to all candidates.
 
 ## 8. Verification checklist
 
-Before claiming an authoritative result:
+Before using a run as comparative evidence:
 
 - `prepare.py --list` names only included models, the HHEM diagnostic, and documented Docling subcomponents.
 - `selected.json` exists and every recorded directory exists.
@@ -249,7 +249,7 @@ Before claiming an authoritative result:
 - all candidate runs retain per-sample results and exact revisions.
 - generation candidates share the same explicit device.
 - vector servers report healthy and use actual ANN indexes.
-- failed candidates remain visible; smoke output is never treated as comparative evidence.
+- the parent MLflow run reports `benchmark_complete=1`; failed candidates and partial artifacts remain visible, and smoke output is never treated as comparative evidence.
 - final human review is imported before selecting the locked-test system.
 
 If a model is missing, rerun the matching preparation target. If a pinned revision no longer resolves, stop and review the selection package; do not replace it with the repository's current head.
