@@ -6,21 +6,21 @@
 
 ## Role
 
-`edumind.extraction` converts a local image, PDF, DOCX, audio file, or video into a
-normalized `ExtractedDocument`. Production and experiments share the same contracts
-and canonical results. Provisional extractors live in `src`; alternative adapters
+`edumind.extraction` converts a local image, PDF, DOCX, audio file, or video into an
+`ExtractedDocument`. Production and experiments share the same contracts and
+canonical results. Provisional extractors live in `src`; alternative adapters
 remain beside their experiments until a benchmark-backed promotion.
 
 ```text
 local path -> source detection -> extractor registry -> canonical document
-           -> normalization -> revisioned cache
+           -> optional runtime cleanup -> revisioned cache
 ```
 
 ## Output contract
 
 An `ExtractedDocument` contains:
 
-- normalized text and exact half-open character offsets;
+- text and exact half-open character offsets;
 - pages, timestamps, and bounding boxes where the source/parser provides them;
 - structured heading, list, table, formula, caption, audio, and visual-text
   segments;
@@ -28,12 +28,16 @@ An `ExtractedDocument` contains:
 
 Tables and formulas are document elements, not separate source kinds. The original
 parser representation is retained in metadata when it contains richer structure
-than the normalized text view.
+than the text view.
 
 `ExtractionRequest` freezes source identity and options. `ExtractionProfile`
 freezes every behavior-changing choice: engine revision, device, OCR/table/formula
 settings, routing, preprocessing, and normalization. The profile fingerprint and
 source checksum form the cache identity.
+
+Production may request an optional cleanup profile. Extraction benchmarks request
+`normalization=none`, preserve candidate output, and use only fixed evaluator
+canonicalization shared by the reference and prediction.
 
 ## Current production routes
 
@@ -64,5 +68,4 @@ raw exceptions through the UI.
 
 - [Complete document parsing](../benchmarks/methodology.md#1-document-extraction)
 - [Audio transcription](../benchmarks/methodology.md#2-audio-extraction)
-- [Video keyframes](../benchmarks/methodology.md#4-video-extraction)
-- [Text normalization](../benchmarks/methodology.md#3-text-normalization)
+- [Video keyframes](../benchmarks/methodology.md#3-video-extraction)

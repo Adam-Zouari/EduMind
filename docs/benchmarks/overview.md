@@ -27,8 +27,7 @@ rationale.
 
 ```text
 document parser ─┐
-audio ASR ───────┼─> video extraction
-normalization ───┘
+audio ASR ───────┴─> video extraction
 
 chunking × embedding -> retrieval/reranking -> real vector-server retrieval
 
@@ -39,8 +38,8 @@ selected server + retrieval + generator -> Final RAG -> blinded review
                                            -> one locked-test evaluation
 ```
 
-Document extraction, audio, normalization, chunking/embedding, vector-server
-ANN checks, and generation can begin independently. Downstream experiments use
+Document extraction, audio, chunking/embedding, vector-server ANN checks, and
+generation can begin independently. Downstream experiments use
 engineer-authored decision files so an earlier choice is frozen rather than
 silently reselected.
 
@@ -51,7 +50,9 @@ silently reselected.
 - `full` runs explicit engineer-selected finalists.
 - Every planned candidate and required metric must complete for a comparison to
   be usable.
-- Standard/full retain per-sample rows and 95% bootstrap intervals.
+- Standard/full retain per-sample rows and report 95% confidence intervals for
+  eligible sample-based aggregates. Counts, statuses, fixed identifiers, and
+  one-off operational observations do not receive artificial intervals.
 - No weighted overall score or automatic production promotion is used.
 - Performance results apply to the hardware and software environment recorded
   with that run.

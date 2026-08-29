@@ -2,7 +2,7 @@
 
 [Project overview](../../README.md) ·
 [Architecture](overview.md) ·
-[Pipeline](application.md) · [RAG benchmark methodology](../benchmarks/methodology.md#5-chunking-and-embedding)
+[Pipeline](application.md) · [RAG benchmark methodology](../benchmarks/methodology.md#4-chunking-and-embedding)
 
 ## Role
 
@@ -48,8 +48,8 @@ Alternative chunkers/embeddings share this production contract. BM25, reciprocal
 rank fusion, rerankers, and alternative vector servers remain experiment-only
 until an explicit benchmark-backed production change.
 
-- [Chunking and embedding experiment](../benchmarks/methodology.md#5-chunking-and-embedding)
-- [Retrieval and reranking experiment](../benchmarks/methodology.md#6-retrieval-and-reranking)
-- [Generation experiment](../benchmarks/methodology.md#8-generation)
-- [Final RAG experiment](../benchmarks/methodology.md#9-final-rag-and-human-review)
-- [Vector database experiment](../benchmarks/methodology.md#7-vector-database-servers)
+- [Chunking and embedding experiment](../benchmarks/methodology.md#4-chunking-and-embedding)
+- [Retrieval and reranking experiment](../benchmarks/methodology.md#5-retrieval-and-reranking)
+- [Generation experiment](../benchmarks/methodology.md#7-generation)
+- [Final RAG experiment](../benchmarks/methodology.md#8-final-rag-and-human-review)
+- [Vector database experiment](../benchmarks/methodology.md#6-vector-database-servers)

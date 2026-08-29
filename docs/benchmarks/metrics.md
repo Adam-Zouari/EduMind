@@ -14,16 +14,19 @@ marked lower-is-better.
 
 - Content, Exact Match, Token F1, and ROUGE-L use case-folded `\w+` tokens.
   CER operates on the strings supplied by the stage, and WER splits those
-  strings on whitespace. A stage therefore performs its fixed canonical
-  normalization before scoring rather than hiding it inside these two metrics.
+  strings on whitespace. An evaluator therefore applies its fixed canonical
+  representation rules before scoring rather than hiding them inside these two
+  metrics.
 - Source and evidence spans are half-open intervals: `[start, end)`.
 - Empty denominators use the explicit behavior stated below; they never produce
   fabricated zero-quality observations.
 - Standard and full runs retain one row per sample before aggregation.
 - p50, p95, and p99 are latency percentiles. Throughput is completed operations
   divided by measured wall-clock time.
-- Confidence intervals use 10,000 bootstrap resamples with seed 42. Paired
-  comparisons resample aligned samples, not unrelated aggregate values.
+- Eligible standard/full sample-based aggregates use 10,000 bootstrap resamples
+  with seed 42 and 95% confidence intervals. Paired comparisons resample aligned
+  samples, not unrelated aggregate values. Counts, statuses, fixed identifiers,
+  and single operational observations do not receive intervals.
 - Normalized precision, recall, F1, accuracy, coverage, nDCG, and correctness
   values lie in `[0, 1]`. CER and WER are non-negative and can exceed 1 when
   insertions outnumber reference units. Human rubric scores use their stated
@@ -42,11 +45,17 @@ scorers. Until the runner is aligned with this contract, document smoke runs may
 validate wiring, but their metrics cannot support an authoritative parser
 comparison.
 
-All candidates receive the same canonical reference and output normalization.
-Results are reported overall and separately for image, PDF, and DOCX inputs and
-for the document families defined by the manifest. A conditional metric is
-absent, not zero, when its required annotation does not apply. Every aggregate
-records `eligible_samples`, `total_samples`, and a confidence interval.
+All candidates receive the same canonical reference and output conversion.
+This evaluation-only conversion handles representational equivalence; it does
+not repair words, remove page content, deduplicate text, or otherwise clean a
+candidate's extraction.
+Each metric is reported as a total across the documents on which it is defined
+and separately for applicable document groups such as `image`, `pdf_scanned`,
+and `docx`. A conditional metric is absent, not zero, when its required
+annotation does not apply. Every sample-based aggregate records `sample_count`
+as reporting metadata. Qualifying aggregates also record a confidence interval
+under the separate policy below. The benchmark plan records the total scheduled
+samples.
 
 ### Text content and recognition
 
@@ -153,7 +162,7 @@ row/column-adjacency approximation. OmniDocBench documents TEDS and TEDS-S in it
 ### Formulas
 
 Formula metrics are calculated only for samples with formula annotations and are
-reported separately for inline and display formulas as well as overall. Detection
+reported as a total and separately for inline and display formulas. Detection
 uses one-to-one region matching at `IoU >= 0.5` when boxes are available.
 
 | Metric | Calculation | Question answered | Range and direction |
@@ -209,17 +218,11 @@ batch. It is omitted when it would merely be the arithmetic inverse of sequentia
 latency. Missing RAM, VRAM, or disk instrumentation is recorded as unavailable;
 it is never silently converted to zero.
 
-### Metrics deliberately excluded
-
-| Excluded metric | Reason |
-|---|---|
-| Word Accuracy | Answers the same word-recognition question as WER and is only a clipped transformation of it. |
-| Missing Text Rate | Answers the same omission question as Content Recall. |
-| Hallucinated Text Rate | Answers the same additional-content question as Content Precision, and the name overstates what unmatched text proves. |
-| Missing Page Rate | Answers the same missing-page question as Page Coverage. |
-| Exact-line Block F1 | Does not validly measure layout elements, types, hierarchy, or localization. |
-| Sequential items/minute derived from mean latency | Answers the same speed question as latency; true sustained Batch Pages per Minute remains included. |
-| Character-only LaTeX similarity | Replaced by the official CDM formula-recognition metric. |
+p50/p95 latency intervals are reported only when enough independent document or
+page observations support them. A single first-item measurement, throughput
+batch, or peak RAM/VRAM/temporary-disk observation is reported without a
+confidence interval. If an operational measurement is repeated independently,
+an interval may be reported only with the repetition count and aggregation unit.
 
 ### Required document-extraction result groups
 
@@ -256,6 +259,103 @@ This grouping supports a complete conclusion without pretending that text,
 layout, structure, reliability, and cost are interchangeable. No weighted
 overall score is calculated.
 
+### Reporting metadata
+
+Every sample-based aggregate records `sample_count`, the number of samples that
+contributed to its point estimate. It is reporting metadata, not a quality or
+operational metric, and no confidence interval is calculated for it.
+
+```text
+text.content_f1 = 0.91
+text.content_f1.sample_count = 120
+
+tables.structure_score = 0.84
+tables.structure_score.sample_count = 18
+```
+
+This makes the evidence volume visible without treating the count as part of
+the confidence-interval calculation or as another performance result.
+
+## Confidence intervals
+
+A confidence interval expresses uncertainty in an aggregate calculated from
+multiple independent observations. It does not describe the possible range of
+an individual prediction, and it must not be attached to a value merely because
+the value appears in MLflow.
+
+### Which values receive an interval
+
+| Value | 95% confidence interval? | Rule |
+|---|---:|---|
+| Standard/full text, page, layout, table, and formula aggregates | Yes | Calculated from the contributing independent samples. |
+| Standard/full reliability rates | Yes | Calculated across scheduled independent samples. |
+| Standard/full p50/p95 latency | Conditional | Reported when enough independent document or page observations support the percentile estimate. |
+| Smoke metrics | No authoritative interval | Smoke validates execution and is too small for selection claims. |
+| Statuses, revisions, checksums, configuration values | No | These are states or fixed facts rather than sampled estimates. |
+| One first-item or cold-load measurement | No | One observation cannot estimate uncertainty. |
+| One throughput batch | No | Report the observed batch throughput. |
+| One peak RAM, VRAM, or temporary-disk measurement | No | Report the observed peak. |
+| Repeated independent operational measurements | Conditional | An interval is allowed only when the repetition count and aggregation unit are recorded. |
+
+When an interval is required but the available independent observations are too
+few to support it, the report keeps the point estimate, omits the interval, and
+marks the metric as descriptive rather than authoritative selection evidence.
+EduMind does not invent a zero-width interval.
+
+### Calculation
+
+Eligible standard/full sample-based metrics use 10,000 bootstrap resamples with
+seed 42:
+
+1. Treat the document, page, query, clip, or other declared sample as the
+   independent resampling unit.
+2. Resample those units with replacement.
+3. Recalculate the aggregate for every resample.
+4. Use the 2.5th and 97.5th percentiles as the 95% interval bounds.
+
+Document-group metrics resample only the samples in that group. Conditional
+metrics such as table structure or formula recognition resample only the samples
+eligible for that metric. Paired candidate comparisons resample aligned sample
+IDs together so both candidates are evaluated on the same resampled cases.
+
+### MLflow names
+
+The point estimate keeps the simple metric name. Interval bounds are attached to
+it:
+
+```text
+text.content_f1
+text.content_f1.ci_lower
+text.content_f1.ci_upper
+
+text.pdf_scanned.content_f1
+text.pdf_scanned.content_f1.ci_lower
+text.pdf_scanned.content_f1.ci_upper
+
+tables.structure_score
+tables.structure_score.ci_lower
+tables.structure_score.ci_upper
+```
+
+A value without `ci_lower` and `ci_upper` has no reported interval. Missing
+bounds are not interpreted as zero.
+
+### Interpretation
+
+For example:
+
+```text
+text.content_f1 = 0.91
+95% CI          = [0.89, 0.93]
+```
+
+The benchmark estimates an aggregate Content F1 of `0.91`; variation across the
+sampled documents produces the reported uncertainty interval. A narrower
+interval means the aggregate is estimated more precisely. Overlapping intervals
+do not by themselves prove that candidates are equal, and non-overlapping
+intervals do not replace an aligned paired comparison when a formal difference
+claim is made.
+
 ## Audio extraction
 
 Audio uses CER and WER as defined above, with speech-specific alignment and cost
@@ -272,25 +372,6 @@ The timestamp helper accepts already aligned arrays of equal non-zero length. A
 stage must perform and record the alignment before calling it; it must not
 truncate unequal arrays silently. The audio section will be expanded to the same
 full contract format after its metric audit.
-
-## Normalization
-
-For reference text `r`, corrupted observed text `o`, and normalized output `n`:
-
-```text
-B = edit_distance(r, o)        original corruption
-A = edit_distance(r, n)        corruption remaining
-C = edit_distance(o, n)        edits made by normalization
-R = max(0, B - A)              useful repair
-```
-
-| Metric | Definition | Direction |
-|---|---|---|
-| Content Preservation Recall | Reference content retained after normalization divided by reference content. | Higher |
-| Corruption Removal Recall | `R / B`; equals 1 when the input has no corruption and remains correct. | Higher |
-| Corruption Removal Precision | `R / C`; unnecessary or harmful edits increase `C` without increasing `R`. | Higher |
-| Corruption Removal F1 | Harmonic mean of removal precision and recall. | Higher |
-| Accidental Deletion/Merge Rate | Reference units deleted or incorrectly joined by normalization divided by reference units. | Lower |
 
 ## Retrieval quality
 
@@ -373,9 +454,11 @@ retrieval, reranking, context packing, prompting, and generation.
 
 ## Aggregation and interpretation
 
-Aggregate metrics never replace sample rows. Reports show the mean (or named
-percentile), a 95% interval, the number of contributing samples, and failures.
-Conditional metrics such as table structure or timestamps also report their
-eligible subset size. An engineer reviews the complete evidence; EduMind does
-not combine unrelated metrics into a weighted overall score or promote a
-candidate automatically.
+Aggregate metrics never replace sample rows. Eligible standard/full sample-based
+metrics report the mean (or named percentile), a 95% interval, the number of
+contributing samples, and failures. Conditional metrics such as table structure
+or timestamps also report their sample count. Smoke values, counts, statuses,
+fixed identifiers, and single operational observations do not have authoritative
+intervals. An engineer reviews the complete evidence; EduMind does not combine
+unrelated metrics into a weighted overall score or promote a candidate
+automatically.

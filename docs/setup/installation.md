@@ -179,10 +179,6 @@ data/benchmarks/extraction/video-locked-test.json
 
 Every asset row must contain a checksum, license, source revision, document family, and reference transcript. Timestamp metrics require reference segments. Video visual-text metrics additionally require verified visible text and timestamps.
 
-### Normalization
-
-Normalization needs at least 200 deterministic corruption/preservation cases split by document family. Each row contains `observed`, `reference`, provenance, and split identity. No model download is required.
-
 ## 5. Vector database servers
 
 Prepare and digest-lock the four server images:

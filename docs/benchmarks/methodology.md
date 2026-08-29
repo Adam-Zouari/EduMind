@@ -11,31 +11,30 @@ combine the approved retrieval and generation profiles and review their answers.
 ```text
 1. Document extraction: configuration on development, architectures on validation
 2. Audio extraction: all candidates on development, finalists on validation
-3. Text normalization: all profiles on development, finalists on validation
-1 + 2 + 3 --> 4. Video keyframes with parser, ASR, and normalization frozen
+1 + 2 --> 3. Video keyframes with parser and ASR frozen
 
-5. Chunking x embedding --> 6. Retrieval and reranking
-6 --> 7. Real vector-server retrieval
+4. Chunking x embedding --> 5. Retrieval and reranking
+5 --> 6. Real vector-server retrieval
 
-8. Generation on fixed evidence (independent of retrieval)
+7. Generation on fixed evidence (independent of retrieval)
 
 selected server + selected retrieval + selected generator
---> 9. Final RAG on validation + blinded human review
---> 10. Extraction-to-RAG confirmation on separate non-locked data
---> 11. Exactly one locked-test run
+--> 8. Final RAG on validation + blinded human review
+--> 9. Extraction-to-RAG confirmation on separate non-locked data
+--> 10. Exactly one locked-test run
 ```
 
-Document extraction, audio, normalization, chunking/embedding, the synthetic
+Document extraction, audio, chunking/embedding, the synthetic
 vector-server workload, and generation can start independently. Video waits for
-a document parser, ASR, and normalization profile. Retrieval waits for
-chunking/embedding. Real server retrieval waits for a retrieval stack. Final RAG
-waits for one selected server, retrieval stack, and generator.
+a document parser and ASR. Retrieval waits for chunking/embedding. Real server
+retrieval waits for a retrieval stack. Final RAG waits for one selected server,
+retrieval stack, and generator.
 
 `smoke` checks that a small real path works and cannot support a selection.
 `standard` compares every candidate on development data. `full` compares only
 engineer-selected finalists on validation data. Standard/full use seed 42, retain
-per-sample results, and report 95% bootstrap confidence intervals. The locked
-test is reserved for the one final system.
+per-sample results, and report 95% confidence intervals for eligible
+sample-based aggregates. The locked test is reserved for the one final system.
 
 Every comparison gives its candidates the same samples. MLflow stores the exact
 settings, revisions, data checksum, hardware, aggregate metrics, confidence
@@ -50,52 +49,181 @@ latency, throughput, and resources.
 
 ## 1. Document extraction
 
-Which complete parser best converts educational images, PDFs, and DOCX files into
-accurate text and useful structure, including pages, reading order, tables, and
-formulas?
+Which complete parser profile best converts educational images, PDFs, and DOCX
+files into accurate text and useful structure, including pages, reading order,
+tables, and formulas?
 
-OCR is not tested as an isolated product. It is tested inside the document
-pipeline because OCR, native PDF text, layout detection, tables, formulas, and
-reading order affect one another.
+OCR is not tested as an isolated product. It is tested inside the complete
+document pipeline because OCR text and boxes influence layout, reading order,
+page attribution, tables, and formulas.
 
-### Phase A: 24 Docling Standard configurations
+### Terminology and unit of comparison
 
-The first phase compares:
+An **extraction profile** is one complete executable parser configuration. The
+benchmark runner currently calls this value a `candidate`, but the word means a
+configuration run, not an individual model. For example:
 
 ```text
-OCR engine:          RapidOCR, Tesseract, EasyOCR                 (3)
-OCR mode:            PDF-aware regions, full page                 (2)
-TableFormer mode:    fast, accurate                               (2)
-Formula enrichment: off, on                                      (2)
-                                                                  ───
-Total:               3 × 2 × 2 × 2 = 24 configurations
+Docling Standard
++ RapidOCR
++ PDF-aware OCR
++ TableFormer accurate
++ formula enrichment on
 ```
 
-Why these settings vary:
+An extraction profile produces one canonical structured document for every
+applicable input. Results use only two organizing concepts.
 
-| Setting | Why it is tested |
-|---|---|
-| OCR engine | Recognition quality, bounding boxes, speed, and device use differ. RapidOCR is the production control, Tesseract is a classical CPU comparison, and EasyOCR is a separate neural implementation. |
-| PDF-aware versus full-page OCR | PDF-aware mode can preserve correct native text and OCR only necessary regions. Full-page OCR can recover scans or broken encodings but may duplicate correct native text. |
-| TableFormer fast versus accurate | Tests the speed/quality trade-off in row and column reconstruction. |
-| Formula enrichment off versus on | Tests whether specialized formula recovery justifies its additional load, latency, and memory. |
+**Metric groups say what is measured:**
 
-The following stay fixed so the experiment remains understandable: Docling
-2.117.0, English, OCR scale 3.0, table-cell matching enabled, code enrichment
-disabled, canonical structured output, and native DOCX ingestion.
+```text
+text
+pages
+layout
+tables
+formulas
+reliability
+operational
+```
 
-### Phase B: parser architectures
+These are the sections defined in [metrics.md](metrics.md). Content F1 is a text
+metric, Page Coverage is a page metric, and Table Structure Score is a table
+metric.
 
-After reviewing Phase A, the selected Docling configurations are compared with:
+**Document groups say what kind of document was processed:**
 
-| Parser | Why it is included |
-|---|---|
-| Selected Docling Standard configuration | Conventional OCR, layout, table, and formula pipeline control. |
-| Granite Docling 258M | Compact visual parser integrated with Docling; tests a different architecture. |
-| PaddleOCR-VL-1.6 | Independent visual document parser, so the comparison is not limited to Docling implementations. |
+```text
+PDF
+├── digital
+├── scanned
+├── mixed
+└── broken text
 
-The visual-parser comparison uses images and PDFs. DOCX remains native Docling
-input instead of being rasterized merely to accommodate visual models.
+image
+├── scan
+└── phone photo
+
+DOCX
+└── native document
+```
+
+Every sample belongs to one broad format group (`image`, `pdf`, or `docx`) and
+one detailed group where applicable. Compound detailed names use underscores in
+MLflow: `image_scan`, `image_phone_photo`, `pdf_digital`, `pdf_scanned`,
+`pdf_mixed`, and `pdf_broken_text`. A phone photo therefore contributes to the
+`image` aggregate and the more specific `image_phone_photo` aggregate.
+
+An unqualified metric is the aggregate across every sample eligible for that
+metric. Adding a document group gives the same metric for that group only:
+
+```text
+text.content_f1                 -> every document with a text reference
+text.image.content_f1           -> images only
+text.pdf_digital.content_f1     -> digital PDFs only
+text.pdf_scanned.content_f1     -> scanned PDFs only
+text.docx.content_f1            -> DOCX only
+
+tables.structure_score          -> every reference table
+tables.pdf_scanned.structure_score
+                                 -> reference tables in scanned PDFs only
+```
+
+Documents still carry annotations such as `has_table`, `has_formula`,
+`multi_column`, and `layout_difficulty`. Those labels remain in the manifest and
+per-sample artifact for investigation, but they do not create another required
+MLflow namespace.
+
+Metrics from different categories are never averaged together. `text.content_f1`
+does not combine text, pages, layout, tables, formulas, latency, or memory. It is
+only the total Content F1 across documents eligible for Content F1.
+
+### Which metrics apply to which inputs
+
+The following matrix defines applicability. `Yes` means the metric group is
+expected for that input when its required reference annotation exists.
+`Conditional` means only the relevant annotated subset is scored. `No` means
+the metric would not represent the native input and must be omitted rather than
+recorded as zero.
+
+| Metric category | Images/photos | Digital PDF | Scanned PDF | Mixed PDF | Broken-text PDF | Native DOCX |
+|---|---:|---:|---:|---:|---:|---:|
+| Text content and recognition | Yes | Yes | Yes | Yes | Yes | Yes |
+| Page metrics | Yes, as one page | Yes | Yes | Yes | Yes | No |
+| Reading order | Yes | Yes | Yes | Yes | Yes | Yes |
+| Visual layout and bounding boxes | Yes | Yes | Yes | Yes | Yes | No |
+| Semantic element types and hierarchy | Conditional | Yes | Yes | Yes | Yes | Yes |
+| Tables | Conditional | Conditional | Conditional | Conditional | Conditional | Conditional |
+| Formulas | Conditional | Conditional | Conditional | Conditional | Conditional | Conditional |
+| Reliability | Yes | Yes | Yes | Yes | Yes | Yes |
+| Operational | Yes | Yes | Yes | Yes | Yes | Yes |
+
+#### Text
+
+Content Precision, Content Recall, Content F1, CER, and WER apply to every input
+with verified reference text: images, every PDF family, and DOCX. Reading Order
+Accuracy also applies to all of those formats when the reference contains enough
+ordered elements to form comparable pairs.
+
+#### Pages
+
+Page Coverage, Page Content F1, Page Attribution Accuracy, and Duplicate Page
+Rate apply to PDFs and to images treated as one-page documents. They do not
+apply to native DOCX. DOCX page boundaries depend on a renderer, fonts, margins,
+and page settings; native ingestion deliberately avoids inventing a fixed visual
+pagination.
+
+#### Layout
+
+Visual layout detection and Mean Bounding-Box IoU apply to images and PDFs with
+layout boxes. Native DOCX does not receive bounding-box metrics. Semantic
+Element Type Accuracy and Hierarchy Accuracy can apply to DOCX because headings,
+paragraphs, lists, captions, nesting, and parent-child relationships exist in
+the authored structure without rendering. Reading order is kept in the text
+group even though it uses matched document elements.
+
+#### Tables
+
+Table metrics can apply to images, every PDF family, and DOCX. Detection
+precision, recall, and F1 use table-presence annotations, including verified
+negative cases needed to expose false detections. Table Content F1 and Table
+Structure Score apply only to reference tables that the parser is expected to
+recover. A document with no reference table does not receive a zero structure
+score.
+
+#### Formulas
+
+Formula metrics can apply to images, every PDF family, and DOCX. Detection
+metrics use annotated positive and verified-negative cases. Formula Recognition
+Similarity and Formula Exact Match apply only to reference formulas. A
+formula-free document does not receive a zero recognition score.
+
+#### Difficult layouts
+
+`layout_difficulty` is a per-sample diagnostic label, not another metric
+category or required MLflow namespace. If the general layout result needs
+investigation, the per-sample artifact can be filtered to documents with
+columns, unusual reading order, dense pages, or overlapping elements.
+
+#### Reliability and operations
+
+Reliability metrics apply to every scheduled supported input, including inputs
+that fail extraction. Complete-document latency, first-item latency, RAM, VRAM,
+temporary disk, and appropriate throughput measurements apply to every processed
+format. Per-page latency and pages per minute apply to PDFs and one-page images,
+not to native DOCX with no fixed rendering.
+
+In short:
+
+```text
+text                          -> images + all PDFs + DOCX
+pages                         -> images + all PDFs
+visual layout and boxes       -> images + all PDFs
+semantic structure            -> annotated images + all PDFs + DOCX
+tables                        -> table-evaluation inputs of any supported format
+formulas                      -> formula-evaluation inputs of any supported format
+reliability                   -> every scheduled supported input
+operational                   -> every processed input; page rates exclude native DOCX
+```
 
 ### Data
 
@@ -111,55 +239,356 @@ corpus target is:
 The reviewed source pool is OmniDocBench, olmOCR-Bench, PureDocBench, and
 EduMind-specific verified samples. The frozen manifests—not the source-pool
 names—define the actual cases and record every selected ID, source revision,
-license, checksum, and document family. An authoritative run cannot be claimed
-until those manifests and references are complete.
+license, checksum, document family, source type, and available annotations. An
+authoritative run cannot be claimed until those manifests and references are
+complete.
 
-The corpus covers:
+The corpus covers clean and degraded images; digital, scanned, mixed, and
+broken-text PDFs; phone photos; low-resolution and skewed pages; multiple
+columns; headings, lists, and captions; tables and formulas; and native DOCX
+documents. Every sample has verified text. Page, layout, table, and formula
+metrics are calculated only when the required annotations exist. Every
+conditional aggregate records how many samples were eligible.
 
-- clean and degraded images;
-- digital, scanned, mixed, and broken-encoding PDFs;
-- phone photos, low resolution, skew, and multiple columns;
-- headings, paragraphs, lists, captions, and reading order;
-- tables and formulas with explicit structural references;
-- native DOCX documents.
+### Phase A: Docling Standard configuration screen
 
-Every sample includes verified text. Page, table, formula, and layout metrics are
-calculated only when the required annotations exist. Every report shows the
-number of annotated samples behind each conditional metric; a structure metric
-with too few annotations remains descriptive rather than selection evidence.
-
-### Execution
-
-The two phases use different splits:
+The development PDF set receives all 24 configurations:
 
 ```text
-development:
-24 Docling Standard configurations
-→ engineer selects configuration finalists
-
-validation:
-Docling finalists + Granite Docling + PaddleOCR-VL
-→ engineer selects the document parser
+OCR engine:          RapidOCR, Tesseract, EasyOCR                 (3)
+OCR mode:            PDF-aware regions, full page                 (2)
+TableFormer mode:    fast, accurate                               (2)
+Formula enrichment: off, on                                      (2)
+                                                                  ───
+Total:               3 × 2 × 2 × 2 = 24 configurations
 ```
 
-Within each phase, every candidate processes the same deterministically shuffled
-manifest three times after one cold item and warmups. Output is converted to the
-common structured-document format before scoring. Parser comparison is performed
-before the separately selected cleanup profile is applied, except for fixed
-canonical Unicode and line-ending normalization required by every candidate.
+Each factor answers a production question:
 
-### Metrics and why they are used
+| Setting | Question answered by changing it |
+|---|---|
+| OCR engine | When Docling genuinely needs OCR, which backend gives the best final text, boxes, reading order, table content, speed, and resource use? |
+| PDF-aware versus full-page OCR | When should EduMind preserve usable native PDF text, and when should it reconstruct the complete page through OCR? |
+| TableFormer fast versus accurate | Does better row, column, header, merged-cell, and span reconstruction justify the additional execution cost? |
+| Formula enrichment off versus on | Does CodeFormulaV2 improve mathematical-expression recovery enough to justify its model load, latency, memory, and false detections? |
 
-| Role | Metrics | Why they are needed |
+The applicability rules prevent meaningless duplicate work:
+
+| Source | Configurations executed | Reason |
 |---|---|---|
-| Primary | Content F1, Reading Order Accuracy, Page Content F1; Table Structure F1 and Formula LaTeX Similarity on annotated subsets | Measures complete content, ordering, page assignment, and the two important structured-content types. |
-| Secondary | CER, WER, Content Precision/Recall, Page Coverage, Page Attribution Accuracy, Block F1, Table Detection F1, Table Content F1, Formula Detection F1, Formula Exact Match | Explains whether a primary result came from transcription, coverage, detection, or exact reconstruction. |
-| Diagnostic | Missing Text Rate, Hallucinated Text Rate, Empty Output Rate, Duplicate Text Rate, Duplicate Page Rate, block/table/formula precision and recall | Locates omission, unsupported-output, duplication, and precision-versus-recall failures. |
-| Operational | Cold first-extraction time, p50/p95 item latency, items/minute, peak RAM, peak VRAM, determinism | Shows execution cost and repeatability. |
+| PDF | All 24 | Every factor can affect digital, scanned, mixed, or broken PDFs. |
+| Image | 12 unique engine × table × formula profiles | Images always use full-page OCR, so the two PDF OCR modes would duplicate work. |
+| DOCX | Native Docling ingestion once | OCR engine and PDF OCR mode do not apply to native DOCX parsing. |
 
-An engineer reviews quality, latency, and resources, then records the Docling
-configuration finalists and parser-architecture finalists. The approved document
-parser is combined with the approved normalization profile before video and
+Docling 2.117.0, English, OCR scale 3.0, table-cell matching enabled,
+code enrichment disabled, canonical structured output, and native DOCX
+ingestion remain fixed. They define the common evaluation environment rather
+than useful strategy questions.
+
+### Phase B: scoring and result slices
+
+Every applicable execution is converted to the same canonical document
+representation containing text, pages, ordered elements, types, hierarchy,
+bounding boxes, tables, formulas, provenance, warnings, and timing. The
+benchmark scores that representation without an EduMind cleanup profile. Its
+evaluator applies only the same fixed representation rules to the reference and
+prediction, such as Unicode NFC and consistent line endings; it does not repair
+extraction errors.
+
+The result groups are:
+
+| Group | What it establishes |
+|---|---|
+| Text | Whether required text was recovered accurately and in the correct order. |
+| Pages | Whether content was recovered from, and attributed to, the correct pages without duplication. |
+| Layout | Whether elements, semantic types, hierarchy, and locations were preserved. |
+| Tables | Whether tables were detected and their content and structure reconstructed. |
+| Formulas | Whether formulas were detected and recognized correctly. |
+| Reliability | Whether the profile returns complete, non-duplicated, deterministic output without fatal failures. |
+| Operations | First-request cost, warm latency, throughput, RAM, VRAM, and temporary disk. |
+
+The exact formulas, eligibility rules, ranges, and directions are defined in
+[metrics.md](metrics.md). An inapplicable conditional metric is absent rather
+than zero. A real extraction failure remains visible and contributes to the
+reliability result.
+
+Each metric is aggregated across all its eligible documents and, separately,
+across relevant document groups. This permits conclusions such as "high text
+quality across all documents but weak table structure on scanned PDFs" instead
+of hiding the weakness inside one mean.
+
+### Phase C: routing design
+
+Development results show which profiles work on each document family. The
+engineer then defines routing rules using only signals that exist at runtime,
+such as source type, native PDF text availability, text density, invalid
+characters, empty-page proportion, extraction warnings, and output coverage.
+Reference answers and oracle labels are never router inputs.
+
+A typical policy to test is:
+
+```text
+image                 → full-page OCR
+PDF with usable text  → PDF-aware OCR
+scanned/broken PDF    → full-page OCR
+failed PDF-aware page → full-page OCR fallback
+DOCX                  → native Docling ingestion
+```
+
+The routing evaluation compares always-PDF-aware, always-full-page,
+source-aware, and source-aware-with-fallback policies. It reports final
+extraction quality, routing decision accuracy, quality regret relative to the
+best observed profile for each sample, fallback frequency and success, and
+added latency. The oracle is used only to measure regret; it cannot be used in
+production.
+
+### Phase D: parser architecture comparison
+
+After reviewing the Standard-pipeline screen, the engineer records the selected
+Docling profiles. Those complete profiles are compared with:
+
+| Parser profile | Question answered |
+|---|---|
+| Selected Docling Standard profile | How well does the conventional OCR, layout, table, and formula pipeline perform? |
+| Granite Docling 258M | Does Docling's compact full-page VLM improve complete document parsing? |
+| PaddleOCR-VL-1.6 | Does an independent visual parser outperform the two Docling architectures? |
+
+The common architecture comparison uses images and PDFs. DOCX is evaluated
+through native Docling and reported as format coverage; it is not rasterized to
+give visual parsers artificial DOCX support.
+
+### Development, validation, and locked test
+
+```text
+smoke:
+one small real profile → verify loading, extraction, scoring, artifacts, and MLflow
+
+development / standard:
+Docling configuration screen → document-group breakdowns
+→ engineer defines profile finalists and routing policies
+
+validation / full:
+selected Standard profiles and routing policies
++ Granite Docling + PaddleOCR-VL on their common inputs
+→ engineer selects the complete extraction policy
+
+locked test:
+run the one selected policy once
+```
+
+Every profile within one comparison receives the same deterministically shuffled
+eligible samples, one cold measurement, warmups, and three measured repetitions.
+Development determines configurations and routing rules. Validation confirms
+them without changing thresholds. The locked test is not used for tuning.
+
+### MLflow result structure
+
+MLflow uses one experiment named `EduMind / extraction`. One benchmark command
+creates one **parent run** representing the complete invocation. The parent run
+is not a parser result; it records the shared comparison plan:
+
+```text
+MLflow experiment: EduMind / extraction
+└── parent run: extraction-document-<timestamp>
+    ├── child run: <extraction-profile-1>
+    ├── child run: <extraction-profile-2>
+    └── child run: <extraction-profile-N>
+```
+
+The parent run stores:
+
+- profile (`smoke`, `standard`, or `full`), stage, dataset name and checksum;
+- seed, required metric contract, run fingerprint, Git state, hardware, model
+  revisions, dependency locks, and any engineer-decision file;
+- `plan.json`, `provenance.json`, and the final `summary.json` artifacts;
+- completion metrics: whether the invocation is complete and how many profiles
+  succeeded or failed; and
+- paired comparisons derived from aligned per-sample results in `summary.json`.
+
+Each nested child run represents exactly one extraction profile. Its run name is
+the complete configuration identifier, for example:
+
+```text
+docling-standard|ocr=rapidocr|mode=pdf_aware_layout_regions|table=accurate|formula=on
+```
+
+The child run stores:
+
+- the profile identifier, runtime settings, profile type, and success/failure
+  status;
+- aggregate quality metrics and their `ci_lower` and `ci_upper` values when the
+  metric is eligible for an interval;
+- `operational.*` latency, throughput, memory, VRAM, and disk metrics when
+  available;
+- a candidate-result JSON containing status, aggregates, intervals, operational
+  values, fingerprint, and any error; and
+- a Parquet artifact with one row per processed sample, including sample ID,
+  latency, individual metrics, document-group and annotation labels, warnings,
+  and other diagnostic metadata.
+
+The MLflow comparison page is used for compact aggregates. The Parquet artifact
+is the detailed evidence: it supports document-group breakdowns, diagnostic
+filtering, and paired inspection of the same document across profiles. Raw input
+documents are not duplicated into each child run.
+
+The authoritative layout logs **every applicable metric in
+[metrics.md](metrics.md)**. The first name is the metric category. With no
+document group in the name, the value is the total aggregate across every
+document on which that metric is defined:
+
+```text
+text.content_precision
+text.content_recall
+text.content_f1
+text.character_error_rate
+text.word_error_rate
+text.reading_order_accuracy
+
+pages.page_coverage
+pages.page_content_f1
+pages.page_attribution_accuracy
+pages.duplicate_page_rate
+
+layout.element_precision
+layout.element_recall
+layout.element_f1
+layout.element_type_accuracy
+layout.hierarchy_accuracy
+layout.mean_bounding_box_iou
+
+tables.detection_precision
+tables.detection_recall
+tables.detection_f1
+tables.content_f1
+tables.structure_score
+
+formulas.detection_precision
+formulas.detection_recall
+formulas.detection_f1
+formulas.recognition_similarity
+formulas.exact_match
+```
+
+For example, `text.content_f1` is the total average Content F1 across documents
+with verified text. `tables.structure_score` is the total average across
+reference tables. These totals remain separate; Content F1 is never combined
+with page, layout, table, formula, reliability, or operational metrics.
+
+Inserting a document-group name gives the same metric for that group only:
+
+```text
+text.image.content_f1
+text.image_scan.content_f1
+text.image_phone_photo.content_f1
+text.pdf.content_f1
+text.pdf_digital.content_f1
+text.pdf_scanned.content_f1
+text.pdf_mixed.content_f1
+text.pdf_broken_text.content_f1
+text.docx.content_f1
+
+pages.image.page_coverage
+pages.pdf_digital.page_coverage
+pages.pdf_scanned.page_coverage
+
+layout.image.element_f1
+layout.pdf_scanned.element_f1
+layout.docx.hierarchy_accuracy
+
+tables.image.structure_score
+tables.pdf_digital.structure_score
+tables.pdf_scanned.structure_score
+tables.docx.structure_score
+
+formulas.image.recognition_similarity
+formulas.pdf_scanned.recognition_similarity
+formulas.docx.recognition_similarity
+```
+
+A document group receives only metrics that apply to it. Native DOCX can receive
+text, semantic hierarchy, table, formula, reliability, and document-level
+operational metrics. It does not receive page or bounding-box metrics without a
+fixed renderer.
+
+Annotations such as `has_table`, `has_formula`, and `layout_difficulty` remain
+in the manifest and per-sample Parquet artifact for diagnostic filtering. The
+standard MLflow aggregates use only the metric category and optional document
+group shown above.
+
+Reliability and operational results use:
+
+```text
+reliability.empty_output_rate
+reliability.duplicate_content_rate
+reliability.structured_output_determinism
+reliability.candidate_failure_rate
+
+operational.first_item_latency_seconds
+operational.p50_warm_latency_per_page_seconds
+operational.p95_warm_latency_per_page_seconds
+operational.p50_complete_document_latency_seconds
+operational.p95_complete_document_latency_seconds
+operational.batch_pages_per_minute
+operational.peak_process_tree_ram_mb
+operational.peak_vram_mb
+operational.peak_temporary_disk_mb
+```
+
+Operational latency can additionally be aggregated by document group, for
+example `operational.pdf_scanned.p95_document_latency_seconds`. Peak RAM, VRAM,
+and temporary disk describe the complete profile execution and remain top-level
+operational metrics rather than being misleadingly attributed to one slice.
+
+Each standard/full sample-based quality or reliability aggregate has its own
+confidence-interval keys and sample count, for example:
+
+```text
+tables.structure_score
+tables.structure_score.ci_lower
+tables.structure_score.ci_upper
+tables.structure_score.sample_count
+
+tables.pdf_scanned.structure_score
+tables.pdf_scanned.structure_score.ci_lower
+tables.pdf_scanned.structure_score.ci_upper
+tables.pdf_scanned.structure_score.sample_count
+```
+
+`sample_count` records how many samples contributed to that metric. It prevents
+a table score based on five annotated documents from looking equivalent to a
+text score based on the whole corpus.
+
+Confidence intervals are not attached indiscriminately:
+
+- text, page, layout, table, formula, and reliability aggregates receive 95%
+  intervals when they are calculated from enough independent samples;
+- p50 and p95 latency receive intervals when enough independent document or page
+  observations support the estimate;
+- smoke intervals, if emitted for debugging, are not authoritative;
+- `sample_count`, run status, completion status, revisions, checksums, and other
+  fixed values do not receive intervals; and
+- one first-item measurement, one throughput batch, and one observed peak RAM,
+  VRAM, or temporary-disk value do not receive intervals. Repeated independent
+  measurements may support an interval, but the repetitions and aggregation
+  unit must be recorded.
+
+This rule avoids presenting statistical precision that the measurements do not
+contain.
+
+The current shared runner already creates the parent/child hierarchy, global
+aggregates, applicable confidence intervals, statuses, and per-sample Parquet
+files. Before an authoritative document comparison, its per-sample rows and
+MLflow metrics must also carry the manifest document-group labels and the grouped
+aggregates shown above. Until that alignment is implemented, the stored global
+results can validate execution but cannot support the complete document-group
+analysis described here.
+
+MLflow records evidence but does not choose a winner. After reviewing complete
+parent and child runs, the engineer records finalists or a final extraction
+policy in a separate decision file. The benchmark never modifies production
+configuration automatically.
+
+The approved document parser and routing policy are frozen before video and
 downstream extraction are evaluated.
 
 ## 2. Audio extraction
@@ -211,7 +640,7 @@ validation: ASR finalists on the same 18 clips
 Every candidate uses the same requested device and fixed audio preprocessing.
 Each run loads the exact model, transcribes, performs alignment when required,
 converts output to timestamped segments, and repeats three times. Candidate text
-is scored before the separately selected cleanup profile is applied.
+is scored without an additional cleanup profile.
 
 ### Metrics and why they are used
 
@@ -226,42 +655,7 @@ The engineer approves the ASR profiles that provide the best useful combination
 of transcription, timestamp quality, and execution cost. The selected ASR is
 frozen for video extraction.
 
-## 3. Text normalization
-
-How much deterministic cleanup should be applied after extraction without
-deleting or merging legitimate educational content?
-
-### Profiles
-
-| Profile | What it does | Why it is included |
-|---|---|---|
-| Minimal | Unicode normalization, line-ending repair, null/soft-hyphen removal, final trim | Safe baseline. |
-| Conservative | Minimal plus dehyphenation and restrained whitespace cleanup | Expected production trade-off. |
-| Aggressive | Conservative plus stronger page-label and newline cleanup | Tests whether more cleanup helps or becomes destructive. |
-
-### Data and execution
-
-Smoke uses the committed observed/reference text pairs. The authoritative set
-contains at least 200 verified cases split by document family into 120
-development, 40 validation, and 40 locked cases.
-
-All three profiles receive the same development cases. After the engineer selects
-finalists, those profiles receive the same validation cases. Every output is
-compared with the verified clean reference and repeated three times.
-
-### Metrics and why they are used
-
-| Role | Metrics | Why they are needed |
-|---|---|---|
-| Primary | Content Preservation Recall, Corruption Removal F1 | Cleanup must preserve valid content while repairing real corruption. |
-| Secondary | Corruption Removal Precision/Recall, WER | Separates unnecessary edits from missed repairs and shows final word error. |
-| Diagnostic | CER, Content F1, Missing/Hallucinated Text Rate, Duplicate Text Rate, determinism | Explains character errors, deletion, unsupported additions, repeated text, and instability. |
-| Operational | p50/p95 latency | Confirms that deterministic cleanup remains inexpensive. |
-
-The selected profile is applied after the selected document parser or ASR and
-before video combination, indexing, and extraction-to-RAG confirmation.
-
-## 4. Video extraction
+## 3. Video extraction
 
 With the document parser and ASR fixed, which keyframe policy recovers useful
 on-screen text without processing too many duplicate frames?
@@ -290,8 +684,7 @@ video
 ├─ FFmpeg extracts mono 16 kHz audio → frozen selected ASR
 └─ FFmpeg extracts candidate keyframes → frozen selected document parser
         ↓
-apply the selected normalization profile
-→ combine timestamped audio and visual segments
+combine timestamped audio and visual segments
 → compare with transcript and visible-text references
 ```
 
@@ -312,7 +705,7 @@ then run on validation.
 The selected keyframe policy joins the selected parser and ASR as the provisional
 video-extraction profile.
 
-## 5. Chunking and embedding
+## 4. Chunking and embedding
 
 Which complete chunker/embedding pair retrieves verified educational evidence
 best?
@@ -405,7 +798,7 @@ so decisions use span-based Context Recall and graded nDCG instead.
 The engineer approves up to three complete chunker/embedding pairs. No separate
 embedding winner or chunker winner is required.
 
-## 6. Retrieval and reranking
+## 5. Retrieval and reranking
 
 For the approved chunker/embedding pairs, do exact-term search, rank fusion, or a
 learned reranker improve the ordering enough to justify their cost?
@@ -468,7 +861,7 @@ chunk boundaries.
 The engineer approves up to three complete retrieval stacks. A stack contains
 the chunker, embedding, retrieval method, and reranker when applicable.
 
-## 7. Vector database servers
+## 6. Vector database servers
 
 Which networked vector server preserves nearest-neighbour and filter correctness
 while providing the most useful latency, concurrency, ingestion, memory, and
@@ -554,7 +947,7 @@ The database report remains separate evidence. It shows which server should be
 used by the final benchmark, but the benchmark never changes the current Chroma
 production default automatically.
 
-## 8. Generation
+## 7. Generation
 
 Which local Hugging Face generator produces the best grounded, cited answer when
 every model receives exactly the same verified evidence?
@@ -617,7 +1010,7 @@ The engineer approves up to three generator profiles after inspecting automatic
 quality, citation/refusal behavior, latency, and resources. Human review happens
 only after retrieval and generation are combined.
 
-## 9. Final RAG and human review
+## 8. Final RAG and human review
 
 Which complete retrieval-and-generation system gives the best evidence-backed
 answers when every component runs together?
@@ -684,7 +1077,7 @@ reliability. After ratings are imported and validated, system identities are
 revealed and the engineer selects exactly one complete system. A future
 multi-reviewer study must define overlap, agreement, and adjudication separately.
 
-## 10. Extraction-to-RAG confirmation
+## 9. Extraction-to-RAG confirmation
 
 How much does real extraction reduce the quality of the selected RAG system?
 
@@ -698,9 +1091,9 @@ selected extracted text → the same frozen selected RAG
 ```
 
 Question IDs, document IDs, questions, model profiles, prompt, and retrieval
-strategy remain identical. The selected parser, ASR, normalization profile, and
-vector server are part of the extracted-text path. Each text version keeps its
-own evidence offsets because extraction can change length and layout.
+strategy remain identical. The selected parser, ASR, and vector server are part
+of the extracted-text path. Each text version keeps its own evidence offsets
+because extraction can change length and layout.
 
 This comparison uses a separate frozen confirmation manifest derived without
 locked-test questions. It may describe deployment risk, but it cannot reopen
@@ -723,12 +1116,12 @@ The experiment reports the paired extracted-minus-reference difference for:
 This experiment does not select the extractor again. It quantifies the downstream
 cost of extraction after component selection.
 
-## 11. Locked test
+## 10. Locked test
 
 After Final RAG review and extraction confirmation are complete, the one frozen
 system runs exactly once on the locked-test manifest. The selected parser, ASR,
-normalization, chunker, embedding, retrieval method, vector server, generator,
-prompt, and context settings cannot change between confirmation and this run.
+chunker, embedding, retrieval method, vector server, generator, prompt, and
+context settings cannot change between confirmation and this run.
 
 The locked result is the final unbiased estimate. It is not used for more tuning.
 If the system changes after the result is inspected, a new benchmark and locked

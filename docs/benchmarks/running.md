@@ -63,7 +63,7 @@ python experiments/benchmarks/extraction/document/run.py --profile full `
   --manifest data/benchmarks/extraction/document-validation.json
 ```
 
-Run audio and normalization independently:
+Run audio independently:
 
 ```powershell
 python experiments/benchmarks/extraction/audio/run.py --profile standard `
@@ -73,12 +73,6 @@ python experiments/benchmarks/extraction/audio/run.py --profile full `
   --manifest data/benchmarks/extraction/audio-validation.json `
   --shortlist AUDIO_DECISION `
   --device cuda
-
-python experiments/benchmarks/extraction/normalization/run.py --profile standard `
-  --manifest data/benchmarks/extraction/normalization-development.json
-python experiments/benchmarks/extraction/normalization/run.py --profile full `
-  --manifest data/benchmarks/extraction/normalization-validation.json `
-  --shortlist NORMALIZATION_DECISION
 ```
 
 Video requires one selected document parser and one selected ASR profile:
@@ -91,10 +85,9 @@ python experiments/benchmarks/extraction/video/run.py --profile standard `
   --device cuda
 ```
 
-The intended methodology also freezes the selected normalization profile for
-video. The current video CLI does not yet accept that decision, so a video run
-must not be described as authoritative until that input is implemented and
-recorded.
+Extraction candidates are scored without an additional cleanup profile. The
+runner records the parser or ASR output and applies only the fixed evaluator
+representation rules described in the methodology.
 
 ## 5. Run chunking, embedding, and retrieval
 
@@ -228,10 +221,10 @@ tuning opportunity.
 ## 10. Read results
 
 Each completed parent run records the plan, provenance, candidate completion
-status, aggregate summary, confidence intervals, and decision inputs. Child runs
-record candidate parameters, scalar metrics, errors, and per-sample Parquet
-artifacts. Local artifacts are also written atomically under the configured
-artifact root.
+status, aggregate summary, applicable confidence intervals, and decision inputs.
+Child runs record candidate parameters, scalar metrics, errors, and per-sample
+Parquet artifacts. Local artifacts are also written atomically under the
+configured artifact root.
 
 A run is usable only when every planned candidate and required metric completed.
 Smoke runs prove wiring only. Standard/full results remain evidence for an

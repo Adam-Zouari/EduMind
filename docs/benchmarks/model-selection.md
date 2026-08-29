@@ -266,14 +266,6 @@ Short-form public WER only creates the shortlist. Final ASR selection uses compl
 
 The selected ASR and visual parser are held fixed while frame-selection strategies are compared.
 
-## Normalization
-
-| Strategy | Why it is included |
-|---|---|
-| Minimal | Normalizes Unicode, line endings, and whitespace only. |
-| Conservative | Repairs common extraction artifacts while minimizing content-changing edits. |
-| Aggressive | Tests whether stronger cleanup is worth the increased risk of deleting or merging valid content. |
-
 ## Vector database servers
 
 The benchmark compares self-hosted network servers with the same vectors, metadata, filters, schema, query order, and client-visible latency. Vendor benchmark numbers are not used to rank them because those numbers do not hold EduMind's workload and environment constant.
