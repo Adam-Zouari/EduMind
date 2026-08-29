@@ -13,15 +13,13 @@ import numpy as np
 from edumind.common.artifacts import sha256_file
 from edumind.common.paths import PROJECT_ROOT
 from edumind.extraction import ExtractionPipeline, ExtractionProfile, SourceKind
-from edumind.extraction.normalization import normalize_text
-
 from experiments.benchmarks.common.contracts import BenchmarkPlan, BenchmarkResult, SampleResult
 from experiments.benchmarks.common.datasets import load_manifest
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.extraction.registry import build_experiment_registry
 from experiments.benchmarks.preparation.models import load_selected_model_lock
 
-STAGES = {"document", "audio", "video", "normalization"}
+STAGES = {"document", "audio", "video"}
 LOCK_CANDIDATES = {
     "docling-standard": "docling-standard",
     "docling-vlm-granite-258m": "ibm-granite/granite-docling-258M",
@@ -53,31 +51,22 @@ def run(
     selected = [
         item
         for item in manifest.samples
-        if stage == "normalization"
-        or (stage == "document" and item.get("kind") in {"image", "pdf", "docx"})
+        if (stage == "document" and item.get("kind") in {"image", "pdf", "docx"})
         or item.get("kind") == stage
     ]
     if not selected:
         raise ValueError(f"Manifest {manifest.name} has no samples for {stage}")
-    minimum = {"document": 45, "audio": 18, "video": 6, "normalization": 40}
+    minimum = {"document": 45, "audio": 18, "video": 6}
     if profile in {"standard", "full"} and len(selected) < minimum[stage]:
         raise ValueError(
             f"{stage} {profile} requires at least {minimum[stage]} frozen samples; "
             f"manifest contains {len(selected)}"
         )
-    if stage == "normalization" and profile in {"standard", "full"}:
-        missing_family = [item.get("id") for item in selected if not item.get("document_family")]
-        if missing_family:
-            raise ValueError(
-                "Authoritative normalization cases require document_family for split isolation: "
-                + ", ".join(str(value) for value in missing_family[:5])
-            )
-    if stage != "normalization":
-        _validate_assets(
-            selected,
-            require_checksums=True,
-            require_provenance=profile in {"standard", "full"},
-        )
+    _validate_assets(
+        selected,
+        require_checksums=True,
+        require_provenance=profile in {"standard", "full"},
+    )
     component_options = dict(component_options or {})
     architecture_comparison = stage == "document" and any(
         candidate in {"docling-vlm-granite-258m", "paddleocr-vl-1.6"}
@@ -113,12 +102,11 @@ def run(
         ordered = list(evaluation_items)
         random.Random(plan.seed).shuffle(ordered)
         cold_load_seconds = None
-        if stage != "normalization":
-            _, _, cold_load_seconds = _extract_once(
-                stage, candidate, ordered[0], model_lock, prepared_options, pipeline
-            )
-            for _ in range(plan.warmups):
-                _extract_once(stage, candidate, ordered[0], model_lock, prepared_options, pipeline)
+        _, _, cold_load_seconds = _extract_once(
+            stage, candidate, ordered[0], model_lock, prepared_options, pipeline
+        )
+        for _ in range(plan.warmups):
+            _extract_once(stage, candidate, ordered[0], model_lock, prepared_options, pipeline)
         for item in ordered:
             outputs = [
                 _extract_once(stage, candidate, item, model_lock, prepared_options, pipeline)
@@ -171,7 +159,6 @@ def run(
             "document": "content_f1",
             "audio": "word_error_rate",
             "video": "complete_content_recall",
-            "normalization": "content_preservation_recall",
         }[stage],
         revisions={name: str(value.get("revision", "")) for name, value in model_lock.items()},
         decision_files=decision_files,
@@ -198,10 +185,6 @@ def _metric_directions(
         "document": {"page_coverage"},
         "audio": set(),
         "video": {"transcript_word_error_rate", "complete_content_recall"},
-        "normalization": {
-            "content_preservation_recall",
-            "corruption_removal_f1",
-        },
     }[stage]
     required = common | stage_specific
     return {name: direction for name, direction in directions.items() if name in required}
@@ -209,8 +192,6 @@ def _metric_directions(
 
 def _extract_once(stage, candidate, item, model_lock, component_options, pipeline):
     started = time.perf_counter()
-    if stage == "normalization":
-        return normalize_text(str(item["observed"]), candidate), None, time.perf_counter() - started
     kind = SourceKind(str(item["kind"]))
     engine, preprocessing = _engine_and_preprocessing(stage, candidate, item)
     lock_name = (
@@ -229,7 +210,7 @@ def _extract_once(stage, candidate, item, model_lock, component_options, pipelin
             engine=engine,
             engine_revision=str(lock_entry.get("revision", "system")),
             preprocessing=preprocessing,
-            normalization=str(item.get("normalization", "conservative")),
+            normalization="none",
             routing="direct",
             device=_device(component_options, item),
             options=_options(item, lock_entry, component_options, candidate),
@@ -316,8 +297,7 @@ def _options(
 
 
 def _model_lock(stage: str) -> dict[str, dict[str, object]]:
-    if stage == "normalization":
-        return {}
+    del stage
     return load_selected_model_lock(PROJECT_ROOT / "data/benchmarks/models/selected.json")
 
 

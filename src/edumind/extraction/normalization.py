@@ -1,4 +1,4 @@
-"""Benchmarkable text normalization with offset reconstruction."""
+"""Optional runtime text cleanup with offset reconstruction."""
 
 from __future__ import annotations
 
@@ -10,22 +10,23 @@ from .contracts import ExtractedDocument, ExtractedSegment, SegmentKind
 
 
 def normalize_text(text: str, profile: str) -> str:
-    if profile not in {"minimal", "conservative", "aggressive"}:
+    if profile == "none":
+        return text
+    if profile not in {"minimal", "conservative"}:
         raise ValueError(f"Unknown normalization profile: {profile}")
     normalized = unicodedata.normalize("NFC", text).replace("\r\n", "\n").replace("\r", "\n")
     normalized = normalized.replace("\u0000", "").replace("\u00ad", "")
-    if profile in {"conservative", "aggressive"}:
+    if profile == "conservative":
         normalized = re.sub(r"(?<=\w)-\n(?=\w)", "", normalized)
         normalized = re.sub(r"[\t\f\v]+", " ", normalized)
         normalized = re.sub(r"[ ]{2,}", " ", normalized)
         normalized = re.sub(r"\n{3,}", "\n\n", normalized)
-    if profile == "aggressive":
-        normalized = re.sub(r"(?m)^\s*(?:page\s+)?\d+\s*$", "", normalized, flags=re.IGNORECASE)
-        normalized = re.sub(r"\n{2,}", "\n", normalized)
     return normalized.strip()
 
 
 def normalize_document(document: ExtractedDocument, profile: str) -> ExtractedDocument:
+    if profile == "none":
+        return replace(document, profile=replace(document.profile, normalization=profile))
     source_segments = document.segments or (
         ExtractedSegment(text=document.text, start=0, end=len(document.text)),
     )

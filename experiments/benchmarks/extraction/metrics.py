@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections import Counter
 from collections.abc import Mapping, Sequence
 
@@ -19,6 +20,8 @@ from experiments.benchmarks.common.metrics import (
 
 
 def base_scores(reference: str, hypothesis: str) -> dict[str, float]:
+    reference = canonicalize_for_evaluation(reference)
+    hypothesis = canonicalize_for_evaluation(hypothesis)
     scores = content_scores(reference, hypothesis)
     scores.update(block_scores(reference, hypothesis))
     scores.update(
@@ -34,6 +37,12 @@ def base_scores(reference: str, hypothesis: str) -> dict[str, float]:
         }
     )
     return scores
+
+
+def canonicalize_for_evaluation(text: str) -> str:
+    """Standardize encoding and line endings without repairing extracted content."""
+
+    return unicodedata.normalize("NFC", text).replace("\r\n", "\n").replace("\r", "\n")
 
 
 def page_scores(item: Mapping[str, object], document: ExtractedDocument) -> dict[str, float]:
@@ -285,7 +294,7 @@ def _table_content_f1(reference: list[list[str]], hypothesis: list[list[str]]) -
 
 
 def _table_relation_f1(reference: list[list[str]], hypothesis: list[list[str]]) -> float:
-    """Compare row/column adjacency relations after cell-text normalization."""
+    """Compare row/column adjacency relations after cell-text canonicalization."""
     reference_relations = _relations(reference)
     hypothesis_relations = _relations(hypothesis)
     overlap = len(reference_relations & hypothesis_relations)
