@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
 from ..contracts import ExtractedDocument, ExtractionRequest, SourceKind
 from ..errors import ExtractionBackendError, MissingDependencyError
-from ..structured import build_markdown_document
+from ..structured import build_docling_document
+
+DOCLING_VERSION = "2.117.0"
 
 
 class DoclingExtractor:
@@ -26,29 +28,28 @@ class DoclingExtractor:
             raise ValueError("Resolved extraction profile is required")
         started = time.perf_counter()
         try:
-            pages, canonical = self._convert(request, kind)
+            document = self._convert(request, kind)
         except MissingDependencyError:
             raise
         except Exception as exc:
             raise ExtractionBackendError(
                 "Document extraction failed with Docling Standard", detail=str(exc)
             ) from exc
-        return build_markdown_document(
+        return build_docling_document(
             request,
             kind,
             request.profile,
-            pages,
+            document,
             metadata={
                 "engine": self.engine,
                 "engine_revision": request.profile.engine_revision,
-                "canonical_document": canonical,
             },
             seconds=time.perf_counter() - started,
         )
 
     def _convert(
         self, request: ExtractionRequest, kind: SourceKind
-    ) -> tuple[list[str], Mapping[str, object]]:
+    ) -> Any:
         try:
             from docling.datamodel.accelerator_options import AcceleratorOptions
             from docling.datamodel.base_models import InputFormat
@@ -66,7 +67,12 @@ class DoclingExtractor:
                 PdfFormatOption,
             )
         except (ImportError, ModuleNotFoundError) as exc:
-            raise MissingDependencyError("Docling 2.117.0 is required") from exc
+            raise MissingDependencyError(f"Docling {DOCLING_VERSION} is required") from exc
+        installed = version("docling")
+        if installed != DOCLING_VERSION:
+            raise MissingDependencyError(
+                f"Docling {DOCLING_VERSION} is required; found {installed}"
+            )
         artifacts = required_directory(request, "model_path", "Docling Standard")
         options = request.options
         ocr_engine = str(options.get("ocr_engine", "rapidocr"))
@@ -112,19 +118,7 @@ class DoclingExtractor:
                 InputFormat.IMAGE: ImageFormatOption(pipeline_options=pipeline),
             }
             self._runtimes[key] = DocumentConverter(format_options=formats)
-        document = self._runtimes[key].convert(str(request.source_path)).document
-        return docling_pages(document, kind), document.export_to_dict()
-
-
-def docling_pages(document: Any, kind: SourceKind) -> list[str]:
-    if kind is SourceKind.PDF and getattr(document, "pages", None):
-        pages = [
-            str(document.export_to_markdown(page_no=int(page_number))).strip()
-            for page_number in sorted(document.pages)
-        ]
-        if any(pages):
-            return pages
-    return [str(document.export_to_markdown()).strip()]
+        return self._runtimes[key].convert(str(request.source_path)).document
 
 
 def required_directory(request: ExtractionRequest, key: str, label: str) -> Path:
@@ -135,4 +129,3 @@ def required_directory(request: ExtractionRequest, key: str, label: str) -> Path
             "experiments/benchmarks/prepare.py app-models`."
         )
     return path
-

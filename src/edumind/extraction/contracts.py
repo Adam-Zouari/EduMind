@@ -23,11 +23,16 @@ class SourceKind(str, Enum):
 
 class SegmentKind(str, Enum):
     TEXT = "text"
+    TITLE = "title"
     HEADING = "heading"
     LIST_ITEM = "list_item"
     TABLE = "table"
     FORMULA = "formula"
     CAPTION = "caption"
+    FIGURE = "figure"
+    CODE = "code"
+    PAGE_HEADER = "page_header"
+    PAGE_FOOTER = "page_footer"
     AUDIO = "audio"
     VISUAL_TEXT = "visual_text"
 
@@ -97,6 +102,9 @@ class ExtractedSegment:
     text: str
     start: int
     end: int
+    element_id: str | None = None
+    parent_id: str | None = None
+    order: int | None = None
     page_number: int | None = None
     timestamp_start: float | None = None
     timestamp_end: float | None = None
