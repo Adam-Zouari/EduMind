@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import random
+import shutil
 import time
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 
@@ -53,13 +56,30 @@ def run_benchmark(
     *,
     dataset_checksum: str,
     directions: Mapping[str, str],
-    primary_metric: str,
+    primary_metric: str | Sequence[str],
+    required_metrics: Sequence[str] | None = None,
+    paired_metrics: Sequence[str] | None = None,
     revisions: Mapping[str, str] | None = None,
     decision_files: Mapping[str, Path] | None = None,
     no_mlflow: bool = False,
     artifact_root: Path = Path("artifacts/benchmarks"),
 ) -> BenchmarkResult:
-    _validate_metric_contract(directions, primary_metric)
+    if not plan.candidates:
+        raise ValueError("A benchmark plan must contain at least one candidate")
+    if len(set(plan.candidates)) != len(plan.candidates):
+        raise ValueError("A benchmark plan cannot contain duplicate candidates")
+    primary_metrics = (
+        (primary_metric,) if isinstance(primary_metric, str) else tuple(primary_metric)
+    )
+    _validate_metric_contract(directions, primary_metrics)
+    required = tuple(required_metrics) if required_metrics is not None else tuple(directions)
+    paired = tuple(paired_metrics) if paired_metrics is not None else tuple(directions)
+    unknown_required = sorted(set(required) - set(directions))
+    if unknown_required:
+        raise ValueError("Required metrics have no declared direction: " + ", ".join(unknown_required))
+    unknown_paired = sorted(set(paired) - set(directions))
+    if unknown_paired:
+        raise ValueError("Paired metrics have no declared direction: " + ", ".join(unknown_paired))
     run_name = f"{plan.suite}-{plan.stage}-{time.strftime('%Y%m%d-%H%M%S')}"
     run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     directory = artifact_root / plan.suite / plan.stage / run_id
@@ -85,9 +105,10 @@ def run_benchmark(
     plan_path = directory / "plan.json"
     provenance_path = directory / "provenance.json"
     metric_contract = {
-        "primary_metric": primary_metric,
+        "primary_metrics": list(primary_metrics),
         "directions": dict(directions),
-        "required_metrics": list(directions),
+        "required_metrics": list(required),
+        "paired_metrics": list(paired),
     }
     plan_payload = {**asdict(plan), "metric_contract": metric_contract}
     atomic_write_json(plan_path, plan_payload)
@@ -105,8 +126,8 @@ def run_benchmark(
                 "dataset": plan.dataset,
                 "dataset_checksum": dataset_checksum,
                 "seed": plan.seed,
-                "primary_metric": primary_metric,
-                "required_metrics": json.dumps(list(directions)),
+                "primary_metrics": json.dumps(list(primary_metrics)),
+                "required_metrics": json.dumps(list(required)),
                 "run_fingerprint": run_fingerprint,
                 "git_commit": provenance["git"].get("commit"),
                 "git_dirty": provenance["git"].get("dirty"),
@@ -132,12 +153,12 @@ def run_benchmark(
                     directory,
                     tracking,
                     run_fingerprint,
-                    tuple(directions),
+                    required,
                 )
             )
 
         successful = [result for result in results if result.status == "success"]
-        problems = _completion_problems(plan, results)
+        problems = _completion_problems(results)
         complete = not problems
         summary = {
             "run_id": run_id,
@@ -147,11 +168,15 @@ def run_benchmark(
             "metric_contract": metric_contract,
             "provenance": provenance,
             "candidates": [_payload(result, include_samples=False) for result in results],
-            "paired_comparisons": _paired_comparisons(
-                successful,
-                directions,
-                resamples=500 if plan.profile == "smoke" else plan.bootstrap_resamples,
-                seed=plan.seed,
+            "paired_comparisons": (
+                []
+                if plan.profile == "smoke"
+                else _paired_comparisons(
+                    successful,
+                    {name: directions[name] for name in paired},
+                    resamples=plan.bootstrap_resamples,
+                    seed=plan.seed,
+                )
             ),
             "complete": complete,
             "completion": {
@@ -207,11 +232,17 @@ def _run_candidate(
     with tracking.run(candidate, nested=True):
         try:
             tracking.parameters({"candidate": candidate, "profile": plan.profile})
-            resources = ResourceMonitor()
-            with resources:
-                evaluated = evaluator(candidate)
+            temporary_directory = directory / "temporary" / _safe(candidate)
+            temporary_directory.mkdir(parents=True, exist_ok=True)
+            resources = ResourceMonitor(temporary_directory=temporary_directory)
+            try:
+                with _temporary_environment(temporary_directory), resources:
+                    evaluated = evaluator(candidate)
+            finally:
+                operational.update(resources.metrics())
             samples = list(evaluated[0])
-            operational = {**dict(evaluated[1]), **resources.metrics()}
+            operational = {**dict(evaluated[1]), **operational}
+            shutil.rmtree(temporary_directory, ignore_errors=True)
             candidate_metrics = dict(evaluated[2]) if len(evaluated) >= 3 else {}
             if len(evaluated) >= 4:
                 tracking.parameters(evaluated[3])
@@ -221,13 +252,16 @@ def _run_candidate(
             _validate_sample_ids(samples)
             sample_path = _write_samples(directory, candidate, samples)
             tracking.artifact(sample_path)
-            metrics, intervals = aggregate_samples(
-                samples,
-                resamples=500 if plan.profile == "smoke" else plan.bootstrap_resamples,
-                seed=plan.seed,
-            )
-            metrics = {**metrics, **candidate_metrics}
-            intervals = {**intervals, **candidate_intervals}
+            # Evaluators with grouped/pooled statistics return their own aggregates and CIs.
+            if len(evaluated) >= 5:
+                metrics, intervals = candidate_metrics, candidate_intervals
+            else:
+                metrics, intervals = aggregate_samples(
+                    samples,
+                    resamples=0 if plan.profile == "smoke" else plan.bootstrap_resamples,
+                    seed=plan.seed,
+                )
+                metrics.update(candidate_metrics)
             _validate_required_metrics(metrics, operational, required_metrics)
             result = CandidateResult(
                 candidate,
@@ -255,6 +289,8 @@ def _run_candidate(
             tracking.artifact(candidate_path)
             return result
         except Exception as exc:
+            if "temporary_directory" in locals():
+                shutil.rmtree(temporary_directory, ignore_errors=True)
             error = f"{type(exc).__name__}: {exc}"
             result = CandidateResult(
                 candidate,
@@ -315,14 +351,35 @@ def _safe(value: str) -> str:
     return "".join(character if character.isalnum() or character in "-_." else "_" for character in value)
 
 
-def _validate_metric_contract(directions: Mapping[str, str], primary_metric: str) -> None:
+def _validate_metric_contract(
+    directions: Mapping[str, str], primary_metrics: Sequence[str]
+) -> None:
     if not directions:
         raise ValueError("A benchmark must declare at least one required metric")
     invalid = sorted(name for name, direction in directions.items() if direction not in {"min", "max"})
     if invalid:
         raise ValueError(f"Metrics have invalid directions: {', '.join(invalid)}")
-    if primary_metric not in directions:
-        raise ValueError("primary_metric must be one of the benchmark's required metrics")
+    if not primary_metrics:
+        raise ValueError("A benchmark must declare at least one primary metric")
+    missing = [name for name in primary_metrics if name not in directions]
+    if missing:
+        raise ValueError("Primary metrics are not required metrics: " + ", ".join(missing))
+
+
+@contextmanager
+def _temporary_environment(directory: Path):
+    names = ("TMP", "TEMP", "TMPDIR")
+    previous = {name: os.environ.get(name) for name in names}
+    try:
+        for name in names:
+            os.environ[name] = str(directory.resolve())
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 def _validate_sample_ids(samples: list[SampleResult]) -> None:
@@ -356,18 +413,8 @@ def _finite_number(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
-def _completion_problems(plan: BenchmarkPlan, results: list[CandidateResult]) -> list[str]:
+def _completion_problems(results: list[CandidateResult]) -> list[str]:
     problems: list[str] = []
-    returned = [result.candidate for result in results]
-    if returned != list(dict.fromkeys(returned)):
-        problems.append("runner returned duplicate candidate results")
-    missing_candidates = sorted(set(plan.candidates) - set(returned))
-    unexpected_candidates = sorted(set(returned) - set(plan.candidates))
-    if missing_candidates:
-        problems.append("missing candidate results: " + ", ".join(missing_candidates))
-    if unexpected_candidates:
-        problems.append("unexpected candidate results: " + ", ".join(unexpected_candidates))
-
     failed = [result for result in results if result.status != "success"]
     for result in failed:
         problems.append(f"candidate {result.candidate} failed: {result.error or 'unknown error'}")
@@ -389,8 +436,6 @@ def _completion_problems(plan: BenchmarkPlan, results: list[CandidateResult]) ->
                     f"candidate {result.candidate} evaluated a different sample set "
                     f"({' ; '.join(detail)})"
                 )
-    elif plan.candidates:
-        problems.append("no candidate completed successfully")
     return problems
 
 

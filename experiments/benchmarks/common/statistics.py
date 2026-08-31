@@ -18,8 +18,10 @@ def aggregate_samples(
     intervals: dict[str, dict[str, float]] = {}
     for name in metric_names:
         values = [sample.metrics[name] for sample in samples if name in sample.metrics]
+        metrics[name] = sum(values) / len(values)
+        if not resamples:
+            continue
         interval = paired_bootstrap_interval(values, resamples=resamples, seed=seed)
-        metrics[name] = interval.estimate
         intervals[name] = {
             "estimate": interval.estimate,
             "lower": interval.lower,

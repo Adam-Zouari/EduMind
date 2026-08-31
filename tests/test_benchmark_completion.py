@@ -48,7 +48,7 @@ def test_bad_score_is_complete_and_runner_makes_no_selection(tmp_path: Path) -> 
         (result.artifact_directory / "summary.json").read_text(encoding="utf-8")
     )
     assert summary["complete"] is True
-    assert summary["metric_contract"]["primary_metric"] == "quality"
+    assert summary["metric_contract"]["primary_metrics"] == ["quality"]
     assert summary["selection"]["made_by_runner"] is False
     assert "pareto_candidates" not in summary
     assert "gate_failures" not in summary

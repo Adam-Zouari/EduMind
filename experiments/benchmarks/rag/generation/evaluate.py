@@ -13,6 +13,7 @@ from edumind.rag.types import RetrievalHit
 
 from experiments.benchmarks.common.contracts import DatasetManifest, SampleResult
 from experiments.benchmarks.common.metrics import (
+    balanced_accuracy,
     balanced_accuracy_interval,
     citation_scores,
     exact_match,
@@ -64,7 +65,7 @@ GENERATION_DIRECTIONS = {
     "operational.mean_reasoning_tokens": "min",
     "operational.mean_generated_tokens": "min",
     "operational.cold_load_seconds": "min",
-    "operational.peak_process_memory_gb": "min",
+    "operational.peak_process_tree_ram_mb": "min",
 }
 
 
@@ -257,12 +258,21 @@ def evaluate_candidate(
     runtime_memory = generator.runtime_memory()
     generator.unload()
     refusal = _refusal_scores(labels, predictions)
-    answerability_interval = balanced_accuracy_interval(
-        labels,
-        predictions,
-        resamples=bootstrap_resamples,
-        seed=bootstrap_seed,
-    )
+    answerability = balanced_accuracy(labels, predictions)
+    answerability_intervals = {}
+    if bootstrap_resamples:
+        interval = balanced_accuracy_interval(
+            labels,
+            predictions,
+            resamples=bootstrap_resamples,
+            seed=bootstrap_seed,
+        )
+        answerability_intervals["answerability_balanced_accuracy"] = {
+            "estimate": interval.estimate,
+            "lower": interval.lower,
+            "upper": interval.upper,
+            "confidence": interval.confidence,
+        }
     return samples, {
         "p50_latency_seconds": float(np.median(total_latencies)),
         "p95_latency_seconds": float(np.quantile(total_latencies, 0.95)),
@@ -287,17 +297,10 @@ def evaluate_candidate(
         "cold_load_seconds": cold.load_seconds,
         **runtime_memory,
     }, {
-        "answerability_balanced_accuracy": answerability_interval.estimate,
+        "answerability_balanced_accuracy": answerability,
         **refusal,
         "human_review_required": 1.0,
-    }, {}, {
-        "answerability_balanced_accuracy": {
-            "estimate": answerability_interval.estimate,
-            "lower": answerability_interval.lower,
-            "upper": answerability_interval.upper,
-            "confidence": answerability_interval.confidence,
-        }
-    }
+    }, {}, answerability_intervals
 
 
 def _frozen_hits(question, documents, tokenizer) -> tuple[list[RetrievalHit], str, float]:

@@ -54,7 +54,7 @@ def main() -> int:
         dataset_name,
         candidates,
         repetitions=1 if arguments.profile == "smoke" else 3,
-        bootstrap_resamples=500 if arguments.profile == "smoke" else 10_000,
+        bootstrap_resamples=0 if arguments.profile == "smoke" else 10_000,
     )
 
     def evaluate(candidate: str):

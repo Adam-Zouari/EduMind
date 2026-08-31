@@ -4,18 +4,26 @@ from __future__ import annotations
 
 import os
 import threading
+from pathlib import Path
 from types import TracebackType
 from typing import Any
 
 
 class ResourceMonitor:
-    def __init__(self, interval_seconds: float = 0.05) -> None:
+    def __init__(
+        self,
+        interval_seconds: float = 0.05,
+        *,
+        temporary_directory: Path | None = None,
+    ) -> None:
         self.interval_seconds = interval_seconds
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._peak_ram_bytes = 0
         self._ram_sampled = False
         self._peak_vram_bytes = 0
+        self._peak_temporary_bytes = 0
+        self._temporary_directory = temporary_directory
         self._pynvml: Any | None = None
         self._gpu_handles: list[Any] = []
 
@@ -55,14 +63,11 @@ class ResourceMonitor:
     def metrics(self) -> dict[str, float]:
         values = {}
         if self._ram_sampled:
-            values.update(
-                {
-                    "peak_process_memory_gb": self._peak_ram_bytes / (1024**3),
-                    "peak_ram_mb": self._peak_ram_bytes / (1024**2),
-                }
-            )
+            values["peak_process_tree_ram_mb"] = self._peak_ram_bytes / (1024**2)
         if self._peak_vram_bytes:
             values["peak_vram_mb"] = self._peak_vram_bytes / (1024**2)
+        if self._temporary_directory is not None:
+            values["peak_temporary_disk_mb"] = self._peak_temporary_bytes / (1024**2)
         return values
 
     def _run(self) -> None:
@@ -70,28 +75,47 @@ class ResourceMonitor:
             self._sample()
 
     def _sample(self) -> None:
+        process_ids = {os.getpid()}
         try:
             import psutil
 
             self._ram_sampled = True
+            root = psutil.Process(os.getpid())
+            processes = [root, *root.children(recursive=True)]
+            process_ids.update(process.pid for process in processes)
+            resident = 0
+            for process in processes:
+                try:
+                    resident += int(process.memory_info().rss)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
             self._peak_ram_bytes = max(
                 self._peak_ram_bytes,
-                int(psutil.Process(os.getpid()).memory_info().rss),
+                resident,
             )
         except (ImportError, OSError):
             pass
-        try:
-            if self._pynvml is None:
-                return
-            for handle in self._gpu_handles:
-                processes = self._pynvml.nvmlDeviceGetComputeRunningProcesses(handle)
-                self._peak_vram_bytes = max(
-                    self._peak_vram_bytes,
-                    sum(
-                        int(process.usedGpuMemory)
-                        for process in processes
-                        if process.pid == os.getpid() and process.usedGpuMemory
-                    ),
+        if self._pynvml is not None:
+            try:
+                for handle in self._gpu_handles:
+                    processes = self._pynvml.nvmlDeviceGetComputeRunningProcesses(handle)
+                    self._peak_vram_bytes = max(
+                        self._peak_vram_bytes,
+                        sum(
+                            int(process.usedGpuMemory)
+                            for process in processes
+                            if process.pid in process_ids and process.usedGpuMemory
+                        ),
+                    )
+            except Exception:  # optional driver/API differences omit VRAM measurements
+                pass
+        if self._temporary_directory is not None:
+            try:
+                size = sum(
+                    path.stat().st_size
+                    for path in self._temporary_directory.rglob("*")
+                    if path.is_file()
                 )
-        except Exception:  # optional driver/API differences omit VRAM measurements
-            pass
+                self._peak_temporary_bytes = max(self._peak_temporary_bytes, size)
+            except OSError:
+                pass
