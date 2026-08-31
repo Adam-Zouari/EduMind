@@ -629,6 +629,11 @@ record source, revision, selected clip interval, license, checksum, duration, an
 speaker/document family. The public Open ASR material is screening context, not a
 substitute for this frozen educational corpus.
 
+A small fixed reliability set contains verified silence, music without lyrics,
+background noise, and other nonspeech audio. These controls are separate from the
+90 speech clips and are used only to measure false transcription on audio that has
+no spoken reference.
+
 ### Execution
 
 ```text
@@ -639,19 +644,28 @@ validation: ASR finalists on the same 18 clips
 → engineer selects the ASR profile
 ```
 
-Every candidate uses the same requested device and fixed audio preprocessing.
-Each run loads the exact model, transcribes, performs alignment when required,
-converts output to timestamped segments, and repeats three times. Candidate text
-is scored without an additional cleanup profile.
+Every candidate in one invocation uses the same explicitly requested CPU or GPU
+device and fixed audio preprocessing. A runtime never falls back silently to
+another device. Each run loads the exact model, transcribes, performs alignment
+when required, converts output to timestamped segments, and repeats three times.
+Candidate text is scored without an additional cleanup profile. Quality metrics
+compare transcripts; operational metrics compare the recorded runtime profiles.
 
 ### Metrics and why they are used
 
-| Role | Metrics | Why they are needed |
+| Category | Metrics | Why they are needed |
 |---|---|---|
-| Primary | WER, Timestamp MAE, Timestamp Alignment Coverage | Measures transcription accuracy and whether useful timestamps are both accurate and sufficiently complete. |
-| Secondary | CER, Segment Boundary MAE, Missing Speech Rate, Hallucinated Speech Rate | Reveals technical-term errors, boundary errors, dropped speech, and unsupported speech. |
-| Diagnostic | Determinism | Checks whether repeated transcripts and timestamps remain stable. |
-| Operational | Real-Time Factor, cold load, p50/p95 clip latency, peak RAM, peak VRAM | Measures complete transcription/alignment cost. |
+| Recognition | **Corpus WER** (primary), Corpus CER | WER measures the complete ordered word transcript; CER exposes character-level spelling, name, and number errors. |
+| WER diagnostics | Word Substitution Rate, Word Deletion Rate, Word Insertion Rate | Shows whether WER comes mainly from confused, omitted, or unsupported words. These explain WER but do not replace it. |
+| Timestamps | **Timestamp Boundary MAE**, **Timestamp Alignment Coverage** | MAE measures the accuracy of aligned start/end boundaries; coverage prevents a candidate from looking accurate after aligning only easy segments. |
+| Reliability | Empty Transcript Rate, Nonspeech False-Transcription Rate | Measures complete empty output on speech and invented lexical output on verified nonspeech controls. |
+| Operational | **Complete-Pipeline Real-Time Factor**, p50/p95 warm clip latency, cold model-load time, peak process-tree RAM, peak VRAM | Measures the complete transcription and alignment cost of the recorded CPU or GPU profile. |
+
+Content F1 and Transcript Order Accuracy are not ASR metrics in this benchmark.
+Audio already supplies chronological order, so Corpus WER evaluates the required
+ordered transcript. Technical-Term Accuracy is also excluded because EduMind is
+not restricted to a stable subject vocabulary. Diarization is not scored unless
+speaker identification becomes a product requirement.
 
 The engineer approves the ASR profiles that provide the best useful combination
 of transcription, timestamp quality, and execution cost. The selected ASR is

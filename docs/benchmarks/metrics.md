@@ -176,20 +176,9 @@ Repeated token occurrences are counted; token sets are not used.
 
 **Question:** How much extracted content is supported by the reference?
 
-For reference token counts $c_r(t)$ and predicted token counts $c_p(t)$, the
-number of matched token occurrences is:
-
-$$
-TP_{\text{token}}
-= \sum_{t \in V}\min\!\left(c_r(t),c_p(t)\right)
-$$
-
-$V$ is the set of distinct tokens appearing in either text and $m$ is the
-number of predicted tokens. Content Precision is:
-
-$$
-P_{\text{content}}=\frac{TP_{\text{token}}}{m}
-$$
+Repeated occurrences are matched only up to the smaller count in the reference
+and prediction. For example, if a word appears twice in the reference and three
+times in the prediction, only two occurrences are correct.
 
 In plain language:
 
@@ -219,18 +208,8 @@ zero rather than producing an undefined value.
 
 **Question:** How much required content was recovered?
 
-Let $V$ be the tokens appearing in either text, $c_r(t)$ and $c_p(t)$ their
-reference and prediction occurrence counts, and $n$ the number of reference
-tokens:
-
-$$
-TP_{\text{token}}
-=\sum_{t\in V}\min\!\left(c_r(t),c_p(t)\right)
-$$
-
-$$
-R_{\text{content}}=\frac{TP_{\text{token}}}{n}
-$$
+Repeated occurrences are matched only up to the smaller count in the reference
+and prediction, using the same rule as Content Precision.
 
 In plain language:
 
@@ -258,26 +237,9 @@ Everything extracted is correct, but half of the reference content is missing.
 
 **Question:** Does the extractor balance correct output and complete output?
 
-Let $TP_{\text{token}}$ be multiset token overlap, so repeated occurrences are
-counted up to the smaller reference/prediction count. Let $m$ and $n$ be the
-prediction and reference token counts:
-
-$$
-TP_{\text{token}}
-=\sum_{t\in V}\min\!\left(c_r(t),c_p(t)\right)
-$$
-
-$$
-P_{\text{content}}=\frac{TP_{\text{token}}}{m},
-\qquad
-R_{\text{content}}=\frac{TP_{\text{token}}}{n}
-$$
-
-$$
-F1_{\text{content}}
-=\frac{2P_{\text{content}}R_{\text{content}}}
-       {P_{\text{content}}+R_{\text{content}}}
-$$
+Content F1 combines the Content Precision and Content Recall calculated above.
+Repeated token occurrences still count only up to the smaller reference and
+prediction count.
 
 In plain language:
 
@@ -304,14 +266,8 @@ and recall are both zero.
 
 **Question:** How severe are character-recognition errors?
 
-Let $S_{char}$, $D_{char}$, and $I_{char}$ be the minimum Levenshtein
-substitutions, deletions, and insertions needed to transform the reference into
-the prediction:
-
-$$
-CER=\frac{S_{char}+D_{char}+I_{char}}
-         {N_{\text{reference characters}}}
-$$
+The evaluator finds the minimum character substitutions, deletions, and
+insertions needed to transform the reference into the prediction.
 
 In plain language:
 
@@ -341,13 +297,8 @@ when insertions outnumber reference characters.
 
 **Question:** How severe are complete-word errors?
 
-Let $S_{word}$, $D_{word}$, and $I_{word}$ be the minimum word-level
-substitutions, deletions, and insertions:
-
-$$
-WER=\frac{S_{word}+D_{word}+I_{word}}
-         {N_{\text{reference words}}}
-$$
+The evaluator finds the minimum word substitutions, deletions, and insertions
+needed to transform the reference into the prediction.
 
 In plain language:
 
@@ -377,15 +328,9 @@ when insertions outnumber reference words.
 
 **Question:** Is recovered content presented in the correct sequence?
 
-Let $L$ be the number of one-to-one matched document elements and $C$ the
-number of their unordered pairs whose relative order agrees in the reference
-and prediction:
-
-$$
-ROA=\frac{C}{\binom{L}{2}}
-   =\frac{2C}{L(L-1)},
-\qquad L\ge2
-$$
+The evaluator considers every pair of one-to-one matched document elements and
+checks whether that pair has the same relative order in the reference and
+prediction.
 
 In plain language:
 
@@ -434,15 +379,8 @@ or perfect score.
 
 **Question:** Did every expected page produce relevant content?
 
-Let $G$ be the set of reference content-bearing pages and $TP_j$ the number of
-matched content units on reference page $j$:
-
-$$
-\operatorname{PageCoverage}
-= \frac{\displaystyle\sum_{j \in G}
-          \mathbf{1}\!\left[TP_j > 0\right]}
-       {|G|}
-$$
+Each reference content-bearing page counts as covered when it contains at least
+one matched content unit.
 
 In plain language:
 
@@ -467,18 +405,9 @@ not establish that all content on those pages was recovered correctly.
 
 **Question:** Was the correct content recovered within the correct page?
 
-Let $G$ and $P$ be the reference and predicted page-ID sets. $F1_j$ is Content
-F1 calculated using only the reference and predicted content assigned to page
-$j$:
-
-$$
-\operatorname{PageContentF1}
-= \frac{1}{|G \cup P|}
-  \sum_{j \in G \cup P}F1_j
-$$
-
-Using $G\cup P$ includes missing reference pages and unexpected predicted pages,
-both of which receive zero.
+Content F1 is calculated separately for every reference or unexpected predicted
+page and then averaged. Missing reference pages and unexpected predicted pages
+receive zero.
 
 In plain language:
 
@@ -507,19 +436,10 @@ missing, incorrect, misplaced, and unexpected page content.
 
 **Question:** Was extracted content assigned to the correct page number?
 
-Let $A$ be the set of matched content elements with reference page annotations.
 For this metric, one-to-one content matching maximizes Content F1 and requires
 `Content F1 >= 0.5`; page numbers are deliberately ignored until after the
-content pairs are formed:
-
-$$
-\operatorname{PageAttributionAccuracy}
-= \frac{\displaystyle\sum_{a \in A}
-          \mathbf{1}\!\left[
-          \operatorname{page}_{pred}(a)=\operatorname{page}_{ref}(a)
-          \right]}
-       {|A|}
-$$
+content pairs are formed. The metric then counts how many matched elements have
+the correct page number.
 
 In plain language:
 
@@ -540,14 +460,8 @@ are no matched elements with page annotations.
 
 **Question:** How often did the parser repeat a page?
 
-Let $D_{page}$ be unsupported duplicate predicted pages. Two page records are
-treated as near-duplicates when their Content F1 is at least `0.95`; this fixed
-threshold is applied to every extraction profile:
-
-$$
-\operatorname{DuplicatePageRate}
-= \frac{D_{page}}{N_{\text{predicted page records}}}
-$$
+Two page records are treated as near-duplicates when their Content F1 is at
+least `0.95`; this fixed threshold is applied to every extraction profile.
 
 In plain language:
 
@@ -609,12 +523,8 @@ mix the two rules within a document comparison.
 
 **Question:** How many predicted document elements are real?
 
-$TP_e$ is the number of one-to-one matched elements and $FP_e$ the number of
-extra predicted elements:
-
-$$
-P_e=\frac{TP_e}{TP_e+FP_e}
-$$
+One-to-one matched elements count as correct; unmatched predicted elements count
+as extra.
 
 In plain language:
 
@@ -636,11 +546,8 @@ is `8 / 9 = 0.89`.
 
 **Question:** How many required document elements were detected?
 
-$FN_e$ is the number of missed reference elements:
-
-$$
-R_e=\frac{TP_e}{TP_e+FN_e}
-$$
+One-to-one matched elements count as correct; unmatched reference elements count
+as missed.
 
 In plain language:
 
@@ -662,17 +569,8 @@ blocks were missed.
 
 **Question:** Does layout detection balance false and missed elements?
 
-For the pooled matched, extra, and missed element counts:
-
-$$
-P_e=\frac{TP_e}{TP_e+FP_e},
-\qquad
-R_e=\frac{TP_e}{TP_e+FN_e}
-$$
-
-$$
-F1_e=\frac{2P_eR_e}{P_e+R_e}
-$$
+Layout Element F1 combines Layout Element Precision and Recall calculated from
+the pooled matched, extra, and missed element counts.
 
 In plain language:
 
@@ -699,16 +597,8 @@ and recall are both zero.
 **Question:** Were headings, paragraphs, lists, captions, and other matched
 blocks classified correctly?
 
-Let $M_e$ be the set of matched elements:
-
-$$
-\operatorname{TypeAccuracy}
-=\frac{\displaystyle\sum_{e\in M_e}
-        \mathbf{1}\!\left[
-        \operatorname{type}_{pred}(e)=\operatorname{type}_{ref}(e)
-        \right]}
-       {|M_e|}
-$$
+Only one-to-one matched elements are considered. Each receives credit when its
+predicted type equals its reference type.
 
 In plain language:
 
@@ -730,18 +620,9 @@ are no matched elements.
 **Question:** Were heading levels, list nesting, and parent-child relationships
 preserved?
 
-Let $H_e$ be matched elements with hierarchy annotations:
-
-$$
-\operatorname{HierarchyAccuracy}
-=\frac{\displaystyle\sum_{e\in H_e}
-        \mathbf{1}\!\left[
-        \operatorname{parent}_{pred}(e)=\operatorname{parent}_{ref}(e)
-        \land
-        \operatorname{level}_{pred}(e)=\operatorname{level}_{ref}(e)
-        \right]}
-       {|H_e|}
-$$
+Only matched elements with hierarchy annotations are considered. An element
+receives credit when both its parent relationship and hierarchy level are
+correct.
 
 In plain language:
 
@@ -764,23 +645,6 @@ matched elements have hierarchy annotations.
 
 **Question:** Were matched elements localized correctly on the page?
 
-For boxes $a$ and $b$:
-
-$$
-\operatorname{IoU}(a,b)
-=\frac{\operatorname{area}(a\cap b)}
-       {\operatorname{area}(a\cup b)}
-$$
-
-For the matched elements $B_e$ that have reference and predicted boxes:
-
-$$
-\operatorname{MeanIoU}
-=\frac{1}{|B_e|}
-  \sum_{e\in B_e}
-  \operatorname{IoU}\!\left(b_e^{ref},b_e^{pred}\right)
-$$
-
 In plain language, IoU for one matched element is:
 
 ```text
@@ -789,7 +653,8 @@ area shared by reference and predicted boxes
  area covered by either of the two boxes
 ```
 
-The benchmark averages this value over matched elements with boxes.
+The benchmark averages this value over matched elements that have both
+reference and predicted boxes.
 
 **Example:**
 
@@ -838,12 +703,8 @@ Score (TEDS-S).
 
 **Question:** How many predicted tables are real tables?
 
-Let $TP_t$ be one-to-one matched table regions and $FP_t$ extra predicted
-tables:
-
-$$
-P_t=\frac{TP_t}{TP_t+FP_t}
-$$
+One-to-one matched table regions count as correct; unmatched predicted tables
+count as extra.
 
 In plain language:
 
@@ -865,11 +726,8 @@ precision is `8 / 10 = 0.80`.
 
 **Question:** How many reference tables were found?
 
-Let $FN_t$ be missed reference tables:
-
-$$
-R_t=\frac{TP_t}{TP_t+FN_t}
-$$
+One-to-one matched table regions count as correct; unmatched reference tables
+count as missed.
 
 In plain language:
 
@@ -890,17 +748,8 @@ It reveals how many real tables were found.
 
 **Question:** Does table detection balance extra and missed tables?
 
-For the pooled matched, extra, and missed table-region counts:
-
-$$
-P_t=\frac{TP_t}{TP_t+FP_t},
-\qquad
-R_t=\frac{TP_t}{TP_t+FN_t}
-$$
-
-$$
-F1_t=\frac{2P_tR_t}{P_t+R_t}
-$$
+Table Detection F1 combines Table Detection Precision and Recall calculated
+from the pooled matched, extra, and missed table-region counts.
 
 In plain language:
 
@@ -923,15 +772,8 @@ and recall are both zero.
 
 **Question:** Was the textual content inside tables recovered?
 
-Each of the $N_t$ reference tables is paired with its matched prediction. A
-missed table is paired with an empty prediction:
-
-$$
-\operatorname{TableContentF1}
-=\frac{1}{N_t}
-  \sum_{j=1}^{N_t}
-  \operatorname{ContentF1}(r_j,p_j)
-$$
+Each reference table is paired with its matched prediction. A missed table is
+paired with an empty prediction.
 
 In plain language:
 
@@ -954,34 +796,17 @@ table, the result is `(1.00 + 0.80 + 0.00) / 3 = 0.60`.
 **Question:** Were rows, columns, headers, merged cells, and spans reconstructed
 correctly?
 
-$T(r_j)$ and $T(p_j)$ are the reference and predicted HTML trees after cell
-text is removed. $\operatorname{TED}$ is tree-edit distance and $|T|$ is the
-number of nodes:
-
-$$
-\operatorname{TEDS\text{-}S}_j
-=1-
- \frac{\operatorname{TED}\!\left(T(r_j),T(p_j)\right)}
-      {\max\!\left(|T(r_j)|,|T(p_j)|\right)}
-$$
-
-The reported score is the mean over all reference tables:
-
-$$
-\operatorname{TableStructureScore}
-=\frac{1}{N_t}
-  \sum_{j=1}^{N_t}\operatorname{TEDS\text{-}S}_j
-$$
-
 In plain language:
 
 ```text
 TEDS-S = 1 − normalized table-tree edit distance
 ```
 
-The evaluator represents each table as a tree of rows, columns, headers, cells,
-and spans. Cell text is removed before comparison, so this score focuses on
-structure:
+The evaluator represents each reference and prediction as a tree of rows,
+columns, headers, cells, and spans. It measures how many tree edits separate
+them, normalizes that distance for table size, converts it to similarity, and
+then averages the scores across reference tables. Cell text is removed before
+comparison, so this score focuses on structure:
 
 ```text
 TEDS-S = 1.0       → identical structure
@@ -1026,12 +851,8 @@ boxes, one-to-one matching uses formula Content F1 with a `0.5` threshold.
 
 **Question:** How many predicted formula regions are real formulas?
 
-$TP_f$ is the number of matched formula regions and $FP_f$ extra predicted
-formula regions:
-
-$$
-P_f=\frac{TP_f}{TP_f+FP_f}
-$$
+Matched formula regions count as correct; unmatched predicted formula regions
+count as extra.
 
 In plain language:
 
@@ -1053,11 +874,8 @@ mathematical formulas.
 
 **Question:** How many reference formulas were found?
 
-$FN_f$ is the number of missed reference formula regions:
-
-$$
-R_f=\frac{TP_f}{TP_f+FN_f}
-$$
+Matched formula regions count as correct; unmatched reference formula regions
+count as missed.
 
 In plain language:
 
@@ -1078,17 +896,8 @@ It reveals how many real formulas were found.
 
 **Question:** Does formula detection balance extra and missed formulas?
 
-For the pooled matched, extra, and missed formula-region counts:
-
-$$
-P_f=\frac{TP_f}{TP_f+FP_f},
-\qquad
-R_f=\frac{TP_f}{TP_f+FN_f}
-$$
-
-$$
-F1_f=\frac{2P_fR_f}{P_f+R_f}
-$$
+Formula Detection F1 combines Formula Detection Precision and Recall calculated
+from the pooled matched, extra, and missed formula-region counts.
 
 In plain language:
 
@@ -1112,24 +921,10 @@ and recall are both zero.
 **Question:** How visually and structurally close is each recognized formula to
 its reference?
 
-The official evaluator renders the reference and predicted formulas, then
-matches their characters and positions. For formula $j$:
-
-$$
-\operatorname{CDM}(r_j,p_j)
-=\frac{2TP_{cdm,j}}
-       {2TP_{cdm,j}+FP_{cdm,j}+FN_{cdm,j}}
-$$
-
-$TP_{cdm,j}$ is valid matched character regions; $FP_{cdm,j}$ and $FN_{cdm,j}$
-are extra predicted and missed reference character regions. The reported score
-averages the $N_f$ reference formulas:
-
-$$
-\operatorname{MeanCDM}
-=\frac{1}{N_f}
-  \sum_{j=1}^{N_f}\operatorname{CDM}(r_j,p_j)
-$$
+The official evaluator renders each reference and predicted formula, then
+matches their character regions and positions. It compares matched characters
+against extra predicted and missed reference characters. The reported score is
+the average across reference formulas.
 
 In plain language:
 
@@ -1157,13 +952,6 @@ penalized merely for using different LaTeX source.
 
 **Question:** How often was a formula reconstructed perfectly?
 
-$$
-\operatorname{ExpRate@CDM}
-=\frac{1}{N_f}
-  \sum_{j=1}^{N_f}
-  \mathbf{1}\!\left[\operatorname{CDM}(r_j,p_j)=1\right]
-$$
-
 In plain language:
 
 ```text
@@ -1188,7 +976,7 @@ CDM and ExpRate@CDM therefore answer different questions.
 
 The evaluator and its exact revision are pinned from the [official OmniDocBench evaluation
 code](https://github.com/opendatalab/OmniDocBench); EduMind does not substitute a
-home-grown LaTeX edit score. The CDM and ExpRate@CDM formulas come from the
+home-grown LaTeX edit score. The CDM and ExpRate@CDM definitions come from the
 [CVPR 2025 CDM paper](https://openaccess.thecvf.com/content/CVPR2025/html/Wang_Image_Over_Text_Transforming_Formula_Recognition_Evaluation_with_Character_Detection_CVPR_2025_paper.html).
 
 ### Reliability and failure behavior
@@ -1205,13 +993,6 @@ candidate is dependable enough to use.
 
 **Question:** How often does extraction complete without producing usable
 content?
-
-$$
-\operatorname{EmptyOutputRate}
-= \frac{1}{N_{scheduled}}
-  \sum_{i=1}^{N_{scheduled}}
-  \mathbf{1}\!\left[\operatorname{output}_i=\varnothing\right]
-$$
 
 In plain language:
 
@@ -1233,12 +1014,6 @@ Empty Output Rate = 2 / 100 = 0.02
 
 **Question:** How much substantial content did the parser repeat without source
 support?
-
-$$
-\operatorname{DuplicateContentRate}
-=\frac{N_{\text{unsupported duplicate units}}}
-       {N_{\text{predicted content units}}}
-$$
 
 In plain language:
 
@@ -1264,18 +1039,9 @@ candidate produces no content; Empty Output Rate records that case.
 
 **Question:** Does the same input produce the same complete structured result?
 
-Let $N_{repeated}$ be samples deliberately executed more than once. The
-fingerprint covers text, page attribution, element types and order, hierarchy,
-tables, formulas, and normalized boxes; timing and random run IDs are excluded:
-
-$$
-\operatorname{Determinism}
-=\frac{1}{N_{repeated}}
-  \sum_{i=1}^{N_{repeated}}
-  \mathbf{1}\!\left[
-  |\operatorname{Fingerprints}(i)|=1
-  \right]
-$$
+The fingerprint covers text, page attribution, element types and order,
+hierarchy, tables, formulas, and normalized boxes; timing and random run IDs are
+excluded.
 
 In plain language:
 
@@ -1298,13 +1064,6 @@ Structured-output Determinism = 19 / 20 = 0.95
 
 **Question:** How often does the candidate end with a fatal error instead of a
 scoreable result?
-
-$$
-\operatorname{CandidateFailureRate}
-=\frac{1}{N_{scheduled}}
-  \sum_{i=1}^{N_{scheduled}}
-  \mathbf{1}\!\left[\text{sample }i\text{ ends in a fatal error}\right]
-$$
 
 In plain language:
 
@@ -1344,11 +1103,6 @@ latency while batch ingestion may emphasize pages per minute.
 
 **Question:** What initialization cost does the first request experience?
 
-$$
-T_{first}
-= t_{\text{first extraction complete}}-t_{\text{fresh process start}}
-$$
-
 In plain language:
 
 ```text
@@ -1366,19 +1120,6 @@ delay experienced by the first request in a fresh process.
 #### p50 and p95 Warm Latency per Page
 
 **Question:** What are the typical and slow-tail steady-state page speeds?
-
-For document $i$, let $T_i$ be complete warm latency and $p_i$ its processed
-page count:
-
-$$
-L_i=\frac{T_i}{p_i}
-$$
-
-$$
-\operatorname{p50}_{page}=Q_{0.50}(L_1,\ldots,L_N),
-\qquad
-\operatorname{p95}_{page}=Q_{0.95}(L_1,\ldots,L_N)
-$$
 
 In plain language, first calculate this for every document:
 
@@ -1403,14 +1144,6 @@ observations were no slower than 2.4 seconds.
 
 **Question:** How long does a user wait for a complete source?
 
-For complete document times $T_1,\ldots,T_N$:
-
-$$
-\operatorname{p50}_{document}=Q_{0.50}(T_1,\ldots,T_N),
-\qquad
-\operatorname{p95}_{document}=Q_{0.95}(T_1,\ldots,T_N)
-$$
-
 This is the end-to-end time for one whole source. Its p50 and p95 answer how long
 a user typically waits and how long difficult documents take. It is retained
 alongside per-page latency because a large PDF can have reasonable page speed
@@ -1426,11 +1159,6 @@ are also reported by document group.
 #### Batch Pages per Minute
 
 **Question:** What sustained batch capacity does the parser provide?
-
-$$
-\operatorname{PagesPerMinute}
-=\frac{60N_{\text{successful pages}}}{T_{\text{batch seconds}}}
-$$
 
 In plain language:
 
@@ -1452,14 +1180,6 @@ omitted when no real sustained batch is measured.
 
 **Question:** How much system memory does the complete extractor require?
 
-$$
-\operatorname{PeakRAM}
-=\max_t\left(
-  \sum_{p\in\mathcal{P}_{candidate}(t)}
-  \operatorname{ResidentMemory}(p,t)
-  \right)
-$$
-
 At every sampling point, add the resident RAM of the benchmark candidate and
 all extractor child processes. The largest observed total is reported.
 
@@ -1472,11 +1192,6 @@ MiB, Peak Process-Tree RAM is `2,450 MiB`.
 
 **Question:** How much GPU memory does extraction require?
 
-$$
-\operatorname{PeakVRAM}
-=\max_t\operatorname{CandidateGPUMemory}(t)
-$$
-
 Report the largest GPU-memory allocation attributable to the candidate during
 the measured extraction.
 
@@ -1488,13 +1203,6 @@ VRAM `1,800 MiB`.
 #### Peak Temporary Disk
 
 **Question:** How much additional working-disk space does extraction require?
-
-$$
-\operatorname{PeakTempDisk}
-=\max_t\left(
-  \operatorname{TempBytes}(t)-\operatorname{TempBytes}_{before}
-  \right)
-$$
 
 In plain language:
 
@@ -1637,14 +1345,6 @@ seed 42:
 3. Recalculate the aggregate for every resample.
 4. Use the 2.5th and 97.5th percentiles as the 95% interval bounds.
 
-If `θ(X)` is the aggregate metric calculated from samples `X`, and `X_b*` is
-bootstrap resample `b`, the reported percentile interval is:
-
-```text
-θ_b* = θ(X_b*)                                      for b = 1, …, 10,000
-95% CI = [Q0.025({θ_b*}), Q0.975({θ_b*})]
-```
-
 Document-group metrics resample only the samples in that group. Conditional
 metrics such as table structure or formula recognition resample only the samples
 eligible for that metric. Paired candidate comparisons resample aligned sample
@@ -1694,20 +1394,182 @@ claim is made.
 
 ## Audio extraction
 
-Audio uses CER and WER as defined above, with speech-specific alignment and cost
-metrics:
+The ASR benchmark evaluates the complete ordered transcript, its timestamps,
+catastrophic output behavior, and the cost of the recorded runtime profile. It
+does not use Content F1 or Transcript Order Accuracy: unlike a two-dimensional
+page, audio already defines one chronological sequence.
 
-| Metric | Definition | Direction |
-|---|---|---|
-| Timestamp Mean Absolute Error (MAE) | Mean absolute difference between aligned reference and predicted timestamps. | Lower |
-| Segment Boundary MAE | MAE over aligned segment start and end times. | Lower |
-| Timestamp Alignment Coverage | Reference timed units with a valid predicted alignment divided by timed reference units. | Higher |
-| Real-Time Factor | Complete transcription-and-alignment seconds divided by audio duration seconds. | Lower |
+### Metric summary
 
-The timestamp helper accepts already aligned arrays of equal non-zero length. A
-stage must perform and record the alignment before calling it; it must not
-truncate unequal arrays silently. The audio section will be expanded to the same
-full contract format after its metric audit.
+#### Recognition quality
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Corpus Word Error Rate (WER) | Primary | How wrong is the complete ordered word transcript? | Lower |
+| Corpus Character Error Rate (CER) | Supporting | How severe are character-level spelling, name, and number errors? | Lower |
+
+#### WER diagnostics
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Word Substitution Rate | Diagnostic | How often is a spoken word recognized as a different word? | Lower |
+| Word Deletion Rate | Diagnostic | How much spoken content is omitted? | Lower |
+| Word Insertion Rate | Diagnostic | How much unsupported word content is added? | Lower |
+
+#### Timestamp quality
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Timestamp Boundary MAE | Primary | How far are aligned segment starts and ends from the reference boundaries? | Lower |
+| Timestamp Alignment Coverage | Primary companion | What proportion of timed reference segments received a valid alignment? | Higher |
+
+#### Reliability
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Empty Transcript Rate | Diagnostic | How often does speech-containing audio produce no lexical text? | Lower |
+| Nonspeech False-Transcription Rate | Diagnostic | How often does verified nonspeech audio produce lexical text? | Lower |
+
+#### Operational performance
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Complete-Pipeline Real-Time Factor | Primary operational | How much processing time is required relative to audio duration? | Lower |
+| p50 Warm Clip Latency | Supporting | What is normal warm processing latency? | Lower |
+| p95 Warm Clip Latency | Supporting | What is slow-case warm processing latency? | Lower |
+| Cold Model-Load Time | Supporting | How long does initial model loading take? | Lower |
+| Peak Process-Tree RAM | Resource | How much total system memory does the candidate require? | Lower |
+| Peak VRAM | Resource | How much GPU memory does the candidate require? | Lower |
+
+These 15 metrics are the frozen ASR evaluation contract. Technical-Term
+Accuracy is excluded because EduMind has no fixed subject vocabulary;
+diarization metrics remain out of scope until speaker identification becomes a
+product requirement.
+
+### Recognition metrics
+
+Corpus WER and CER use the fixed ASR evaluator normalization described in the
+shared conventions. Counts are pooled across clips before division; the
+benchmark does not average independently calculated clip error rates.
+
+```text
+Corpus WER =
+all word substitutions + deletions + insertions
+------------------------------------------------
+        all words in the reference clips
+
+Word Substitution Rate = word substitutions / reference words
+Word Deletion Rate     = word deletions / reference words
+Word Insertion Rate    = word insertions / reference words
+```
+
+**Example:** Across the complete corpus, 1,000 reference words with 40
+substitutions, 20 deletions, and 10 insertions produce WER `70 / 1,000 = 0.07`.
+The component rates are `0.04`, `0.02`, and `0.01`.
+
+WER is primary because ASR must reproduce the ordered spoken sequence. The
+three component rates are diagnostic: two candidates can have the same WER
+while one confuses words, another omits speech, and another adds unsupported
+words. They do not measure order separately and are not independent selection
+scores.
+
+Corpus CER uses the same pooled calculation over characters:
+
+```text
+Corpus CER =
+all character substitutions + deletions + insertions
+-----------------------------------------------------
+          all characters in the reference clips
+```
+
+**Example:** Fifty character edits across 5,000 reference characters produce
+CER `50 / 5,000 = 0.01`.
+
+CER supports WER by exposing small spelling, number, abbreviation, and name
+errors that a whole-word error treats as one event.
+
+### Timestamp metrics
+
+After the stage applies one fixed one-to-one segment-alignment rule, Timestamp
+Boundary MAE is calculated as follows:
+
+1. Find the absolute start-time error for every aligned segment.
+2. Find the absolute end-time error for every aligned segment.
+3. Average all start and end errors.
+
+```text
+Timestamp Alignment Coverage =
+reference segments successfully aligned
+---------------------------------------
+reference segments with timestamps
+```
+
+**Example:** If 18 of 20 reference segments align, coverage is `18 / 20 =
+0.90`. If their 36 start/end boundaries have 7.2 seconds of total absolute
+error, Timestamp Boundary MAE is `7.2 / 36 = 0.20 seconds`.
+
+Boundary MAE alone can look excellent when only easy segments align. Coverage
+shows how much of the timed reference actually contributed. The two metrics are
+therefore interpreted together: low MAE and high coverage. When no segments
+align, MAE is undefined rather than fabricated as zero, while coverage is zero.
+
+### Reliability metrics
+
+For speech-containing clips:
+
+```text
+Empty Transcript Rate =
+speech clips producing no lexical text
+--------------------------------------
+       speech clips evaluated
+```
+
+**Example:** Four empty transcripts from 100 speech clips produce a rate of
+`4 / 100 = 0.04`.
+
+This exposes complete transcription failures that can be diluted inside corpus
+WER. A process crash is a failed candidate run, not an empty transcript.
+
+For the fixed silence, music-without-lyrics, background-noise, and environmental
+sound controls:
+
+```text
+Nonspeech False-Transcription Rate =
+nonspeech clips producing lexical text
+---------------------------------------
+       nonspeech clips evaluated
+```
+
+**Example:** Three controls producing text among 20 nonspeech clips produce a
+rate of `3 / 20 = 0.15`.
+
+WER cannot score these controls because their references contain zero words.
+This rate directly measures invented speech where no spoken reference exists.
+
+### Operational metrics
+
+```text
+Complete-Pipeline Real-Time Factor =
+total transcription-and-alignment time
+--------------------------------------
+          total audio duration
+```
+
+**Example:** Processing 60 minutes of audio in 15 minutes produces RTF `15 / 60
+= 0.25`.
+
+An RTF below `1` means processing is faster than audio playback. Qwen's complete
+time includes transcription, unloading, loading the forced aligner, and
+alignment. Warm p50/p95 latency describes typical and slow clips on the same
+frozen corpus. Cold load measures initial model loading separately. Peak RAM is
+sampled across the candidate process tree, and Peak VRAM is the candidate's
+largest observed GPU allocation. Every operational result records the explicit
+CPU or GPU profile; silent device fallback is invalid.
+
+Standard and full confidence intervals resample complete clips, preserving each
+clip's transcript, timestamps, and latency as one sampling unit. Resource peaks
+and a single cold-load observation do not receive fabricated confidence
+intervals.
 
 ## Retrieval quality
 

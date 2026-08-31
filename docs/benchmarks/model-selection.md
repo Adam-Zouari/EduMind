@@ -257,7 +257,9 @@ Shared quality source: [Open ASR methodology](https://github.com/huggingface/ope
 
 The Qwen profile contains a 2.04B ASR model and a 0.6B forced aligner, or 2.64B parameters across both components. They run sequentially: transcription completes and the ASR is unloaded before alignment starts. The benchmark still measures the complete transcription-plus-alignment latency and peak resources.
 
-Short-form public WER only creates the shortlist. Final ASR selection uses complete educational recordings and measures long-form WER, missing and hallucinated speech, timestamp MAE, real-time factor, latency, RAM, and VRAM.
+Short-form public WER only creates the shortlist. Final ASR evaluation follows
+the frozen educational-audio procedure in [methodology.md](methodology.md) and
+the metric contract in [metrics.md](metrics.md).
 
 ## Video extraction
 

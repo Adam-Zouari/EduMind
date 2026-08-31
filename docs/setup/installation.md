@@ -210,12 +210,18 @@ Use [Open ASR Leaderboard datasets/methodology](https://github.com/huggingface/o
 data/benchmarks/extraction/audio-development.json
 data/benchmarks/extraction/audio-validation.json
 data/benchmarks/extraction/audio-locked-test.json
+data/benchmarks/extraction/audio-reliability.json
 data/benchmarks/extraction/video-development.json
 data/benchmarks/extraction/video-validation.json
 data/benchmarks/extraction/video-locked-test.json
 ```
 
-Every asset row must contain a checksum, license, source revision, document family, and reference transcript. Timestamp metrics require reference segments. Video visual-text metrics additionally require verified visible text and timestamps.
+Every speech asset row must contain a checksum, license, source revision,
+document family, and reference transcript. Timestamp metrics require reference
+segments. `audio-reliability.json` contains verified silence,
+music-without-lyrics, background-noise, and environmental-sound controls with an
+empty spoken reference. Video visual-text metrics additionally require verified
+visible text and timestamps.
 
 ## 5. Vector database servers
 

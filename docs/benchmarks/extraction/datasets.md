@@ -15,6 +15,12 @@ Each stage has `<stage>-development.json`, `<stage>-validation.json`, and
 - `document_family` so preparation can prove family-level split isolation;
 - modality annotations used by that stage, such as `reference_pages`, timestamps, `duration_seconds`, visible text, or PDF layout/oracle labels.
 
+Audio also has a fixed `audio-reliability.json` manifest. Its rows are verified
+nonspeech controls—silence, music without lyrics, background noise, or
+environmental sound—with an empty spoken reference and a `nonspeech_kind` label.
+They are not mixed into Corpus WER or CER; they are used only for Nonspeech
+False-Transcription Rate.
+
 Download a reviewed asset plan explicitly:
 
 ```powershell
