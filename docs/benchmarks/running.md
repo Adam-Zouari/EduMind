@@ -25,27 +25,42 @@ terminal if you want to inspect runs while they execute:
 mlflow ui --backend-store-uri sqlite:///mlflow.db
 ```
 
-Use `--no-mlflow` only for debugging. A normal invocation creates one parent run
-and one child per candidate. Failures remain visible rather than being silently
-skipped.
+Use `--no-mlflow` only for debugging. A normal comparison creates one parent run
+and one child per candidate. Document `--source all` deliberately launches three
+comparisons and therefore creates separate PDF, image, and DOCX parents.
+Failures remain visible rather than being silently skipped.
 
 ## 3. Understand profiles and decision files
 
 - `smoke` uses tiny fixtures and checks only that the path executes.
 - `standard` runs the candidate registry for the stage.
-- `full` requires `--shortlist DECISION_JSON` and runs only candidates explicitly
-  selected by an engineer.
+- `full` runs only candidates explicitly selected by an engineer. Most stages use
+  `--shortlist`; document extraction uses separate `--pdf-selection` and
+  `--image-selection` decisions because their valid configuration sets differ.
 - `--manifest PATH` overrides a stage's default dataset manifest.
 
 A decision JSON names candidates selected after inspecting a completed upstream
 run. It is an explicit input to the next stage, not an automatically generated
 winner. The runner validates that the referenced candidate exists.
 
+```json
+{
+  "schema_version": 1,
+  "source_summary": "../../artifacts/benchmarks/extraction/document-configuration-pdf/<run-id>/summary.json",
+  "source_run_id": "<run-id>",
+  "selected_candidates": ["<exact child-run candidate name>"],
+  "selected_by": "<engineer name>",
+  "selected_date": "YYYY-MM-DD",
+  "reason": "<why this profile advances>"
+}
+```
+
+Resolve `source_summary` relative to the decision file. Create separate PDF and
+image decisions because they refer to different parent summaries.
+
 The methodology assigns development, validation, and locked data according to
-the experiment phase. Pass the shown `--manifest` paths explicitly. In
-particular, the shared extraction runner's current automatic profile-to-split
-mapping does not represent the two-phase development/validation method by
-itself.
+the experiment phase. The document runner maps `standard` to development and
+`full` to validation; `--manifest` can still provide an explicit frozen path.
 
 ## 4. Run extraction experiments
 
@@ -54,14 +69,19 @@ compares selected configurations with the visual-parser architectures:
 
 ```powershell
 python experiments/benchmarks/extraction/document/run.py --profile standard `
-  --phase configuration `
   --manifest data/benchmarks/extraction/document-development.json
 
 python experiments/benchmarks/extraction/document/run.py --profile full `
-  --phase architecture `
-  --shortlist DOCUMENT_CONFIG_DECISION `
+  --pdf-selection PDF_CONFIG_DECISION `
+  --image-selection IMAGE_CONFIG_DECISION `
   --manifest data/benchmarks/extraction/document-validation.json
 ```
+
+The default `--source all` creates the three parent runs described in the
+methodology. Use `--source pdf`, `--source image`, or `--source docx` to run one
+comparison independently. PDF configuration executes 24 profiles, image
+configuration executes 12 unique full-page profiles, and DOCX executes native
+Docling once.
 
 Run audio independently:
 

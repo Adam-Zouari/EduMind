@@ -129,10 +129,9 @@ and examples follow the summary.
 | Peak VRAM | How much GPU memory does extraction require? |
 | Peak Temporary Disk | How much additional working-disk space does extraction require? |
 
-This section replaces the legacy exact-line, adjacency-table, and raw-LaTeX
-scorers. Until the runner is aligned with this contract, document smoke runs may
-validate wiring, but their metrics cannot support an authoritative parser
-comparison.
+This contract replaces the legacy exact-line, adjacency-table, and raw-LaTeX
+scorers. The executable document runner uses these names, applicability rules,
+group aggregates, sample counts, and confidence intervals directly.
 
 All candidates receive the same canonical reference and output conversion.
 This evaluation-only conversion handles representational equivalence; it does
@@ -508,7 +507,10 @@ missing, incorrect, misplaced, and unexpected page content.
 
 **Question:** Was extracted content assigned to the correct page number?
 
-Let $A$ be the set of matched content elements with reference page annotations:
+Let $A$ be the set of matched content elements with reference page annotations.
+For this metric, one-to-one content matching maximizes Content F1 and requires
+`Content F1 >= 0.5`; page numbers are deliberately ignored until after the
+content pairs are formed:
 
 $$
 \operatorname{PageAttributionAccuracy}
@@ -538,8 +540,9 @@ are no matched elements with page annotations.
 
 **Question:** How often did the parser repeat a page?
 
-Let $D_{page}$ be unsupported duplicate predicted pages under the fixed
-near-duplicate rule:
+Let $D_{page}$ be unsupported duplicate predicted pages. Two page records are
+treated as near-duplicates when their Content F1 is at least `0.95`; this fixed
+threshold is applied to every extraction profile:
 
 $$
 \operatorname{DuplicatePageRate}
@@ -557,7 +560,9 @@ unsupported duplicated page records
 **Example:**
 
 ```text
-Predicted pages:      1, 2, 2, 3
+Reference pages:             1, 2, 3
+Predicted pages:             1, 2, 3, 4
+Page 4 repeats page 2:       unsupported duplicate
 Unsupported duplicate pages: 1
 
 Duplicate Page Rate = 1 / 4 = 0.25
@@ -595,9 +600,10 @@ Accuracy.
 
 Reference and predicted elements are matched one-to-one. When boxes are
 available, matching maximizes bounding-box Intersection over Union (IoU), with
-`IoU >= 0.5` required for a match. When a corpus lacks boxes, its pinned official
-element matcher is used instead; matching protocols are never mixed silently
-inside one comparison.
+`IoU >= 0.5` required for a match. For native documents without boxes, matching
+maximizes element Content F1 and requires `Content F1 >= 0.5`. The input format
+therefore determines one explicit matching rule; the runner does not silently
+mix the two rules within a document comparison.
 
 #### Layout Element Precision
 
@@ -806,10 +812,10 @@ or hierarchy.
 ### Tables
 
 Table metrics are calculated only for samples with table annotations. Detection
-uses one-to-one table-region matching at `IoU >= 0.5`; crop-level datasets use
-their explicit table identities. Results are reported overall and by table
-attributes such as bordered/borderless and merged-cell presence when those
-labels exist.
+uses one-to-one table-region matching at `IoU >= 0.5` when boxes are available.
+For native documents without boxes, one-to-one matching uses table Content F1
+with the same fixed `0.5` threshold used by the executable evaluator. Results
+are reported as a total and by document group.
 
 Table evaluation answers three separate questions: was the table found, was
 its text recovered, and was its structure reconstructed?
@@ -997,8 +1003,9 @@ row/column-adjacency approximation. OmniDocBench documents TEDS and TEDS-S in it
 ### Formulas
 
 Formula metrics are calculated only for samples with formula annotations and are
-reported as a total and separately for inline and display formulas. Detection
-uses one-to-one region matching at `IoU >= 0.5` when boxes are available.
+reported as a total and by document group. Detection uses one-to-one region
+matching at `IoU >= 0.5` when boxes are available. For native documents without
+boxes, one-to-one matching uses formula Content F1 with a `0.5` threshold.
 
 **Primary metrics:** Formula Detection F1 and Formula Exact Match
 (ExpRate@CDM).
@@ -1241,8 +1248,11 @@ unsupported repeated content units
        predicted content units
 ```
 
-It exposes repeated paragraphs, page content, tables, or formulas that do not
-represent legitimate repetition in the source.
+The content units are the same case-folded `\w+` token occurrences used by
+Content F1. For each token, predicted occurrences beyond the number supported
+by the reference count only when that token was repeated in the prediction. The
+metric therefore exposes repeated paragraphs, page content, tables, or formulas
+without treating one isolated wrong token as a duplication error.
 
 **Example:** If 20 of 1,000 predicted content units are unsupported repetitions,
 Duplicate Content Rate is `20 / 1,000 = 0.02`.
@@ -1411,7 +1421,7 @@ is `4 seconds`; the slow `11-second` document influences the upper tail. The
 benchmark reports the exact p95 using its fixed quantile implementation.
 
 **Range and direction:** Non-negative seconds/document; lower is better. Results
-are also reported by modality and page-count bucket.
+are also reported by document group.
 
 #### Batch Pages per Minute
 
@@ -1639,6 +1649,10 @@ Document-group metrics resample only the samples in that group. Conditional
 metrics such as table structure or formula recognition resample only the samples
 eligible for that metric. Paired candidate comparisons resample aligned sample
 IDs together so both candidates are evaluated on the same resampled cases.
+If a pooled detection resample contains neither a reference nor a prediction,
+its precision/recall/F1 denominator is undefined and that draw is excluded from
+that metric's percentile calculation rather than converted to zero. The result
+artifact records the number of defined resamples.
 
 ### MLflow names
 

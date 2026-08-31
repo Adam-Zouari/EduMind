@@ -17,6 +17,8 @@ Install these programs before creating the Python environment:
 | Docker Desktop with Compose | Chroma and vector-server benchmarks | [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/) |
 | FFmpeg | audio/video decoding and video keyframes | [FFmpeg download page](https://ffmpeg.org/download.html) |
 | Tesseract 5 with English data | one Docling Standard configuration | [Tesseract installation](https://tesseract-ocr.github.io/tessdoc/Installation.html) and [Windows builds](https://tesseract-ocr.github.io/tessdoc/Downloads.html) |
+| TeX Live (`pdflatex`, `kpsewhich`) | official CDM formula scoring | [TeX Live](https://www.tug.org/texlive/) |
+| ImageMagick 7 and Ghostscript | rendering formulas for official CDM scoring | [ImageMagick](https://imagemagick.org/script/download.php) and [Ghostscript](https://ghostscript.com/releases/gsdnld.html) |
 | NVIDIA driver | CUDA benchmark profiles | [NVIDIA drivers](https://www.nvidia.com/Download/index.aspx) |
 
 The application does not require a separate model-serving service. Generation uses exact local Hugging Face snapshots directly. Docker is never started by an import, preparation command, or application startup.
@@ -31,6 +33,10 @@ docker compose version
 ffmpeg -version
 tesseract --version
 tesseract --list-langs
+pdflatex --version
+kpsewhich --version
+magick -version
+gswin64c --version
 nvidia-smi
 ```
 
@@ -86,7 +92,10 @@ Prepare only the provisional application controls:
 python experiments/benchmarks/prepare.py app-models
 ```
 
-This installs MiniLM embeddings, Hugging Face Qwen3 1.7B, Whisper `small.en`, and Docling Standard artifacts. Prepare experiment candidates separately or together:
+This installs MiniLM embeddings, Hugging Face Qwen3 1.7B, Whisper `small.en`,
+and only the Docling components used by the provisional application: layout,
+TableFormer, and RapidOCR. Prepare the additional experiment candidates and
+Docling components separately or together:
 
 ```powershell
 python experiments/benchmarks/prepare.py rag-models
@@ -118,6 +127,24 @@ The extraction download contains:
 - The Qwen ASR profile also downloads the pinned [Qwen3 ForcedAligner 0.6B](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B). ASR and alignment execute sequentially, while their combined time and peak resource use are measured.
 
 NeMo and MOSS have heavier runtime dependency trees. Install them only inside the project environment from `requirements/benchmarks.lock`; do not combine this lock with unrelated ML environments.
+
+### Official document-metric code
+
+TEDS-S and CDM are loaded from the pinned OmniDocBench evaluator rather than
+reimplemented by EduMind. Prepare that source explicitly:
+
+```powershell
+python experiments/benchmarks/prepare.py evaluators
+```
+
+The command records revision
+`193627ae9e97d89188468ed1ee3b7a856ff76044` under
+`data/benchmarks/evaluators/OmniDocBench/`. TEDS-S needs its Python dependencies;
+CDM additionally needs TeX, ImageMagick, and Ghostscript. The runner adapts only
+the official evaluator's process-launch call on Windows; it does not replace the
+TEDS-S or CDM calculation. If those tools or the pinned source are missing, a
+table/formula-bearing authoritative child run fails instead of logging an
+approximation.
 
 ## 4. Datasets
 
@@ -158,11 +185,22 @@ python experiments/benchmarks/prepare.py assets `
 ```
 
 Create `document-development.json`, `document-validation.json`, and
-`document-locked-test.json` under `data/benchmarks/extraction/`. Each sample needs
-an ID, `kind` (`image`, `pdf`, or `docx`), repository-relative `source_path`,
-verified `reference`, `asset_sha256`, source license/revision, and
-`document_family`. Add page text and canonical structure annotations when their
-dependent metrics are claimed.
+`document-locked-test.json` under `data/benchmarks/extraction/`. Each manifest
+row needs an ID, `kind` (`image`, `pdf`, or `docx`), repository-relative
+`source_path` and `reference_path`, both SHA-256 checksums, source
+license/revision, and `document_family`. The reference JSON contains verified
+`text`, numbered `pages`, and ordered `elements`. Elements record `id`, `kind`,
+text, `order`, `page_number`, normalized `bounding_box`, `parent_id` and
+`hierarchy_level` where applicable, table `html`, and formula `latex`. Visual
+authoritative samples require normalized boxes;
+native DOCX does not invent page boxes.
+
+To regenerate only the committed document smoke files without invoking Windows
+speech/video synthesis:
+
+```powershell
+python experiments/benchmarks/prepare.py smoke-fixtures
+```
 
 ### Audio and video
 

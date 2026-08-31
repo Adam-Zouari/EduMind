@@ -180,7 +180,10 @@ Document extraction should benchmark configurations, not assume that one Docling
 
 ### Docling Standard configuration matrix
 
-All **24 combinations** of the following factors are run on the development split:
+All **24 combinations** of the following factors are run on the PDF development
+split. Images use the 12 unique OCR-engine × table-mode × formula settings with
+full-page OCR fixed; native DOCX is parsed once because OCR mode and engine do
+not apply to it.
 
 | Factor | Values | What the comparison answers |
 |---|---|---|

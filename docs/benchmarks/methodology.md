@@ -113,8 +113,10 @@ MLflow: `image_scan`, `image_phone_photo`, `pdf_digital`, `pdf_scanned`,
 `pdf_mixed`, and `pdf_broken_text`. A phone photo therefore contributes to the
 `image` aggregate and the more specific `image_phone_photo` aggregate.
 
-An unqualified metric is the aggregate across every sample eligible for that
-metric. Adding a document group gives the same metric for that group only:
+An unqualified metric is the aggregate across every eligible sample in that
+child run. Because PDF, image, and DOCX have separate parents, its scope is the
+source being compared by that parent. Adding a document group gives the same
+metric for that group only:
 
 ```text
 text.content_f1                 -> every document with a text reference
@@ -317,32 +319,7 @@ across relevant document groups. This permits conclusions such as "high text
 quality across all documents but weak table structure on scanned PDFs" instead
 of hiding the weakness inside one mean.
 
-### Phase C: routing design
-
-Development results show which profiles work on each document family. The
-engineer then defines routing rules using only signals that exist at runtime,
-such as source type, native PDF text availability, text density, invalid
-characters, empty-page proportion, extraction warnings, and output coverage.
-Reference answers and oracle labels are never router inputs.
-
-A typical policy to test is:
-
-```text
-image                 → full-page OCR
-PDF with usable text  → PDF-aware OCR
-scanned/broken PDF    → full-page OCR
-failed PDF-aware page → full-page OCR fallback
-DOCX                  → native Docling ingestion
-```
-
-The routing evaluation compares always-PDF-aware, always-full-page,
-source-aware, and source-aware-with-fallback policies. It reports final
-extraction quality, routing decision accuracy, quality regret relative to the
-best observed profile for each sample, fallback frequency and success, and
-added latency. The oracle is used only to measure regret; it cannot be used in
-production.
-
-### Phase D: parser architecture comparison
+### Phase C: parser architecture comparison
 
 After reviewing the Standard-pipeline screen, the engineer records the selected
 Docling profiles. Those complete profiles are compared with:
@@ -365,34 +342,62 @@ one small real profile → verify loading, extraction, scoring, artifacts, and M
 
 development / standard:
 Docling configuration screen → document-group breakdowns
-→ engineer defines profile finalists and routing policies
+→ engineer selects one PDF configuration and one image configuration
 
 validation / full:
-selected Standard profiles and routing policies
-+ Granite Docling + PaddleOCR-VL on their common inputs
-→ engineer selects the complete extraction policy
+selected Standard profiles + Granite Docling + PaddleOCR-VL
+on common image/PDF inputs; native Docling on DOCX
+→ engineer selects the complete parser profiles
 
-locked test:
-run the one selected policy once
+future locked test, after the runtime routing policy is defined:
+run the one frozen extraction policy once
 ```
 
-Every profile within one comparison receives the same deterministically shuffled
-eligible samples, one cold measurement, warmups, and three measured repetitions.
-Development determines configurations and routing rules. Validation confirms
-them without changing thresholds. The locked test is not used for tuning.
+Within a standard/full comparison, every profile receives the same
+deterministically shuffled eligible samples, one cold measurement, warmups, and
+three measured repetitions. Smoke uses one measured repetition because it is
+only a wiring check.
+Development determines configurations. Validation confirms the selected
+configurations and parser architectures without changing the experiment. The
+locked test is not used for tuning. Runtime routing and the resulting locked-test
+execution are deliberately deferred until these parser results exist; neither is
+part of the current configuration/architecture commands.
 
 ### MLflow result structure
 
-MLflow uses one experiment named `EduMind / extraction`. One benchmark command
-creates one **parent run** representing the complete invocation. The parent run
-is not a parser result; it records the shared comparison plan:
+MLflow uses one experiment named `EduMind / extraction`. A document command with
+`--source all` creates three independent **parent runs**, because PDF, image,
+and DOCX execute different valid configuration sets. Each parent is one fair
+comparison; it is not a parser result itself. The standard configuration tree
+is:
 
 ```text
 MLflow experiment: EduMind / extraction
-└── parent run: extraction-document-<timestamp>
-    ├── child run: <extraction-profile-1>
-    ├── child run: <extraction-profile-2>
-    └── child run: <extraction-profile-N>
+├── parent: extraction-document-configuration-pdf-<timestamp>
+│   └── 24 child runs: one per PDF extraction profile
+├── parent: extraction-document-configuration-image-<timestamp>
+│   └── 12 child runs: one per unique full-page image profile
+└── parent: extraction-document-configuration-docx-<timestamp>
+    └── 1 child run: native Docling ingestion
+```
+
+`--source pdf`, `--source image`, or `--source docx` runs only that parent.
+During validation, PDF and image parents compare the engineer-selected Standard
+profile with Granite Docling and PaddleOCR-VL. The DOCX parent validates native
+Docling because the two visual parsers do not accept native DOCX.
+
+```text
+MLflow experiment: EduMind / extraction
+├── parent: extraction-document-architecture-pdf-<timestamp>
+│   ├── child: <selected PDF Docling Standard profile>
+│   ├── child: docling-vlm-granite-258m
+│   └── child: paddleocr-vl-1.6
+├── parent: extraction-document-architecture-image-<timestamp>
+│   ├── child: <selected image Docling Standard profile>
+│   ├── child: docling-vlm-granite-258m
+│   └── child: paddleocr-vl-1.6
+└── parent: extraction-document-architecture-docx-<timestamp>
+    └── child: docling-standard-native
 ```
 
 The parent run stores:
@@ -404,6 +409,11 @@ The parent run stores:
 - completion metrics: whether the invocation is complete and how many profiles
   succeeded or failed; and
 - paired comparisons derived from aligned per-sample results in `summary.json`.
+
+Paired comparisons are emitted for document-level scalar metrics. Pooled layout,
+table, and formula detection precision/recall/F1 use their candidate-level
+document-bootstrap intervals instead; averaging per-document F1 differences
+would not reproduce the documented pooled-count calculation.
 
 Each nested child run represents exactly one extraction profile. Its run name is
 the complete configuration identifier, for example:
@@ -434,7 +444,7 @@ documents are not duplicated into each child run.
 The authoritative layout logs **every applicable metric in
 [metrics.md](metrics.md)**. The first name is the metric category. With no
 document group in the name, the value is the total aggregate across every
-document on which that metric is defined:
+eligible document processed by that child run:
 
 ```text
 text.content_precision
@@ -534,8 +544,8 @@ operational.peak_vram_mb
 operational.peak_temporary_disk_mb
 ```
 
-Operational latency can additionally be aggregated by document group, for
-example `operational.pdf_scanned.p95_document_latency_seconds`. Peak RAM, VRAM,
+Operational latency is additionally aggregated by document group, for example
+`operational.pdf_scanned.p95_complete_document_latency_seconds`. Peak RAM, VRAM,
 and temporary disk describe the complete profile execution and remain top-level
 operational metrics rather than being misleadingly attributed to one slice.
 
@@ -575,20 +585,12 @@ Confidence intervals are not attached indiscriminately:
 This rule avoids presenting statistical precision that the measurements do not
 contain.
 
-The current shared runner already creates the parent/child hierarchy, global
-aggregates, applicable confidence intervals, statuses, and per-sample Parquet
-files. Before an authoritative document comparison, its per-sample rows and
-MLflow metrics must also carry the manifest document-group labels and the grouped
-aggregates shown above. Until that alignment is implemented, the stored global
-results can validate execution but cannot support the complete document-group
-analysis described here.
-
 MLflow records evidence but does not choose a winner. After reviewing complete
 parent and child runs, the engineer records finalists or a final extraction
 policy in a separate decision file. The benchmark never modifies production
 configuration automatically.
 
-The approved document parser and routing policy are frozen before video and
+The approved document-parser profile is frozen before video and
 downstream extraction are evaluated.
 
 ## 2. Audio extraction
