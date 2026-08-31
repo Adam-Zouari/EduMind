@@ -34,7 +34,8 @@ retrieval stack, and generator.
 `standard` compares every candidate on development data. `full` compares only
 engineer-selected finalists on validation data. Standard/full use seed 42, retain
 per-sample results, and report 95% confidence intervals for eligible
-sample-based aggregates. The locked test is reserved for the one final system.
+sample-based aggregates. A stage's locked split is used once for its one
+engineer-selected final profile; it is never used to choose or tune candidates.
 
 Every comparison gives its candidates the same samples. MLflow stores the exact
 settings, revisions, data checksum, hardware, aggregate metrics, confidence
@@ -598,14 +599,38 @@ downstream extraction are evaluated.
 Which English speech-to-text profile produces the most accurate educational
 transcript with timestamps suitable for navigation and citations?
 
-### Models
+### Terminology and unit of comparison
+
+An **ASR profile** is one complete executable transcription configuration. It
+includes the model revision, decoder settings, device, numeric precision,
+audio preprocessing, timestamp method, and any required aligner. The benchmark
+runner calls it a `candidate`, but the result belongs to the complete profile,
+not only to the model weights.
+
+Each speech clip produces:
+
+- one ordered transcript;
+- timestamped segments in the common benchmark representation;
+- warnings and timing information; and
+- the counts required to reproduce Corpus WER and CER.
+
+Audio already defines chronological order, so the benchmark evaluates the final
+ordered transcript with WER. It does not split recognition into Content F1 and
+Transcript Order Accuracy as document extraction does for two-dimensional
+pages.
+
+The independent quality sample is one audio clip. Three latency repetitions of
+the same clip improve timing measurement but do not become three independent
+quality samples.
+
+### ASR profiles
 
 | Model/profile | Why it is included |
 |---|---|
 | Whisper `small.en` | Established English control with timestamp output. |
 | Canary 180M | Compact timestamp-capable challenger. |
 | Parakeet TDT 0.6B v2 | Mid-size profile with word, segment, and character timestamps. |
-| MOSS Transcribe-Diarize | Tests transcription with diarization-oriented segment output. |
+| MOSS Transcribe-Diarize | Larger timestamp-capable transcription challenger. Diarization is not scored because speaker identification is not currently an EduMind requirement. |
 | Qwen3 ASR 1.7B + ForcedAligner 0.6B | Strong transcription candidate whose separate aligner provides timestamps. |
 
 For Qwen, transcription runs first. Its ASR model is unloaded before the forced
@@ -632,24 +657,92 @@ substitute for this frozen educational corpus.
 A small fixed reliability set contains verified silence, music without lyrics,
 background noise, and other nonspeech audio. These controls are separate from the
 90 speech clips and are used only to measure false transcription on audio that has
-no spoken reference.
+no spoken reference. The reliability manifest labels its development,
+validation, and locked-test controls so each phase uses only its own subset.
 
-### Execution
+Every speech sample records at least:
 
 ```text
-development: all ASR candidates on the same 54 clips
-→ engineer selects finalists
-
-validation: ASR finalists on the same 18 clips
-→ engineer selects the ASR profile
+sample ID
+source, license, revision, and checksum
+split and document/speaker family
+duration and audio-condition labels
+verified transcript
+verified timestamped reference segments
 ```
 
-Every candidate in one invocation uses the same explicitly requested CPU or GPU
-device and fixed audio preprocessing. A runtime never falls back silently to
-another device. Each run loads the exact model, transcribes, performs alignment
-when required, converts output to timestamped segments, and repeats three times.
-Candidate text is scored without an additional cleanup profile. Quality metrics
-compare transcripts; operational metrics compare the recorded runtime profiles.
+Audio-condition labels such as clean, noisy, accented, and multi-speaker remain
+in the per-sample artifact for diagnosis. They do not create extra required
+MLflow metric namespaces or a larger metric contract.
+
+### Common input and output rules
+
+Every candidate receives the same decoded audio waveform: mono, 16 kHz, with no
+candidate-specific denoising, volume repair, prompting, or vocabulary hints.
+Model-native feature extraction and the documented deterministic decoder remain
+part of the ASR profile and are recorded. Candidate output receives only the
+fixed evaluator normalization used by WER and CER; the evaluator does not repair
+misspellings, remove repetitions, or rewrite transcripts.
+
+All timestamp outputs are converted to ordered benchmark segments containing
+text, start time, and end time. The evaluator uses one fixed transcript
+alignment to associate predicted timed content with reference segments. It does
+not require candidates to emit the same number of segments and does not truncate
+unequal timestamp arrays. Boundary MAE is calculated only from valid alignments;
+Alignment Coverage records how much of the timed reference aligned.
+
+### Per-candidate execution
+
+One child run executes one ASR profile in a fresh candidate context:
+
+```text
+load the exact pinned model
+→ record cold model-load time
+→ run two warmups
+→ transcribe every deterministically shuffled speech clip
+→ run three measured warm repetitions per speech clip
+→ process the corresponding nonspeech reliability controls
+→ aggregate quality, timestamp, reliability, and operational results
+→ unload the model and release resources
+```
+
+The quality result for a clip comes from one designated deterministic measured
+output. Repeated executions preserve raw timing measurements but are not
+averaged into additional quality samples. Qwen's complete execution includes
+both transcription and forced alignment.
+
+Every profile uses the same explicitly requested CPU or CUDA device within one
+comparison. Device, dtype, decoder, timestamp path, and runtime versions are
+recorded. Silent CPU fallback invalidates the profile. If one selected profile
+cannot complete on the requested device, that parent comparison is incomplete;
+the engineer fixes the runtime plan and reruns it instead of comparing partial
+results.
+
+### Development, validation, and locked test
+
+```text
+smoke:
+all runnable ASR paths on tiny committed speech and nonspeech fixtures
+→ verify loading, transcription, timestamps, scoring, artifacts, and cleanup
+
+development / standard:
+all five ASR profiles on 54 speech clips and development reliability controls
+→ engineer reviews MLflow and records finalists
+
+validation / full:
+engineer-selected finalists on 18 unseen speech clips and validation controls
+→ engineer records exactly one selected ASR profile
+
+locked test:
+the selected profile once on 18 locked speech clips and locked controls
+→ final unbiased ASR report; no further tuning in this benchmark version
+```
+
+Smoke validates wiring only. Development is where all candidates are compared.
+Validation checks whether the chosen finalists retain their behavior on unseen
+recordings. The locked split is used only after the engineer has selected one
+profile. MLflow records evidence throughout but never advances a candidate or
+changes application configuration.
 
 ### Metrics and why they are used
 
@@ -667,9 +760,108 @@ ordered transcript. Technical-Term Accuracy is also excluded because EduMind is
 not restricted to a stable subject vocabulary. Diarization is not scored unless
 speaker identification becomes a product requirement.
 
-The engineer approves the ASR profiles that provide the best useful combination
-of transcription, timestamp quality, and execution cost. The selected ASR is
-frozen for video extraction.
+The exact calculations, examples, ranges, directions, and confidence-interval
+rules are defined in [metrics.md](metrics.md). Corpus WER, CER, and the three
+WER components pool edit counts across speech clips before division; they are
+not averages of independently calculated clip error rates. Timestamp Boundary
+MAE and Alignment Coverage are interpreted together. Reliability controls are
+not included in WER because their references contain no speech.
+
+### MLflow result structure
+
+Audio uses the same MLflow experiment as the other extraction stages:
+
+```text
+MLflow experiment: EduMind / extraction
+├── parent: extraction-audio-smoke-<timestamp>
+│   └── one child per smoke-tested ASR profile
+├── parent: extraction-audio-development-<timestamp>
+│   ├── child: whisper-small-en-control
+│   ├── child: canary-180m
+│   ├── child: parakeet-tdt-0.6b-v2
+│   ├── child: moss-transcribe-diarize
+│   └── child: qwen3-asr-1.7b-aligned
+├── parent: extraction-audio-validation-<timestamp>
+│   └── one child per engineer-selected finalist
+└── parent: extraction-audio-locked-test-<timestamp>
+    └── one child for the selected ASR profile
+```
+
+The parent is the comparison run. It stores the phase, profile, dataset and
+reliability-manifest checksums, candidate order, seed, Git state, hardware,
+dependency locks, model revisions, runtime plan, and any engineer-decision file.
+Its artifacts are `plan.json`, `provenance.json`, the frozen manifests, and
+`summary.json`. Its only direct metrics describe completion: whether the entire
+comparison completed and how many candidates succeeded or failed.
+
+Each child is one ASR profile. Its parameters identify the candidate, revisions,
+device, dtype, language, decoder, timestamp method, sample rate, warmups,
+repetitions, data split, and checksums. It has no child runs for individual
+clips, repetitions, or metrics.
+
+ASR child metrics use descriptive flat names because the run already has
+`stage=audio` and no metric names collide inside it:
+
+```text
+word_error_rate
+character_error_rate
+word_substitution_rate
+word_deletion_rate
+word_insertion_rate
+
+timestamp_boundary_mae_seconds
+timestamp_alignment_coverage
+
+empty_transcript_rate
+nonspeech_false_transcription_rate
+
+real_time_factor
+p50_warm_clip_latency_seconds
+p95_warm_clip_latency_seconds
+cold_model_load_seconds
+peak_process_tree_ram_mb
+peak_vram_mb
+```
+
+The recognition, timestamp, reliability, and operational labels remain useful
+documentation categories, but they are not repeated as MLflow prefixes.
+Applicable standard/full uncertainty bounds attach to the same name:
+
+```text
+word_error_rate
+word_error_rate.ci_lower
+word_error_rate.ci_upper
+```
+
+Corpus WER/CER and their components, timestamp metrics, reliability rates, RTF,
+and sufficiently supported warm latency estimates receive clip-bootstrap
+intervals. One cold-load observation and observed peak RAM/VRAM do not receive
+fabricated intervals.
+
+Each successful child stores three artifacts:
+
+| Artifact | Contents and purpose |
+|---|---|
+| `samples.parquet` | One row per speech or nonspeech sample with sample ID, condition labels, duration, word/character edit counts, reference lengths, timestamp alignment counts and error totals, reliability flags, warnings, and the designated quality-pass latency. It makes every aggregate traceable. |
+| `timings.parquet` | One row per speech clip and measured repetition with latency, duration, RTF, and device. It preserves the observations used for p50, p95, and operational analysis. |
+| `candidate.json` | Candidate status, fingerprint, aggregate metrics, confidence intervals, operational values, and artifact references. |
+
+Fields that do not apply to a row are absent or null, not fabricated as zero.
+Raw audio and transcripts are not duplicated into MLflow by default; sample IDs
+resolve them through the frozen local manifests.
+
+Every successful standard/full child must contain all 15 aggregate metric point
+estimates. A CPU profile may report zero VRAM only when execution confirms that
+no GPU process was used; unavailable instrumentation is not converted to zero.
+If a candidate crashes, lacks required timestamp output, or cannot produce the
+required artifacts or aggregates, its child remains visible as failed and the
+parent is incomplete. The engineer repairs the problem and reruns the complete
+comparison rather than selecting from partial evidence.
+
+The engineer reviews the completed child runs and per-sample artifacts. No
+weighted overall score is calculated. Finalist and winner choices are written
+to explicit engineer-decision files containing the source parent run and
+selected child profiles. The selected ASR is then frozen for video extraction.
 
 ## 3. Video extraction
 
