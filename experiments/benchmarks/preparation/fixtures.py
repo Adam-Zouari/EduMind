@@ -83,8 +83,13 @@ def _write_minimal_docx(destination: Path, text: str) -> None:
     from zipfile import ZIP_DEFLATED, ZipFile
 
     paragraphs = "".join(
-        f'<w:p><w:r><w:t xml:space="preserve">{escape(line)}</w:t></w:r></w:p>'
-        for line in text.splitlines()
+        (
+            '<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>'
+            f'<w:r><w:t xml:space="preserve">{escape(line)}</w:t></w:r></w:p>'
+            if index == 0 and line == "Heading"
+            else f'<w:p><w:r><w:t xml:space="preserve">{escape(line)}</w:t></w:r></w:p>'
+        )
+        for index, line in enumerate(text.splitlines())
     )
     content_types = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -122,4 +127,3 @@ def _windows_speech(text: str, destination: Path) -> None:
         f"$s.SetOutputToWaveFile('{escaped_path}'); $s.Speak('{escaped_text}'); $s.Dispose()"
     )
     subprocess.run(["powershell", "-NoProfile", "-Command", command], check=True)
-

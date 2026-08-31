@@ -1,24 +1,191 @@
 {
-  "name": "edumind-smoke-extraction",
-  "version": "1.0.0",
-  "task": "extraction",
-  "split": "smoke",
-  "source": "EduMind deterministic modality fixtures",
+  "checksum": "c69b220ae903ca42e51ce54ba6489a5727c2325164b9c7bf100b42d9e2342679",
   "license": "CC0-1.0",
-  "revision": "1",
-  "checksum": "3377256ba8236f0ef0d8e60a6f6d3827f0b7f1a73b3fa476449d59c8da4f8016",
+  "name": "edumind-smoke-extraction",
   "preprocessing_version": "extraction-fixtures-v1",
-  "split_seed": 42,
+  "revision": "1",
   "samples": [
-    {"id":"image-01","kind":"image","source_path":"data/benchmarks/fixtures/extraction/image-01.png","reference":"Cell biology explains how cells obtain energy."},
-    {"id":"image-02","kind":"image","source_path":"data/benchmarks/fixtures/extraction/image-02.png","reference":"Mitosis produces two daughter cells."},
-    {"id":"pdf-01","kind":"pdf","source_path":"data/benchmarks/fixtures/extraction/pdf-01.pdf","reference":"The chapter introduces linear algebra."},
-    {"id":"pdf-02","kind":"pdf","source_path":"data/benchmarks/fixtures/extraction/pdf-02.pdf","reference":"Vectors have magnitude and direction."},
-    {"id":"docx-01","kind":"docx","source_path":"data/benchmarks/fixtures/extraction/docx-01.docx","reference":"Heading\nFirst list item\nSecond list item"},
-    {"id":"docx-02","kind":"docx","source_path":"data/benchmarks/fixtures/extraction/docx-02.docx","reference":"A caption describes the embedded image."},
-    {"id":"audio-01","kind":"audio","source_path":"data/benchmarks/fixtures/extraction/audio-01.wav","reference":"Entropy increases in an isolated system."},
-    {"id":"audio-02","kind":"audio","source_path":"data/benchmarks/fixtures/extraction/audio-02.wav","reference":"The derivative measures instantaneous change."},
-    {"id":"video-01","kind":"video","source_path":"data/benchmarks/fixtures/extraction/video-01.mp4","reference":"The slide defines a binary search tree."},
-    {"id":"video-02","kind":"video","source_path":"data/benchmarks/fixtures/extraction/video-02.mp4","reference":"The lecturer balances the chemical equation."}
-  ]
+    {
+      "asset_sha256": "816ae80e6345304256f3aeaa7e5eb7b7d27733167969d5ad4853a92ebb4bb94d",
+      "document_family": "scan",
+      "id": "image-01",
+      "kind": "image",
+      "reference": "Cell biology explains how cells obtain energy.",
+      "reference_elements": [
+        {
+          "bounding_box": [
+            0.02,
+            0.2,
+            0.55,
+            0.8
+          ],
+          "id": "image-01-text",
+          "kind": "text",
+          "order": 0,
+          "page_number": 1,
+          "text": "Cell biology explains how cells obtain energy."
+        }
+      ],
+      "reference_page_texts": [
+        "Cell biology explains how cells obtain energy."
+      ],
+      "source_path": "data/benchmarks/fixtures/extraction/image-01.png"
+    },
+    {
+      "asset_sha256": "987a88da2486b74a15d9486591ab3a6e6afd4c0cfac0c5d5b6638657d5afbd53",
+      "document_family": "phone_photo",
+      "id": "image-02",
+      "kind": "image",
+      "reference": "Mitosis produces two daughter cells.",
+      "reference_elements": [
+        {
+          "bounding_box": [
+            0.02,
+            0.2,
+            0.5,
+            0.8
+          ],
+          "id": "image-02-text",
+          "kind": "text",
+          "order": 0,
+          "page_number": 1,
+          "text": "Mitosis produces two daughter cells."
+        }
+      ],
+      "reference_page_texts": [
+        "Mitosis produces two daughter cells."
+      ],
+      "source_path": "data/benchmarks/fixtures/extraction/image-02.png"
+    },
+    {
+      "asset_sha256": "994c5a07fef01bb9bb6713a7c12ee41681d422858a52e0449d510ce8bac458a0",
+      "document_family": "digital",
+      "id": "pdf-01",
+      "kind": "pdf",
+      "reference": "The chapter introduces linear algebra.",
+      "reference_elements": [
+        {
+          "bounding_box": [
+            0.1,
+            0.08,
+            0.55,
+            0.16
+          ],
+          "id": "pdf-01-text",
+          "kind": "text",
+          "order": 0,
+          "page_number": 1,
+          "text": "The chapter introduces linear algebra."
+        }
+      ],
+      "reference_page_texts": [
+        "The chapter introduces linear algebra."
+      ],
+      "source_path": "data/benchmarks/fixtures/extraction/pdf-01.pdf"
+    },
+    {
+      "asset_sha256": "67f052cdb75ab7be36e3af483a880dbefe158ec1121fa1fa6691ac081ee35952",
+      "document_family": "digital",
+      "id": "pdf-02",
+      "kind": "pdf",
+      "reference": "Vectors have magnitude and direction.",
+      "reference_elements": [
+        {
+          "bounding_box": [
+            0.1,
+            0.08,
+            0.55,
+            0.16
+          ],
+          "id": "pdf-02-text",
+          "kind": "text",
+          "order": 0,
+          "page_number": 1,
+          "text": "Vectors have magnitude and direction."
+        }
+      ],
+      "reference_page_texts": [
+        "Vectors have magnitude and direction."
+      ],
+      "source_path": "data/benchmarks/fixtures/extraction/pdf-02.pdf"
+    },
+    {
+      "asset_sha256": "32a40b4de995c531cd4f4c132290b69adfa1681e355ec4f00e29e143ac02f445",
+      "document_family": "native",
+      "id": "docx-01",
+      "kind": "docx",
+      "reference": "Heading\nFirst list item\nSecond list item",
+      "reference_elements": [
+        {
+          "hierarchy_level": 1,
+          "id": "docx-01-heading",
+          "kind": "heading",
+          "order": 0,
+          "text": "Heading"
+        },
+        {
+          "id": "docx-01-item-1",
+          "kind": "text",
+          "order": 1,
+          "text": "First list item"
+        },
+        {
+          "id": "docx-01-item-2",
+          "kind": "text",
+          "order": 2,
+          "text": "Second list item"
+        }
+      ],
+      "source_path": "data/benchmarks/fixtures/extraction/docx-01.docx"
+    },
+    {
+      "asset_sha256": "03e6547c02a5d55a23a0d9f2c15092252e7b66b651de576fb87ed9b4e827a4cf",
+      "document_family": "native",
+      "id": "docx-02",
+      "kind": "docx",
+      "reference": "A caption describes the embedded image.",
+      "reference_elements": [
+        {
+          "id": "docx-02-text",
+          "kind": "text",
+          "order": 0,
+          "text": "A caption describes the embedded image."
+        }
+      ],
+      "source_path": "data/benchmarks/fixtures/extraction/docx-02.docx"
+    },
+    {
+      "asset_sha256": "269b408af2898889a32ea90c66ddd590be8e44d2a47b51f64196185c68049ead",
+      "id": "audio-01",
+      "kind": "audio",
+      "reference": "Entropy increases in an isolated system.",
+      "source_path": "data/benchmarks/fixtures/extraction/audio-01.wav"
+    },
+    {
+      "asset_sha256": "a0a9d973c919bb8c7d80cbfc45cdd3676fa565ff2dd304e0d1c0824beb53ae23",
+      "id": "audio-02",
+      "kind": "audio",
+      "reference": "The derivative measures instantaneous change.",
+      "source_path": "data/benchmarks/fixtures/extraction/audio-02.wav"
+    },
+    {
+      "asset_sha256": "9be9b807cdf0c8c07b7e782206c5913af1de269b3c95ef99d59ad90a0b48aa99",
+      "id": "video-01",
+      "kind": "video",
+      "reference": "The slide defines a binary search tree.",
+      "source_path": "data/benchmarks/fixtures/extraction/video-01.mp4"
+    },
+    {
+      "asset_sha256": "df9780241060d1ed8f508aa6ff1b5e083321636b45cf2ac8229045918d3db560",
+      "id": "video-02",
+      "kind": "video",
+      "reference": "The lecturer balances the chemical equation.",
+      "source_path": "data/benchmarks/fixtures/extraction/video-02.mp4"
+    }
+  ],
+  "source": "EduMind deterministic modality fixtures",
+  "split": "smoke",
+  "split_seed": 42,
+  "task": "extraction",
+  "version": "1.0.0"
 }
