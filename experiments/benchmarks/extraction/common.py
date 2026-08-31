@@ -16,7 +16,9 @@ from edumind.extraction import ExtractionPipeline, ExtractionProfile, SourceKind
 from experiments.benchmarks.common.contracts import BenchmarkPlan, BenchmarkResult, SampleResult
 from experiments.benchmarks.common.datasets import load_manifest
 from experiments.benchmarks.common.runner import run_benchmark
+from experiments.benchmarks.extraction.document import runner as document_runner
 from experiments.benchmarks.extraction.registry import build_experiment_registry
+from experiments.benchmarks.preparation.evaluators import OMNIDOCBENCH_REVISION
 from experiments.benchmarks.preparation.models import load_selected_model_lock
 
 STAGES = {"document", "audio", "video"}
@@ -41,6 +43,7 @@ def run(
     no_mlflow: bool = False,
     component_options: Mapping[str, object] | None = None,
     decision_files: Mapping[str, Path] | None = None,
+    document_kind: str | None = None,
 ) -> BenchmarkResult:
     if stage not in STAGES:
         raise ValueError(f"Unknown extraction stage: {stage}")
@@ -51,15 +54,19 @@ def run(
     selected = [
         item
         for item in manifest.samples
-        if (stage == "document" and item.get("kind") in {"image", "pdf", "docx"})
+        if (
+            stage == "document"
+            and item.get("kind") in {"image", "pdf", "docx"}
+            and (document_kind is None or item.get("kind") == document_kind)
+        )
         or item.get("kind") == stage
     ]
     if not selected:
         raise ValueError(f"Manifest {manifest.name} has no samples for {stage}")
-    minimum = {"document": 45, "audio": 18, "video": 6}
-    if profile in {"standard", "full"} and len(selected) < minimum[stage]:
+    minimum = _minimum_samples(stage, profile, document_kind)
+    if minimum and len(selected) < minimum:
         raise ValueError(
-            f"{stage} {profile} requires at least {minimum[stage]} frozen samples; "
+            f"{stage} {profile} requires at least {minimum} frozen samples; "
             f"manifest contains {len(selected)}"
         )
     _validate_assets(
@@ -68,40 +75,45 @@ def run(
         require_provenance=profile in {"standard", "full"},
     )
     component_options = dict(component_options or {})
-    architecture_comparison = stage == "document" and any(
-        candidate in {"docling-vlm-granite-258m", "paddleocr-vl-1.6"}
-        for candidate in candidates
-    )
-    evaluation_items = (
-        [item for item in selected if item.get("kind") in {"image", "pdf"}]
-        if architecture_comparison
-        else selected
+    if stage == "document":
+        for item in selected:
+            evaluator.validate_reference(item, authoritative=profile in {"standard", "full"})
+        evaluator.validate_official_evaluators(selected)
+    comparison = "architecture" if profile == "full" else "configuration"
+    plan_stage = (
+        f"document-{comparison}-{document_kind or 'all'}"
+        if stage == "document"
+        else stage
     )
     plan = BenchmarkPlan(
         "extraction",
-        stage,
+        plan_stage,
         profile,
         manifest.name,
         candidates,
         repetitions=1 if profile == "smoke" else 3,
-        bootstrap_resamples=500 if profile == "smoke" else 10_000,
-        settings={
-            **component_options,
-            "document_scope": (
-                "image-pdf-architecture" if architecture_comparison else "all-supported"
-            ),
-        },
+        bootstrap_resamples=0 if profile == "smoke" else 10_000,
+        settings=component_options,
     )
-    model_lock = _model_lock(stage)
+    model_lock = _model_lock()
     prepared_options = _prepared_component_options(component_options, model_lock)
 
     def evaluate(candidate: str):
         pipeline = ExtractionPipeline(registry=build_experiment_registry())
+        if stage == "document":
+            return document_runner.evaluate_candidate(
+                candidate,
+                selected,
+                plan,
+                model_lock,
+                prepared_options,
+                pipeline,
+                _extract_once,
+            )
         samples: list[SampleResult] = []
         latencies: list[float] = []
-        ordered = list(evaluation_items)
+        ordered = list(selected)
         random.Random(plan.seed).shuffle(ordered)
-        cold_load_seconds = None
         _, _, cold_load_seconds = _extract_once(
             stage, candidate, ordered[0], model_lock, prepared_options, pipeline
         )
@@ -137,30 +149,55 @@ def run(
             "p95_latency_seconds": float(np.quantile(latencies, 0.95)),
             "items_per_minute": 60.0 * len(latencies) / max(sum(latencies), 1e-9),
         }
-        if cold_load_seconds is not None:
-            operational["cold_load_seconds"] = cold_load_seconds
+        operational["cold_load_seconds"] = cold_load_seconds
         durations = [
             float(item["duration_seconds"])
-            for item in evaluation_items
+            for item in selected
             if item.get("duration_seconds")
         ]
-        if durations and len(durations) == len(evaluation_items):
+        if durations and len(durations) == len(selected):
             operational["real_time_factor"] = sum(latencies) / (
                 sum(durations) * plan.repetitions
             )
         return samples, operational
 
+    directions = (
+        document_runner.directions_for(
+            selected, document_kind, evaluator.directions()
+        )
+        if stage == "document"
+        else _metric_directions(stage, profile, evaluator.directions())
+    )
+    primary_metrics = (
+        document_runner.primary_metrics(directions)
+        if stage == "document"
+        else ({"audio": ("word_error_rate",), "video": ("complete_content_recall",)}[stage])
+    )
+    required_metrics = (
+        document_runner.required_metrics(directions)
+        if stage == "document"
+        else tuple(directions)
+    )
     return run_benchmark(
         plan,
         evaluate,
         dataset_checksum=manifest.fingerprint,
-        directions=_metric_directions(stage, profile, evaluator.directions()),
-        primary_metric={
-            "document": "content_f1",
-            "audio": "word_error_rate",
-            "video": "complete_content_recall",
-        }[stage],
-        revisions={name: str(value.get("revision", "")) for name, value in model_lock.items()},
+        directions=directions,
+        primary_metric=primary_metrics,
+        required_metrics=required_metrics,
+        paired_metrics=(
+            document_runner.paired_metrics(directions)
+            if stage == "document"
+            else None
+        ),
+        revisions={
+            **{name: str(value.get("revision", "")) for name, value in model_lock.items()},
+            **(
+                {"omnidocbench-evaluator": OMNIDOCBENCH_REVISION}
+                if stage == "document"
+                else {}
+            ),
+        },
         decision_files=decision_files,
         no_mlflow=no_mlflow,
     )
@@ -174,20 +211,29 @@ def _metric_directions(
     if profile != "smoke":
         return dict(directions)
     common = {
-        "character_error_rate",
-        "word_error_rate",
-        "content_f1",
-        "reading_order_accuracy",
         "operational.p95_latency_seconds",
-        "operational.peak_ram_mb",
+        "operational.peak_process_tree_ram_mb",
     }
     stage_specific = {
-        "document": {"page_coverage"},
-        "audio": set(),
+        "audio": {"character_error_rate", "word_error_rate"},
         "video": {"transcript_word_error_rate", "complete_content_recall"},
     }[stage]
     required = common | stage_specific
     return {name: direction for name, direction in directions.items() if name in required}
+
+
+def _minimum_samples(stage: str, profile: str, document_kind: str | None) -> int:
+    if profile == "smoke":
+        return 0
+    if stage != "document":
+        return {"audio": 18, "video": 6}.get(stage, 0)
+    targets = {
+        "standard": {"image": 72, "pdf": 36, "docx": 27},
+        "full": {"image": 24, "pdf": 12, "docx": 9},
+    }
+    if document_kind:
+        return targets[profile][document_kind]
+    return sum(targets[profile].values())
 
 
 def _extract_once(stage, candidate, item, model_lock, component_options, pipeline):
@@ -242,27 +288,28 @@ def _validate_assets(
                     f"Extraction sample {item.get('id')} lacks authoritative provenance: "
                     f"{', '.join(missing)}"
                 )
-            if item.get("kind") == "pdf":
-                reference_pages = item.get("reference_page_texts")
-                if (
-                    not isinstance(reference_pages, Sequence)
-                    or isinstance(reference_pages, (str, bytes))
-                    or not reference_pages
-                    or len(reference_pages) != int(item.get("reference_pages", 0))
-                ):
-                    raise ValueError(
-                        f"Authoritative PDF sample {item.get('id')} requires "
-                        "reference_page_texts matching reference_pages"
-                    )
         if not path.is_file():
             raise FileNotFoundError(f"Extraction asset is missing: {path}")
         if expected and sha256_file(path) != str(expected):
             raise ValueError(f"Extraction asset checksum mismatch: {path}")
+        reference_path = item.get("reference_path")
+        if reference_path:
+            reference = PROJECT_ROOT / str(reference_path)
+            if not reference.is_file():
+                raise FileNotFoundError(f"Extraction reference is missing: {reference}")
+            expected_reference = item.get("reference_sha256")
+            if require_checksums and not expected_reference:
+                raise ValueError(
+                    f"Extraction sample {item.get('id')} has no reference_sha256"
+                )
+            if expected_reference and sha256_file(reference) != str(expected_reference):
+                raise ValueError(f"Extraction reference checksum mismatch: {reference}")
 
 
 def _engine_and_preprocessing(stage, candidate, item) -> tuple[str, str]:
     if stage == "document":
-        return candidate.partition("|")[0], "raw"
+        engine = candidate.partition("|")[0]
+        return ("docling-standard" if engine == "docling-standard-native" else engine), "raw"
     if stage == "audio":
         return candidate.partition("|")[0], str(item.get("preprocessing", "raw"))
     return candidate, str(item.get("preprocessing", "raw"))
@@ -296,8 +343,7 @@ def _options(
     return result
 
 
-def _model_lock(stage: str) -> dict[str, dict[str, object]]:
-    del stage
+def _model_lock() -> dict[str, dict[str, object]]:
     return load_selected_model_lock(PROJECT_ROOT / "data/benchmarks/models/selected.json")
 
 
@@ -327,7 +373,7 @@ def _prepared_component_options(
 def _manifest(stage: str, profile: str) -> Path:
     if profile == "smoke":
         return PROJECT_ROOT / "data/benchmarks/extraction/smoke.json"
-    split = "validation" if profile == "standard" else "locked-test"
+    split = "development" if profile == "standard" else "validation"
     return PROJECT_ROOT / f"data/benchmarks/extraction/{stage}-{split}.json"
 
 

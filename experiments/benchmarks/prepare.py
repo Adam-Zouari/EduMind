@@ -16,7 +16,9 @@ from experiments.benchmarks.preparation.datasets import (
     prepare_rag_selection_manifest,
 )
 from experiments.benchmarks.preparation.fixtures import prepare_smoke_fixtures
+from experiments.benchmarks.preparation.evaluators import prepare_evaluators
 from experiments.benchmarks.preparation.models import (
+    DOCLING_BENCHMARK_COMPONENTS,
     EXTRACTION_COMPONENTS,
     MODEL_COMPONENTS,
     RAG_COMPONENTS,
@@ -42,6 +44,7 @@ def main() -> int:
             "assets",
             "vectordb",
             "smoke-fixtures",
+            "evaluators",
         ),
     )
     parser.add_argument("--list", action="store_true", help="List approved model downloads")
@@ -59,7 +62,15 @@ def main() -> int:
     root = Path(__file__).resolve().parents[2]
 
     if arguments.list:
-        print(json.dumps(preparation_plan(selected_model_names(MODEL_COMPONENTS), True), indent=2))
+        print(
+            json.dumps(
+                preparation_plan(
+                    selected_model_names(MODEL_COMPONENTS),
+                    DOCLING_BENCHMARK_COMPONENTS,
+                ),
+                indent=2,
+            )
+        )
         return 0
     if arguments.target is None:
         parser.error("target is required unless --list is used")
@@ -107,7 +118,15 @@ def main() -> int:
                 arguments.output or root / "data/benchmarks/models/selected.json",
                 root / "data/benchmarks/downloads/models",
                 selected,
-                include_docling=arguments.target in {"extraction-models", "all-models"},
+                docling_components=(
+                    DOCLING_BENCHMARK_COMPONENTS
+                    if arguments.target in {"extraction-models", "all-models"}
+                    and (
+                        not arguments.candidate
+                        or any(entries[name].component == "document_extraction" for name in selected)
+                    )
+                    else ()
+                ),
                 dry_run=arguments.dry_run,
             )
         ]
@@ -117,8 +136,15 @@ def main() -> int:
                 arguments.output or root / "data/benchmarks/models/vectordb.json"
             )
         ]
+    elif arguments.target == "evaluators":
+        outputs = prepare_evaluators(root, dry_run=arguments.dry_run)
     else:
-        outputs = [prepare_smoke_fixtures(root)]
+        fixture_manifest = root / "data/benchmarks/extraction/smoke.json"
+        outputs = (
+            [fixture_manifest]
+            if arguments.dry_run
+            else [prepare_smoke_fixtures(root)]
+        )
 
     print(json.dumps([str(path) for path in outputs], indent=2))
     return 0

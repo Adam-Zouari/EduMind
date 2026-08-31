@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 from experiments.benchmarks.common.metrics import word_error_rate
-from experiments.benchmarks.extraction.audio.evaluate import metrics as audio_metrics
 from experiments.benchmarks.extraction.metrics import (
     content_scores,
     duplicate_line_rate,
@@ -14,14 +13,16 @@ from experiments.benchmarks.extraction.metrics import (
 
 
 def metrics(reference: str, hypothesis: str, item: Mapping[str, object], document):
-    scores = audio_metrics(reference, hypothesis, item, document)
+    scores: dict[str, float] = {}
     audio_count = int(document.metadata.get("audio_segment_count", 0))
     audio_text = "\n".join(segment.text for segment in document.segments[:audio_count])
     visual_segments = document.segments[audio_count:]
     visual_text = "\n".join(segment.text for segment in visual_segments)
     transcript_reference = str(item.get("reference_transcript", reference))
     scores["transcript_word_error_rate"] = word_error_rate(transcript_reference, audio_text)
-    scores["complete_content_recall"] = scores["content_recall"]
+    scores["complete_content_recall"] = content_scores(reference, hypothesis)[
+        "content_recall"
+    ]
     if "reference_visual_text" in item:
         visual_reference = item["reference_visual_text"]
         if isinstance(visual_reference, Sequence) and not isinstance(visual_reference, str):
@@ -55,10 +56,6 @@ def metrics(reference: str, hypothesis: str, item: Mapping[str, object], documen
 
 def directions() -> dict[str, str]:
     return {
-        "character_error_rate": "min",
-        "word_error_rate": "min",
-        "content_f1": "max",
-        "reading_order_accuracy": "max",
         "transcript_word_error_rate": "min",
         "visual_text_precision": "max",
         "visual_text_recall": "max",
@@ -66,7 +63,6 @@ def directions() -> dict[str, str]:
         "audio_visual_alignment_mae_seconds": "min",
         "complete_content_recall": "max",
         "operational.p95_latency_seconds": "min",
-        "operational.peak_ram_mb": "min",
+        "operational.peak_process_tree_ram_mb": "min",
         "operational.real_time_factor": "min",
     }
-

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import pytest
+from types import SimpleNamespace
+from pathlib import Path
 
 from experiments.benchmarks.common.metrics import (
     average_precision_at_k,
@@ -24,22 +26,24 @@ from experiments.benchmarks.common.metrics import (
     token_f1,
     word_error_rate,
 )
-from experiments.benchmarks.extraction.metrics import (
-    content_scores,
-    reading_order_accuracy,
-    structured_document_scores,
+from experiments.benchmarks.extraction.document.metrics import (
+    aggregate_evaluations,
+    score_document,
 )
+from experiments.benchmarks.extraction.document.adapters import _paddle_blocks
 from edumind.extraction import (
     ExtractedDocument,
     ExtractedSegment,
     ExtractionProfile,
+    ExtractionRequest,
     SegmentKind,
     SourceKind,
 )
+from edumind.extraction.structured import build_structured_document
 from experiments.benchmarks.rag.chunking_embedding.strategies import (
     build_chunking_strategy,
 )
-from edumind.extraction.structured import markdown_segments
+from experiments.benchmarks.extraction.run_stage import _document_candidates
 
 
 def test_interval_overlap_is_clamped_and_union_avoids_double_counting() -> None:
@@ -99,59 +103,59 @@ def test_metric_edge_cases_and_directions() -> None:
 
 
 def test_extraction_text_metrics_have_known_ranges_and_directions() -> None:
-    scores = content_scores("alpha beta", "alpha extra")
-    assert scores["content_precision"] == 0.5
-    assert scores["content_recall"] == 0.5
-    assert scores["missing_text_rate"] == 0.5
-    assert scores["hallucinated_text_rate"] == 0.5
-    assert reading_order_accuracy("alpha beta gamma", "alpha gamma beta") < 1.0
+    document = _document(
+        "alpha extra",
+        (ExtractedSegment("alpha extra", 0, 11, element_id="p", order=0),),
+    )
+    result = score_document(
+        {
+            "id": "text",
+            "kind": "docx",
+            "reference": "alpha beta",
+            "reference_elements": [
+                {"id": "p", "kind": "text", "text": "alpha beta", "order": 0}
+            ],
+        },
+        document,
+        repeated_documents=(document, document),
+    )
+    assert result.metrics["text.content_precision"] == 0.5
+    assert result.metrics["text.content_recall"] == 0.5
+    assert result.metrics["reliability.structured_output_determinism"] == 1.0
 
 
-def test_structured_metrics_score_verified_tables_and_formulas() -> None:
-    table, formula = "| H | V |\n|---|---|\n| a | 1 |", "$$x^2$$"
-    text = f"{table}\n{formula}"
-    document = ExtractedDocument(
-        "fixture.md",
-        "fixture.md",
-        SourceKind.PDF,
-        "checksum",
-        "application/pdf",
+def test_document_metrics_use_element_order_and_grouped_aggregates() -> None:
+    text = "Heading\n\nParagraph"
+    document = _document(
         text,
         (
             ExtractedSegment(
-                table,
-                0,
-                len(table),
-                kind=SegmentKind.TABLE,
-                structured_content={"rows": [["H", "V"], ["a", "1"]]},
+                "Heading", 0, 7, element_id="h", order=1, kind=SegmentKind.HEADING
             ),
-            ExtractedSegment(
-                formula,
-                len(table) + 1,
-                len(text),
-                kind=SegmentKind.FORMULA,
-                structured_content={"latex": "x^2"},
-            ),
+            ExtractedSegment("Paragraph", 9, 18, element_id="p", order=0),
         ),
-        ExtractionProfile("fixture", "fixture", "1"),
     )
-    scores = structured_document_scores(
-        [
-            {"kind": "table", "rows": [["H", "V"], ["a", "1"]]},
-            {"kind": "formula", "latex": "x^2"},
-        ],
+    result = score_document(
+        {
+            "id": "layout",
+            "kind": "docx",
+            "document_family": "native",
+            "reference": text,
+            "reference_elements": [
+                {"id": "h", "kind": "heading", "text": "Heading", "order": 0},
+                {"id": "p", "kind": "text", "text": "Paragraph", "order": 1},
+            ],
+        },
         document,
+        repeated_documents=(document, document),
     )
-    assert scores["table_content_f1"] == 1.0
-    assert scores["table_structure_f1"] == 1.0
-    assert scores["formula_exact_match"] == 1.0
-    assert structured_document_scores([], document) == {}
-
-    compact_markdown = "# Results\n| H | V |\n|---|---|\n| a | 1 |\n$$x^2$$"
-    parsed_kinds = [kind for _, _, kind, _ in markdown_segments(compact_markdown)]
-    assert SegmentKind.HEADING in parsed_kinds
-    assert SegmentKind.TABLE in parsed_kinds
-    assert SegmentKind.FORMULA in parsed_kinds
+    assert result.metrics["layout.element_f1"] == 1.0
+    assert result.metrics["text.reading_order_accuracy"] == 0.0
+    metrics, intervals = aggregate_evaluations([result, result], resamples=50, seed=42)
+    assert metrics["text.content_f1"] == 1.0
+    assert metrics["text.docx.content_f1"] == 1.0
+    assert metrics["text.docx_native.content_f1"] == 1.0
+    assert intervals["text.content_f1"]["lower"] == 1.0
 
 
 def test_section_and_structure_chunkers_return_exact_source_spans() -> None:
@@ -174,25 +178,134 @@ def test_section_and_structure_chunkers_return_exact_source_spans() -> None:
 
 
 def test_page_metrics_detect_wrong_page_attribution() -> None:
-    from experiments.benchmarks.extraction.metrics import page_scores
-
     text = "beta\nalpha"
-    document = ExtractedDocument(
-        "fixture.pdf",
-        "fixture.pdf",
-        SourceKind.PDF,
-        "checksum",
-        "application/pdf",
+    document = _document(
         text,
         (
             ExtractedSegment("beta", 0, 4, page_number=1),
             ExtractedSegment("alpha", 5, 10, page_number=2),
         ),
+        kind=SourceKind.PDF,
+    )
+    scores = score_document(
+        {
+            "id": "pages",
+            "kind": "pdf",
+            "reference": "alpha\nbeta",
+            "reference_page_texts": ["alpha", "beta"],
+            "reference_elements": [
+                {"id": "a", "kind": "text", "text": "alpha", "page_number": 1},
+                {"id": "b", "kind": "text", "text": "beta", "page_number": 2},
+            ],
+        },
+        document,
+    )
+    assert scores.metrics["pages.page_coverage"] == 0.0
+    assert scores.metrics["pages.page_attribution_accuracy"] == 0.0
+    assert scores.metrics["pages.page_content_f1"] == 0.0
+
+
+def test_page_metrics_detect_an_unsupported_repeated_page() -> None:
+    document = _document(
+        "alpha\nbeta\nbeta",
+        (
+            ExtractedSegment("alpha", 0, 5, page_number=1),
+            ExtractedSegment("beta", 6, 10, page_number=2),
+            ExtractedSegment("beta", 11, 15, page_number=3),
+        ),
+        kind=SourceKind.PDF,
+    )
+    scores = score_document(
+        {
+            "id": "duplicate-page",
+            "kind": "pdf",
+            "reference": "alpha\nbeta",
+            "reference_page_texts": ["alpha", "beta"],
+        },
+        document,
+    )
+    assert scores.metrics["pages.duplicate_page_rate"] == 1 / 3
+
+
+def test_paddle_native_json_is_converted_without_markdown_inference() -> None:
+    blocks = _paddle_blocks(
+        {
+            "res": {
+                "page_index": 0,
+                "width": 200,
+                "height": 100,
+                "parsing_res_list": [
+                    {
+                        "block_id": 7,
+                        "block_label": "table",
+                        "block_content": "<table><tr><td>A</td></tr></table>",
+                        "block_bbox": [20, 10, 180, 90],
+                    }
+                ],
+            }
+        },
+    )
+    assert blocks[0]["kind"] == "table"
+    assert blocks[0]["bounding_box"] == [0.1, 0.1, 0.9, 0.9]
+
+
+def test_document_configuration_matrix_has_no_duplicate_image_modes() -> None:
+    arguments = SimpleNamespace(profile="standard")
+    path = Path("experiments/benchmarks/extraction/document/candidates.yaml")
+    pdf, _ = _document_candidates("pdf", arguments, path)
+    image, _ = _document_candidates("image", arguments, path)
+    docx, _ = _document_candidates("docx", arguments, path)
+    assert len(pdf) == 24
+    assert len(image) == len(set(image)) == 12
+    assert all("mode=full_page" in candidate for candidate in image)
+    assert docx == ("docling-standard-native",)
+
+
+def test_canonical_document_preserves_exact_offsets_and_structure() -> None:
+    profile = ExtractionProfile("fixture", "fixture", "1")
+    document = build_structured_document(
+        ExtractionRequest(Path("fixture.pdf"), "checksum", profile=profile),
+        SourceKind.PDF,
+        profile,
+        [
+            {
+                "text": "Heading",
+                "element_id": "h",
+                "order": 0,
+                "page_number": 1,
+                "kind": "heading",
+            },
+            {
+                "text": "Body",
+                "element_id": "p",
+                "parent_id": "h",
+                "order": 1,
+                "page_number": 1,
+                "kind": "text",
+            },
+        ],
+    )
+    assert document.text == "Heading\n\nBody"
+    assert [(segment.start, segment.end) for segment in document.segments] == [
+        (0, 7),
+        (9, 13),
+    ]
+    assert document.segments[1].parent_id == "h"
+
+
+def _document(
+    text: str,
+    segments: tuple[ExtractedSegment, ...],
+    *,
+    kind: SourceKind = SourceKind.DOCX,
+) -> ExtractedDocument:
+    return ExtractedDocument(
+        "fixture",
+        "fixture",
+        kind,
+        "checksum",
+        None,
+        text,
+        segments,
         ExtractionProfile("fixture", "fixture", "1"),
     )
-    scores = page_scores(
-        {"kind": "pdf", "reference_page_texts": ["alpha", "beta"]}, document
-    )
-    assert scores["page_coverage"] == 1.0
-    assert scores["page_attribution_accuracy"] == 0.0
-    assert scores["page_content_f1"] == 0.0

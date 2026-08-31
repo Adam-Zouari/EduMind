@@ -10,6 +10,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 from edumind.common.artifacts import atomic_write_json, atomic_write_text
+from edumind.extraction.extractors.document import DOCLING_VERSION
 
 from experiments.benchmarks.common.selection import SelectionEntry, selection_entries
 
@@ -24,7 +25,15 @@ APP_CANDIDATES = (
     "openai/whisper-small.en",
 )
 DOCLING_STANDARD = "docling-standard"
-DOCLING_VERSION = "2.117.0"
+DOCLING_APP_COMPONENTS = ("layout", "tableformer", "rapidocr")
+DOCLING_BENCHMARK_COMPONENTS = (
+    "layout",
+    "tableformer",
+    "code_formula",
+    "rapidocr",
+    "easyocr",
+    "tesseract-cli",
+)
 
 
 def prepare_app_models(root: Path, *, dry_run: bool = False) -> list[Path]:
@@ -34,7 +43,7 @@ def prepare_app_models(root: Path, *, dry_run: bool = False) -> list[Path]:
         output,
         root / "data/benchmarks/downloads/models",
         APP_CANDIDATES,
-        include_docling=True,
+        docling_components=DOCLING_APP_COMPONENTS,
         dry_run=dry_run,
     )
     return [output]
@@ -45,7 +54,7 @@ def prepare_selected_models(
     cache_directory: Path,
     selected: Sequence[str],
     *,
-    include_docling: bool = False,
+    docling_components: Sequence[str] = (),
     dry_run: bool = False,
 ) -> Path:
     """Download only approved immutable snapshots into the project model directory."""
@@ -55,7 +64,7 @@ def prepare_selected_models(
         raise ValueError(f"Candidates are not included in model selection: {', '.join(unknown)}")
     cache_directory = cache_directory.expanduser().resolve()
     if dry_run:
-        print(json.dumps(preparation_plan(selected, include_docling), indent=2))
+        print(json.dumps(preparation_plan(selected, docling_components), indent=2))
         return output_path
     huggingface_home = cache_directory.parent / "huggingface"
     os.environ["HF_HOME"] = str(huggingface_home)
@@ -98,8 +107,8 @@ def prepare_selected_models(
                 _prepare_paddle_components(cache_directory, Path(primary["model_path"]))
             )
         _merge_model_lock(output_path, {candidate: lock_entry})
-    if include_docling:
-        _prepare_docling_standard(output_path, cache_directory)
+    if docling_components:
+        _prepare_docling_standard(output_path, cache_directory, docling_components)
     _prepare_tiktoken(cache_directory.parent / "tiktoken")
     return output_path
 
@@ -111,7 +120,7 @@ def selected_model_names(components: frozenset[str]) -> tuple[str, ...]:
 
 
 def preparation_plan(
-    selected: Sequence[str], include_docling: bool
+    selected: Sequence[str], docling_components: Sequence[str] = ()
 ) -> list[dict[str, object]]:
     entries = {entry.candidate: entry for entry in selection_entries()}
     plan = [
@@ -125,20 +134,13 @@ def preparation_plan(
         }
         for candidate in selected
     ]
-    if include_docling:
+    if docling_components:
         plan.append(
             {
                 "candidate": DOCLING_STANDARD,
                 "component": "document_extraction",
                 "runtime_version": DOCLING_VERSION,
-                "subcomponents": [
-                    "layout",
-                    "tableformer",
-                    "code_formula",
-                    "rapidocr",
-                    "easyocr",
-                    "tesseract-cli (system)",
-                ],
+                "subcomponents": list(docling_components),
             }
         )
     return plan
@@ -147,7 +149,10 @@ def preparation_plan(
 def load_selected_model_lock(path: Path) -> dict[str, dict[str, object]]:
     """Load the generated runtime lock and verify every recorded local snapshot."""
     if not path.is_file():
-        raise RuntimeError(f"Missing model lock {path}; run the matching preparation command")
+        raise RuntimeError(
+            f"Missing model lock {path}; run `python experiments/benchmarks/prepare.py "
+            "app-models` for the controls or the stage-specific model preparation command"
+        )
     payload = json.loads(path.read_text(encoding="utf-8"))
     raw_models = payload.get("models", {})
     if not isinstance(raw_models, Mapping) or not raw_models:
@@ -258,30 +263,23 @@ def _merge_model_lock(path: Path, updates: Mapping[str, object]) -> None:
     )
 
 
-def _prepare_docling_standard(output_path: Path, cache_directory: Path) -> None:
+def _prepare_docling_standard(
+    output_path: Path,
+    cache_directory: Path,
+    components: Sequence[str],
+) -> None:
     installed = version("docling")
     if installed != DOCLING_VERSION:
         raise RuntimeError(f"Docling {DOCLING_VERSION} is required, but {installed} is installed")
     docling_directory = cache_directory / "docling-standard"
-    subprocess.run(
-        [
-            "docling-tools",
-            "models",
-            "download",
-            "layout",
-            "tableformer",
-            "code_formula",
-            "rapidocr",
-            "easyocr",
-            "--rapidocr-backend-lang",
-            "onnxruntime:english",
-            "--easyocr-lang",
-            "en",
-            "--output-dir",
-            str(docling_directory),
-        ],
-        check=True,
-    )
+    downloadable = [component for component in components if component != "tesseract-cli"]
+    command = ["docling-tools", "models", "download", *downloadable]
+    if "rapidocr" in downloadable:
+        command.extend(["--rapidocr-backend-lang", "onnxruntime:english"])
+    if "easyocr" in downloadable:
+        command.extend(["--easyocr-lang", "en"])
+    command.extend(["--output-dir", str(docling_directory)])
+    subprocess.run(command, check=True)
     if not docling_directory.is_dir() or not any(docling_directory.rglob("*")):
         raise RuntimeError("Docling model preparation produced an empty artifact directory")
     _merge_model_lock(
@@ -293,6 +291,7 @@ def _prepare_docling_standard(output_path: Path, cache_directory: Path) -> None:
                 "model": "standard-pipeline-artifacts",
                 "revision": installed,
                 "model_path": str(docling_directory),
+                "prepared_components": list(components),
             }
         },
     )
@@ -312,7 +311,7 @@ def _prepare_paddle_components(cache_directory: Path, model_path: Path) -> Path:
         ) from exc
     PaddleOCRVL(
         pipeline_version="v1.6",
-        engine="transformers",
+        vl_rec_backend="native",
         vl_rec_model_dir=str(model_path),
         device="cpu",
     )
@@ -331,4 +330,3 @@ def _prepare_tiktoken(cache_directory: Path) -> None:
     os.environ["TIKTOKEN_CACHE_DIR"] = str(cache_directory)
     tiktoken.get_encoding("cl100k_base").encode("EduMind preparation check")
     atomic_write_text(cache_directory / "cl100k_base.ready", "cl100k_base\n")
-

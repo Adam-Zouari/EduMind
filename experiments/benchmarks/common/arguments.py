@@ -12,15 +12,16 @@ import yaml
 from .decisions import load_engineer_decision
 
 
-def parser(description: str) -> argparse.ArgumentParser:
+def parser(description: str, *, shortlist: bool = True) -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=description)
     result.add_argument("--profile", choices=("smoke", "standard", "full"), default="smoke")
     result.add_argument("--manifest", type=Path)
-    result.add_argument(
-        "--shortlist",
-        type=Path,
-        help="engineer decision JSON whose selected candidates replace candidates.yaml",
-    )
+    if shortlist:
+        result.add_argument(
+            "--shortlist",
+            type=Path,
+            help="engineer decision JSON whose selected candidates replace candidates.yaml",
+        )
     result.add_argument("--no-mlflow", action="store_true", help="Debug without MLflow logging")
     return result
 

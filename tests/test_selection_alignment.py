@@ -5,6 +5,7 @@ from pathlib import Path
 from experiments.benchmarks.common.arguments import load_candidates
 from experiments.benchmarks.common.selection import included_candidates, selection_entries
 from experiments.benchmarks.preparation.models import (
+    DOCLING_BENCHMARK_COMPONENTS,
     EXTRACTION_COMPONENTS,
     MODEL_COMPONENTS,
     RAG_COMPONENTS,
@@ -99,5 +100,5 @@ def test_preparation_plan_contains_only_approved_models_and_docling() -> None:
     assert set(selected) == approved
     assert set(selected_model_names(RAG_COMPONENTS)) <= approved
     assert set(selected_model_names(EXTRACTION_COMPONENTS)) <= approved
-    plan = preparation_plan(selected, include_docling=True)
+    plan = preparation_plan(selected, DOCLING_BENCHMARK_COMPONENTS)
     assert {str(item["candidate"]) for item in plan} == approved | {"docling-standard"}

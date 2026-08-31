@@ -53,4 +53,5 @@ Thumbs.db
 Screenshot *.png
 data/benchmarks/raw/
 data/benchmarks/downloads/
+data/benchmarks/evaluators/
 data/benchmarks/models/*.json

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from experiments.benchmarks.extraction.metrics import base_scores, timestamp_mae
+from experiments.benchmarks.extraction.metrics import timestamp_mae, transcript_scores
 
 
 def metrics(reference: str, hypothesis: str, item: Mapping[str, object], document):
-    scores = base_scores(reference, hypothesis)
+    scores = transcript_scores(reference, hypothesis)
     reference_timestamps = item.get("reference_timestamps")
     if isinstance(reference_timestamps, Sequence) and not isinstance(reference_timestamps, str):
         predicted = [
@@ -47,15 +47,12 @@ def directions() -> dict[str, str]:
     return {
         "character_error_rate": "min",
         "word_error_rate": "min",
-        "content_f1": "max",
-        "reading_order_accuracy": "max",
-        "missing_text_rate": "min",
-        "hallucinated_text_rate": "min",
+        "missing_speech_rate": "min",
+        "hallucinated_speech_rate": "min",
         "timestamp_mae_seconds": "min",
         "segment_boundary_mae_seconds": "min",
         "timestamp_alignment_coverage": "max",
         "operational.p95_latency_seconds": "min",
-        "operational.peak_ram_mb": "min",
+        "operational.peak_process_tree_ram_mb": "min",
         "operational.real_time_factor": "min",
     }
-
