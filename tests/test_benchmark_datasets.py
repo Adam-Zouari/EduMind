@@ -9,6 +9,7 @@ from experiments.benchmarks.common.datasets import (
     assert_no_split_leakage,
     load_manifest,
 )
+from experiments.benchmarks.preparation.fixtures import _write_minimal_docx
 from edumind.common.paths import PROJECT_ROOT
 
 
@@ -44,3 +45,11 @@ def test_near_duplicate_document_leakage_is_rejected() -> None:
     second = replace(manifest, name="near", split="other", samples=(altered,))
     with pytest.raises(DatasetValidationError, match="Near-duplicate"):
         assert_no_split_leakage([manifest, second])
+
+
+def test_generated_docx_fixture_is_byte_deterministic(tmp_path) -> None:
+    first = tmp_path / "first.docx"
+    second = tmp_path / "second.docx"
+    _write_minimal_docx(first, "Heading\nDeterministic content")
+    _write_minimal_docx(second, "Heading\nDeterministic content")
+    assert first.read_bytes() == second.read_bytes()

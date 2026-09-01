@@ -1,4 +1,5 @@
 import csv
+import json
 from collections import Counter
 from pathlib import Path
 
@@ -10,7 +11,9 @@ from experiments.benchmarks.preparation.models import (
     MODEL_COMPONENTS,
     RAG_COMPONENTS,
     preparation_plan,
+    load_selected_model_lock,
     selected_model_names,
+    snapshot_specs,
 )
 from experiments.benchmarks.rag.chunking_embedding.profiles import (
     EXPERIMENTAL_EMBEDDING_SPECS,
@@ -73,17 +76,16 @@ def test_reranker_audio_and_document_registries_are_exact() -> None:
         "rrf-ettin-1b-reranker",
         "rrf-qwen3-4b-reranker",
     }
-    assert set(
-        load_candidates(
-            ROOT / "experiments/benchmarks/extraction/audio/candidates.yaml", "standard"
-        )
-    ) == {
+    approved_asr = {
         "whisper-small-en-control",
         "canary-180m",
         "parakeet-tdt-0.6b-v2",
         "moss-transcribe-diarize",
         "qwen3-asr-1.7b-aligned",
     }
+    audio_registry = ROOT / "experiments/benchmarks/extraction/audio/candidates.yaml"
+    assert set(load_candidates(audio_registry, "smoke")) == approved_asr
+    assert set(load_candidates(audio_registry, "standard")) == approved_asr
     document = load_candidates(
         ROOT / "experiments/benchmarks/extraction/document/candidates.yaml", "standard"
     )
@@ -102,3 +104,35 @@ def test_preparation_plan_contains_only_approved_models_and_docling() -> None:
     assert set(selected_model_names(EXTRACTION_COMPONENTS)) <= approved
     plan = preparation_plan(selected, DOCLING_BENCHMARK_COMPONENTS)
     assert {str(item["candidate"]) for item in plan} == approved | {"docling-standard"}
+
+
+def test_stage_model_lock_ignores_unrequested_missing_models(tmp_path) -> None:
+    entries = {entry.candidate: entry for entry in selection_entries()}
+    requested = entries["openai/whisper-small.en"]
+    unrelated = entries["sentence-transformers/all-MiniLM-L6-v2"]
+    requested_directory = tmp_path / "whisper"
+    requested_directory.mkdir()
+
+    def lock_entry(entry, model_path):
+        repository, revision, _ = snapshot_specs(entry)[0]
+        return {
+            "model": repository,
+            "revision": revision,
+            "selection_revision": entry.revision,
+            "model_path": str(model_path),
+        }
+
+    path = tmp_path / "selected.json"
+    path.write_text(
+        json.dumps(
+            {
+                "models": {
+                    requested.candidate: lock_entry(requested, requested_directory),
+                    unrelated.candidate: lock_entry(unrelated, tmp_path / "missing"),
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded = load_selected_model_lock(path, candidates=(requested.candidate,))
+    assert set(loaded) == {requested.candidate}

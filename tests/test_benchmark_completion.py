@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,7 @@ import pytest
 from experiments.benchmarks.common.contracts import BenchmarkPlan, SampleResult
 from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.runner import run_benchmark
+import experiments.benchmarks.common.runner as benchmark_runner
 
 
 def _plan(*candidates: str) -> BenchmarkPlan:
@@ -114,3 +116,47 @@ def test_engineer_decision_requires_a_complete_non_smoke_run(tmp_path: Path) -> 
     summary_path.write_text(json.dumps(summary), encoding="utf-8")
     with pytest.raises(ValueError, match="incomplete"):
         load_engineer_decision(decision_path)
+
+
+def test_incomplete_candidate_and_parent_are_marked_failed_in_tracking(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class RecordingTracker:
+        def __init__(self) -> None:
+            self.active: list[str] = []
+            self.failed: list[str] = []
+
+        @contextmanager
+        def run(self, name: str, *, nested: bool = False):
+            del nested
+            self.active.append(name)
+            try:
+                yield name
+            finally:
+                if self.active and self.active[-1] == name:
+                    self.active.pop()
+
+        def parameters(self, values) -> None:
+            del values
+
+        def metrics(self, values) -> None:
+            del values
+
+        def artifact(self, path, artifact_path=None) -> None:
+            del path, artifact_path
+
+        def mark_failed(self) -> None:
+            self.failed.append(self.active.pop())
+
+    tracking = RecordingTracker()
+    monkeypatch.setattr(benchmark_runner, "tracker", lambda **_kwargs: tracking)
+
+    result = _run(
+        tmp_path,
+        _plan("incomplete"),
+        lambda _candidate: ([SampleResult("sample", {}, 0.01)], {}),
+    )
+
+    assert not result.complete
+    assert tracking.failed[0] == "incomplete"
+    assert tracking.failed[1].startswith("test-suite-completion-")
