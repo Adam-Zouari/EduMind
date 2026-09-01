@@ -23,17 +23,21 @@ def build_document(
     *,
     pages: list[int | None] | None = None,
     timestamps: Sequence[tuple[float | None, float | None]] | None = None,
+    separators: str | Sequence[str] = "\n",
     metadata: dict[str, object] | None = None,
     warnings: list[ExtractionWarning] | None = None,
     seconds: float = 0.0,
 ) -> ExtractedDocument:
+    if not isinstance(separators, str) and len(separators) != max(0, len(texts) - 1):
+        raise ValueError("Segment separators must contain one value between each text segment")
     pieces: list[str] = []
     segments: list[ExtractedSegment] = []
     offset = 0
     for index, text in enumerate(texts):
         if pieces:
-            pieces.append("\n")
-            offset += 1
+            separator = separators if isinstance(separators, str) else separators[index - 1]
+            pieces.append(separator)
+            offset += len(separator)
         start = offset
         pieces.append(text)
         offset += len(text)

@@ -134,12 +134,17 @@ class VideoExtractor:
         timestamps = [
             (segment.timestamp_start, segment.timestamp_end) for segment in audio.segments
         ] + [(timestamp, timestamp) for _, timestamp in visual_segments]
+        separators = [
+            " " if index < len(audio.segments) else "\n"
+            for index in range(1, len(texts))
+        ]
         result = build_document(
             request,
             kind,
             request.profile,
             texts,
             timestamps=timestamps,
+            separators=separators,
             metadata={
                 "keyframe_policy": self.keyframes,
                 "audio_engine": audio_engine,
@@ -147,6 +152,7 @@ class VideoExtractor:
                 "audio_segment_count": len(audio.segments),
                 "visual_segment_count": len(visual_segments),
             },
+            warnings=list(audio.warnings),
             seconds=time.perf_counter() - started,
         )
         # The final document owns new offsets; local audio offsets are intentionally rebuilt.
