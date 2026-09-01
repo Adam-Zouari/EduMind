@@ -1,0 +1,34 @@
+{
+  "checksum": "03adeb65bf37491bf8c762a1d02d67f23de3069648ed38adf7a7262b1352be2c",
+  "license": "CC0-1.0",
+  "name": "edumind-extraction-audio-reliability-smoke",
+  "preprocessing_version": "pcm-v1",
+  "revision": "1",
+  "samples": [
+    {
+      "asset_sha256": "20eaebffe1816e0ffa6f7f854f5ef4ea80d5349faaf0ce1fec1b713e7fde58fa",
+      "duration_seconds": 2.0,
+      "id": "audio-silence-01",
+      "kind": "audio_reliability",
+      "nonspeech_kind": "silence",
+      "reference": "",
+      "source_path": "data/benchmarks/fixtures/extraction/audio-silence-01.wav",
+      "split": "smoke"
+    },
+    {
+      "asset_sha256": "2b787c128d1c9d7506756d579dbd6b063c7ee2576d38e13083a006ac4cefe73c",
+      "duration_seconds": 2.0,
+      "id": "audio-noise-01",
+      "kind": "audio_reliability",
+      "nonspeech_kind": "background_noise",
+      "reference": "",
+      "source_path": "data/benchmarks/fixtures/extraction/audio-noise-01.wav",
+      "split": "smoke"
+    }
+  ],
+  "source": "EduMind deterministic nonspeech fixtures",
+  "split": "smoke",
+  "split_seed": 42,
+  "task": "extraction",
+  "version": "1.0.0"
+}

@@ -1,5 +1,5 @@
 {
-  "checksum": "c69b220ae903ca42e51ce54ba6489a5727c2325164b9c7bf100b42d9e2342679",
+  "checksum": "1bfaf5523ac8e4bf58b4b0eb05bf8968463360f782322caa4b436ff59fbfefb1",
   "license": "CC0-1.0",
   "name": "edumind-smoke-extraction",
   "preprocessing_version": "extraction-fixtures-v1",
@@ -58,7 +58,7 @@
       "source_path": "data/benchmarks/fixtures/extraction/image-02.png"
     },
     {
-      "asset_sha256": "994c5a07fef01bb9bb6713a7c12ee41681d422858a52e0449d510ce8bac458a0",
+      "asset_sha256": "6621ce0a5d685b0b2d17c8639d31eba06580eb2e8505cf2a7f5ca42011bdc916",
       "document_family": "digital",
       "id": "pdf-01",
       "kind": "pdf",
@@ -84,7 +84,7 @@
       "source_path": "data/benchmarks/fixtures/extraction/pdf-01.pdf"
     },
     {
-      "asset_sha256": "67f052cdb75ab7be36e3af483a880dbefe158ec1121fa1fa6691ac081ee35952",
+      "asset_sha256": "fc256f8abaa38c8e3e31c73fce202b11e864fc0df32ec68b7434a4bcc311b1c3",
       "document_family": "digital",
       "id": "pdf-02",
       "kind": "pdf",
@@ -110,7 +110,7 @@
       "source_path": "data/benchmarks/fixtures/extraction/pdf-02.pdf"
     },
     {
-      "asset_sha256": "32a40b4de995c531cd4f4c132290b69adfa1681e355ec4f00e29e143ac02f445",
+      "asset_sha256": "cf45708a4812725802152747ad665c1bcfa5ba7fd67f60241fee064185fad0b3",
       "document_family": "native",
       "id": "docx-01",
       "kind": "docx",
@@ -139,7 +139,7 @@
       "source_path": "data/benchmarks/fixtures/extraction/docx-01.docx"
     },
     {
-      "asset_sha256": "03e6547c02a5d55a23a0d9f2c15092252e7b66b651de576fb87ed9b4e827a4cf",
+      "asset_sha256": "7310e7ab54fc030ad57a8d53ee40b899f0d9d7b3de0bc81c880a121fb0513507",
       "document_family": "native",
       "id": "docx-02",
       "kind": "docx",
@@ -155,28 +155,44 @@
       "source_path": "data/benchmarks/fixtures/extraction/docx-02.docx"
     },
     {
-      "asset_sha256": "269b408af2898889a32ea90c66ddd590be8e44d2a47b51f64196185c68049ead",
+      "asset_sha256": "71d01cc20c6514e6128fbbf9e34ee6882cc58e3efbcc6f7530623e49f153b157",
+      "duration_seconds": 3.005,
       "id": "audio-01",
       "kind": "audio",
       "reference": "Entropy increases in an isolated system.",
+      "reference_segments": [
+        {
+          "end": 3.005,
+          "start": 0.0,
+          "text": "Entropy increases in an isolated system."
+        }
+      ],
       "source_path": "data/benchmarks/fixtures/extraction/audio-01.wav"
     },
     {
-      "asset_sha256": "a0a9d973c919bb8c7d80cbfc45cdd3676fa565ff2dd304e0d1c0824beb53ae23",
+      "asset_sha256": "28caff98d913e75412bfd221d93f405d2b896bcb12ae4e39e6ee656d6040b06b",
+      "duration_seconds": 2.93,
       "id": "audio-02",
       "kind": "audio",
       "reference": "The derivative measures instantaneous change.",
+      "reference_segments": [
+        {
+          "end": 2.93,
+          "start": 0.0,
+          "text": "The derivative measures instantaneous change."
+        }
+      ],
       "source_path": "data/benchmarks/fixtures/extraction/audio-02.wav"
     },
     {
-      "asset_sha256": "9be9b807cdf0c8c07b7e782206c5913af1de269b3c95ef99d59ad90a0b48aa99",
+      "asset_sha256": "eeb7270e79fbc4c4f59033317735268d2c13b79c7c5de1e088908dc35a3bb4df",
       "id": "video-01",
       "kind": "video",
       "reference": "The slide defines a binary search tree.",
       "source_path": "data/benchmarks/fixtures/extraction/video-01.mp4"
     },
     {
-      "asset_sha256": "df9780241060d1ed8f508aa6ff1b5e083321636b45cf2ac8229045918d3db560",
+      "asset_sha256": "c843661912e8c1abed2f7fdb998089ba77e55ccce42aa2f512caeb7c9c483961",
       "id": "video-02",
       "kind": "video",
       "reference": "The lecturer balances the chemical equation.",
