@@ -54,6 +54,12 @@ def main() -> int:
     parser.add_argument("--qasper-manifest", type=Path)
     parser.add_argument("--structured-manifest", type=Path)
     parser.add_argument(
+        "--modality",
+        choices=("all", "document", "audio", "video"),
+        default="all",
+        help="Fixture group to regenerate with the smoke-fixtures target",
+    )
+    parser.add_argument(
         "--candidate",
         action="append",
         help="Prepare only this candidate; repeat the option for several candidates",
@@ -74,6 +80,8 @@ def main() -> int:
         return 0
     if arguments.target is None:
         parser.error("target is required unless --list is used")
+    if arguments.target != "smoke-fixtures" and arguments.modality != "all":
+        parser.error("--modality is only valid with smoke-fixtures")
 
     if arguments.target == "app-models":
         if arguments.candidate:
@@ -140,11 +148,14 @@ def main() -> int:
         outputs = prepare_evaluators(root, dry_run=arguments.dry_run)
     else:
         fixture_manifest = root / "data/benchmarks/extraction/smoke.json"
-        outputs = (
-            [fixture_manifest]
-            if arguments.dry_run
-            else [prepare_smoke_fixtures(root)]
+        reliability_manifest = (
+            root / "data/benchmarks/extraction/audio-reliability-smoke.json"
         )
+        if not arguments.dry_run:
+            prepare_smoke_fixtures(root, modality=arguments.modality)
+        outputs = [fixture_manifest]
+        if arguments.modality in {"all", "audio"}:
+            outputs.append(reliability_manifest)
 
     print(json.dumps([str(path) for path in outputs], indent=2))
     return 0

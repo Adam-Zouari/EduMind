@@ -146,8 +146,10 @@ def preparation_plan(
     return plan
 
 
-def load_selected_model_lock(path: Path) -> dict[str, dict[str, object]]:
-    """Load the generated runtime lock and verify every recorded local snapshot."""
+def load_selected_model_lock(
+    path: Path, *, candidates: Sequence[str] | None = None
+) -> dict[str, dict[str, object]]:
+    """Load and verify the requested entries from the generated runtime lock."""
     if not path.is_file():
         raise RuntimeError(
             f"Missing model lock {path}; run `python experiments/benchmarks/prepare.py "
@@ -158,9 +160,21 @@ def load_selected_model_lock(path: Path) -> dict[str, dict[str, object]]:
     if not isinstance(raw_models, Mapping) or not raw_models:
         raise RuntimeError(f"Model lock is empty or malformed: {path}")
     approved = {entry.candidate: entry for entry in selection_entries()}
+    requested = set(candidates or ())
+    unknown = sorted(
+        candidate
+        for candidate in requested
+        if candidate != DOCLING_STANDARD and candidate not in approved
+    )
+    if unknown:
+        raise RuntimeError(
+            "Requested models are outside the approved selection: " + ", ".join(unknown)
+        )
     result: dict[str, dict[str, object]] = {}
     for raw_candidate, raw_entry in raw_models.items():
         candidate = str(raw_candidate)
+        if requested and candidate not in requested:
+            continue
         if candidate != DOCLING_STANDARD and candidate not in approved:
             raise RuntimeError(
                 f"Model lock contains a candidate outside the approved selection: {candidate}"
@@ -183,7 +197,9 @@ def load_selected_model_lock(path: Path) -> dict[str, dict[str, object]]:
             expected = snapshot_specs(approved[candidate])
             actual = [(str(entry.get("model", "")), str(entry["revision"]), "primary")]
             submodels = entry.get("submodels", [])
-            if isinstance(submodels, Sequence) and not isinstance(submodels, (str, bytes)):
+            if submodels and isinstance(submodels, Sequence) and not isinstance(
+                submodels, (str, bytes)
+            ):
                 actual = [
                     (
                         str(item.get("repository", "")),
@@ -210,6 +226,9 @@ def load_selected_model_lock(path: Path) -> dict[str, dict[str, object]]:
                         f"Prepared submodel path no longer exists: {submodel.get('model_path')}"
                     )
         result[candidate] = entry
+    missing = sorted(requested - set(result))
+    if missing:
+        raise RuntimeError("Model lock lacks requested candidates: " + ", ".join(missing))
     return result
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 from experiments.benchmarks.common.metrics import word_error_rate
-from experiments.benchmarks.extraction.metrics import (
+from experiments.benchmarks.extraction.video.metrics import (
     content_scores,
     duplicate_line_rate,
     timestamp_mae,

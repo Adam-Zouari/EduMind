@@ -98,14 +98,43 @@ def validate_evidence(manifest: DatasetManifest) -> None:
                 raise DatasetValidationError(f"Evidence text mismatch in question {sample['id']}")
 
 
-def assert_no_split_leakage(manifests: list[DatasetManifest]) -> None:
+def assert_no_split_leakage(manifests: Sequence[DatasetManifest]) -> None:
     seen_ids: dict[str, str] = {}
     seen_hashes: dict[str, str] = {}
+    seen_audio_assets: dict[str, str] = {}
+    seen_audio_families: dict[str, tuple[str, str]] = {}
     seen_documents: list[tuple[str, set[tuple[str, ...]]]] = []
     import hashlib
 
     for manifest in manifests:
         for sample in manifest.samples:
+            if sample.get("kind") == "audio":
+                label = f"{manifest.name}/{manifest.split}"
+                sample_id = str(sample.get("id", ""))
+                checksum = str(sample.get("asset_sha256", ""))
+                family = str(sample.get("document_family", ""))
+                for name, value, seen in (
+                    ("sample ID", sample_id, seen_ids),
+                    ("asset checksum", checksum, seen_audio_assets),
+                ):
+                    if not value:
+                        raise DatasetValidationError(f"ASR {label} has an empty {name}")
+                    if value in seen:
+                        raise DatasetValidationError(
+                            f"ASR split leakage: {name} {value!r} occurs in "
+                            f"{seen[value]} and {label}"
+                        )
+                    seen[value] = label
+                if not family:
+                    raise DatasetValidationError(f"ASR {label} has an empty document family")
+                previous_family = seen_audio_families.get(family)
+                if previous_family is not None and previous_family[0] != manifest.split:
+                    raise DatasetValidationError(
+                        f"ASR split leakage: document family {family!r} occurs in "
+                        f"{previous_family[1]} and {label}"
+                    )
+                seen_audio_families.setdefault(family, (manifest.split, label))
+                continue
             if sample.get("kind") != "document":
                 continue
             sample_id = str(sample["id"])

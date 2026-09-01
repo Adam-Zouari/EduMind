@@ -18,19 +18,15 @@ from experiments.benchmarks.common.datasets import load_manifest
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.extraction.document import runner as document_runner
 from experiments.benchmarks.extraction.registry import build_experiment_registry
+from experiments.benchmarks.extraction.audio.adapters import ASR_PROFILES
 from experiments.benchmarks.preparation.evaluators import OMNIDOCBENCH_REVISION
 from experiments.benchmarks.preparation.models import load_selected_model_lock
 
-STAGES = {"document", "audio", "video"}
+STAGES = {"document", "video"}
 LOCK_CANDIDATES = {
     "docling-standard": "docling-standard",
     "docling-vlm-granite-258m": "ibm-granite/granite-docling-258M",
     "paddleocr-vl-1.6": "PaddlePaddle/PaddleOCR-VL-1.6",
-    "whisper-small-en-control": "openai/whisper-small.en",
-    "canary-180m": "nvidia/canary-180m-flash",
-    "parakeet-tdt-0.6b-v2": "nvidia/parakeet-tdt-0.6b-v2",
-    "moss-transcribe-diarize": "OpenMOSS-Team/MOSS-Transcribe-Diarize",
-    "qwen3-asr-1.7b-aligned": "Qwen/Qwen3-ASR-1.7B-hf",
 }
 
 
@@ -131,7 +127,6 @@ def run(
             quality = evaluator.metrics(
                 str(item["reference"]), hypothesis, item, document
             )
-            quality["determinism"] = float(all(value[0] == hypothesis for value in outputs))
             samples.append(
                 SampleResult(
                     str(item["id"]),
@@ -147,7 +142,6 @@ def run(
         operational = {
             "p50_latency_seconds": float(np.median(latencies)),
             "p95_latency_seconds": float(np.quantile(latencies, 0.95)),
-            "items_per_minute": 60.0 * len(latencies) / max(sum(latencies), 1e-9),
         }
         operational["cold_load_seconds"] = cold_load_seconds
         durations = [
@@ -171,7 +165,7 @@ def run(
     primary_metrics = (
         document_runner.primary_metrics(directions)
         if stage == "document"
-        else ({"audio": ("word_error_rate",), "video": ("complete_content_recall",)}[stage])
+        else ("complete_content_recall",)
     )
     required_metrics = (
         document_runner.required_metrics(directions)
@@ -214,10 +208,7 @@ def _metric_directions(
         "operational.p95_latency_seconds",
         "operational.peak_process_tree_ram_mb",
     }
-    stage_specific = {
-        "audio": {"character_error_rate", "word_error_rate"},
-        "video": {"transcript_word_error_rate", "complete_content_recall"},
-    }[stage]
+    stage_specific = {"transcript_word_error_rate", "complete_content_recall"}
     required = common | stage_specific
     return {name: direction for name, direction in directions.items() if name in required}
 
@@ -226,7 +217,7 @@ def _minimum_samples(stage: str, profile: str, document_kind: str | None) -> int
     if profile == "smoke":
         return 0
     if stage != "document":
-        return {"audio": 18, "video": 6}.get(stage, 0)
+        return 6
     targets = {
         "standard": {"image": 72, "pdf": 36, "docx": 27},
         "full": {"image": 24, "pdf": 12, "docx": 9},
@@ -241,9 +232,9 @@ def _extract_once(stage, candidate, item, model_lock, component_options, pipelin
     kind = SourceKind(str(item["kind"]))
     engine, preprocessing = _engine_and_preprocessing(stage, candidate, item)
     lock_name = (
-        LOCK_CANDIDATES[
+        ASR_PROFILES[
             str(component_options.get("audio_candidate", "whisper-small-en-control"))
-        ]
+        ].model
         if stage == "video"
         else LOCK_CANDIDATES.get(engine, engine)
     )
@@ -310,8 +301,6 @@ def _engine_and_preprocessing(stage, candidate, item) -> tuple[str, str]:
     if stage == "document":
         engine = candidate.partition("|")[0]
         return ("docling-standard" if engine == "docling-standard-native" else engine), "raw"
-    if stage == "audio":
-        return candidate.partition("|")[0], str(item.get("preprocessing", "raw"))
     return candidate, str(item.get("preprocessing", "raw"))
 
 
@@ -356,7 +345,12 @@ def _prepared_component_options(
         if not candidate:
             continue
         candidate_name = str(candidate)
-        entry = model_lock.get(LOCK_CANDIDATES.get(candidate_name, candidate_name), {})
+        lock_name = (
+            ASR_PROFILES[candidate_name].model
+            if candidate_name in ASR_PROFILES
+            else LOCK_CANDIDATES.get(candidate_name, candidate_name)
+        )
+        entry = model_lock.get(lock_name, {})
         if not entry:
             raise RuntimeError(
                 f"Selected component {candidate_name} is absent from the extraction model lock"

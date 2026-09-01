@@ -46,6 +46,7 @@ Evaluator = Callable[
         Mapping[str, float],
         Mapping[str, object],
         Mapping[str, Mapping[str, float]],
+        Mapping[str, Sequence[Mapping[str, object]]],
     ],
 ]
 
@@ -61,8 +62,13 @@ def run_benchmark(
     paired_metrics: Sequence[str] | None = None,
     revisions: Mapping[str, str] | None = None,
     decision_files: Mapping[str, Path] | None = None,
+    input_artifacts: Mapping[str, Path] | None = None,
     no_mlflow: bool = False,
     artifact_root: Path = Path("artifacts/benchmarks"),
+    monitor_resources: bool = True,
+    operational_prefix: str = "operational.",
+    paired_comparisons: bool = True,
+    candidate_artifact_name: str | None = None,
 ) -> BenchmarkResult:
     if not plan.candidates:
         raise ValueError("A benchmark plan must contain at least one candidate")
@@ -100,6 +106,10 @@ def run_benchmark(
         "engineer_decisions": {
             name: {"path": str(path.resolve()), "sha256": sha256_file(path)}
             for name, path in (decision_files or {}).items()
+        },
+        "input_artifacts": {
+            name: {"path": str(path.resolve()), "sha256": sha256_file(path)}
+            for name, path in (input_artifacts or {}).items()
         },
     }
     plan_path = directory / "plan.json"
@@ -142,6 +152,8 @@ def run_benchmark(
         )
         tracking.artifact(plan_path)
         tracking.artifact(provenance_path)
+        for input_name, input_path in (input_artifacts or {}).items():
+            tracking.artifact(input_path, f"inputs/{input_name}")
         for decision_name, decision_path in (decision_files or {}).items():
             tracking.artifact(decision_path, f"engineer-decisions/{decision_name}")
         for candidate in order:
@@ -154,6 +166,9 @@ def run_benchmark(
                     tracking,
                     run_fingerprint,
                     required,
+                    monitor_resources,
+                    operational_prefix,
+                    candidate_artifact_name,
                 )
             )
 
@@ -170,7 +185,7 @@ def run_benchmark(
             "candidates": [_payload(result, include_samples=False) for result in results],
             "paired_comparisons": (
                 []
-                if plan.profile == "smoke"
+                if plan.profile == "smoke" or not paired_comparisons
                 else _paired_comparisons(
                     successful,
                     {name: directions[name] for name in paired},
@@ -204,6 +219,8 @@ def run_benchmark(
                 "failed_candidates": float(len(plan.candidates) - len(successful)),
             }
         )
+        if not complete:
+            tracking.mark_failed()
     return BenchmarkResult(
         run_id,
         plan,
@@ -223,35 +240,57 @@ def _run_candidate(
     tracking,
     run_fingerprint,
     required_metrics,
+    monitor_resources,
+    operational_prefix,
+    candidate_artifact_name,
 ) -> CandidateResult:
     samples: list[SampleResult] = []
     metrics: dict[str, float] = {}
     intervals: dict[str, dict[str, float]] = {}
     operational: dict[str, float] = {}
+    artifact_names: list[str] = []
+    sample_artifact_path: Path | None = None
     fingerprint = stable_hash({"run": run_fingerprint, "candidate": candidate})
     with tracking.run(candidate, nested=True):
         try:
             tracking.parameters({"candidate": candidate, "profile": plan.profile})
             temporary_directory = directory / "temporary" / _safe(candidate)
             temporary_directory.mkdir(parents=True, exist_ok=True)
-            resources = ResourceMonitor(temporary_directory=temporary_directory)
-            try:
-                with _temporary_environment(temporary_directory), resources:
+            if monitor_resources:
+                resources = ResourceMonitor(temporary_directory=temporary_directory)
+                try:
+                    with _temporary_environment(temporary_directory), resources:
+                        evaluated = evaluator(candidate)
+                finally:
+                    operational.update(resources.metrics())
+            else:
+                with _temporary_environment(temporary_directory):
                     evaluated = evaluator(candidate)
-            finally:
-                operational.update(resources.metrics())
             samples = list(evaluated[0])
             operational = {**dict(evaluated[1]), **operational}
-            shutil.rmtree(temporary_directory, ignore_errors=True)
             candidate_metrics = dict(evaluated[2]) if len(evaluated) >= 3 else {}
             if len(evaluated) >= 4:
                 tracking.parameters(evaluated[3])
             candidate_intervals = dict(evaluated[4]) if len(evaluated) >= 5 else {}
+            artifact_tables = dict(evaluated[5]) if len(evaluated) >= 6 else {}
             if not samples:
                 raise RuntimeError("Candidate produced no samples")
             _validate_sample_ids(samples)
-            sample_path = _write_samples(directory, candidate, samples)
-            tracking.artifact(sample_path)
+            if artifact_tables:
+                if "samples" not in artifact_tables:
+                    artifact_tables["samples"] = _sample_rows(samples)
+                for name, rows in artifact_tables.items():
+                    table_path = _write_table(directory, candidate, name, rows)
+                    if name == "samples":
+                        sample_artifact_path = table_path
+                    artifact_names.append(table_path.name)
+                    tracking.artifact(table_path)
+            else:
+                sample_path = _write_samples(directory, candidate, samples)
+                tracking.artifact(sample_path)
+                artifact_names.append(sample_path.name)
+                sample_artifact_path = sample_path
+            shutil.rmtree(temporary_directory, ignore_errors=True)
             # Evaluators with grouped/pooled statistics return their own aggregates and CIs.
             if len(evaluated) >= 5:
                 metrics, intervals = candidate_metrics, candidate_intervals
@@ -262,7 +301,9 @@ def _run_candidate(
                     seed=plan.seed,
                 )
                 metrics.update(candidate_metrics)
-            _validate_required_metrics(metrics, operational, required_metrics)
+            _validate_required_metrics(
+                metrics, operational, required_metrics, operational_prefix
+            )
             result = CandidateResult(
                 candidate,
                 "success",
@@ -280,12 +321,21 @@ def _run_candidate(
                         for name, values in intervals.items()
                         for bound in ("lower", "upper")
                     },
-                    **{f"operational.{key}": value for key, value in operational.items()},
+                    **{f"{operational_prefix}{key}": value for key, value in operational.items()},
                 }
             )
             tracking.parameters({"candidate_status": "success"})
-            candidate_path = directory / "candidates" / f"{_safe(candidate)}.json"
-            atomic_write_json(candidate_path, _payload(result, include_samples=False))
+            candidate_path = _candidate_path(
+                directory, candidate, candidate_artifact_name
+            )
+            artifact_names.append(candidate_path.name)
+            atomic_write_json(
+                candidate_path,
+                {
+                    **_payload(result, include_samples=False),
+                    "artifacts": artifact_names,
+                },
+            )
             tracking.artifact(candidate_path)
             return result
         except Exception as exc:
@@ -305,7 +355,7 @@ def _run_candidate(
             tracking.parameters({"candidate_status": "failed", "candidate_error": error})
             partial_metrics = {
                 **metrics,
-                **{f"operational.{key}": value for key, value in operational.items()},
+                **{f"{operational_prefix}{key}": value for key, value in operational.items()},
             }
             tracking.metrics(
                 {
@@ -315,18 +365,29 @@ def _run_candidate(
                 }
             )
             if samples:
-                sample_path = directory / "samples" / f"{_safe(candidate)}.parquet"
-                if not sample_path.is_file():
-                    sample_path = _write_samples(directory, candidate, samples)
-                tracking.artifact(sample_path)
-            candidate_path = directory / "candidates" / f"{_safe(candidate)}.json"
-            atomic_write_json(candidate_path, _payload(result, include_samples=False))
+                if sample_artifact_path is None:
+                    sample_artifact_path = _write_samples(directory, candidate, samples)
+                    artifact_names.append(sample_artifact_path.name)
+                tracking.artifact(sample_artifact_path)
+            candidate_path = _candidate_path(
+                directory, candidate, candidate_artifact_name
+            )
+            if candidate_path.name not in artifact_names:
+                artifact_names.append(candidate_path.name)
+            atomic_write_json(
+                candidate_path,
+                {
+                    **_payload(result, include_samples=False),
+                    "artifacts": artifact_names,
+                },
+            )
             tracking.artifact(candidate_path)
+            tracking.mark_failed()
             return result
 
 
-def _write_samples(directory: Path, candidate: str, samples: list[SampleResult]) -> Path:
-    rows = [
+def _sample_rows(samples: list[SampleResult]) -> list[dict[str, object]]:
+    return [
         {
             "sample_id": sample.sample_id,
             "latency_seconds": sample.latency_seconds,
@@ -335,10 +396,35 @@ def _write_samples(directory: Path, candidate: str, samples: list[SampleResult])
         }
         for sample in samples
     ]
+
+
+def _write_samples(directory: Path, candidate: str, samples: list[SampleResult]) -> Path:
     path = directory / "samples" / f"{_safe(candidate)}.parquet"
     path.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(rows).to_parquet(path, index=False)
+    pd.DataFrame(_sample_rows(samples)).to_parquet(path, index=False)
     return path
+
+
+def _write_table(
+    directory: Path,
+    candidate: str,
+    name: str,
+    rows: Sequence[Mapping[str, object]],
+) -> Path:
+    if not name or any(character not in "abcdefghijklmnopqrstuvwxyz0123456789_-" for character in name):
+        raise ValueError(f"Invalid candidate artifact table name: {name}")
+    path = directory / "candidates" / _safe(candidate) / f"{name}.parquet"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(list(rows)).to_parquet(path, index=False)
+    return path
+
+
+def _candidate_path(directory: Path, candidate: str, name: str | None) -> Path:
+    if name is None:
+        return directory / "candidates" / f"{_safe(candidate)}.json"
+    if name != "candidate.json":
+        raise ValueError("The supported fixed candidate artifact name is candidate.json")
+    return directory / "candidates" / _safe(candidate) / name
 
 
 def _payload(result: CandidateResult, *, include_samples: bool) -> dict[str, object]:
@@ -391,10 +477,12 @@ def _validate_sample_ids(samples: list[SampleResult]) -> None:
         raise ValueError(f"Candidate produced duplicate sample IDs: {', '.join(duplicates[:10])}")
 
 
-def _validate_required_metrics(metrics, operational, required_metrics) -> None:
+def _validate_required_metrics(
+    metrics, operational, required_metrics, operational_prefix="operational."
+) -> None:
     values = {
         **metrics,
-        **{f"operational.{name}": value for name, value in operational.items()},
+        **{f"{operational_prefix}{name}": value for name, value in operational.items()},
     }
     missing = [name for name in required_metrics if name not in values]
     invalid = [

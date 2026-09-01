@@ -15,6 +15,8 @@ class ResourceMonitor:
         interval_seconds: float = 0.05,
         *,
         temporary_directory: Path | None = None,
+        require_vram: bool = False,
+        report_zero_vram: bool = False,
     ) -> None:
         self.interval_seconds = interval_seconds
         self._stop = threading.Event()
@@ -22,8 +24,11 @@ class ResourceMonitor:
         self._peak_ram_bytes = 0
         self._ram_sampled = False
         self._peak_vram_bytes = 0
+        self._vram_sampled = False
         self._peak_temporary_bytes = 0
         self._temporary_directory = temporary_directory
+        self._require_vram = require_vram
+        self._report_zero_vram = report_zero_vram
         self._pynvml: Any | None = None
         self._gpu_handles: list[Any] = []
 
@@ -37,8 +42,14 @@ class ResourceMonitor:
                 pynvml.nvmlDeviceGetHandleByIndex(index)
                 for index in range(pynvml.nvmlDeviceGetCount())
             ]
-        except Exception:  # optional monitoring must not invalidate quality results
+            if self._require_vram and not self._gpu_handles:
+                raise RuntimeError("CUDA ASR benchmark requested but NVML found no GPU")
+        except Exception as exc:  # optional except when a CUDA profile requires it
             self._pynvml = None
+            if self._require_vram:
+                raise RuntimeError(
+                    "CUDA ASR benchmarks require working NVML VRAM measurement"
+                ) from exc
         self._sample()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -61,10 +72,16 @@ class ResourceMonitor:
                 pass
 
     def metrics(self) -> dict[str, float]:
+        if self._require_vram and (
+            not self._vram_sampled or self._peak_vram_bytes <= 0
+        ):
+            raise RuntimeError(
+                "CUDA resource monitoring did not capture process VRAM usage"
+            )
         values = {}
         if self._ram_sampled:
             values["peak_process_tree_ram_mb"] = self._peak_ram_bytes / (1024**2)
-        if self._peak_vram_bytes:
+        if self._peak_vram_bytes or self._report_zero_vram:
             values["peak_vram_mb"] = self._peak_vram_bytes / (1024**2)
         if self._temporary_directory is not None:
             values["peak_temporary_disk_mb"] = self._peak_temporary_bytes / (1024**2)
@@ -96,9 +113,10 @@ class ResourceMonitor:
         except (ImportError, OSError):
             pass
         if self._pynvml is not None:
-            try:
-                for handle in self._gpu_handles:
+            for handle in self._gpu_handles:
+                try:
                     processes = self._pynvml.nvmlDeviceGetComputeRunningProcesses(handle)
+                    self._vram_sampled = True
                     self._peak_vram_bytes = max(
                         self._peak_vram_bytes,
                         sum(
@@ -107,8 +125,8 @@ class ResourceMonitor:
                             if process.pid in process_ids and process.usedGpuMemory
                         ),
                     )
-            except Exception:  # optional driver/API differences omit VRAM measurements
-                pass
+                except Exception:  # a required CUDA run is rejected by metrics()
+                    continue
         if self._temporary_directory is not None:
             try:
                 size = sum(
