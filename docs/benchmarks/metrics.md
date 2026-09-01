@@ -1569,7 +1569,10 @@ CPU or GPU profile; silent device fallback is invalid.
 Standard and full confidence intervals resample complete clips, preserving each
 clip's transcript, timestamps, and latency as one sampling unit. Resource peaks
 and a single cold-load observation do not receive fabricated confidence
-intervals.
+intervals. A resample with no timestamp match still contributes to recognition,
+reliability, latency, and zero Alignment Coverage. Boundary MAE alone is
+undefined for that resample and omits it; each interval records its actual
+number of contributing resamples.
 
 ## Retrieval quality
 

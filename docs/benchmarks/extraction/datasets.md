@@ -13,6 +13,8 @@ Each stage has `<stage>-development.json`, `<stage>-validation.json`, and
 - `asset_sha256`, `source_path`, `source_license`, and `source_revision`;
 - a verified normalized `reference`;
 - `document_family` so preparation can prove family-level split isolation;
+- one canonical audio `condition` label for authoritative ASR clips: `clean`,
+  `noisy`, `accented`, or `multi_speaker`;
 - modality annotations used by that stage, such as `reference_pages`, timestamps, `duration_seconds`, visible text, or PDF layout/oracle labels.
 
 Audio also has a fixed `audio-reliability.json` manifest. Its rows are verified
@@ -20,6 +22,15 @@ nonspeech controls—silence, music without lyrics, background noise, or
 environmental sound—with an empty spoken reference and a `nonspeech_kind` label.
 They are not mixed into Corpus WER or CER; they are used only for Nonspeech
 False-Transcription Rate.
+The same reliability asset checksum cannot appear in more than one of the
+development, validation, or locked-test subsets.
+
+The committed smoke path uses `audio-reliability-smoke.json` with deterministic
+silence and noise. Authoritative speech rows are limited to 30 seconds and must
+contain non-empty timed reference segments; development, validation, and locked
+test contain 54, 18, and 18 speech clips respectively. All three authoritative
+speech manifests must exist before any authoritative audio run. The runner rejects
+reused sample IDs, asset checksums, or speaker/document families across them.
 
 Download a reviewed asset plan explicitly:
 

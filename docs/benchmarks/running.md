@@ -93,7 +93,21 @@ python experiments/benchmarks/extraction/audio/run.py --profile full `
   --manifest data/benchmarks/extraction/audio-validation.json `
   --shortlist AUDIO_DECISION `
   --device cuda
+python experiments/benchmarks/extraction/audio/run.py --profile locked `
+  --manifest data/benchmarks/extraction/audio-locked-test.json `
+  --shortlist SELECTED_ASR_DECISION `
+  --device cuda
 ```
+
+Prepare all three frozen audio manifests before running any of these commands;
+the runner validates their sample, checksum, and speaker/document-family isolation
+as one dataset contract.
+
+The runner reads the matching split from
+`data/benchmarks/extraction/audio-reliability.json`. Use
+`--reliability-manifest PATH` only when the frozen reliability manifest is stored
+elsewhere. The locked profile rejects decisions containing more than one ASR
+profile.
 
 Video requires one selected document parser and one selected ASR profile:
 

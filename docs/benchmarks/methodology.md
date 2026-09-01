@@ -671,8 +671,9 @@ verified transcript
 verified timestamped reference segments
 ```
 
-Audio-condition labels such as clean, noisy, accented, and multi-speaker remain
-in the per-sample artifact for diagnosis. They do not create extra required
+Each authoritative split contains the canonical `clean`, `noisy`, `accented`,
+and `multi_speaker` condition labels. They remain in the per-sample artifact for
+diagnosis and do not create extra required
 MLflow metric namespaces or a larger metric contract.
 
 ### Common input and output rules
@@ -693,7 +694,12 @@ Alignment Coverage records how much of the timed reference aligned.
 
 ### Per-candidate execution
 
-One child run executes one ASR profile in a fresh candidate context:
+One child run executes one ASR profile in a fresh operating-system process. A
+CPU process has CUDA hidden before any model runtime is imported; a CUDA process
+must provide working NVML VRAM measurement. No profile may change device or use
+CPU/GPU offloading silently.
+
+The process performs:
 
 ```text
 load the exact pinned model
@@ -836,7 +842,11 @@ word_error_rate.ci_upper
 Corpus WER/CER and their components, timestamp metrics, reliability rates, RTF,
 and sufficiently supported warm latency estimates receive clip-bootstrap
 intervals. One cold-load observation and observed peak RAM/VRAM do not receive
-fabricated intervals.
+fabricated intervals. Every bootstrap draw contributes to every metric that is
+defined for that draw. A draw with no aligned timestamp segment still
+contributes zero Alignment Coverage and contributes normally to recognition,
+reliability, and latency intervals; only its undefined Boundary MAE is omitted.
+The interval artifact records the number of contributing resamples.
 
 Each successful child stores three artifacts:
 
@@ -847,8 +857,9 @@ Each successful child stores three artifacts:
 | `candidate.json` | Candidate status, fingerprint, aggregate metrics, confidence intervals, operational values, and artifact references. |
 
 Fields that do not apply to a row are absent or null, not fabricated as zero.
-Raw audio and transcripts are not duplicated into MLflow by default; sample IDs
-resolve them through the frozen local manifests.
+Raw audio and candidate predictions are not uploaded to MLflow. The frozen
+speech manifest is uploaded and contains the verified reference transcripts,
+source identifiers, and checksums needed to reproduce scoring.
 
 Every successful standard/full child must contain all 15 aggregate metric point
 estimates. A CPU profile may report zero VRAM only when execution confirms that

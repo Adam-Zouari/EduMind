@@ -195,12 +195,24 @@ text, `order`, `page_number`, normalized `bounding_box`, `parent_id` and
 authoritative samples require normalized boxes;
 native DOCX does not invent page boxes.
 
-To regenerate only the committed document smoke files without invoking Windows
-speech/video synthesis:
+To regenerate the committed multimodal smoke files, including real synthesized
+speech WAVs and deterministic silence/noise controls:
 
 ```powershell
 python experiments/benchmarks/prepare.py smoke-fixtures
 ```
+
+Regenerate only one fixture group when working on a single experiment:
+
+```powershell
+python experiments/benchmarks/prepare.py smoke-fixtures --modality document
+python experiments/benchmarks/prepare.py smoke-fixtures --modality audio
+python experiments/benchmarks/prepare.py smoke-fixtures --modality video
+```
+
+Audio and video regeneration requires an FFmpeg build containing the optional
+`flite` filter. This is needed only to recreate the committed synthetic speech;
+running the existing smoke benchmarks does not require `flite`.
 
 ### Audio and video
 
@@ -216,9 +228,9 @@ data/benchmarks/extraction/video-validation.json
 data/benchmarks/extraction/video-locked-test.json
 ```
 
-Every speech asset row must contain a checksum, license, source revision,
-document family, and reference transcript. Timestamp metrics require reference
-segments. `audio-reliability.json` contains verified silence,
+Every speech asset row must contain a checksum, license, source revision, split,
+speaker/document family, duration of at most 30 seconds, reference transcript,
+and non-empty timed reference segments. `audio-reliability.json` contains verified silence,
 music-without-lyrics, background-noise, and environmental-sound controls with an
 empty spoken reference. Video visual-text metrics additionally require verified
 visible text and timestamps.
