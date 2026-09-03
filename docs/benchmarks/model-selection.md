@@ -263,13 +263,17 @@ the metric contract in [metrics.md](metrics.md).
 
 ## Video extraction
 
-| Strategy | Why it is included |
-|---|---|
-| Fixed interval | Deterministic coverage and predictable processing cost. |
-| Scene change | Reduces redundant frames by sampling visual transitions. |
-| Scene change + maximum interval | Adds fallback coverage when content changes gradually without a sharp transition. |
+| Strategy | Development settings | Why it is included |
+|---|---|---|
+| Fixed interval | 5, 10, and 20 seconds | Establishes the direct coverage-versus-cost trade-off of periodic sampling. |
+| Scene change | FFmpeg thresholds 0.30, 0.40, and 0.50 | Tests whether transition-driven sampling can remove unchanged frames without missing useful visual changes. |
+| Scene change + maximum interval | Selected scene threshold with maximum gaps of 5, 10, and 20 seconds | Tests whether periodic fallback recovers gradual or static content missed by scene detection. |
 
-The selected ASR and visual parser are held fixed while frame-selection strategies are compared.
+Every configuration includes the first frame. Fixed and scene-change settings
+are tested first; one scene threshold is then recorded and reused for the three
+hybrid configurations. This produces nine development configurations without
+testing an unnecessary threshold-by-gap Cartesian grid. The selected ASR and
+visual parser are held fixed throughout.
 
 ## Vector database servers
 
