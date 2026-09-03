@@ -167,33 +167,14 @@ python experiments/benchmarks/prepare.py rag-selection `
   --output data/benchmarks/rag/rag-selection-validation.json
 ```
 
-### Document extraction
+### Extraction datasets
 
-Use licensed source documents and retain original checksums and source revisions. Relevant public sources are:
-
-- [OmniDocBench](https://github.com/opendatalab/OmniDocBench): full document parsing, reading order, tables, and formulas.
-- [olmOCR-Bench](https://huggingface.co/datasets/allenai/olmOCR-bench): difficult scanned and born-digital pages.
-- [OHR-Bench](https://huggingface.co/datasets/opendatalab/OHR-Bench): retrieval-oriented document understanding confirmation.
-- [PureDocBench](https://github.com/opendatalab/PureDocBench): structured document parsing cases.
-
-The repository does not silently redistribute these corpora. Create a reviewed JSON asset plan containing, for each selected file, an HTTPS URL, destination filename, SHA-256 checksum, and license; then run:
-
-```powershell
-python experiments/benchmarks/prepare.py assets `
-  --plan data/benchmarks/extraction/assets-plan.json `
-  --output data/benchmarks/raw/document
-```
-
-Create `document-development.json`, `document-validation.json`, and
-`document-locked-test.json` under `data/benchmarks/extraction/`. Each manifest
-row needs an ID, `kind` (`image`, `pdf`, or `docx`), repository-relative
-`source_path` and `reference_path`, both SHA-256 checksums, source
-license/revision, and `document_family`. The reference JSON contains verified
-`text`, numbered `pages`, and ordered `elements`. Elements record `id`, `kind`,
-text, `order`, `page_number`, normalized `bounding_box`, `parent_id` and
-`hierarchy_level` where applicable, table `html`, and formula `latex`. Visual
-authoritative samples require normalized boxes;
-native DOCX does not invent page boxes.
+Follow the [benchmark dataset guide](../benchmarks/datasets.md) for
+the reviewed document, audio, and video source pools; exact download commands;
+pinned revisions; licenses; checksums; directory layout; sample allocation; and
+manifest requirements. That guide is the single source of truth for extraction
+data. The repository does not silently download or redistribute the public
+corpora.
 
 To regenerate the committed multimodal smoke files, including real synthesized
 speech WAVs and deterministic silence/noise controls:
@@ -213,27 +194,6 @@ python experiments/benchmarks/prepare.py smoke-fixtures --modality video
 Audio and video regeneration requires an FFmpeg build containing the optional
 `flite` filter. This is needed only to recreate the committed synthetic speech;
 running the existing smoke benchmarks does not require `flite`.
-
-### Audio and video
-
-Use [Open ASR Leaderboard datasets/methodology](https://github.com/huggingface/open_asr_leaderboard) as public screening context, then prepare EduMind-specific educational recordings with verified transcripts and timestamps. Store manifests as:
-
-```text
-data/benchmarks/extraction/audio-development.json
-data/benchmarks/extraction/audio-validation.json
-data/benchmarks/extraction/audio-locked-test.json
-data/benchmarks/extraction/audio-reliability.json
-data/benchmarks/extraction/video-development.json
-data/benchmarks/extraction/video-validation.json
-data/benchmarks/extraction/video-locked-test.json
-```
-
-Every speech asset row must contain a checksum, license, source revision, split,
-speaker/document family, duration of at most 30 seconds, reference transcript,
-and non-empty timed reference segments. `audio-reliability.json` contains verified silence,
-music-without-lyrics, background-noise, and environmental-sound controls with an
-empty spoken reference. Video visual-text metrics additionally require verified
-visible text and timestamps.
 
 ## 5. Vector database servers
 

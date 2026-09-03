@@ -16,7 +16,7 @@ advance.
 | What each metric means and its exact calculation | [Metric reference](metrics.md) |
 | Why each model or server entered the candidate list | [Model-selection rationale](model-selection.md) |
 | Which commands to run and what files they consume or produce | [Benchmark runbook](running.md) |
-| How to obtain and describe extraction data | [Extraction dataset guide](extraction/datasets.md) |
+| How to obtain and describe benchmark data | [Benchmark dataset guide](datasets.md) |
 | Which model decisions and revisions are machine-readable | [`selection_evidence.csv`](../../experiments/benchmarks/selection_evidence.csv) |
 
 These documents have deliberately separate roles. The methodology does not

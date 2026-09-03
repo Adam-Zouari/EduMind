@@ -119,6 +119,20 @@ python experiments/benchmarks/extraction/video/run.py --profile standard `
   --device cuda
 ```
 
+Development is an ordered nine-configuration study:
+
+1. compare fixed intervals of 5, 10, and 20 seconds;
+2. compare FFmpeg scene thresholds of 0.30, 0.40, and 0.50;
+3. record the selected scene threshold; and
+4. compare hybrid maximum gaps of 5, 10, and 20 seconds using that threshold.
+
+Every configuration includes the first frame. The three comparisons remain in
+the same `EduMind / extraction` MLflow experiment, where their nine child runs
+can be filtered and compared together. Validation runs only the
+engineer-selected finalists; locked test runs one selected configuration once.
+The current video runner must implement this sequence before a video result can
+be treated as authoritative; the existing smoke command remains a wiring check.
+
 Extraction candidates are scored without an additional cleanup profile. The
 runner records the parser or ASR output and applies only the fixed evaluator
 representation rules described in the methodology.
