@@ -54,8 +54,8 @@ multiple metrics, such as the element-matching protocol.
 ### Metric summary
 
 The following tables provide the complete metric list for readers who only need
-to know what the document-extraction benchmark measures. The detailed contracts
-and examples follow the summary.
+to know what the document-extraction benchmark measures. The detailed contracts,
+examples, and confidence-interval rules follow the summary.
 
 #### Text content and recognition
 
@@ -140,10 +140,8 @@ candidate's extraction.
 Each metric is reported as a total across the documents on which it is defined
 and separately for applicable document groups such as `image`, `pdf_scanned`,
 and `docx`. A conditional metric is absent, not zero, when its required
-annotation does not apply. Every sample-based aggregate records `sample_count`
-as reporting metadata. Qualifying aggregates also record a confidence interval
-under the separate policy below. The benchmark plan records the total scheduled
-samples.
+annotation does not apply. Qualifying aggregates receive a confidence interval
+under the separate policy below.
 
 Text error and content metrics are calculated per eligible document and then
 macro-averaged, so a long PDF cannot dominate every short document. Detection
@@ -825,7 +823,7 @@ The benchmark uses the pinned official evaluator rather than EduMind's former
 row/column-adjacency approximation. OmniDocBench documents TEDS and TEDS-S in its
 [official evaluation repository](https://github.com/opendatalab/OmniDocBench).
 
-### Formulas
+### Mathematical formulas
 
 Formula metrics are calculated only for samples with formula annotations and are
 reported as a total and by document group. Detection uses one-to-one region
@@ -1291,31 +1289,14 @@ This grouping supports a complete conclusion without pretending that text,
 layout, structure, reliability, and cost are interchangeable. No weighted
 overall score is calculated.
 
-### Reporting metadata
-
-Every sample-based aggregate records `sample_count`, the number of samples that
-contributed to its point estimate. It is reporting metadata, not a quality or
-operational metric, and no confidence interval is calculated for it.
-
-```text
-text.content_f1 = 0.91
-text.content_f1.sample_count = 120
-
-tables.structure_score = 0.84
-tables.structure_score.sample_count = 18
-```
-
-This makes the evidence volume visible without treating the count as part of
-the confidence-interval calculation or as another performance result.
-
-## Confidence intervals
+### Document-extraction confidence intervals
 
 A confidence interval expresses uncertainty in an aggregate calculated from
 multiple independent observations. It does not describe the possible range of
 an individual prediction, and it must not be attached to a value merely because
-the value appears in MLflow.
+the value is reported.
 
-### Which values receive an interval
+#### Which values receive an interval
 
 | Value | 95% confidence interval? | Rule |
 |---|---:|---|
@@ -1334,14 +1315,13 @@ few to support it, the report keeps the point estimate, omits the interval, and
 marks the metric as descriptive rather than authoritative selection evidence.
 EduMind does not invent a zero-width interval.
 
-### Calculation
+#### Calculation
 
 Eligible standard/full sample-based metrics use 10,000 bootstrap resamples with
 seed 42:
 
-1. Treat the document, page, query, clip, or other declared sample as the
-   independent resampling unit.
-2. Resample those units with replacement.
+1. Treat each source document as the independent resampling unit.
+2. Resample documents with replacement.
 3. Recalculate the aggregate for every resample.
 4. Use the 2.5th and 97.5th percentiles as the 95% interval bounds.
 
@@ -1354,35 +1334,13 @@ its precision/recall/F1 denominator is undefined and that draw is excluded from
 that metric's percentile calculation rather than converted to zero. The result
 artifact records the number of defined resamples.
 
-### MLflow names
-
-The point estimate keeps the simple metric name. Interval bounds are attached to
-it:
-
-```text
-text.content_f1
-text.content_f1.ci_lower
-text.content_f1.ci_upper
-
-text.pdf_scanned.content_f1
-text.pdf_scanned.content_f1.ci_lower
-text.pdf_scanned.content_f1.ci_upper
-
-tables.structure_score
-tables.structure_score.ci_lower
-tables.structure_score.ci_upper
-```
-
-A value without `ci_lower` and `ci_upper` has no reported interval. Missing
-bounds are not interpreted as zero.
-
-### Interpretation
+#### Interpretation
 
 For example:
 
 ```text
-text.content_f1 = 0.91
-95% CI          = [0.89, 0.93]
+Content F1 = 0.91
+95% CI     = [0.89, 0.93]
 ```
 
 The benchmark estimates an aggregate Content F1 of `0.91`; variation across the
@@ -1423,7 +1381,7 @@ page, audio already defines one chronological sequence.
 | Timestamp Boundary MAE | Primary | How far are aligned segment starts and ends from the reference boundaries? | Lower |
 | Timestamp Alignment Coverage | Primary companion | What proportion of timed reference segments received a valid alignment? | Higher |
 
-#### Reliability
+#### Reliability and failure behavior
 
 | Metric | Role | Question answered | Direction |
 |---|---|---|---|
@@ -1446,32 +1404,38 @@ Accuracy is excluded because EduMind has no fixed subject vocabulary;
 diarization metrics remain out of scope until speaker identification becomes a
 product requirement.
 
-### Recognition metrics
+### Recognition quality
 
-Corpus WER and CER use the fixed ASR evaluator normalization described in the
-shared conventions. Counts are pooled across clips before division; the
-benchmark does not average independently calculated clip error rates.
+#### Corpus Word Error Rate
+
+**Question:** How wrong is the complete ordered word transcript?
+
+Corpus WER uses the fixed ASR evaluator normalization described in the shared
+conventions. Edit counts are pooled across clips before division; the benchmark
+does not average independently calculated clip error rates.
 
 ```text
 Corpus WER =
 all word substitutions + deletions + insertions
 ------------------------------------------------
         all words in the reference clips
-
-Word Substitution Rate = word substitutions / reference words
-Word Deletion Rate     = word deletions / reference words
-Word Insertion Rate    = word insertions / reference words
 ```
 
 **Example:** Across the complete corpus, 1,000 reference words with 40
 substitutions, 20 deletions, and 10 insertions produce WER `70 / 1,000 = 0.07`.
-The component rates are `0.04`, `0.02`, and `0.01`.
 
-WER is primary because ASR must reproduce the ordered spoken sequence. The
-three component rates are diagnostic: two candidates can have the same WER
-while one confuses words, another omits speech, and another adds unsupported
-words. They do not measure order separately and are not independent selection
-scores.
+WER is primary because ASR must reproduce the ordered spoken sequence in one
+value. The component rates below explain its failure type rather than replacing
+it.
+
+**Range and direction:** WER is non-negative and lower is better. It can exceed
+`1` when insertions outnumber reference words. A speech set with no reference
+words is invalid.
+
+#### Corpus Character Error Rate
+
+**Question:** How severe are character-level transcription errors that may be
+hidden by whole-word scoring?
 
 Corpus CER uses the same pooled calculation over characters:
 
@@ -1488,7 +1452,77 @@ CER `50 / 5,000 = 0.01`.
 CER supports WER by exposing small spelling, number, abbreviation, and name
 errors that a whole-word error treats as one event.
 
-### Timestamp metrics
+**Range and direction:** CER is non-negative and lower is better. It can exceed
+`1` when insertions outnumber reference characters. A speech set with no
+reference characters is invalid.
+
+### WER diagnostics
+
+The three diagnostic rates reuse the exact word alignment and pooled reference
+word count used by Corpus WER. Together they add up to WER, but each answers a
+different failure question.
+
+#### Word Substitution Rate
+
+**Question:** How often is a spoken reference word replaced by a different
+predicted word?
+
+```text
+Word Substitution Rate =
+substituted reference words
+---------------------------
+all reference words
+```
+
+**Example:** Forty substitutions among 1,000 reference words produce `0.04`.
+
+This distinguishes word confusion from omitted or invented speech.
+
+**Range and direction:** Non-negative and lower is better. It cannot exceed `1`
+because each reference word can be substituted at most once.
+
+#### Word Deletion Rate
+
+**Question:** How much spoken reference content is missing from the transcript?
+
+```text
+Word Deletion Rate =
+deleted reference words
+-----------------------
+all reference words
+```
+
+**Example:** Twenty deletions among 1,000 reference words produce `0.02`.
+
+This exposes omissions that are especially harmful when lectures contain
+definitions, negations, or instructions.
+
+**Range and direction:** Lies in `[0, 1]`; lower is better.
+
+#### Word Insertion Rate
+
+**Question:** How much unsupported word content did the model add?
+
+```text
+Word Insertion Rate =
+inserted predicted words
+------------------------
+all reference words
+```
+
+**Example:** Ten insertions against 1,000 reference words produce `0.01`.
+
+This exposes invented speech that is not present in the recording.
+
+**Range and direction:** Non-negative and lower is better. It can exceed `1`
+when the model inserts more words than the entire reference contains.
+
+### Timestamp quality
+
+#### Timestamp Boundary MAE and Timestamp Alignment Coverage
+
+**Question:** How accurate are the predicted start/end times, and how much of
+the timed reference could actually be aligned?
 
 After the stage applies one fixed one-to-one segment-alignment rule, Timestamp
 Boundary MAE is calculated as follows:
@@ -1513,7 +1547,14 @@ shows how much of the timed reference actually contributed. The two metrics are
 therefore interpreted together: low MAE and high coverage. When no segments
 align, MAE is undefined rather than fabricated as zero, while coverage is zero.
 
-### Reliability metrics
+**Range and direction:** Boundary MAE is a non-negative number of seconds and
+lower is better. Alignment Coverage lies in `[0, 1]` and higher is better.
+
+### Reliability and failure behavior
+
+#### Empty Transcript Rate
+
+**Question:** How often does a valid speech clip produce no lexical transcript?
 
 For speech-containing clips:
 
@@ -1529,6 +1570,14 @@ speech clips producing no lexical text
 
 This exposes complete transcription failures that can be diluted inside corpus
 WER. A process crash is a failed candidate run, not an empty transcript.
+
+**Range and direction:** The rate lies in `[0, 1]`; lower is better. A dataset
+without speech clips is invalid for this metric.
+
+#### Nonspeech False-Transcription Rate
+
+**Question:** How often does the model invent lexical speech on verified
+nonspeech audio?
 
 For the fixed silence, music-without-lyrics, background-noise, and environmental
 sound controls:
@@ -1546,7 +1595,15 @@ rate of `3 / 20 = 0.15`.
 WER cannot score these controls because their references contain zero words.
 This rate directly measures invented speech where no spoken reference exists.
 
-### Operational metrics
+**Range and direction:** The rate lies in `[0, 1]`; lower is better. It is
+undefined when no reliability controls were evaluated.
+
+### Operational performance
+
+#### Complete-Pipeline Real-Time Factor
+
+**Question:** How much complete processing time is required relative to audio
+duration?
 
 ```text
 Complete-Pipeline Real-Time Factor =
@@ -1560,19 +1617,451 @@ total transcription-and-alignment time
 
 An RTF below `1` means processing is faster than audio playback. Qwen's complete
 time includes transcription, unloading, loading the forced aligner, and
-alignment. Warm p50/p95 latency describes typical and slow clips on the same
-frozen corpus. Cold load measures initial model loading separately. Peak RAM is
-sampled across the candidate process tree, and Peak VRAM is the candidate's
-largest observed GPU allocation. Every operational result records the explicit
-CPU or GPU profile; silent device fallback is invalid.
+alignment.
 
-Standard and full confidence intervals resample complete clips, preserving each
-clip's transcript, timestamps, and latency as one sampling unit. Resource peaks
-and a single cold-load observation do not receive fabricated confidence
-intervals. A resample with no timestamp match still contributes to recognition,
-reliability, latency, and zero Alignment Coverage. Boundary MAE alone is
-undefined for that resample and omits it; each interval records its actual
-number of contributing resamples.
+**Range and direction:** RTF is non-negative and lower is better.
+
+#### p50 and p95 Warm Clip Latency
+
+**Question:** What are the typical and slow-tail steady-state transcription
+times per clip?
+
+For each clip, the benchmark takes the median latency of its measured warm
+repetitions. It then reports p50 across clips as typical latency and p95 as the
+slow tail.
+
+**Example:** A p95 of `5.2 seconds` means 95% of the per-clip warm latency
+observations are at or below 5.2 seconds.
+
+**Range and direction:** Non-negative seconds per clip; lower is better.
+
+#### Cold Model-Load Time
+
+**Question:** How long does a fresh worker need to make the ASR model ready?
+
+Measure from the start of model construction until loading completes, before
+warmups or transcription. Qwen reports the complete required loading policy;
+its forced-aligner reload remains part of complete-pipeline latency rather than
+being hidden in this first load value.
+
+**Range and direction:** Non-negative seconds; lower is better.
+
+#### Peak Process-Tree RAM and Peak VRAM
+
+**Question:** What maximum system and GPU memory does the complete candidate
+execution require?
+
+Peak Process-Tree RAM is the largest sampled resident-memory total for the
+worker and its child processes. Peak VRAM is the largest GPU-memory allocation
+attributable to that worker. Every result records the explicit CPU or GPU
+profile; silent device fallback is invalid.
+
+**Example:** Process-tree samples peaking at `3,200 MiB` and GPU samples peaking
+at `2,100 MiB` produce those two reported peaks.
+
+**Range and direction:** Non-negative MiB; lower is better at equal quality. A
+confirmed CPU-only profile reports zero VRAM; unavailable measurement is not
+converted to zero.
+
+### Worked candidate interpretation
+
+Suppose one ASR profile produces:
+
+```text
+Corpus WER                         = 0.08
+Word Deletion Rate                 = 0.04
+Timestamp Boundary MAE             = 0.32 seconds
+Timestamp Alignment Coverage       = 0.94
+Nonspeech False-Transcription Rate = 0.10
+Complete-Pipeline RTF              = 0.40
+Peak VRAM                          = 2,100 MiB
+```
+
+The profile transcribes faster than playback and aligns most timed segments,
+but half of its word errors come from omitted speech and it invents text on 10%
+of nonspeech controls. Those failure modes remain visible even though the total
+WER is relatively low. No weighted overall score combines these values.
+
+### Required audio-extraction result groups
+
+```text
+recognition:
+  Corpus WER, Corpus CER,
+  Word Substitution Rate, Word Deletion Rate, Word Insertion Rate
+
+timestamps:
+  Timestamp Boundary MAE, Timestamp Alignment Coverage
+
+reliability:
+  Empty Transcript Rate, Nonspeech False-Transcription Rate
+
+operational:
+  Complete-Pipeline Real-Time Factor, p50/p95 Warm Clip Latency,
+  Cold Model-Load Time, Peak Process-Tree RAM, Peak VRAM
+```
+
+### Audio confidence intervals
+
+#### Which values receive an interval
+
+| Value | 95% confidence interval? | Rule |
+|---|---:|---|
+| Standard/full WER, CER, and substitution/deletion/insertion rates | Yes | Resample complete speech clips and recalculate the pooled counts. |
+| Standard/full Timestamp Alignment Coverage | Yes | Resample complete timed speech clips. |
+| Standard/full Timestamp Boundary MAE | Yes, when defined | Use resampled clips containing valid aligned boundaries. |
+| Standard/full Empty Transcript Rate | Yes | Resample speech clips. |
+| Standard/full Nonspeech False-Transcription Rate | Yes | Resample the separate nonspeech controls. |
+| Standard/full Real-Time Factor | Yes | Resample complete speech clips with their measured processing time and duration. |
+| Standard/full p50/p95 warm latency | Conditional | Report only when enough independent clips support the percentile estimate. |
+| Smoke metrics | No authoritative interval | Smoke validates execution and is too small for selection claims. |
+| One cold-load measurement | No | One observation cannot estimate uncertainty. |
+| One observed peak RAM or VRAM value | No | Report the observed peak without invented bounds. |
+
+#### Calculation
+
+Standard and full runs use 10,000 bootstrap resamples with seed 42:
+
+1. Treat each complete clip as the independent unit.
+2. Resample speech clips with replacement; resample nonspeech controls
+   separately for their reliability rate.
+3. Recalculate each eligible aggregate from the sampled counts, timestamps,
+   durations, and latencies.
+4. Use the 2.5th and 97.5th percentiles as the 95% bounds.
+
+A resample with no timestamp match still contributes to recognition,
+reliability, latency, and zero Alignment Coverage. Its undefined Boundary MAE
+does not enter the MAE percentile calculation.
+
+#### Interpretation
+
+Corpus WER `0.08` with a 95% CI of `[0.07, 0.10]` means the observed aggregate
+error rate is 8%, while clip resampling estimates a plausible range of 7% to
+10%. A narrower interval indicates a more precise corpus estimate; it does not
+mean that every individual clip has an error rate inside that range.
+
+## Video extraction
+
+The video experiment compares keyframe configurations while holding the
+document parser and ASR fixed. Its quality metrics therefore answer two focused
+questions: did the selected frames recover the useful visible content, and did
+they place that content at a useful time? Spoken and visible tokens are not
+combined into one score because the much longer transcript would dominate it.
+
+### Metric summary
+
+#### Visual-content quality
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Visual Content F1 | Primary | Does the configuration balance correct visible text with complete visible-text recovery? | Higher |
+| Visual Content Precision | Supporting | How much extracted visible text is supported by the reference? | Higher |
+| Visual Content Recall | Supporting | How much verified visible text was recovered from selected frames? | Higher |
+
+#### Visual timestamp quality
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Visual Timestamp Boundary MAE | Primary | How far are the recovered visible-text start and end boundaries from their verified times? | Lower |
+| Visual Timestamp Alignment Coverage | Primary companion | What proportion of timed visible-text references received a valid match? | Higher |
+
+#### Reliability and failure behavior
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Duplicate Visual Text Rate | Diagnostic | How much extracted visible content was repeated because similar frames were selected repeatedly? | Lower |
+
+#### Frozen-input diagnostic
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Frozen-ASR Transcript WER | Shared diagnostic | Is the frozen audio transcript sufficiently understood when interpreting the later combined pipeline? | Lower |
+
+#### Operational performance
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Real-Time Factor | Operational | How much complete video-extraction time is required relative to video duration? | Lower |
+| p50 Warm Video Latency | Operational | What is normal warm processing time for one video? | Lower |
+| p95 Warm Video Latency | Operational | What is slow-case warm processing time? | Lower |
+| Cold Pipeline-Load Time | Operational | How long does initial loading of the frozen extraction pipeline take? | Lower |
+| Peak Process-Tree RAM | Resource | How much system memory does the complete configuration require? | Lower |
+| Peak VRAM | Resource | How much GPU memory does the complete configuration require? | Lower |
+| Mean Selected Frames per Video | Cost diagnostic | How many frames does the configuration send to the document parser on average? | Lower only when quality is preserved |
+
+### Visual-content quality
+
+#### Visual Content Precision, Recall, and F1
+
+**Question:** How much extracted visible content is supported, how much required
+visible content was recovered, and does the configuration balance both?
+
+The evaluator compares the distinct normalized visible content extracted from
+the selected frames with the human-verified visible content. Repeated copies of
+the same text do not earn additional matches; repetition is measured separately
+by Duplicate Visual Text Rate.
+
+```text
+Visual Content Precision =
+matched extracted visible-content units
+---------------------------------------
+all extracted visible-content units
+
+Visual Content Recall =
+matched reference visible-content units
+---------------------------------------
+all reference visible-content units
+
+Visual Content F1 =
+the balance between Visual Content Precision and Visual Content Recall
+```
+
+**Example:** The reference contains 100 visible-content units. A configuration
+extracts 90 units, 80 of which match the reference. Precision is `80 / 90 =
+0.89`, recall is `80 / 100 = 0.80`, and F1 is approximately `0.84`.
+
+F1 is primary because it prevents a configuration from looking good by
+extracting almost nothing or by extracting large amounts of unsupported text.
+Precision and recall are supporting diagnostics that explain whether a lower F1
+comes from extra text or missing text.
+
+**Range and direction:** All three values lie in `[0, 1]`; higher is better. If
+both reference and prediction contain no visible content, the sample is not
+eligible rather than being assigned perfect quality.
+
+### Visual timestamp quality
+
+#### Visual Timestamp Boundary MAE and Alignment Coverage
+
+**Question:** How accurately was recovered visible content placed in time, and
+how much of the timed reference received a valid match?
+
+Each verified visible-text segment has a time interval describing when that
+content is present. The evaluator matches extracted visible content to those
+references. For a matched reference, the first and last matching selected-frame
+times estimate its recovered interval.
+
+```text
+Visual Timestamp Boundary MAE =
+average absolute difference between recovered and reference start/end times
+
+Visual Timestamp Alignment Coverage =
+timed visible-text references with a valid match
+------------------------------------------------
+all timed visible-text references
+```
+
+**Example:** Suppose 8 of 10 timed visible-text references have valid matches.
+Coverage is `8 / 10 = 0.80`. If the 16 matched start/end boundaries have 24
+seconds of total absolute error, Boundary MAE is `24 / 16 = 1.5 seconds`.
+
+The two values must be read together. Low MAE with low coverage means the
+configuration timed only a small easy subset accurately. A useful result has
+both low MAE and high coverage. If nothing aligns, coverage is zero and MAE is
+undefined rather than reported as a false zero.
+
+**Range and direction:** Boundary MAE is a non-negative number of seconds and
+lower is better. Alignment Coverage lies in `[0, 1]` and higher is better.
+
+### Reliability and failure behavior
+
+#### Duplicate Visual Text Rate
+
+**Question:** How much output repeats content already recovered from an
+unchanged or repeatedly selected frame?
+
+```text
+Duplicate Visual Text Rate =
+repeated normalized visible-content occurrences after their first occurrence
+-------------------------------------------------------------------------
+all extracted visible-content occurrences
+```
+
+**Example:** If a configuration extracts 50 visible-text occurrences and 15 are
+repeated copies of content already recovered from unchanged frames, the rate is
+`15 / 50 = 0.30`.
+
+This metric exposes wasted document-parser work and repeated downstream context.
+It is separate from content precision so duplicates cannot obscure whether the
+text itself is supported by the video.
+
+**Range and direction:** The rate lies in `[0, 1]`; lower is better. An output
+with no visible-content occurrences is undefined for duplication and is handled
+by the visual-content metrics instead.
+
+### Frozen-input diagnostic
+
+#### Frozen-ASR Transcript WER
+
+**Question:** How accurately does the already selected ASR transcribe the audio
+of this video corpus?
+
+The ASR profile and its audio output are frozen before frame selection begins.
+Transcript WER is therefore calculated once for the shared ASR output and
+stored on the video parent run. It is a diagnostic for understanding the final
+combined extraction, not a metric for ranking keyframe configurations.
+
+Its calculation, range, and direction use the Corpus WER contract in the audio
+section. It is calculated once per video phase rather than repeated for every
+keyframe configuration.
+
+### Operational performance
+
+#### Real-Time Factor
+
+**Question:** How much complete video-extraction time is required relative to
+video duration?
+
+```text
+Video Real-Time Factor =
+complete extraction time
+------------------------
+video duration
+```
+
+**Example:** Extracting a four-minute video in one minute produces an RTF of
+`1 / 4 = 0.25`. A value below 1 means extraction is faster than playback.
+
+**Range and direction:** RTF is non-negative and lower is better.
+
+#### p50 and p95 Warm Video Latency
+
+**Question:** What are the typical and slow-tail complete-video processing
+times after the frozen models are loaded?
+
+For each video, take the median latency of its measured warm repetitions. The
+benchmark reports p50 across videos as typical latency and p95 as the slow tail.
+
+**Example:** A p95 of `48 seconds` means 95% of measured warm video latencies
+are at or below 48 seconds.
+
+**Range and direction:** Non-negative seconds per video; lower is better.
+
+#### Cold Pipeline-Load Time
+
+**Question:** How long does a fresh worker need to load the frozen ASR and
+document-parser profiles required by the video configuration?
+
+Measure model construction and loading before warmups or video extraction. It
+is kept separate from warm latency so startup does not distort steady-state
+performance.
+
+**Range and direction:** Non-negative seconds; lower is better.
+
+#### Peak Process-Tree RAM and Peak VRAM
+
+**Question:** What maximum system and GPU memory does the complete video
+configuration require?
+
+Peak RAM is the largest sampled resident-memory total across the worker and its
+child processes. Peak VRAM is the largest GPU-memory allocation attributable to
+that worker.
+
+**Example:** If process-tree RAM peaks at `5,600 MiB` and GPU memory peaks at
+`2,900 MiB`, those are the reported resource values.
+
+**Range and direction:** Non-negative MiB; lower is better at equal quality. A
+confirmed CPU-only profile reports zero VRAM; unavailable measurement is not
+converted to zero.
+
+#### Mean Selected Frames per Video
+
+**Question:** How many frames does the strategy send to the frozen document
+parser, on average?
+
+```text
+Mean Selected Frames per Video =
+total selected frames
+---------------------
+videos evaluated
+```
+
+**Example:** Selecting 360 frames across 30 videos produces a mean of `12`
+frames per video.
+
+**Range and direction:** Non-negative frames per video. Lower is preferable
+only when visual-content and timestamp quality are preserved; it is a cost
+diagnostic rather than a standalone selection objective.
+
+### Worked candidate interpretation
+
+Suppose one keyframe configuration produces:
+
+```text
+Visual Content Precision           = 0.92
+Visual Content Recall              = 0.76
+Visual Content F1                  = 0.83
+Visual Timestamp Boundary MAE      = 1.5 seconds
+Visual Timestamp Alignment Coverage = 0.80
+Duplicate Visual Text Rate         = 0.18
+Mean Selected Frames per Video     = 14
+Video Real-Time Factor             = 0.35
+```
+
+Most extracted visible content is supported by the reference, but approximately
+one quarter of the required content is still missed. The matched content is
+timed reasonably well, although 20% of timed references never align. Eighteen
+percent duplicate output suggests that the strategy still selects some
+unchanged frames. The frame count and RTF show the processing cost that produced
+this quality. No weighted overall score combines these values.
+
+### Required video-extraction result groups
+
+```text
+visual_content:
+  Visual Content Precision, Visual Content Recall, Visual Content F1
+
+visual_timestamps:
+  Visual Timestamp Boundary MAE, Visual Timestamp Alignment Coverage
+
+reliability:
+  Duplicate Visual Text Rate
+
+shared_diagnostic:
+  Frozen-ASR Transcript WER
+
+operational:
+  Real-Time Factor, p50/p95 Warm Video Latency,
+  Cold Pipeline-Load Time, Peak Process-Tree RAM, Peak VRAM,
+  Mean Selected Frames per Video
+```
+
+### Video confidence intervals
+
+#### Which values receive an interval
+
+| Value | 95% confidence interval? | Rule |
+|---|---:|---|
+| Standard/full Visual Content Precision/Recall/F1 | Yes | Resample complete videos and recalculate each aggregate. |
+| Standard/full Visual Timestamp Alignment Coverage | Yes | Resample complete videos with their timed visible references. |
+| Standard/full Visual Timestamp Boundary MAE | Yes, when defined | Use resampled videos containing valid aligned boundaries. |
+| Standard/full Duplicate Visual Text Rate | Yes | Resample complete videos with their duplicate counts. |
+| Standard/full Frozen-ASR Transcript WER | Yes | Resample the shared per-video ASR outputs; report the result on the parent run. |
+| Standard/full Real-Time Factor and Mean Selected Frames per Video | Yes | Resample complete videos with their duration, time, and frame counts. |
+| Standard/full p50/p95 warm latency | Conditional | Report only when enough independent videos support the percentile estimate. |
+| Smoke metrics | No authoritative interval | Smoke validates execution and is too small for selection claims. |
+| One cold-load measurement | No | One observation cannot estimate uncertainty. |
+| One observed peak RAM or VRAM value | No | Report the observed peak without invented bounds. |
+
+#### Calculation
+
+Standard and full runs use 10,000 bootstrap resamples with seed 42:
+
+1. Treat each complete video as the independent unit.
+2. Resample videos with replacement.
+3. Recalculate each eligible aggregate from the sampled visual matches,
+   timestamps, duplicates, durations, latencies, and frame counts.
+4. Use the 2.5th and 97.5th percentiles as the 95% bounds.
+
+A resample with no valid visual timestamp alignment still contributes zero
+Alignment Coverage and contributes normally to the other defined metrics. Its
+undefined Boundary MAE does not enter the MAE percentile calculation.
+
+#### Interpretation
+
+Visual Content F1 `0.84` with a 95% CI of `[0.79, 0.88]` means the point
+estimate summarizes the observed videos, while video resampling estimates the
+uncertainty around it. A narrow interval indicates a more precise corpus-level
+estimate; it does not describe the range of individual-video F1 values.
 
 ## Retrieval quality
 

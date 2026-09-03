@@ -42,6 +42,34 @@ settings, revisions, data checksum, hardware, aggregate metrics, confidence
 intervals, and per-sample results. The engineer chooses what continues; the
 runner never chooses a winner or changes the application configuration.
 
+### Shared MLflow metric convention
+
+The stage sections below list only each metric's base key. A sample-based
+aggregate is stored using one consistent convention:
+
+```text
+<metric_key>
+<metric_key>.sample_count
+<metric_key>.ci_lower
+<metric_key>.ci_upper
+```
+
+For example, an eligible audio aggregate appears as:
+
+```text
+word_error_rate
+word_error_rate.sample_count
+word_error_rate.ci_lower
+word_error_rate.ci_upper
+```
+
+`sample_count` records how many independent samples contributed to the point
+estimate. The CI keys exist only when the metric qualifies for a 95% confidence
+interval under [metrics.md](metrics.md). Their absence means that no interval
+was calculated; it never means zero. Statuses, configuration values, checksums,
+and one-off measurements such as a cold load or observed resource peak do not
+receive these suffixes.
+
 Metrics are labeled **primary**, **secondary**, **diagnostic**, or
 **operational**. Primary metrics answer the experiment's central question.
 Secondary metrics provide important supporting evidence. Diagnostics explain
@@ -239,8 +267,10 @@ corpus target is:
 | PDFs | 60 | 36 | 12 | 12 |
 | DOCX | 45 | 27 | 9 | 9 |
 
-The reviewed source pool is OmniDocBench, olmOCR-Bench, PureDocBench, and
-EduMind-specific verified samples. The frozen manifests—not the source-pool
+The reviewed source pool is OmniDocBench v1.6 for structured pages, OHR-Bench v2
+for real multi-page PDFs, PureDocBench v1.0 for matched clean/degraded images,
+DocPTBench for photographed documents, and EduMind-specific native DOCX and
+held-out samples. The frozen manifests—not the source-pool
 names—define the actual cases and record every selected ID, source revision,
 license, checksum, document family, source type, and available annotations. An
 authoritative run cannot be claimed until those manifests and references are
@@ -550,24 +580,12 @@ Operational latency is additionally aggregated by document group, for example
 and temporary disk describe the complete profile execution and remain top-level
 operational metrics rather than being misleadingly attributed to one slice.
 
-Each standard/full sample-based quality or reliability aggregate has its own
-confidence-interval keys and sample count, for example:
-
-```text
-tables.structure_score
-tables.structure_score.ci_lower
-tables.structure_score.ci_upper
-tables.structure_score.sample_count
-
-tables.pdf_scanned.structure_score
-tables.pdf_scanned.structure_score.ci_lower
-tables.pdf_scanned.structure_score.ci_upper
-tables.pdf_scanned.structure_score.sample_count
-```
-
-`sample_count` records how many samples contributed to that metric. It prevents
-a table score based on five annotated documents from looking equivalent to a
-text score based on the whole corpus.
+Each standard/full sample-based quality or reliability base key follows the
+shared suffix convention. This applies equally to a total such as
+`tables.structure_score` and a document-group result such as
+`tables.pdf_scanned.structure_score`. Its `sample_count` makes clear when, for
+example, a table result is based on fewer annotated documents than a text
+result.
 
 Confidence intervals are not attached indiscriminately:
 
@@ -649,10 +667,11 @@ English clips split 54 development, 18 validation, and 18 locked. It includes:
 - accents and multiple speakers;
 - technical and educational vocabulary.
 
-The exact recordings are fixed by the licensed asset plan and manifests, which
-record source, revision, selected clip interval, license, checksum, duration, and
-speaker/document family. The public Open ASR material is screening context, not a
-substitute for this frozen educational corpus.
+The [dataset guide](datasets.md) defines the LibriSpeech, M³AV, EdAcc, and AMI
+source pools and the recommended allocation. The exact recordings are
+fixed by the manifests, which record source, revision, selected clip interval,
+license, checksum, duration, and speaker/document family. Public leaderboard
+scores are screening context; they do not replace this frozen corpus.
 
 A small fixed reliability set contains verified silence, music without lyrics,
 background noise, and other nonspeech audio. These controls are separate from the
@@ -831,13 +850,8 @@ peak_vram_mb
 
 The recognition, timestamp, reliability, and operational labels remain useful
 documentation categories, but they are not repeated as MLflow prefixes.
-Applicable standard/full uncertainty bounds attach to the same name:
-
-```text
-word_error_rate
-word_error_rate.ci_lower
-word_error_rate.ci_upper
-```
+Applicable standard/full uncertainty bounds use the shared MLflow suffix
+convention defined at the beginning of this document.
 
 Corpus WER/CER and their components, timestamp metrics, reliability rates, RTF,
 and sufficiently supported warm latency estimates receive clip-bootstrap
@@ -881,11 +895,24 @@ on-screen text without processing too many duplicate frames?
 
 ### Candidates
 
-| Policy | Behavior | Why it is included |
+The experiment compares three frame-selection strategies, but it does not test
+only one arbitrary setting for each strategy. Development produces nine
+configurations:
+
+| Strategy | Development configurations | Question answered |
 |---|---|---|
-| Fixed interval | One frame every ten seconds | Predictable-cost baseline. |
-| Scene change | A frame when FFmpeg scene score exceeds 0.35 | Avoids repeatedly parsing unchanged slides. |
-| Hybrid | Scene changes plus the first frame and a maximum ten-second gap | Recovers gradual changes that do not trigger a strong scene cut. |
+| Fixed interval | One frame every 5, 10, or 20 seconds | How much visual coverage is gained by sampling more frequently, and what does that coverage cost? |
+| Scene change | FFmpeg scene threshold 0.30, 0.40, or 0.50 | How sensitive should transition detection be before extra frames become mostly redundant? |
+| Hybrid | The selected scene threshold plus a maximum gap of 5, 10, or 20 seconds | How frequently must the fallback sample gradual or static scenes that never produce a strong transition? |
+
+Every configuration includes the first frame. This protects titles, opening
+slides, and initial screen state even when no early scene transition occurs.
+
+These are nine configurations of three strategies, not nine unrelated
+strategies. The hybrid configurations use the scene threshold selected from the
+scene-change comparison. Testing every scene threshold with every maximum gap
+would produce 15 configurations and answer an additional interaction question
+that is not required in the first benchmark.
 
 ### Data
 
@@ -894,7 +921,10 @@ videos split 18 development, 6 validation, and 6 locked. Every video has a
 verified transcript, duration, visible text, and visual timestamps. The set
 includes slides, screen recordings, presenter video, gradual text changes, and
 repeated scenes. Exact sources, revisions, licenses, clip intervals, and checksums
-are frozen in the manifests.
+are frozen in the manifests. The [dataset guide](datasets.md) defines the
+SlideSpeech, AVLectures, and EduMind-owned allocation and explains why public
+subtitles and OCR must be manually corrected rather than accepted as ground
+truth.
 
 ### Execution
 
@@ -907,19 +937,109 @@ combine timestamped audio and visual segments
 → compare with transcript and visible-text references
 ```
 
-Only the keyframe policy changes. Reopening parser or ASR selection here would
-make it unclear whether a difference came from frame selection, OCR, or speech
-recognition. All three policies run on development; engineer-selected finalists
-then run on validation.
+Only the keyframe configuration changes. Reopening parser or ASR selection here
+would make it unclear whether a difference came from frame selection, visual
+parsing, or speech recognition.
+
+Development proceeds in this order:
+
+1. Run the fixed-interval configurations at 5, 10, and 20 seconds.
+2. Run the scene-change configurations at thresholds 0.30, 0.40, and 0.50.
+3. Review visual quality and processing cost, then record one scene threshold.
+4. Combine that threshold with maximum gaps of 5, 10, and 20 seconds and run
+   the three hybrid configurations.
+5. Compare the resulting nine development configurations. Record finalists;
+   do not calculate an automatic overall score.
+6. Run only the engineer-selected finalists on validation. Run one selected
+   configuration once on the locked test.
+
+The numerical settings are initial development search points, not universal
+constants. Five seconds is the high-coverage/high-cost interval, 20 seconds is
+the low-cost/low-coverage interval, and 10 seconds is the midpoint. FFmpeg's
+[scene-filter guidance](https://ffmpeg.org/pipermail/ffmpeg-cvslog/2012-June/051105.html)
+defines the score on a 0-to-1 scale and identifies roughly 0.3 to 0.5 as a
+practical range; 0.30, 0.40, and 0.50 sample that range without a large grid.
+The hybrid gaps reuse the fixed-interval values so the fallback cost can be
+compared directly with the fixed strategy. The selected values are valid only
+for the recorded educational-video corpus.
 
 ### Metrics and why they are used
 
 | Role | Metrics | Why they are needed |
 |---|---|---|
-| Primary | Visual Text F1, Complete Content Recall, Audio/Visual Alignment MAE | Measures visible-text quality, total recovered educational content, and timestamp usefulness. |
-| Secondary | Visual Text Precision/Recall, Duplicate Visual Text Rate, Timestamp Coverage | Separates missing text from extra or repeated frames and shows whether alignment coverage is adequate. |
+| Primary | Visual Content F1; Visual Timestamp Boundary MAE with Visual Timestamp Alignment Coverage | Measures whether useful on-screen text was recovered and whether it was placed at a useful time. MAE and coverage must be interpreted together. |
+| Supporting | Visual Content Precision/Recall | Explains whether a low F1 came from unsupported extracted text or missed visible text. |
+| Reliability | Duplicate Visual Text Rate | Shows whether repeatedly selected unchanged frames duplicate the same content. |
 | Diagnostic | Frozen-ASR Transcript WER, recorded once for the shared ASR output | Confirms the audio input to every policy; it is not used to compare keyframe policies because it is constant. |
-| Operational | Real-Time Factor, cold load, p50/p95 video latency, peak RAM, peak VRAM | Measures complete extraction cost. |
+| Operational | Real-Time Factor, p50/p95 warm video latency, cold pipeline-load time, peak process-tree RAM, peak VRAM, mean selected frames per video | Measures complete extraction cost and reveals why one keyframe configuration costs more than another. |
+
+Spoken and visible tokens remain separate. A video's transcript usually
+contains far more words than its frames, so one combined recall value would be
+dominated by audio and could hide a poor keyframe policy. The isolated video
+comparison therefore scores visible content and its timing; the usefulness of
+the combined audio-and-visual result is evaluated later in the end-to-end
+retrieval experiment.
+
+### MLflow result structure
+
+Video uses `EduMind / extraction`. The nine development configurations are
+created by three ordered comparisons so the hybrid run can consume the
+engineer-selected scene threshold:
+
+```text
+MLflow experiment: EduMind / extraction
+├── parent: extraction-video-development-fixed-<timestamp>
+│   ├── child: video-fixed-5s
+│   ├── child: video-fixed-10s
+│   └── child: video-fixed-20s
+├── parent: extraction-video-development-scene-<timestamp>
+│   ├── child: video-scene-0.30
+│   ├── child: video-scene-0.40
+│   └── child: video-scene-0.50
+├── parent: extraction-video-development-hybrid-<timestamp>
+│   ├── child: video-hybrid-<selected-threshold>-5s
+│   ├── child: video-hybrid-<selected-threshold>-10s
+│   └── child: video-hybrid-<selected-threshold>-20s
+├── parent: extraction-video-validation-<timestamp>
+│   └── one child per engineer-selected finalist
+└── parent: extraction-video-locked-test-<timestamp>
+    └── one child for the selected configuration
+```
+
+Each child is one complete keyframe configuration evaluated on every video in
+that phase. It is not split into child runs for individual videos or metrics.
+The child logs these aggregate metrics:
+
+```text
+visual_content_precision
+visual_content_recall
+visual_content_f1
+visual_timestamp_boundary_mae_seconds
+visual_timestamp_alignment_coverage
+duplicate_visual_text_rate
+
+real_time_factor
+p50_warm_video_latency_seconds
+p95_warm_video_latency_seconds
+cold_pipeline_load_seconds
+peak_process_tree_ram_mb
+peak_vram_mb
+mean_selected_frames_per_video
+```
+
+The parent logs `transcript_word_error_rate` once for the frozen ASR output,
+because repeating the same value in all nine children would falsely suggest
+that it distinguishes keyframe configurations. Each child stores per-video
+quality and timing rows in `samples.parquet`, per-repetition timings in
+`timings.parquet`, and the complete aggregate result in `candidate.json`.
+In standard/full runs, Visual Content Precision/Recall/F1, Visual Timestamp
+Alignment Coverage, Duplicate Visual Text Rate, Real-Time Factor, and Mean
+Selected Frames per Video receive video-bootstrap intervals. Visual Timestamp
+Boundary MAE receives an interval over videos with valid alignments. Warm p50
+and p95 latency receive intervals when enough independent videos support the
+percentiles. The parent's Frozen-ASR Transcript WER receives an interval from
+the same videos. Cold load and observed RAM/VRAM peaks do not receive fabricated
+intervals.
 
 The selected keyframe policy joins the selected parser and ASR as the provisional
 video-extraction profile.
