@@ -17,7 +17,6 @@ paddlepaddle==3.3.1
 paddlex[ocr]==3.7.0
 docling[easyocr,rapidocr,vlm]==2.117.0
 nemo_toolkit[asr]==3.0.0
-qwen-asr==0.0.6
 moss-transcribe-diarize @ git+https://github.com/OpenMOSS/MOSS-Transcribe-Diarize.git@e607537b1b870475e7898969d40b864de8b691b6
 accelerate==1.12.0
 soundfile==0.13.1

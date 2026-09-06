@@ -71,7 +71,7 @@ ASR_PROFILES = {
         ASRProfile(
             "qwen3-asr-1.7b-aligned",
             "Qwen/Qwen3-ASR-1.7B-hf",
-            "qwen-asr",
+            "qwen-transformers",
             "deterministic-english",
             "qwen-forced-aligner-0.6b",
         ),
@@ -99,7 +99,7 @@ def build_runtime(
         "transformers": WhisperRuntime,
         "nemo": NemoRuntime,
         "moss": MossRuntime,
-        "qwen-asr": QwenRuntime,
+        "qwen-transformers": QwenRuntime,
     }[profile.backend]
     return runtime_type(profile, model_path, device, aligner_path)
 
@@ -286,69 +286,85 @@ class QwenRuntime(BaseRuntime):
     def _load_asr(self) -> None:
         try:
             import torch
-            from qwen_asr import Qwen3ASRModel
+            from transformers import AutoModelForMultimodalLM, AutoProcessor
         except ModuleNotFoundError as exc:
-            raise MissingDependencyError("The official qwen-asr runtime is required") from exc
+            raise MissingDependencyError("Transformers 5.13 or newer is required") from exc
         dtype = torch.bfloat16 if self.device == "cuda" else torch.float32
         self.dtype = str(dtype).removeprefix("torch.")
-        self._runtime = Qwen3ASRModel.from_pretrained(
+        processor = AutoProcessor.from_pretrained(
             str(self.model_path),
-            dtype=dtype,
-            device_map="cuda:0" if self.device == "cuda" else "cpu",
-            max_inference_batch_size=1,
-            max_new_tokens=2048,
+            local_files_only=True,
         )
-        _assert_device(self._runtime, self.device)
+        model = AutoModelForMultimodalLM.from_pretrained(
+            str(self.model_path), dtype=dtype, local_files_only=True
+        ).to(self.device).eval()
+        _assert_device(model, self.device)
+        self._runtime = (model, processor)
 
     def transcribe(self, source: Path) -> Transcript:
         if self._runtime is None:
             self._load_asr()
-        transcription = self._runtime.transcribe(audio=str(source), language="English")
-        text = str(getattr(transcription[0], "text", transcription[0])).strip()
+        import torch
+
+        model, processor = self._runtime
+        inputs = processor.apply_transcription_request(
+            audio=str(source), language="English"
+        ).to(model.device, model.dtype)
+        with torch.inference_mode():
+            output_ids = model.generate(**inputs, max_new_tokens=2048, do_sample=False)
+        generated = output_ids[:, inputs["input_ids"].shape[1] :]
+        parsed = processor.decode(generated, return_format="parsed")[0]
+        text = str(parsed.get("transcription", "")).strip()
         self._runtime = None
+        del model, processor
         _release_memory()
         if not text:
             return Transcript("", ())
-        aligner = self._load_aligner()
+        aligner_model, aligner_processor = self._load_aligner()
         try:
-            aligned = aligner.align(audio=str(source), text=text, language="English")
+            aligner_inputs, word_lists = aligner_processor.prepare_forced_aligner_inputs(
+                audio=str(source), transcript=text, language="English"
+            )
+            aligner_inputs = aligner_inputs.to(aligner_model.device, aligner_model.dtype)
+            with torch.inference_mode():
+                outputs = aligner_model(**aligner_inputs)
+            aligned = aligner_processor.decode_forced_alignment(
+                logits=outputs.logits,
+                input_ids=aligner_inputs["input_ids"],
+                word_lists=word_lists,
+                timestamp_token_id=aligner_model.config.timestamp_token_id,
+            )[0]
         finally:
-            del aligner
+            del aligner_model, aligner_processor
             _release_memory()
-        if (
-            not isinstance(aligned, Sequence)
-            or isinstance(aligned, (str, bytes))
-            or len(aligned) != 1
-        ):
-            raise RuntimeError("Qwen forced aligner returned an unexpected batch result")
-        items = getattr(aligned[0], "items", None)
-        if not isinstance(items, Sequence) or isinstance(items, (str, bytes)) or not items:
+        if not isinstance(aligned, Sequence) or isinstance(aligned, (str, bytes)) or not aligned:
             raise RuntimeError("Qwen forced aligner returned no timestamped items")
         segments = tuple(
             {
-                "text": str(getattr(item, "text", getattr(item, "word", ""))).strip(),
-                "start": float(getattr(item, "start_time", getattr(item, "start", -1))),
-                "end": float(getattr(item, "end_time", getattr(item, "end", -1))),
+                "text": str(_item_value(item, "text", _item_value(item, "word", ""))).strip(),
+                "start": float(_item_value(item, "start_time", _item_value(item, "start", -1))),
+                "end": float(_item_value(item, "end_time", _item_value(item, "end", -1))),
             }
-            for item in items
-            if str(getattr(item, "text", getattr(item, "word", ""))).strip()
+            for item in aligned
+            if str(_item_value(item, "text", _item_value(item, "word", ""))).strip()
         )
         return Transcript(text, segments)
 
     def _load_aligner(self):
         try:
             import torch
-            from qwen_asr import Qwen3ForcedAligner
+            from transformers import AutoModelForTokenClassification, AutoProcessor
         except ModuleNotFoundError as exc:
-            raise MissingDependencyError("The official qwen-asr runtime is required") from exc
+            raise MissingDependencyError("Transformers 5.13 or newer is required") from exc
         dtype = torch.bfloat16 if self.device == "cuda" else torch.float32
-        aligner = Qwen3ForcedAligner.from_pretrained(
-            str(self.aligner_path),
-            dtype=dtype,
-            device_map="cuda:0" if self.device == "cuda" else "cpu",
+        processor = AutoProcessor.from_pretrained(
+            str(self.aligner_path), local_files_only=True
         )
-        _assert_device(aligner, self.device)
-        return aligner
+        model = AutoModelForTokenClassification.from_pretrained(
+            str(self.aligner_path), dtype=dtype, local_files_only=True
+        ).to(self.device).eval()
+        _assert_device(model, self.device)
+        return model, processor
 
 
 class ExperimentalAudioExtractor:
@@ -425,6 +441,10 @@ def _nemo_segment(item: Mapping[str, object]) -> dict[str, object]:
     }
 
 
+def _item_value(item: object, name: str, default: object) -> object:
+    return item.get(name, default) if isinstance(item, Mapping) else getattr(item, name, default)
+
+
 def _forced_aligner_path(entry: Mapping[str, object]) -> Path:
     submodels = entry.get("submodels", [])
     if isinstance(submodels, Sequence) and not isinstance(submodels, (str, bytes)):
@@ -472,7 +492,7 @@ def _runtime_version(backend: str) -> str:
         "transformers": "transformers",
         "nemo": "nemo_toolkit",
         "moss": "moss-transcribe-diarize",
-        "qwen-asr": "qwen-asr",
+        "qwen-transformers": "transformers",
     }[backend]
     try:
         return version(distribution)

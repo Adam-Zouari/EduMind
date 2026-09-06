@@ -13,6 +13,7 @@ from experiments.benchmarks.common.resources import ResourceMonitor
 from experiments.benchmarks.extraction.audio.adapters import build_runtime
 from experiments.benchmarks.extraction.audio.evaluate import (
     aggregate,
+    normalize_transcript,
     score_nonspeech,
     score_speech,
 )
@@ -61,12 +62,17 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
                         }
                     )
                 quality, quality_latency = outputs[0]
+                normalized_outputs = [
+                    normalize_transcript(transcript.text)
+                    for transcript, _ in outputs
+                ]
                 sample_rows.append(
                     score_speech(
                         item,
                         quality.text,
                         quality.segments,
                         quality_latency_seconds=quality_latency,
+                        repeat_transcript_agreement=len(set(normalized_outputs)) == 1,
                         warnings=quality.warnings,
                     )
                 )
@@ -104,6 +110,7 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
         "intervals": intervals,
         "parameters": {
             **runtime.parameters(),
+            "seed": int(payload["seed"]),
             "warmups": int(payload["warmups"]),
             "repetitions": int(payload["repetitions"]),
         },

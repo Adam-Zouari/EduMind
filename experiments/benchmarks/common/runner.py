@@ -69,6 +69,7 @@ def run_benchmark(
     operational_prefix: str = "operational.",
     paired_comparisons: bool = True,
     candidate_artifact_name: str | None = None,
+    nullable_metrics: Sequence[str] = (),
 ) -> BenchmarkResult:
     if not plan.candidates:
         raise ValueError("A benchmark plan must contain at least one candidate")
@@ -86,6 +87,11 @@ def run_benchmark(
     unknown_paired = sorted(set(paired) - set(directions))
     if unknown_paired:
         raise ValueError("Paired metrics have no declared direction: " + ", ".join(unknown_paired))
+    unknown_nullable = sorted(set(nullable_metrics) - set(required))
+    if unknown_nullable:
+        raise ValueError(
+            "Nullable metrics are not required metrics: " + ", ".join(unknown_nullable)
+        )
     run_name = f"{plan.suite}-{plan.stage}-{time.strftime('%Y%m%d-%H%M%S')}"
     run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     directory = artifact_root / plan.suite / plan.stage / run_id
@@ -169,6 +175,7 @@ def run_benchmark(
                     monitor_resources,
                     operational_prefix,
                     candidate_artifact_name,
+                    nullable_metrics,
                 )
             )
 
@@ -243,9 +250,10 @@ def _run_candidate(
     monitor_resources,
     operational_prefix,
     candidate_artifact_name,
+    nullable_metrics,
 ) -> CandidateResult:
     samples: list[SampleResult] = []
-    metrics: dict[str, float] = {}
+    metrics: dict[str, float | None] = {}
     intervals: dict[str, dict[str, float]] = {}
     operational: dict[str, float] = {}
     artifact_names: list[str] = []
@@ -302,7 +310,11 @@ def _run_candidate(
                 )
                 metrics.update(candidate_metrics)
             _validate_required_metrics(
-                metrics, operational, required_metrics, operational_prefix
+                metrics,
+                operational,
+                required_metrics,
+                operational_prefix,
+                nullable_metrics,
             )
             result = CandidateResult(
                 candidate,
@@ -315,6 +327,8 @@ def _run_candidate(
             )
             tracking.metrics(
                 {
+                    key: value
+                    for key, value in {
                     **metrics,
                     **{
                         f"{name}.ci_{bound}": values[bound]
@@ -322,6 +336,8 @@ def _run_candidate(
                         for bound in ("lower", "upper")
                     },
                     **{f"{operational_prefix}{key}": value for key, value in operational.items()},
+                    }.items()
+                    if _finite_number(value)
                 }
             )
             tracking.parameters({"candidate_status": "success"})
@@ -478,16 +494,28 @@ def _validate_sample_ids(samples: list[SampleResult]) -> None:
 
 
 def _validate_required_metrics(
-    metrics, operational, required_metrics, operational_prefix="operational."
+    metrics,
+    operational,
+    required_metrics,
+    operational_prefix="operational.",
+    nullable_metrics=(),
 ) -> None:
     values = {
         **metrics,
         **{f"{operational_prefix}{name}": value for name, value in operational.items()},
     }
     missing = [name for name in required_metrics if name not in values]
+    nullable = set(nullable_metrics)
     invalid = [
-        name for name in required_metrics if name in values and not _finite_number(values[name])
+        name
+        for name in required_metrics
+        if name in values
+        and values[name] is not None
+        and not _finite_number(values[name])
     ]
+    invalid.extend(
+        name for name in required_metrics if name in values and values[name] is None and name not in nullable
+    )
     problems = []
     if missing:
         problems.append("missing: " + ", ".join(missing))

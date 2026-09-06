@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
+
+from experiments.benchmarks.common.metrics import normalize_prose
 
 METRIC_DIRECTIONS = {
     "word_error_rate": "min",
@@ -18,6 +19,7 @@ METRIC_DIRECTIONS = {
     "timestamp_alignment_coverage": "max",
     "empty_transcript_rate": "min",
     "nonspeech_false_transcription_rate": "min",
+    "repeat_transcript_agreement_rate": "max",
     "real_time_factor": "min",
     "p50_warm_clip_latency_seconds": "min",
     "p95_warm_clip_latency_seconds": "min",
@@ -54,12 +56,7 @@ class Alignment:
 def normalize_transcript(text: str) -> str:
     """Apply only the frozen evaluator normalization."""
 
-    normalized = unicodedata.normalize("NFC", text).casefold()
-    without_punctuation = "".join(
-        " " if unicodedata.category(character).startswith("P") else character
-        for character in normalized
-    )
-    return " ".join(without_punctuation.split())
+    return normalize_prose(text)
 
 
 def align_sequences(reference: Sequence[str], prediction: Sequence[str]) -> Alignment:
@@ -113,6 +110,7 @@ def score_speech(
     predicted_segments: Sequence[Mapping[str, object]],
     *,
     quality_latency_seconds: float,
+    repeat_transcript_agreement: bool,
     warnings: Sequence[str] = (),
 ) -> dict[str, object]:
     reference = normalize_transcript(str(item["reference"]))
@@ -141,6 +139,7 @@ def score_speech(
         **timestamp,
         "empty_transcript": int(not predicted_words),
         "nonspeech_false_transcription": None,
+        "repeat_transcript_agreement": int(repeat_transcript_agreement),
         "quality_latency_seconds": quality_latency_seconds,
         "warnings": list(warnings),
     }
@@ -172,6 +171,7 @@ def score_nonspeech(
         "timestamp_boundary_count": None,
         "empty_transcript": None,
         "nonspeech_false_transcription": int(bool(normalize_transcript(prediction))),
+        "repeat_transcript_agreement": None,
         "quality_latency_seconds": latency_seconds,
         "warnings": list(warnings),
     }
@@ -186,7 +186,7 @@ def aggregate(
     peak_vram_mb: float,
     resamples: int,
     seed: int,
-) -> tuple[dict[str, float], dict[str, dict[str, float]]]:
+) -> tuple[dict[str, float | None], dict[str, dict[str, float]]]:
     speech = [row for row in sample_rows if row["sample_type"] == "speech"]
     nonspeech = [row for row in sample_rows if row["sample_type"] == "nonspeech"]
     metrics = _aggregate_rows(speech, nonspeech, timing_rows)
@@ -210,9 +210,7 @@ def aggregate(
     return metrics, intervals
 
 
-def _aggregate_rows(
-    speech, nonspeech, timing_rows, *, allow_undefined_timestamp_mae: bool = False
-) -> dict[str, float | None]:
+def _aggregate_rows(speech, nonspeech, timing_rows) -> dict[str, float | None]:
     if not speech:
         raise ValueError("ASR aggregation requires speech samples")
     if not nonspeech:
@@ -237,8 +235,6 @@ def _aggregate_rows(
     boundary_count = _sum(speech, "timestamp_boundary_count")
     if not reference_segments:
         raise ValueError("ASR references must contain timed segments")
-    if (not aligned_segments or not boundary_count) and not allow_undefined_timestamp_mae:
-        raise ValueError("No reference timestamp segment could be aligned")
     if not timing_rows:
         raise ValueError("ASR aggregation requires measured timing rows")
     per_clip: dict[str, list[float]] = {}
@@ -264,6 +260,10 @@ def _aggregate_rows(
             nonspeech, "nonspeech_false_transcription"
         )
         / len(nonspeech),
+        "repeat_transcript_agreement_rate": _sum(
+            speech, "repeat_transcript_agreement"
+        )
+        / len(speech),
         "real_time_factor": measured_seconds / measured_audio_seconds,
         "p50_warm_clip_latency_seconds": float(np.quantile(medians, 0.50)),
         "p95_warm_clip_latency_seconds": float(np.quantile(medians, 0.95)),
@@ -294,7 +294,6 @@ def _bootstrap(speech, nonspeech, timing_rows, *, resamples: int, seed: int):
             sampled_speech_with_ids,
             sampled_nonspeech,
             sampled_timings,
-            allow_undefined_timestamp_mae=True,
         )
         for name in estimates:
             value = values[name]
@@ -303,7 +302,7 @@ def _bootstrap(speech, nonspeech, timing_rows, *, resamples: int, seed: int):
     result = {}
     for name, values in estimates.items():
         if not values:
-            raise ValueError(f"Bootstrap produced no valid estimates for {name}")
+            continue
         result[name] = {
             "estimate": float(np.mean(values)),
             "lower": float(np.quantile(values, 0.025)),

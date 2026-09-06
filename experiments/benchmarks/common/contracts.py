@@ -61,7 +61,7 @@ class CandidateResult:
     candidate: str
     status: str
     fingerprint: str
-    metrics: Mapping[str, float]
+    metrics: Mapping[str, float | None]
     intervals: Mapping[str, Mapping[str, float]]
     samples: tuple[SampleResult, ...]
     operational: Mapping[str, float]

@@ -46,6 +46,7 @@ def _speech(sample_id: str, reference: str, prediction: str):
         prediction,
         predicted,
         quality_latency_seconds=0.5,
+        repeat_transcript_agreement=sample_id != "two",
     )
 
 
@@ -178,6 +179,7 @@ def test_asr_aggregation_pools_counts_and_emits_the_exact_contract() -> None:
     assert metrics["word_deletion_rate"] == pytest.approx(1 / 5)
     assert metrics["word_insertion_rate"] == 0.0
     assert metrics["nonspeech_false_transcription_rate"] == 0.5
+    assert metrics["repeat_transcript_agreement_rate"] == 0.5
     assert "cold_model_load_seconds" not in intervals
     repeated = aggregate(
         samples,
@@ -236,13 +238,14 @@ def test_timestamp_alignment_accepts_unequal_segment_counts() -> None:
             {"text": "beta", "start": 1.1, "end": 1.9},
         ],
         quality_latency_seconds=0.5,
+        repeat_transcript_agreement=True,
     )
     assert row["aligned_timed_segment_count"] == 2
     assert row["timestamp_boundary_count"] == 4
     assert row["timestamp_boundary_error_seconds"] == pytest.approx(0.4)
 
 
-def test_missing_or_unaligned_timestamps_fail_instead_of_becoming_zero() -> None:
+def test_missing_timestamps_fail_but_unaligned_mae_is_null() -> None:
     with pytest.raises(ValueError, match="timestamp segments are missing"):
         score_speech(
             {
@@ -254,6 +257,7 @@ def test_missing_or_unaligned_timestamps_fail_instead_of_becoming_zero() -> None
             "alpha",
             [],
             quality_latency_seconds=0.1,
+            repeat_transcript_agreement=True,
         )
     rows = [
         score_speech(
@@ -266,6 +270,7 @@ def test_missing_or_unaligned_timestamps_fail_instead_of_becoming_zero() -> None
             "beta",
             [{"text": "beta", "start": 0.0, "end": 1.0}],
             quality_latency_seconds=0.1,
+            repeat_transcript_agreement=True,
         ),
         score_nonspeech(
             {"id": "silence", "duration_seconds": 1.0, "nonspeech_kind": "silence"},
@@ -273,16 +278,18 @@ def test_missing_or_unaligned_timestamps_fail_instead_of_becoming_zero() -> None
             latency_seconds=0.1,
         ),
     ]
-    with pytest.raises(ValueError, match="No reference timestamp segment"):
-        aggregate(
-            rows,
-            _timings("unaligned"),
-            cold_model_load_seconds=1.0,
-            peak_process_tree_ram_mb=1.0,
-            peak_vram_mb=0.0,
-            resamples=0,
-            seed=42,
-        )
+    metrics, intervals = aggregate(
+        rows,
+        _timings("unaligned"),
+        cold_model_load_seconds=1.0,
+        peak_process_tree_ram_mb=1.0,
+        peak_vram_mb=0.0,
+        resamples=0,
+        seed=42,
+    )
+    assert metrics["timestamp_alignment_coverage"] == 0.0
+    assert metrics["timestamp_boundary_mae_seconds"] is None
+    assert "timestamp_boundary_mae_seconds" not in intervals
 
 
 def test_audio_registry_and_duration_limit_are_frozen() -> None:
@@ -293,7 +300,7 @@ def test_audio_registry_and_duration_limit_are_frozen() -> None:
         "moss-transcribe-diarize",
         "qwen3-asr-1.7b-aligned",
     }
-    assert len(METRIC_DIRECTIONS) == 15
+    assert len(METRIC_DIRECTIONS) == 16
     speech = [
         {
             "id": "too-long",
@@ -622,21 +629,56 @@ def test_authoritative_audio_split_requires_all_condition_groups() -> None:
 
 
 def test_qwen_forced_aligner_uses_official_result_items(monkeypatch) -> None:
+    import torch
+
+    class Inputs(dict):
+        def to(self, *_args):
+            return self
+
+    class ASRProcessor:
+        def apply_transcription_request(self, **_kwargs):
+            return Inputs(input_ids=torch.tensor([[1, 2]]))
+
+        def decode(self, _tokens, *, return_format):
+            assert return_format == "parsed"
+            return [{"language": "English", "transcription": "hello world"}]
+
+    class ASRModel:
+        device = torch.device("cpu")
+        dtype = torch.float32
+
+        def generate(self, **_kwargs):
+            return torch.tensor([[1, 2, 3]])
+
+    class AlignerInputs(dict):
+        def to(self, *_args):
+            return self
+
+    class AlignerProcessor:
+        def prepare_forced_aligner_inputs(self, **_kwargs):
+            return AlignerInputs(input_ids=torch.tensor([[1, 2]])), [["hello", "world"]]
+
+        def decode_forced_alignment(self, **_kwargs):
+            return [[
+                SimpleNamespace(text="hello", start_time=0.0, end_time=0.4),
+                SimpleNamespace(text="world", start_time=0.5, end_time=1.0),
+            ]]
+
+    class AlignerModel:
+        device = torch.device("cpu")
+        dtype = torch.float32
+        config = SimpleNamespace(timestamp_token_id=1)
+
+        def __call__(self, **_kwargs):
+            return SimpleNamespace(logits=torch.tensor([0.0]))
+
     profile = ASR_PROFILES["qwen3-asr-1.7b-aligned"]
     runtime = QwenRuntime(profile, Path("asr"), "cpu", Path("aligner"))
-    runtime._runtime = SimpleNamespace(
-        transcribe=lambda **_kwargs: [SimpleNamespace(text="hello world")]
-    )
-    aligned = SimpleNamespace(
-        items=[
-            SimpleNamespace(text="hello", start_time=0.0, end_time=0.4),
-            SimpleNamespace(text="world", start_time=0.5, end_time=1.0),
-        ]
-    )
+    runtime._runtime = (ASRModel(), ASRProcessor())
     monkeypatch.setattr(
         runtime,
         "_load_aligner",
-        lambda: SimpleNamespace(align=lambda **_kwargs: [aligned]),
+        lambda: (AlignerModel(), AlignerProcessor()),
     )
 
     transcript = runtime.transcribe(Path("audio.wav"))

@@ -137,6 +137,10 @@ def run(
                 "encoding": "PCM signed 16-bit little-endian",
                 "maximum_duration_seconds": 30,
                 "ffmpeg_version": ffmpeg_version,
+                "ffmpeg_commands": {
+                    str(item["id"]): item["ffmpeg_command"]
+                    for item in [*canonical_speech, *canonical_controls]
+                },
                 "speech_manifest_checksum": speech_manifest.fingerprint,
                 "reliability_manifest_checksum": reliability_manifest.fingerprint,
                 "canonical_checksums": {
@@ -179,6 +183,9 @@ def run(
                 "selection_revision": lock_entry.get("selection_revision", ""),
                 "model_path": lock_entry.get("model_path", ""),
                 "data_split": split,
+                "ffmpeg_version": ffmpeg_version,
+                "canonical_audio": "mono 16 kHz PCM WAV",
+                "maximum_duration_seconds": 30,
                 "speech_manifest_checksum": speech_manifest.fingerprint,
                 "reliability_manifest_checksum": reliability_manifest.fingerprint,
             }
@@ -239,6 +246,7 @@ def run(
             operational_prefix="",
             paired_comparisons=False,
             candidate_artifact_name="candidate.json",
+            nullable_metrics=("timestamp_boundary_mae_seconds",),
         )
 
 
@@ -302,26 +310,24 @@ def _canonicalize(samples: Sequence[Mapping[str, object]], directory: Path):
         if not source.is_file() or not expected or sha256_file(source) != expected:
             raise ValueError(f"Missing or invalid audio asset for {item.get('id')}: {source}")
         destination = directory / f"{index:04d}.wav"
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-y",
-                "-i",
-                str(source),
-                "-vn",
-                "-ac",
-                "1",
-                "-ar",
-                "16000",
-                "-c:a",
-                "pcm_s16le",
-                str(destination),
-            ],
-            check=True,
-        )
+        command = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(source),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "pcm_s16le",
+            str(destination),
+        ]
+        subprocess.run(command, check=True)
         duration = _wav_duration(destination)
         if duration > 30.0 + 1e-6:
             raise ValueError(f"Audio sample {item['id']} exceeds the 30-second limit")
@@ -333,6 +339,7 @@ def _canonicalize(samples: Sequence[Mapping[str, object]], directory: Path):
             {
                 "canonical_path": str(destination.resolve()),
                 "canonical_sha256": sha256_file(destination),
+                "ffmpeg_command": command,
                 "duration_seconds": duration,
             }
         )
