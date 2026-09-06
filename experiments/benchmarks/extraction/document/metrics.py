@@ -21,6 +21,7 @@ from edumind.common.paths import PROJECT_ROOT
 from edumind.extraction import ExtractedDocument, ExtractedSegment, SegmentKind
 from experiments.benchmarks.common.metrics import (
     character_error_rate,
+    normalize_prose,
     normalized_tokens,
     word_error_rate,
 )
@@ -66,7 +67,9 @@ class DocumentEvaluation:
     groups: tuple[str, ...]
     metrics: dict[str, float] = field(default_factory=dict)
     counts: dict[str, tuple[int, int, int]] = field(default_factory=dict)
-    table_scores: list[tuple[float, float]] = field(default_factory=list)
+    table_scores: list[tuple[float, float, float, float, float]] = field(
+        default_factory=list
+    )
     formula_scores: list[float] = field(default_factory=list)
 
 
@@ -283,8 +286,8 @@ def _reference_from_mapping(payload: Mapping[str, object]) -> ReferenceDocument:
 
 
 def _text_metrics(reference: ReferenceDocument, hypothesis: str) -> dict[str, float]:
-    expected = _canonical(reference.text)
-    observed = _canonical(hypothesis)
+    expected = normalize_prose(_canonical(reference.text))
+    observed = normalize_prose(_canonical(hypothesis))
     precision, recall, f1 = _content_scores(expected, observed)
     return {
         "text.content_precision": precision,
@@ -412,11 +415,24 @@ def _score_structured_kind(
     if target is SegmentKind.TABLE and references:
         for index, item in enumerate(references):
             prediction = predictions[by_reference[index]] if index in by_reference else None
-            content = _content_f1(item.text, prediction.text if prediction else "")
-            structure = _teds_structure(item.html or "", _table_html(prediction)) if prediction else 0.0
-            result.table_scores.append((content, structure))
-        result.metrics["tables.content_f1"] = float(np.mean([value[0] for value in result.table_scores]))
-        result.metrics["tables.structure_score"] = float(np.mean([value[1] for value in result.table_scores]))
+            content = _content_scores(item.text, prediction.text if prediction else "")
+            full_teds = _teds(item.html or "", _table_html(prediction)) if prediction else 0.0
+            teds_s = (
+                _teds(item.html or "", _table_html(prediction), structure_only=True)
+                if prediction
+                else 0.0
+            )
+            result.table_scores.append((*content, full_teds, teds_s))
+        for name, index in (
+            ("tables.content_precision", 0),
+            ("tables.content_recall", 1),
+            ("tables.content_f1", 2),
+            ("tables.teds", 3),
+            ("tables.teds_s", 4),
+        ):
+            result.metrics[name] = float(
+                np.mean([value[index] for value in result.table_scores])
+            )
     if target is SegmentKind.FORMULA and references:
         for index, item in enumerate(references):
             prediction = predictions[by_reference[index]] if index in by_reference else None
@@ -448,8 +464,14 @@ def _aggregate_group(records: Sequence[DocumentEvaluation]) -> dict[str, float]:
         values[f"{category}.detection_f1" if category != "layout" else "layout.element_f1"] = f1
     table_scores = [score for record in records for score in record.table_scores]
     if table_scores:
-        values["tables.content_f1"] = float(np.mean([value[0] for value in table_scores]))
-        values["tables.structure_score"] = float(np.mean([value[1] for value in table_scores]))
+        for name, index in (
+            ("tables.content_precision", 0),
+            ("tables.content_recall", 1),
+            ("tables.content_f1", 2),
+            ("tables.teds", 3),
+            ("tables.teds_s", 4),
+        ):
+            values[name] = float(np.mean([value[index] for value in table_scores]))
     formula_scores = [score for record in records for score in record.formula_scores]
     if formula_scores:
         values["formulas.recognition_similarity"] = float(np.mean(formula_scores))
@@ -571,11 +593,20 @@ def _document_fingerprint(document: ExtractedDocument) -> str:
     )
 
 
-def _teds_structure(reference_html: str, prediction_html: str) -> float:
+def _teds(
+    reference_html: str,
+    prediction_html: str,
+    *,
+    structure_only: bool = False,
+) -> float:
     if not reference_html or not prediction_html:
         return 0.0
     module = _official_module("table_metric")
-    return float(module.TEDS(structure_only=True).evaluate(_html(reference_html), _html(prediction_html)))
+    return float(
+        module.TEDS(structure_only=structure_only).evaluate(
+            _html(reference_html), _html(prediction_html)
+        )
+    )
 
 
 def _cdm(reference_latex: str, prediction_latex: str) -> float:

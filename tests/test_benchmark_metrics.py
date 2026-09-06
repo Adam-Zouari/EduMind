@@ -17,6 +17,7 @@ from experiments.benchmarks.common.metrics import (
     interval_overlap,
     merge_intervals,
     ndcg_at_k,
+    normalize_prose,
     paired_bootstrap_interval,
     precision_at_k,
     recall_at_k,
@@ -65,6 +66,8 @@ def test_error_and_answer_metrics() -> None:
     assert character_error_rate("cat", "cut") == pytest.approx(1 / 3)
     assert word_error_rate("the cat", "the dog") == pytest.approx(0.5)
     assert token_f1("red blue", "red green") == pytest.approx(0.5)
+    assert normalize_prose("  CAFÉ—Test!\n") == "café test"
+    assert normalize_prose("algo-\nrithm") == "algo rithm"
 
 
 def test_bootstrap_is_deterministic() -> None:
@@ -123,6 +126,16 @@ def test_extraction_text_metrics_have_known_ranges_and_directions() -> None:
     assert result.metrics["text.content_recall"] == 0.5
     assert result.metrics["reliability.structured_output_determinism"] == 1.0
 
+    equivalent = score_document(
+        {"id": "projection", "kind": "docx", "reference": "CAFÉ—based"},
+        _document(
+            "café based",
+            (ExtractedSegment("café based", 0, 10),),
+        ),
+    )
+    assert equivalent.metrics["text.character_error_rate"] == 0.0
+    assert equivalent.metrics["text.word_error_rate"] == 0.0
+
 
 def test_document_metrics_use_element_order_and_grouped_aggregates() -> None:
     text = "Heading\n\nParagraph"
@@ -156,6 +169,58 @@ def test_document_metrics_use_element_order_and_grouped_aggregates() -> None:
     assert metrics["text.docx.content_f1"] == 1.0
     assert metrics["text.docx_native.content_f1"] == 1.0
     assert intervals["text.content_f1"]["lower"] == 1.0
+
+
+def test_table_metrics_separate_detection_content_and_tree_similarity(monkeypatch) -> None:
+    from experiments.benchmarks.extraction.document import metrics as document_metrics
+
+    monkeypatch.setattr(
+        document_metrics,
+        "_teds",
+        lambda _reference, _prediction, *, structure_only=False: (
+            0.8 if not structure_only else 0.9
+        ),
+    )
+    document = _document(
+        "A extra",
+        (
+            ExtractedSegment(
+                "A extra",
+                0,
+                7,
+                element_id="table",
+                order=0,
+                kind=SegmentKind.TABLE,
+                structured_content={
+                    "rows": [["A", "extra"]],
+                    "html": "<table><tr><td>A</td><td>extra</td></tr></table>",
+                },
+            ),
+        ),
+    )
+    result = score_document(
+        {
+            "id": "table",
+            "kind": "docx",
+            "reference": "A missing",
+            "reference_elements": [
+                {
+                    "id": "table",
+                    "kind": "table",
+                    "text": "A missing",
+                    "order": 0,
+                    "html": "<table><tr><td>A</td><td>missing</td></tr></table>",
+                }
+            ],
+        },
+        document,
+    )
+    assert result.metrics["tables.detection_f1"] == 1.0
+    assert result.metrics["tables.content_precision"] == 0.5
+    assert result.metrics["tables.content_recall"] == 0.5
+    assert result.metrics["tables.content_f1"] == 0.5
+    assert result.metrics["tables.teds"] == 0.8
+    assert result.metrics["tables.teds_s"] == 0.9
 
 
 def test_section_and_structure_chunkers_return_exact_source_spans() -> None:

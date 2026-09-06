@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+import unicodedata
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
@@ -138,8 +139,19 @@ def word_error_rate(reference: str, hypothesis: str) -> float:
     return levenshtein(words, hypothesis.split()) / max(1, len(words))
 
 
+def normalize_prose(text: str) -> str:
+    """Project prose into a symmetric, evaluation-only comparison form."""
+
+    normalized = unicodedata.normalize("NFC", text).casefold()
+    without_punctuation = "".join(
+        " " if unicodedata.category(character).startswith("P") else character
+        for character in normalized
+    )
+    return " ".join(without_punctuation.split())
+
+
 def normalized_tokens(text: str) -> list[str]:
-    return re.findall(r"\w+", text.casefold())
+    return normalize_prose(text).split()
 
 
 def exact_match(answer: str, reference: str) -> float:

@@ -121,7 +121,33 @@ def evaluate_candidate(
                     ).items()
                 }
             )
-    parameters = {}
+    engine = candidate.partition("|")[0]
+    lock_name = {
+        "docling-standard-native": "docling-standard",
+        "docling-standard": "docling-standard",
+        "docling-vlm-granite-258m": "ibm-granite/granite-docling-258M",
+        "paddleocr-vl-1.6": "PaddlePaddle/PaddleOCR-VL-1.6",
+    }.get(engine, engine)
+    lock_entry = model_lock.get(lock_name, {})
+    parameters = {
+        "engine": engine,
+        "engine_revision": lock_entry.get("revision", "system"),
+        "model_path": lock_entry.get("model_path", ""),
+        "device": component_options.get("device", "cpu"),
+        "seed": plan.seed,
+        "warmups": plan.warmups,
+        "repetitions": plan.repetitions,
+        "normalization": "none",
+    }
+    if engine in {"docling-standard", "docling-standard-native"}:
+        parameters.update(
+            {
+                "language": "english",
+                "image_scale": 3.0,
+                "table_cell_matching": True,
+                "code_enrichment": False,
+            }
+        )
     for factor in candidate.split("|")[1:]:
         key, value = factor.split("=", 1)
         parameters[key] = value
@@ -162,7 +188,15 @@ def directions_for(items, document_kind, available):
     has_tables = any(element.kind.value == "table" for element in references)
     if has_tables:
         names.update(name for name in available if name.startswith("tables.detection_"))
-        names.update({"tables.content_f1", "tables.structure_score"})
+        names.update(
+            {
+                "tables.content_precision",
+                "tables.content_recall",
+                "tables.content_f1",
+                "tables.teds",
+                "tables.teds_s",
+            }
+        )
     has_formulas = any(element.kind.value == "formula" for element in references)
     if has_formulas:
         names.update(name for name in available if name.startswith("formulas.detection_"))
@@ -174,7 +208,7 @@ def primary_metrics(directions):
     preferred = (
         "text.content_f1", "text.reading_order_accuracy", "pages.page_content_f1",
         "layout.element_f1", "layout.element_type_accuracy", "layout.hierarchy_accuracy",
-        "tables.detection_f1", "tables.content_f1", "tables.structure_score",
+        "tables.detection_f1", "tables.content_f1", "tables.teds",
         "formulas.detection_f1", "formulas.exact_match",
     )
     return tuple(name for name in preferred if name in directions)
