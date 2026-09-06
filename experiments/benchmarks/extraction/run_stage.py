@@ -43,14 +43,11 @@ def main(stage: str, directory: Path) -> int:
     arguments = argument_parser.parse_args()
     if stage == "document":
         return _document_main(arguments, directory)
-    if arguments.profile != "smoke" and stage == "video":
-        if arguments.document_selection is None:
-            raise ValueError(
-                f"video {arguments.profile} requires --document-selection so parsing is frozen"
-            )
-    if arguments.profile != "smoke" and stage == "video" and arguments.audio_selection is None:
-        raise ValueError(
-            f"video {arguments.profile} requires --audio-selection so ASR is frozen"
+    if stage == "video" and arguments.profile != "smoke":
+        raise RuntimeError(
+            "Authoritative video runs are deferred until the downloaded data fixes "
+            "the occurrence-matching and ASR window-stitching rules; use --profile smoke "
+            "only for the current wiring check."
         )
     candidates = resolved_candidates(
         directory / "candidates.yaml", arguments.profile, arguments.shortlist

@@ -8,7 +8,6 @@ from experiments.benchmarks.common.metrics import word_error_rate
 from experiments.benchmarks.extraction.video.metrics import (
     content_scores,
     duplicate_line_rate,
-    timestamp_mae,
 )
 
 
@@ -36,21 +35,6 @@ def metrics(reference: str, hypothesis: str, item: Mapping[str, object], documen
                 "duplicate_visual_text_rate": duplicate_line_rate(visual_text),
             }
         )
-    visual_timestamps = item.get("reference_visual_timestamps")
-    predicted_visual_timestamps = [
-        segment.timestamp_start
-        for segment in visual_segments
-        if segment.timestamp_start is not None
-    ]
-    if (
-        isinstance(visual_timestamps, Sequence)
-        and not isinstance(visual_timestamps, str)
-        and visual_timestamps
-        and len(visual_timestamps) == len(predicted_visual_timestamps)
-    ):
-        scores["audio_visual_alignment_mae_seconds"] = timestamp_mae(
-            [float(value) for value in visual_timestamps], predicted_visual_timestamps
-        )
     return scores
 
 
@@ -60,7 +44,6 @@ def directions() -> dict[str, str]:
         "visual_text_precision": "max",
         "visual_text_recall": "max",
         "visual_text_f1": "max",
-        "audio_visual_alignment_mae_seconds": "min",
         "complete_content_recall": "max",
         "operational.p95_latency_seconds": "min",
         "operational.peak_process_tree_ram_mb": "min",
