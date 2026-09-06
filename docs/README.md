@@ -31,6 +31,7 @@ one document so the same instructions are not maintained in several places.
 | Why was each candidate included? | [Model-selection rationale](benchmarks/model-selection.md) |
 | Which commands prepare and run experiments? | [Benchmark runbook](benchmarks/running.md) |
 | How are benchmark datasets acquired and described? | [Benchmark dataset guide](benchmarks/datasets.md) |
+| Which benchmark decisions remain blocked on inspecting downloaded data? | [Temporary data-review checklist](benchmarks/pending-data-review.md) |
 | What are the machine-readable model decisions and revisions? | [`selection_evidence.csv`](../experiments/benchmarks/selection_evidence.csv) |
 
 ## Project maintenance

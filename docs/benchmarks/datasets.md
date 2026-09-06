@@ -713,48 +713,12 @@ that were not public during candidate development. If only public sources are
 available, the run remains useful but must be described as public-corpus
 confirmation rather than proof of unseen real-world generalization.
 
-## 7. Run the prepared benchmarks
-
-Document extraction:
-
-```powershell
-python experiments/benchmarks/extraction/document/run.py --profile standard `
-  --manifest data/benchmarks/extraction/document-development.json
-
-python experiments/benchmarks/extraction/document/run.py --profile full `
-  --manifest data/benchmarks/extraction/document-validation.json `
-  --pdf-selection PDF_CONFIG_DECISION `
-  --image-selection IMAGE_CONFIG_DECISION
-```
-
-Audio extraction:
-
-```powershell
-python experiments/benchmarks/extraction/audio/run.py --profile standard `
-  --manifest data/benchmarks/extraction/audio-development.json `
-  --device cuda
-
-python experiments/benchmarks/extraction/audio/run.py --profile full `
-  --manifest data/benchmarks/extraction/audio-validation.json `
-  --shortlist AUDIO_DECISION `
-  --device cuda
-```
-
-Video extraction, after freezing one document parser and one ASR profile:
-
-```powershell
-python experiments/benchmarks/extraction/video/run.py --profile standard `
-  --manifest data/benchmarks/extraction/video-development.json `
-  --document-selection DOCUMENT_DECISION `
-  --audio-selection AUDIO_DECISION `
-  --device cuda
-```
-
 The tiny committed smoke assets remain the only extraction data stored in Git.
 Smoke verifies code paths only and does not replace any public or manually
-verified dataset above.
+verified dataset above. Use the [benchmark runbook](running.md) for all execution
+commands.
 
-## 8. Sources deliberately not required
+## 7. Sources deliberately not required
 
 - [olmOCR-Bench](https://huggingface.co/datasets/allenai/olmOCR-bench) is a
   useful document-parser unit-test suite, but its property/unit-test protocol

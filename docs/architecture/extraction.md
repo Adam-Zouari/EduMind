@@ -36,8 +36,12 @@ settings, routing, preprocessing, and normalization. The profile fingerprint and
 source checksum form the cache identity.
 
 Production may request an optional cleanup profile. Extraction benchmarks request
-`normalization=none`, preserve candidate output, and use only fixed evaluator
-canonicalization shared by the reference and prediction.
+`normalization=none`, preserve candidate output, and use only the fixed prose
+scoring projection shared symmetrically by the reference and prediction:
+Unicode NFC, case-folding, punctuation-to-space replacement, and whitespace
+collapse. This projection compares text but does not clean stored output. Structured
+output canonicalization is a separate operation used only to make equivalent
+serialized objects stable for comparison, hashing, and caching.
 
 ## Current production routes
 

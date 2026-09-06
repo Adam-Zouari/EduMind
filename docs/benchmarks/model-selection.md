@@ -45,7 +45,7 @@ The ranges in this document were added after inspecting the candidate sizes. The
 | `decision` | Whether the row is included in the benchmark shortlist. | `include` or `exclude` |
 | `approx_params_b` | Approximate parameter count in billions; blank for non-model products. | `0.595776512` |
 | `public_benchmark` | Public benchmark used to screen the candidate. | `MTEB English v2` |
-| `public_metric` | Metric represented by `public_score`. | `Retrieval` or `avg WER` |
+| `public_metric` | Metric represented by `public_score`, including its unit when needed. | `Retrieval` or `avg WER (%)` |
 | `public_score` | Public screening value; blank when no numerical public result is claimed. | `61.83` |
 | `benchmark_source_url` | Exact page or result file containing the public score. | A revision-pinned model card or result table. |
 | `benchmark_source_revision` | Exact commit, dataset revision, or benchmark version used for the score. | `d43997c8...` |
@@ -176,76 +176,25 @@ Artificial Analysis is therefore used only to choose plausible compact quality p
 
 ## Document extraction
 
-Document extraction should benchmark configurations, not assume that one Docling setup is optimal. The experiment is staged so configuration choices are measured before comparing complete parser architectures.
-
-### Docling Standard configuration matrix
-
-All **24 combinations** of the following factors are run on the PDF development
-split. Images use the 12 unique OCR-engine × table-mode × formula settings with
-full-page OCR fixed; native DOCX is parsed once because OCR mode and engine do
-not apply to it.
-
-| Factor | Values | What the comparison answers |
-|---|---|---|
-| OCR engine | RapidOCR with ONNX Runtime; Tesseract CLI; EasyOCR | Which OCR implementation integrates best with Docling's layout and page attribution on EduMind documents? |
-| OCR mode | `pdf_aware_layout_regions`; `full_page` | Is preserving usable native PDF text better than rasterizing and OCRing the complete page? |
-| TableFormer mode | `fast`; `accurate` | Is the table-structure quality gain worth the additional latency? |
-| Formula enrichment | off; on | Does CodeFormulaV2 improve formula recovery enough to justify its cost? |
-
-The matrix is `3 × 2 × 2 × 2 = 24`. Testing the combinations preserves interactions—for example, an OCR engine may behave differently under full-page and PDF-aware modes.
-
-The four factors vary because each represents a real production choice that can materially change extraction quality or cost:
-
-- **OCR engine:** RapidOCR is the existing ONNX-based control and provides a portable neural OCR path. Tesseract is the established classical CPU baseline, showing whether the neural alternatives provide a worthwhile improvement. EasyOCR is a separate neural implementation with GPU support. Running all three inside Docling measures not only standalone recognition but also how each engine's text and bounding boxes interact with Docling's layout, page-attribution, and table processing.
-- **OCR mode:** `pdf_aware_layout_regions` preserves usable native PDF text and applies OCR only to regions that require it. It is expected to suit digital and mixed PDFs while avoiding unnecessary recognition errors. `full_page` rasterizes and OCRs the complete page, which may recover scanned pages and broken text encodings but can be slower and can damage or duplicate correct native text. Both are required because EduMind handles digital, scanned, mixed, and broken-encoding PDFs.
-- **TableFormer mode:** `fast` is the lower-cost table-structure path; `accurate` spends more computation on reconstructing rows, columns, and cell relationships. Comparing them establishes whether any gain in table detection, content, and structure justifies the additional latency and memory.
-- **Formula enrichment:** the off configuration measures Docling's base extraction and avoids loading a specialized formula model. The on configuration uses CodeFormulaV2 to recover mathematical expressions. Both are tested because educational documents may contain formulas, but the extra model should be enabled only when formula accuracy improves enough to justify its resource cost.
-
-These factors are evaluated together rather than one at a time because their effects can interact. Full-page OCR can change the text and coordinates supplied to TableFormer, one OCR engine may perform differently under region-based and full-page processing, and formula enrichment adds different value across document types. The full matrix identifies complete configurations rather than assuming that the best isolated setting remains best in every combination.
-
-The following settings stay fixed:
-
-| Setting | Fixed value | Reason |
-|---|---|---|
-| Docling | v2.117.0, commit `f2683c0b5aa14a53b74373b0640260891cdbc1b0` | Keeps the implementation constant. |
-| OCR language | English | Matches the initial EduMind scope. |
-| OCR scale | `3.0` | Uses one higher-resolution 216-DPI render for every OCR engine so rendering resolution does not confound their comparison. |
-| Table cell matching | enabled | Required to map recognized cells back to the document structure. |
-| Code enrichment | disabled | Code-specific extraction is not a current benchmark requirement. |
-| Output | canonical `DoclingDocument` JSON | Preserves text, structure, pages, tables, formulas, and provenance in one comparable representation. |
-| DOCX | native Docling ingestion | Rasterizing DOCX would confound native document parsing with PDF/image conversion. |
-
-These settings are fixed because they define the common experimental environment or are requirements of the evaluated output, rather than useful candidate strategies:
-
-- **Docling version:** changing the release could change models, defaults, parsing behavior, and output schemas. Pinning one commit ensures that measured differences come from the four tested factors.
-- **OCR language:** the initial EduMind corpus is English. Testing additional languages would require representative multilingual data and a separate evaluation.
-- **OCR scale:** `3.0` provides a common rendering resolution for every OCR engine. Adding multiple scales would turn the 24 configurations into a much larger resolution-tuning experiment. Scale should be revisited only if the results identify small-text resolution as a material failure mode.
-- **Table cell matching:** this connects recognized content to table cells and is necessary for evaluating table structure. Disabling it would deliberately remove information required by the task rather than provide a credible production configuration.
-- **Code enrichment:** the current corpus has no dedicated source-code requirement or annotations for indentation, symbols, and code-block correctness. It can become an on/off factor later if programming documents and suitable metrics are added.
-- **Canonical output:** every configuration must produce the same `DoclingDocument` representation so text, structure, pages, tables, formulas, and provenance are compared consistently. Output format is an evaluation contract, not a quality candidate.
-- **Native DOCX ingestion:** DOCX already contains machine-readable text and structure. Rasterizing it would discard that information, introduce OCR and rendering errors, and test a different extraction architecture. A rendered-DOCX fallback must be evaluated separately if corrupted DOCX files become a requirement.
-
-The fixed values are controls for this experiment, not claims that they are universally optimal. A focused follow-up should vary one of them only when the first-stage results or a new product requirement provide a concrete reason.
-
-### Complete architecture comparison
-
-The Docling Standard configurations selected by the engineer advance to an end-to-end comparison:
+The benchmark includes three complete parser architectures. The selected
+Docling Standard profile comes from the development configuration screen defined
+in [methodology.md](methodology.md); configuration values and experiment design
+are intentionally documented there rather than repeated in this candidate
+selection record.
 
 | Candidate | Configuration | Why it is included | Evidence |
 |---|---|---|---|
 | Docling Standard finalist | Best measured Standard configuration from the 24-combination screen | Conventional layout/OCR/table pipeline with optional targeted formula enrichment. | [Pinned Docling release](https://github.com/docling-project/docling/releases/tag/v2.117.0); [pipeline options](https://github.com/docling-project/docling/blob/f2683c0b5aa14a53b74373b0640260891cdbc1b0/docling/datamodel/pipeline_options.py) |
 | Docling VLM | `VlmPipeline` with [`ibm-granite/granite-docling-258M`](https://huggingface.co/ibm-granite/granite-docling-258M/tree/982fe3b40f2fa73c365bdb1bcacf6c81b7184bfe) | Tests Docling's full-page visual parsing architecture rather than only changing Standard-pipeline options. | [Docling VLM documentation](https://docling-project.github.io/docling/usage/vision_models/); [model catalog](https://docling-project.github.io/docling/usage/model_catalog/) |
-| PaddleOCR-VL-1.6 | [`PaddlePaddle/PaddleOCR-VL-1.6`](https://github.com/PaddlePaddle/PaddleOCR/blob/2661c7c0ef5c613e8f93c6e93b2e052399f0f854/docs/version3.x/algorithm/PaddleOCR-VL/PaddleOCR-VL-1.6.en.md), weights `c5630abae1d940eafe0697512a0325494b02ab42` | Independent 0.9B document parser and the strongest compact numerical row in the pinned OmniDocBench v1.6 table. | [Pinned OmniDocBench table](https://github.com/opendatalab/OmniDocBench/blob/193627ae9e97d89188468ed1ee3b7a856ff76044/README.md) |
-
-PaddleOCR-VL should remain. Without it, the architecture comparison would contain only two configurations from the same Docling project. It is promoted only if EduMind's local document quality and operational results justify it.
+| PaddleOCR-VL-1.6 | [`PaddlePaddle/PaddleOCR-VL-1.6`](https://github.com/PaddlePaddle/PaddleOCR/blob/2661c7c0ef5c613e8f93c6e93b2e052399f0f854/docs/version3.x/algorithm/PaddleOCR-VL/PaddleOCR-VL-1.6.en.md), weights `c5630abae1d940eafe0697512a0325494b02ab42` | Adds an independent 0.9B document-parser architecture instead of comparing only two configurations from the Docling project; it is also the strongest compact numerical row in the pinned OmniDocBench v1.6 table. | [Pinned OmniDocBench table](https://github.com/opendatalab/OmniDocBench/blob/193627ae9e97d89188468ed1ee3b7a856ff76044/README.md) |
 
 Every architecture is normalized into the same extracted-document contract and evaluated on the same text, reading-order, page-attribution, table, formula, latency, RAM, and VRAM metrics.
 
 ## Audio extraction
 
-The public screen uses **`avg` WER** from the pinned Open ASR English short-form results; lower is better. Because EduMind needs cited timestamps, a model also needs a verified timestamp path. The size groups below summarize the reviewed candidates and preserve different resource scales.
+The public screen uses **`avg` WER (%)** from the pinned Open ASR English short-form results; lower is better. Because EduMind needs cited timestamps, a model also needs a verified timestamp path. The size groups below summarize the reviewed candidates and preserve different resource scales.
 
-| Approximate size | Candidate | Public `avg` WER | Timestamp path and reason |
+| Approximate size | Candidate | Public `avg` WER (%) | Timestamp path and reason |
 |---|---|---:|---|
 | ≤200M | [`nvidia/canary-180m-flash`](https://huggingface.co/nvidia/canary-180m-flash/tree/b12ab418510d093e83890178fd0e8b0d0f7918a6) | **5.6914** | Compact candidate with documented word and segment timestamps. |
 | >200M–800M | [`nvidia/parakeet-tdt-0.6b-v2`](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2/blob/dcb0e1db8b2220830fecb8f60df74a88a34cb128/README.md) | **4.8186** | Best reviewed WER in this approximate group among models with documented timestamp output. |
@@ -260,20 +209,6 @@ The Qwen profile contains a 2.04B ASR model and a 0.6B forced aligner, or 2.64B 
 Short-form public WER only creates the shortlist. Final ASR evaluation follows
 the frozen educational-audio procedure in [methodology.md](methodology.md) and
 the metric contract in [metrics.md](metrics.md).
-
-## Video extraction
-
-| Strategy | Development settings | Why it is included |
-|---|---|---|
-| Fixed interval | 5, 10, and 20 seconds | Establishes the direct coverage-versus-cost trade-off of periodic sampling. |
-| Scene change | FFmpeg thresholds 0.30, 0.40, and 0.50 | Tests whether transition-driven sampling can remove unchanged frames without missing useful visual changes. |
-| Scene change + maximum interval | Selected scene threshold with maximum gaps of 5, 10, and 20 seconds | Tests whether periodic fallback recovers gradual or static content missed by scene detection. |
-
-Every configuration includes the first frame. Fixed and scene-change settings
-are tested first; one scene threshold is then recorded and reused for the three
-hybrid configurations. This produces nine development configurations without
-testing an unnecessary threshold-by-gap Cartesian grid. The selected ASR and
-visual parser are held fixed throughout.
 
 ## Vector database servers
 

@@ -59,29 +59,34 @@ Resolve `source_summary` relative to the decision file. Create separate PDF and
 image decisions because they refer to different parent summaries.
 
 The methodology assigns development, validation, and locked data according to
-the experiment phase. The document runner maps `standard` to development and
-`full` to validation; `--manifest` can still provide an explicit frozen path.
+the experiment phase. A parser architecture must be compared on development
+before it can be named a validation finalist.
 
 ## 4. Run extraction experiments
 
-Document extraction first screens the Docling configuration matrix, then
-compares selected configurations with the visual-parser architectures:
+Document extraction first screens the Docling configuration matrix on
+development:
 
 ```powershell
 python experiments/benchmarks/extraction/document/run.py --profile standard `
   --manifest data/benchmarks/extraction/document-development.json
 
-python experiments/benchmarks/extraction/document/run.py --profile full `
-  --pdf-selection PDF_CONFIG_DECISION `
-  --image-selection IMAGE_CONFIG_DECISION `
-  --manifest data/benchmarks/extraction/document-validation.json
 ```
 
 The default `--source all` creates the three parent runs described in the
 methodology. Use `--source pdf`, `--source image`, or `--source docx` to run one
 comparison independently. PDF configuration executes 24 profiles, image
 configuration executes 12 unique full-page profiles, and DOCX executes native
-Docling once.
+Docling once. After those configuration decisions are recorded, the selected
+Standard profiles, Granite Docling, and PaddleOCR-VL must be compared on the
+development split. Only the architecture finalists recorded from that comparison
+may run with `--profile full` on the validation manifest.
+
+The current document CLI still maps its architecture comparison directly to
+`full`/validation and does not accept an architecture-finalist decision. That
+path must be revised before a document architecture result can be treated as
+authoritative; do not use validation to make the first Granite-versus-Paddle-
+versus-Standard selection.
 
 Run audio independently:
 
@@ -109,7 +114,9 @@ The runner reads the matching split from
 elsewhere. The locked profile rejects decisions containing more than one ASR
 profile.
 
-Video requires one selected document parser and one selected ASR profile:
+The planned authoritative video command requires one selected document parser
+and one selected ASR profile. It is documented here for the future runner and
+currently exits with a clear error; only `--profile smoke` is executable now:
 
 ```powershell
 python experiments/benchmarks/extraction/video/run.py --profile standard `

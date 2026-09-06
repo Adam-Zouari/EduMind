@@ -32,9 +32,9 @@ retrieval stack, and generator.
 
 `smoke` checks that a small real path works and cannot support a selection.
 `standard` compares every candidate on development data. `full` compares only
-engineer-selected finalists on validation data. Standard/full use seed 42, retain
-per-sample results, and report 95% confidence intervals for eligible
-sample-based aggregates. A stage's locked split is used once for its one
+engineer-selected finalists on validation data. Standard, full, and locked runs
+use seed 42, retain per-sample results, and report 95% confidence intervals for
+eligible sample-based aggregates. A stage's locked split is used once for its one
 engineer-selected final profile; it is never used to choose or tune candidates.
 
 Every comparison gives its candidates the same samples. MLflow stores the exact
@@ -72,9 +72,9 @@ receive these suffixes.
 
 Metrics are labeled **primary**, **secondary**, **diagnostic**, or
 **operational**. Primary metrics answer the experiment's central question.
-Secondary metrics provide important supporting evidence. Diagnostics explain
-failure modes but do not select a candidate alone. Operational metrics measure
-latency, throughput, and resources.
+Secondary metrics explain or qualify a primary result. Diagnostic metrics expose
+specific failure modes. Operational metrics measure latency, throughput, and
+resources. These four role names are used consistently throughout this document.
 
 ## 1. Document extraction
 
@@ -116,8 +116,7 @@ operational
 ```
 
 These are the sections defined in [metrics.md](metrics.md). Content F1 is a text
-metric, Page Coverage is a page metric, and Table Structure Score is a table
-metric.
+metric, Page Coverage is a page metric, and TEDS is a table metric.
 
 **Document groups say what kind of document was processed:**
 
@@ -154,9 +153,8 @@ text.pdf_digital.content_f1     -> digital PDFs only
 text.pdf_scanned.content_f1     -> scanned PDFs only
 text.docx.content_f1            -> DOCX only
 
-tables.structure_score          -> every reference table
-tables.pdf_scanned.structure_score
-                                 -> reference tables in scanned PDFs only
+tables.teds                     -> every reference table
+tables.pdf_scanned.teds         -> reference tables in scanned PDFs only
 ```
 
 Documents still carry annotations such as `has_table`, `has_formula`,
@@ -323,10 +321,12 @@ than useful strategy questions.
 Every applicable execution is converted to the same canonical document
 representation containing text, pages, ordered elements, types, hierarchy,
 bounding boxes, tables, formulas, provenance, warnings, and timing. The
-benchmark scores that representation without an EduMind cleanup profile. Its
-evaluator applies only the same fixed representation rules to the reference and
-prediction, such as Unicode NFC and consistent line endings; it does not repair
-extraction errors.
+benchmark scores that representation without an EduMind cleanup profile. Raw
+outputs remain unchanged. For prose comparison only, the evaluator applies the
+same symmetric projection to reference and prediction: Unicode NFC,
+case-folding, punctuation-to-space replacement, and whitespace collapse. It
+does not dehyphenate words, correct spelling, rewrite numbers, remove headers,
+or alter formulas, code, layout trees, or table trees.
 
 The result groups are:
 
@@ -374,11 +374,14 @@ one small real profile → verify loading, extraction, scoring, artifacts, and M
 development / standard:
 Docling configuration screen → document-group breakdowns
 → engineer selects one PDF configuration and one image configuration
+→ selected Standard configurations + Granite Docling + PaddleOCR-VL
+  are compared on the same development split
+→ engineer records architecture finalists
 
 validation / full:
-selected Standard profiles + Granite Docling + PaddleOCR-VL
-on common image/PDF inputs; native Docling on DOCX
-→ engineer selects the complete parser profiles
+only the engineer-selected architecture finalists
+on unseen image/PDF inputs; native Docling on DOCX
+→ engineer selects the complete parser profiles without adding candidates
 
 future locked test, after the runtime routing policy is defined:
 run the one frozen extraction policy once
@@ -388,11 +391,12 @@ Within a standard/full comparison, every profile receives the same
 deterministically shuffled eligible samples, one cold measurement, warmups, and
 three measured repetitions. Smoke uses one measured repetition because it is
 only a wiring check.
-Development determines configurations. Validation confirms the selected
-configurations and parser architectures without changing the experiment. The
-locked test is not used for tuning. Runtime routing and the resulting locked-test
-execution are deliberately deferred until these parser results exist; neither is
-part of the current configuration/architecture commands.
+Development determines both the Standard settings and the parser-architecture
+finalists. Validation confirms only those finalists; it is not the first local
+comparison of Granite Docling or PaddleOCR-VL. The locked test is not used for
+tuning. Runtime routing and the resulting locked-test execution are deliberately
+deferred until these parser results exist; neither is part of the current
+configuration/architecture commands.
 
 ### MLflow result structure
 
@@ -412,24 +416,30 @@ MLflow experiment: EduMind / extraction
     └── 1 child run: native Docling ingestion
 ```
 
-`--source pdf`, `--source image`, or `--source docx` runs only that parent.
-During validation, PDF and image parents compare the engineer-selected Standard
-profile with Granite Docling and PaddleOCR-VL. The DOCX parent validates native
-Docling because the two visual parsers do not accept native DOCX.
+`--source pdf`, `--source image`, or `--source docx` runs only that parent. After
+the configuration screen, development architecture parents compare the selected
+Standard profile with Granite Docling and PaddleOCR-VL. Validation parents then
+contain only the architecture finalists recorded by the engineer. The DOCX
+parent validates native Docling because the two visual parsers do not accept
+native DOCX.
 
 ```text
 MLflow experiment: EduMind / extraction
-├── parent: extraction-document-architecture-pdf-<timestamp>
+├── parent: extraction-document-architecture-development-pdf-<timestamp>
 │   ├── child: <selected PDF Docling Standard profile>
 │   ├── child: docling-vlm-granite-258m
 │   └── child: paddleocr-vl-1.6
-├── parent: extraction-document-architecture-image-<timestamp>
+├── parent: extraction-document-architecture-development-image-<timestamp>
 │   ├── child: <selected image Docling Standard profile>
 │   ├── child: docling-vlm-granite-258m
 │   └── child: paddleocr-vl-1.6
-└── parent: extraction-document-architecture-docx-<timestamp>
+└── parent: extraction-document-architecture-development-docx-<timestamp>
     └── child: docling-standard-native
 ```
+
+The corresponding validation parents use
+`extraction-document-architecture-validation-<source>-<timestamp>` and contain
+only the recorded finalists for that source.
 
 The parent run stores:
 
@@ -455,8 +465,10 @@ docling-standard|ocr=rapidocr|mode=pdf_aware_layout_regions|table=accurate|formu
 
 The child run stores:
 
-- the profile identifier, runtime settings, profile type, and success/failure
-  status;
+- the complete resolved runtime profile, even for values shared by every child:
+  profile identifier and factors, engine revision and local model path, device,
+  language, fixed Docling options, normalization mode, seed, warmups,
+  repetitions, and success/failure status;
 - aggregate quality metrics and their `ci_lower` and `ci_upper` values when the
   metric is eligible for an interval;
 - `operational.*` latency, throughput, memory, VRAM, and disk metrics when
@@ -500,8 +512,11 @@ layout.mean_bounding_box_iou
 tables.detection_precision
 tables.detection_recall
 tables.detection_f1
+tables.content_precision
+tables.content_recall
 tables.content_f1
-tables.structure_score
+tables.teds
+tables.teds_s
 
 formulas.detection_precision
 formulas.detection_recall
@@ -511,8 +526,8 @@ formulas.exact_match
 ```
 
 For example, `text.content_f1` is the total average Content F1 across documents
-with verified text. `tables.structure_score` is the total average across
-reference tables. These totals remain separate; Content F1 is never combined
+with verified text. `tables.teds` is the total average across reference tables.
+These totals remain separate; Content F1 is never combined
 with page, layout, table, formula, reliability, or operational metrics.
 
 Inserting a document-group name gives the same metric for that group only:
@@ -536,10 +551,10 @@ layout.image.element_f1
 layout.pdf_scanned.element_f1
 layout.docx.hierarchy_accuracy
 
-tables.image.structure_score
-tables.pdf_digital.structure_score
-tables.pdf_scanned.structure_score
-tables.docx.structure_score
+tables.image.teds
+tables.pdf_digital.teds
+tables.pdf_scanned.teds
+tables.docx.teds
 
 formulas.image.recognition_similarity
 formulas.pdf_scanned.recognition_similarity
@@ -580,10 +595,10 @@ Operational latency is additionally aggregated by document group, for example
 and temporary disk describe the complete profile execution and remain top-level
 operational metrics rather than being misleadingly attributed to one slice.
 
-Each standard/full sample-based quality or reliability base key follows the
+Each standard, full, or locked sample-based quality or reliability base key follows the
 shared suffix convention. This applies equally to a total such as
-`tables.structure_score` and a document-group result such as
-`tables.pdf_scanned.structure_score`. Its `sample_count` makes clear when, for
+`tables.teds` and a document-group result such as
+`tables.pdf_scanned.teds`. Its `sample_count` makes clear when, for
 example, a table result is based on fewer annotated documents than a text
 result.
 
@@ -731,10 +746,10 @@ load the exact pinned model
 → unload the model and release resources
 ```
 
-The quality result for a clip comes from one designated deterministic measured
-output. Repeated executions preserve raw timing measurements but are not
-averaged into additional quality samples. Qwen's complete execution includes
-both transcription and forced alignment.
+The quality result for a clip comes from one designated measured output.
+Repeated executions preserve raw timing measurements but are not averaged into
+additional quality samples and do not constitute a determinism metric. Qwen's
+complete execution includes both transcription and forced alignment.
 
 Every profile uses the same explicitly requested CPU or CUDA device within one
 comparison. Device, dtype, decoder, timestamp path, and runtime versions are
@@ -819,10 +834,13 @@ Its artifacts are `plan.json`, `provenance.json`, the frozen manifests, and
 `summary.json`. Its only direct metrics describe completion: whether the entire
 comparison completed and how many candidates succeeded or failed.
 
-Each child is one ASR profile. Its parameters identify the candidate, revisions,
-device, dtype, language, decoder, timestamp method, sample rate, warmups,
-repetitions, data split, and checksums. It has no child runs for individual
-clips, repetitions, or metrics.
+Each child is one ASR profile. Its parameters contain the complete resolved
+runtime profile even when some values repeat the parent plan: candidate and
+submodel revisions and paths, device, dtype, language, decoder, timestamp
+method, seed, FFmpeg version, canonical audio format, duration limit, warmups,
+repetitions, data split, and manifest checksums. This makes a child interpretable
+when viewed or exported alone. It has no child runs for individual clips,
+repetitions, or metrics.
 
 ASR child metrics use descriptive flat names because the run already has
 `stage=audio` and no metric names collide inside it:
@@ -839,6 +857,7 @@ timestamp_alignment_coverage
 
 empty_transcript_rate
 nonspeech_false_transcription_rate
+repeat_transcript_agreement_rate
 
 real_time_factor
 p50_warm_clip_latency_seconds
@@ -850,23 +869,29 @@ peak_vram_mb
 
 The recognition, timestamp, reliability, and operational labels remain useful
 documentation categories, but they are not repeated as MLflow prefixes.
-Applicable standard/full uncertainty bounds use the shared MLflow suffix
+Applicable standard, full, and locked uncertainty bounds use the shared MLflow suffix
 convention defined at the beginning of this document.
 
-Corpus WER/CER and their components, timestamp metrics, reliability rates, RTF,
-and sufficiently supported warm latency estimates receive clip-bootstrap
+Corpus WER/CER and their components, timestamp metrics, reliability rates,
+Repeat Transcript Agreement Rate, RTF, and sufficiently supported warm latency estimates receive clip-bootstrap
 intervals. One cold-load observation and observed peak RAM/VRAM do not receive
 fabricated intervals. Every bootstrap draw contributes to every metric that is
 defined for that draw. A draw with no aligned timestamp segment still
 contributes zero Alignment Coverage and contributes normally to recognition,
 reliability, and latency intervals; only its undefined Boundary MAE is omitted.
-The interval artifact records the number of contributing resamples.
+If the complete candidate has no valid timestamp alignment,
+`timestamp_boundary_mae_seconds` is stored as null and the run remains
+successful; `timestamp_alignment_coverage=0` makes the failure visible. No
+confidence interval is emitted for the undefined MAE. Because MLflow's scalar
+metric store does not accept null, the scalar key is absent there while
+`candidate.json` and `summary.json` preserve the field as null. The interval
+artifact records the number of contributing resamples.
 
 Each successful child stores three artifacts:
 
 | Artifact | Contents and purpose |
 |---|---|
-| `samples.parquet` | One row per speech or nonspeech sample with sample ID, condition labels, duration, word/character edit counts, reference lengths, timestamp alignment counts and error totals, reliability flags, warnings, and the designated quality-pass latency. It makes every aggregate traceable. |
+| `samples.parquet` | One row per speech or nonspeech sample with sample ID, condition labels, duration, word/character edit counts, reference lengths, timestamp alignment counts and error totals, reliability and repeat-agreement flags, warnings, and the designated quality-pass latency. It makes every aggregate traceable. |
 | `timings.parquet` | One row per speech clip and measured repetition with latency, duration, RTF, and device. It preserves the observations used for p50, p95, and operational analysis. |
 | `candidate.json` | Candidate status, fingerprint, aggregate metrics, confidence intervals, operational values, and artifact references. |
 
@@ -875,9 +900,10 @@ Raw audio and candidate predictions are not uploaded to MLflow. The frozen
 speech manifest is uploaded and contains the verified reference transcripts,
 source identifiers, and checksums needed to reproduce scoring.
 
-Every successful standard/full child must contain all 15 aggregate metric point
-estimates. A CPU profile may report zero VRAM only when execution confirms that
-no GPU process was used; unavailable instrumentation is not converted to zero.
+Every successful standard, full, or locked child must contain all 16 aggregate
+metric fields. Timestamp Boundary MAE is the sole nullable field, under the rule
+above. A CPU profile may report zero VRAM only when execution confirms that no
+GPU process was used; unavailable instrumentation is not converted to zero.
 If a candidate crashes, lacks required timestamp output, or cannot produce the
 required artifacts or aggregates, its child remains visible as failed and the
 parent is incomplete. The engineer repairs the problem and reruns the complete
@@ -928,6 +954,14 @@ truth.
 
 ### Execution
 
+The current direct video command supports only the non-authoritative smoke
+wiring check. Standard, full, and locked execution remains disabled until the
+downloaded video annotations are inspected and the two pending rules in
+[pending-data-review.md](pending-data-review.md)—ASR window stitching and timed
+occurrence text matching—are frozen. The following is the approved design for
+that runner, not a claim that authoritative video evidence can already be
+produced.
+
 ```text
 video
 ├─ FFmpeg extracts mono 16 kHz audio → frozen selected ASR
@@ -937,9 +971,19 @@ combine timestamped audio and visual segments
 → compare with transcript and visible-text references
 ```
 
-Only the keyframe configuration changes. Reopening parser or ASR selection here
-would make it unclear whether a difference came from frame selection, visual
-parsing, or speech recognition.
+Only the keyframe configuration changes. The selected ASR is executed once per
+video phase, and its timestamped per-video outputs and measurements are frozen
+as an upstream artifact. Every keyframe child references that artifact by run ID
+and checksum instead of retranscribing the videos. Reopening parser or ASR
+selection here would make it unclear whether a difference came from frame
+selection, visual parsing, or speech recognition.
+
+Video audio may be longer than the ASR benchmark's 30-second single-clip limit.
+The selected ASR therefore receives deterministic windows no longer than 30
+seconds. Window-local timestamps are shifted back onto the video timeline and
+overlapping text is stitched once. The exact overlap and stitching rule are
+frozen before the video comparison. This qualifies the serving policy of the
+already selected ASR; it does not reopen the five-model ASR comparison.
 
 Development proceeds in this order:
 
@@ -967,11 +1011,11 @@ for the recorded educational-video corpus.
 
 | Role | Metrics | Why they are needed |
 |---|---|---|
-| Primary | Visual Content F1; Visual Timestamp Boundary MAE with Visual Timestamp Alignment Coverage | Measures whether useful on-screen text was recovered and whether it was placed at a useful time. MAE and coverage must be interpreted together. |
-| Supporting | Visual Content Precision/Recall | Explains whether a low F1 came from unsupported extracted text or missed visible text. |
-| Reliability | Duplicate Visual Text Rate | Shows whether repeatedly selected unchanged frames duplicate the same content. |
+| Primary | Visual Content F1; Mean Visual First-Detection Delay with Timed Visual Occurrence Coverage | Measures whether useful on-screen text was recovered, whether it was captured while visible, and how quickly it was first captured. Delay and coverage must be interpreted together. |
+| Secondary | Visual Content Precision/Recall | Explains whether a low F1 came from unsupported extracted text or missed visible text. |
+| Diagnostic | Duplicate Visual Text Rate | Shows whether repeatedly selected unchanged frames duplicate the same content. |
 | Diagnostic | Frozen-ASR Transcript WER, recorded once for the shared ASR output | Confirms the audio input to every policy; it is not used to compare keyframe policies because it is constant. |
-| Operational | Real-Time Factor, p50/p95 warm video latency, cold pipeline-load time, peak process-tree RAM, peak VRAM, mean selected frames per video | Measures complete extraction cost and reveals why one keyframe configuration costs more than another. |
+| Operational | Visual Real-Time Factor, p50/p95 warm visual latency, cold visual-pipeline load time, peak visual process-tree RAM, peak visual VRAM, mean selected frames per video | Measures the keyframe and visual-parser cost that differs between configurations. |
 
 Spoken and visible tokens remain separate. A video's transcript usually
 contains far more words than its frames, so one combined recall value would be
@@ -982,12 +1026,14 @@ retrieval experiment.
 
 ### MLflow result structure
 
-Video uses `EduMind / extraction`. The nine development configurations are
-created by three ordered comparisons so the hybrid run can consume the
-engineer-selected scene threshold:
+Video uses `EduMind / extraction`. The shared ASR input is recorded first. The
+nine development configurations are then created by three ordered comparisons
+so the hybrid run can consume the engineer-selected scene threshold:
 
 ```text
 MLflow experiment: EduMind / extraction
+├── parent: extraction-video-input-asr-development-<timestamp>
+│   └── child: <selected-asr-profile-across-all-development-videos>
 ├── parent: extraction-video-development-fixed-<timestamp>
 │   ├── child: video-fixed-5s
 │   ├── child: video-fixed-10s
@@ -1008,38 +1054,58 @@ MLflow experiment: EduMind / extraction
 
 Each child is one complete keyframe configuration evaluated on every video in
 that phase. It is not split into child runs for individual videos or metrics.
+Each child records its complete resolved runtime profile: strategy and numerical
+settings, parser revision and settings, device, seed, FFmpeg version and command,
+warmups and repetitions, dataset checksum, plus the frozen ASR run ID and
+artifact checksum. Values shared with the parent are repeated deliberately so
+the child remains interpretable when exported alone. Validation and
+locked phases follow the same pattern: one phase-specific frozen-ASR input run,
+then the visual-policy comparison run.
 The child logs these aggregate metrics:
 
 ```text
 visual_content_precision
 visual_content_recall
 visual_content_f1
-visual_timestamp_boundary_mae_seconds
-visual_timestamp_alignment_coverage
+mean_visual_first_detection_delay_seconds
+timed_visual_occurrence_coverage
 duplicate_visual_text_rate
 
-real_time_factor
-p50_warm_video_latency_seconds
-p95_warm_video_latency_seconds
-cold_pipeline_load_seconds
-peak_process_tree_ram_mb
-peak_vram_mb
+visual_real_time_factor
+p50_warm_visual_latency_seconds
+p95_warm_visual_latency_seconds
+cold_visual_pipeline_load_seconds
+peak_visual_process_tree_ram_mb
+peak_visual_vram_mb
 mean_selected_frames_per_video
 ```
 
-The parent logs `transcript_word_error_rate` once for the frozen ASR output,
-because repeating the same value in all nine children would falsely suggest
-that it distinguishes keyframe configurations. Each child stores per-video
+The frozen-ASR child logs `word_error_rate` and the ASR component's
+actual per-video latency, RTF, RAM, and VRAM measurements. These values describe
+shared upstream audio work and are not copied into every visual child. Each
+visual child stores per-video
 quality and timing rows in `samples.parquet`, per-repetition timings in
 `timings.parquet`, and the complete aggregate result in `candidate.json`.
-In standard/full runs, Visual Content Precision/Recall/F1, Visual Timestamp
-Alignment Coverage, Duplicate Visual Text Rate, Real-Time Factor, and Mean
-Selected Frames per Video receive video-bootstrap intervals. Visual Timestamp
-Boundary MAE receives an interval over videos with valid alignments. Warm p50
+In standard, full, and locked runs, Visual Content Precision/Recall/F1, Timed
+Visual Occurrence Coverage, Duplicate Visual Text Rate, Visual Real-Time Factor,
+and Mean Selected Frames per Video receive video-bootstrap intervals. Mean
+Visual First-Detection Delay receives an interval over videos with covered timed
+occurrences. Warm p50
 and p95 latency receive intervals when enough independent videos support the
-percentiles. The parent's Frozen-ASR Transcript WER receives an interval from
+percentiles. The frozen-ASR child's Transcript WER receives an interval from
 the same videos. Cold load and observed RAM/VRAM peaks do not receive fabricated
 intervals.
+
+Frozen-ASR operational measurements and visual-child measurements remain
+separate because adding aggregate percentiles or memory peaks would not recreate
+a real pipeline measurement. After the keyframe policy is selected, one
+integrated confirmation run measures actual end-to-end latency, RTF, RAM, and
+VRAM for the complete video path.
+
+For every audio or video decoding step, the run records the FFmpeg version and
+the exact argument vector used. This belongs in the run plan/provenance
+artifacts, not only in documentation, because installed codecs and command
+options can change the decoded input.
 
 The selected keyframe policy joins the selected parser and ASR as the provisional
 video-extraction profile.

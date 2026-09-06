@@ -13,6 +13,8 @@
   package and separated experiment-only model and strategy implementations.
 - Removed the API/service layer, packaged benchmark framework, embedded vector databases, duplicate application modules, recommendation machinery, and broad build/lint/coverage workflows.
 - Split application and benchmark dependencies into separate lock files.
-- Added direct extraction, RAG, and four-server vector-database benchmarks with per-sample artifacts and confidence intervals.
+- Added direct document and audio extraction benchmarks, RAG benchmarks, and a
+  four-server vector-database benchmark with per-sample artifacts and confidence
+  intervals; the authoritative video strategy sequence remains pending.
 - Made the approved selection evidence authoritative for model preparation and removed
   retired candidate registries, model locks, and serving-specific generation code.

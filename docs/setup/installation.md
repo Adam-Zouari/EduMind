@@ -12,7 +12,7 @@ Install these programs before creating the Python environment:
 
 | Program | Required for | Download |
 |---|---|---|
-| Python 3.11 (64-bit) | application and benchmarks | [python.org](https://www.python.org/downloads/windows/) |
+| Python 3.12.x (64-bit) | application and benchmarks; this is the project's supported Python minor release | [python.org](https://www.python.org/downloads/windows/) |
 | Git | editable installation and provenance | [git-scm.com](https://git-scm.com/download/win) |
 | Docker Desktop with Compose | Chroma and vector-server benchmarks | [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/) |
 | FFmpeg | audio/video decoding and video keyframes | [FFmpeg download page](https://ffmpeg.org/download.html) |
@@ -26,7 +26,7 @@ The application does not require a separate model-serving service. Generation us
 Check the system tools:
 
 ```powershell
-py -3.11 --version
+py -3.12 --version
 git --version
 docker version
 docker compose version
@@ -47,7 +47,7 @@ nvidia-smi
 Do not install these locks into a global Python environment.
 
 ```powershell
-py -3.11 -m venv .venv
+py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r requirements/app.lock
@@ -126,11 +126,15 @@ The extraction download contains:
 - [Whisper small.en](https://huggingface.co/openai/whisper-small.en), [Canary 180M](https://huggingface.co/nvidia/canary-180m-flash), [Parakeet TDT 0.6B v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2), [MOSS Transcribe-Diarize](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize), and [Qwen3 ASR 1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B-hf).
 - The Qwen ASR profile also downloads the pinned [Qwen3 ForcedAligner 0.6B](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B). ASR and alignment execute sequentially, while their combined time and peak resource use are measured.
 
-NeMo and MOSS have heavier runtime dependency trees. Install them only inside the project environment from `requirements/benchmarks.lock`; do not combine this lock with unrelated ML environments.
+NeMo and MOSS have heavier runtime dependency trees. Install them only inside
+the Python 3.12 project environment from `requirements/benchmarks.lock`; do not
+combine this lock with unrelated ML environments. Qwen ASR and its forced
+aligner use the Transformers 5.13 native API, so the incompatible `qwen-asr`
+wrapper package is not installed.
 
 ### Official document-metric code
 
-TEDS-S and CDM are loaded from the pinned OmniDocBench evaluator rather than
+TEDS, TEDS-S, and CDM are loaded from the pinned OmniDocBench evaluator rather than
 reimplemented by EduMind. Prepare that source explicitly:
 
 ```powershell
@@ -139,10 +143,10 @@ python experiments/benchmarks/prepare.py evaluators
 
 The command records revision
 `193627ae9e97d89188468ed1ee3b7a856ff76044` under
-`data/benchmarks/evaluators/OmniDocBench/`. TEDS-S needs its Python dependencies;
+`data/benchmarks/evaluators/OmniDocBench/`. TEDS and TEDS-S need their Python dependencies;
 CDM additionally needs TeX, ImageMagick, and Ghostscript. The runner adapts only
 the official evaluator's process-launch call on Windows; it does not replace the
-TEDS-S or CDM calculation. If those tools or the pinned source are missing, a
+TEDS, TEDS-S, or CDM calculation. If those tools or the pinned source are missing, a
 table/formula-bearing authoritative child run fails instead of logging an
 approximation.
 

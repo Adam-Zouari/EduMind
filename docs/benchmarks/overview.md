@@ -50,9 +50,12 @@ silently reselected.
 - `full` runs explicit engineer-selected finalists.
 - Every planned candidate and required metric must complete for a comparison to
   be usable.
-- Standard/full retain per-sample rows and report 95% confidence intervals for
+- Standard, full, and locked runs retain per-sample rows and report 95% confidence intervals for
   eligible sample-based aggregates. Counts, statuses, fixed identifiers, and
   one-off operational observations do not receive artificial intervals.
+- Decisions that require inspecting downloaded corpora are tracked in the
+  [temporary data-review checklist](pending-data-review.md), not guessed in the
+  benchmark contract.
 - No weighted overall score or automatic production promotion is used.
 - Performance results apply to the hardware and software environment recorded
   with that run.
