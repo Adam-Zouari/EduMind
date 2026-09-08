@@ -8,6 +8,14 @@ the candidate datasets are downloaded and inspected. It is not an experiment
 contract and must not be used to justify a result. Resolve each item by updating
 the authoritative dataset manifests and methodology, then remove the item.
 
+## Shared confidence intervals
+
+- After the frozen manifests exist, set a documented minimum number of
+  independent eligible samples for reporting confidence intervals, especially
+  for conditional table, formula, reliability, timestamp, and p95-latency
+  results. Repeated measurements of one document, audio clip, or video are not
+  additional independent samples.
+
 ## Document extraction
 
 - Verify that every conditional metric has enough eligible samples: pages with
@@ -22,9 +30,9 @@ the authoritative dataset manifests and methodology, then remove the item.
 
 ## Audio extraction
 
-- Inspect the chosen clips before deciding whether condition labels such as
-  `clean`, `noisy`, `accented`, and `multi_speaker` are single-valued or
-  multi-label. A noisy accented clip must not be forced into a false category.
+- Verify the reviewed `conditions` lists: every speech clip must be either
+  `clean` or `noisy`, while `accented` and `multi_speaker` may coexist with that
+  acoustic label.
 - Determine the available count of independent silence, music, background-noise,
   and environmental-sound controls per split. Do not promise reliability
   confidence intervals until the counts support them.

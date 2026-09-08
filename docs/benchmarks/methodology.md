@@ -274,6 +274,14 @@ license, checksum, document family, source type, and available annotations. An
 authoritative run cannot be claimed until those manifests and references are
 complete.
 
+OmniDocBench is one annotated source within this combined corpus, not the whole
+EduMind experiment. Its selected English pages provide verified text, reading
+order, element, table, and formula references. EduMind then evaluates its own
+Docling configuration matrix, exact parser revisions, canonical-output
+integration, reliability, and local operational cost across OmniDocBench and the
+other sources above. The public OmniDocBench leaderboard is candidate-screening
+evidence; it is not reused as an EduMind result.
+
 The corpus covers clean and degraded images; digital, scanned, mixed, and
 broken-text PDFs; phone photos; low-resolution and skewed pages; multiple
 columns; headings, lists, and captions; tables and formulas; and native DOCX
@@ -327,6 +335,28 @@ same symmetric projection to reference and prediction: Unicode NFC,
 case-folding, punctuation-to-space replacement, and whitespace collapse. It
 does not dehyphenate words, correct spelling, rewrite numbers, remove headers,
 or alter formulas, code, layout trees, or table trees.
+
+OmniDocBench annotations act as ground truth for every applicable metric on its
+samples. EduMind calculates the common text, page, layout, detection,
+reliability, and operational metrics so their definitions remain identical for
+OHR-Bench, PureDocBench, DocPTBench, native DOCX, and EduMind-specific samples.
+Only the specialized table-tree and formula scorers—TEDS, TEDS-S, and CDM—come
+from the pinned official evaluator; ExpRate@CDM is derived from those CDM
+results.
+
+The execution boundary is explicit:
+
+```text
+Python 3.12: Docling/Granite/Paddle extraction -> canonical prediction
+             -> common EduMind metrics
+Python 3.10 Docker: all table HTML pairs -> TEDS and TEDS-S
+                    all formula LaTeX pairs -> CDM
+```
+
+The table and formula pairs for one extraction profile are scored in one
+container call after extraction finishes. Container startup and scoring time are
+evaluation overhead, not extraction latency. MLflow provenance records both the
+pinned OmniDocBench source revision and the immutable Docker image digest.
 
 The result groups are:
 
@@ -705,10 +735,11 @@ verified transcript
 verified timestamped reference segments
 ```
 
-Each authoritative split contains the canonical `clean`, `noisy`, `accented`,
-and `multi_speaker` condition labels. They remain in the per-sample artifact for
-diagnosis and do not create extra required
-MLflow metric namespaces or a larger metric contract.
+Each sample stores a `conditions` list. It contains exactly one acoustic label,
+`clean` or `noisy`, and may also contain `accented` and/or `multi_speaker`.
+Every authoritative split covers all four labels. They remain in the per-sample
+artifact for diagnosis and do not create extra required MLflow metric namespaces
+or a larger metric contract.
 
 ### Common input and output rules
 

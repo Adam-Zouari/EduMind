@@ -64,6 +64,18 @@ before it can be named a validation finalist.
 
 ## 4. Run extraction experiments
 
+Start Docker Desktop and prepare the official document scorer before any
+document corpus containing table or formula annotations:
+
+```powershell
+docker version
+python experiments/benchmarks/prepare.py evaluators
+```
+
+Document parsers and common metrics run in the project's Python 3.12
+environment. Only TEDS, TEDS-S, and CDM run in the pinned OmniDocBench Python
+3.10 container. A run fails clearly if that prepared scorer is unavailable.
+
 Document extraction first screens the Docling configuration matrix on
 development:
 
@@ -82,11 +94,30 @@ Standard profiles, Granite Docling, and PaddleOCR-VL must be compared on the
 development split. Only the architecture finalists recorded from that comparison
 may run with `--profile full` on the validation manifest.
 
-The current document CLI still maps its architecture comparison directly to
-`full`/validation and does not accept an architecture-finalist decision. That
-path must be revised before a document architecture result can be treated as
-authoritative; do not use validation to make the first Granite-versus-Paddle-
-versus-Standard selection.
+Run the development architecture comparison with the configuration decisions:
+
+```powershell
+python experiments/benchmarks/extraction/document/run.py --profile standard `
+  --comparison architecture `
+  --manifest data/benchmarks/extraction/document-development.json `
+  --pdf-selection PDF_CONFIGURATION_DECISION.json `
+  --image-selection IMAGE_CONFIGURATION_DECISION.json
+```
+
+After reviewing that comparison, run only its recorded finalists on validation:
+
+```powershell
+python experiments/benchmarks/extraction/document/run.py --profile full `
+  --comparison architecture `
+  --manifest data/benchmarks/extraction/document-validation.json `
+  --pdf-selection PDF_ARCHITECTURE_FINALISTS.json `
+  --image-selection IMAGE_ARCHITECTURE_FINALISTS.json
+```
+
+For `standard`, each selection file must choose one profile from the matching
+completed configuration parent. For `full`, each file must choose one or more
+finalists from the matching completed development architecture parent. The
+runner rejects using configuration decisions directly on validation.
 
 Run audio independently:
 

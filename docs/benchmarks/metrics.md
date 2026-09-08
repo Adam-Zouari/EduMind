@@ -43,6 +43,19 @@ not reduce a parser to one overall score. Each retained metric answers a distinc
 question about text, pages, layout, tables, formulas, reliability, or execution
 cost.
 
+OmniDocBench has two separate roles. Its selected pages supply ground-truth text,
+reading order, element types and boxes, tables, and formulas for all applicable
+metrics below. Its scoring code is reused only for TEDS, TEDS-S, and CDM;
+ExpRate@CDM is derived from CDM results. EduMind calculates the remaining metrics
+from the same canonical reference/prediction pairs because those definitions
+must also work unchanged on OHR-Bench, PureDocBench, DocPTBench, native DOCX, and
+EduMind-specific samples.
+
+EduMind calculates the common metrics in its Python 3.12 environment. TEDS,
+TEDS-S, and CDM alone run from the pinned official evaluator inside its verified
+Python 3.10 Docker image. This changes only where those calculations execute;
+all metrics still belong to the same extraction-profile child run in MLflow.
+
 Within each quality category, **primary metrics** summarize the category's main
 outcomes. The remaining metrics are **secondary metrics**: they explain the
 primary results or expose a narrower failure mode. Primary status does not assign
@@ -892,7 +905,7 @@ the shape is right but text is missing.
 **Range and direction:** `[0, 1]`; higher is better. A missed table receives
 zero.
 
-The benchmark uses the pinned official evaluator rather than a custom
+The benchmark uses the pinned official scorer rather than a custom
 approximation. OmniDocBench documents TEDS and TEDS-S in its
 [official evaluation repository](https://github.com/opendatalab/OmniDocBench).
 

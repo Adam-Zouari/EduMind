@@ -14,12 +14,10 @@ Install these programs before creating the Python environment:
 |---|---|---|
 | Python 3.12.x (64-bit) | application and benchmarks; this is the project's supported Python minor release | [python.org](https://www.python.org/downloads/windows/) |
 | Git | editable installation and provenance | [git-scm.com](https://git-scm.com/download/win) |
-| Docker Desktop with Compose | Chroma and vector-server benchmarks | [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/) |
+| Docker Desktop with Compose | Chroma, vector-server benchmarks, and official OmniDocBench table/formula scoring | [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/) |
 | FFmpeg | audio/video decoding and video keyframes | [FFmpeg download page](https://ffmpeg.org/download.html) |
 | Tesseract 5 with English data | one Docling Standard configuration | [Tesseract installation](https://tesseract-ocr.github.io/tessdoc/Installation.html) and [Windows builds](https://tesseract-ocr.github.io/tessdoc/Downloads.html) |
-| TeX Live (`pdflatex`, `kpsewhich`) | official CDM formula scoring | [TeX Live](https://www.tug.org/texlive/) |
-| ImageMagick 7 and Ghostscript | rendering formulas for official CDM scoring | [ImageMagick](https://imagemagick.org/script/download.php) and [Ghostscript](https://ghostscript.com/releases/gsdnld.html) |
-| NVIDIA driver | CUDA benchmark profiles | [NVIDIA drivers](https://www.nvidia.com/Download/index.aspx) |
+| NVIDIA driver | Optional; required only for CUDA benchmark profiles | [NVIDIA drivers](https://www.nvidia.com/Download/index.aspx) |
 
 The application does not require a separate model-serving service. Generation uses exact local Hugging Face snapshots directly. Docker is never started by an import, preparation command, or application startup.
 
@@ -33,10 +31,7 @@ docker compose version
 ffmpeg -version
 tesseract --version
 tesseract --list-langs
-pdflatex --version
-kpsewhich --version
-magick -version
-gswin64c --version
+# CUDA profiles only:
 nvidia-smi
 ```
 
@@ -134,21 +129,33 @@ wrapper package is not installed.
 
 ### Official document-metric code
 
-TEDS, TEDS-S, and CDM are loaded from the pinned OmniDocBench evaluator rather than
-reimplemented by EduMind. Prepare that source explicitly:
+TEDS, TEDS-S, and CDM come from the
+[pinned OmniDocBench evaluator](https://github.com/opendatalab/OmniDocBench/tree/193627ae9e97d89188468ed1ee3b7a856ff76044)
+rather than being reimplemented by EduMind. The main EduMind environment remains Python
+3.12. These three specialized metrics run in OmniDocBench's verified Python
+3.10 Docker environment, which also contains its required TeX, ImageMagick, and
+Ghostscript versions. They do not need to be installed on Windows.
+
+Start Docker Desktop, then prepare the evaluator explicitly:
 
 ```powershell
 python experiments/benchmarks/prepare.py evaluators
 ```
 
-The command records revision
-`193627ae9e97d89188468ed1ee3b7a856ff76044` under
-`data/benchmarks/evaluators/OmniDocBench/`. TEDS and TEDS-S need their Python dependencies;
-CDM additionally needs TeX, ImageMagick, and Ghostscript. The runner adapts only
-the official evaluator's process-launch call on Windows; it does not replace the
-TEDS, TEDS-S, or CDM calculation. If those tools or the pinned source are missing, a
-table/formula-bearing authoritative child run fails instead of logging an
-approximation.
+The command checks out source revision
+`193627ae9e97d89188468ed1ee3b7a856ff76044`, pulls
+`ghcr.io/zeng-weijun/omnidocbench-eval:repro-ubuntu2204`, and records the
+resolved immutable image digest under
+`data/benchmarks/evaluators/OmniDocBench/`. An authoritative run uses that
+digest, disables container networking, and fails if the source, image, or lock
+does not match instead of logging an approximation.
+
+This evaluator never runs Docling, Granite Docling, or PaddleOCR-VL. EduMind
+first produces each parser's canonical prediction and calculates the common
+text/page/layout/reliability/operational metrics in Python 3.12. It then sends
+only the table HTML and formula LaTeX reference/prediction pairs to the isolated
+official scorer. The scoring time is evaluation overhead and is not included in
+parser latency.
 
 ## 4. Datasets
 
@@ -216,7 +223,11 @@ ports, and benchmark data remains separate from application data.
 
 ## 6. Next steps
 
-Installation and preparation are now complete:
+Software, models, and source datasets are now prepared. Standard/full extraction
+benchmarks remain unavailable until the downloaded samples have been reviewed,
+annotated, checksummed, and frozen into the manifests required by the
+[dataset guide](../benchmarks/datasets.md) and
+[pending-data checklist](../benchmarks/pending-data-review.md).
 
 - use [Running the application](running.md) for daily start, stop, readiness, and
   troubleshooting commands;

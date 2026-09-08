@@ -36,7 +36,7 @@ python -m pytest tests/test_benchmark_metrics.py tests/test_benchmark_datasets.p
   [installation guide](docs/setup/installation.md).
 - Put experiment order, candidates, datasets, procedures, metric rationale, and
   limitations in the [benchmark methodology](docs/benchmarks/methodology.md).
-- Put exact formulas and edge cases in the
+- Put metric definitions, calculation procedures, examples, and edge cases in the
   [metric reference](docs/benchmarks/metrics.md).
 - Put benchmark commands and operational troubleshooting in the
   [benchmark runbook](docs/benchmarks/running.md).

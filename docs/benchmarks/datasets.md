@@ -30,7 +30,10 @@ These sources answer different questions and are not interchangeable:
 - OmniDocBench supplies the richest element-level references for EduMind's
   layout, table, and formula metrics. The project deliberately pins v1.6 because
   its evaluator is pinned to the matching v1.6 revision. Do not download the
-  moving `main` revision for an authoritative run.
+  moving `main` revision for an authoritative run. It is one source within the
+  combined corpus rather than a request to reproduce its complete leaderboard:
+  selected English pages are scored alongside real multi-page PDFs, degradation
+  pairs, phone photos, and native DOCX.
 - OHR-Bench supplies real, complete, multi-page PDFs. It is used for PDF text,
   page-content, page-attribution, and whole-document behavior; it does not
   replace OmniDocBench's element-level annotations.
@@ -75,9 +78,11 @@ The recommended 90-clip allocation is deliberately simple:
 | **Total speech clips** | **54** | **18** | **18** | **90** |
 
 The allocation does not assign conditions automatically. A reviewer listens to
-every selected clip and assigns exactly one of `clean`, `noisy`, `accented`, or
-`multi_speaker`. Each split must contain all four conditions. Corpus names such
-as `test-other` are not substitutes for listening and labeling.
+every selected clip and records a `conditions` list. Every clip is either
+`clean` or `noisy`; `accented` and `multi_speaker` may be added to the same clip.
+For example, `['noisy', 'accented']` is valid. Each split must cover all four
+labels. Corpus names such as `test-other` are not substitutes for listening and
+labeling.
 
 MUSAN and generated silence are stored in a separate reliability manifest. They
 never enter Corpus WER or CER.
@@ -687,7 +692,8 @@ box, table structure, or formula representation.
 Speech samples additionally contain:
 
 - `duration_seconds` in `(0, 30]`;
-- one condition: `clean`, `noisy`, `accented`, or `multi_speaker`; and
+- a non-empty `conditions` list containing exactly one of `clean` or `noisy`,
+  plus `accented` and/or `multi_speaker` when applicable; and
 - non-empty timed `reference_segments`, all inside the clip duration.
 
 Reliability samples contain an empty spoken reference and one of `silence`,

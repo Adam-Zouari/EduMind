@@ -76,7 +76,7 @@ Choose the path that matches what you are trying to do:
 | Install every prerequisite, model, dataset, and server | [Complete installation and preparation guide](docs/setup/installation.md) |
 | Start only the current application | [Application run instructions](docs/setup/running.md) |
 | Understand the experiment sequence, data, and metric rationale | [Benchmark methodology](docs/benchmarks/methodology.md) |
-| Look up exact metric formulas | [Metric reference](docs/benchmarks/metrics.md) |
+| Look up metric definitions, calculations, examples, and edge cases | [Metric reference](docs/benchmarks/metrics.md) |
 | Prepare or run experiments | [Benchmark runbook](docs/benchmarks/running.md) |
 | Understand why specific models were shortlisted | [Model-selection rationale](docs/benchmarks/model-selection.md) |
 | Find one specific subsystem or experiment | [Documentation map](docs/README.md) |
