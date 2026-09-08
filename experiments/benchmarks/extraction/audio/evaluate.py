@@ -126,7 +126,7 @@ def score_speech(
     return {
         "sample_id": str(item["id"]),
         "sample_type": "speech",
-        "condition": str(item.get("condition", "unspecified")),
+        "conditions": list(item.get("conditions", [])),
         "duration_seconds": float(item["duration_seconds"]),
         "reference_word_count": len(reference_words),
         "word_substitutions": word_alignment.substitutions,
@@ -155,7 +155,7 @@ def score_nonspeech(
     return {
         "sample_id": str(item["id"]),
         "sample_type": "nonspeech",
-        "condition": str(item.get("nonspeech_kind", "unspecified")),
+        "conditions": [str(item.get("nonspeech_kind", "unspecified"))],
         "duration_seconds": float(item["duration_seconds"]),
         "reference_word_count": None,
         "word_substitutions": None,

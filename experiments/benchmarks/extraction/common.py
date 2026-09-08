@@ -40,6 +40,7 @@ def run(
     component_options: Mapping[str, object] | None = None,
     decision_files: Mapping[str, Path] | None = None,
     document_kind: str | None = None,
+    document_comparison: str | None = None,
 ) -> BenchmarkResult:
     if stage not in STAGES:
         raise ValueError(f"Unknown extraction stage: {stage}")
@@ -71,11 +72,14 @@ def run(
         require_provenance=profile in {"standard", "full"},
     )
     component_options = dict(component_options or {})
+    uses_official_evaluators = False
     if stage == "document":
         for item in selected:
             evaluator.validate_reference(item, authoritative=profile in {"standard", "full"})
-        evaluator.validate_official_evaluators(selected)
-    comparison = "architecture" if profile == "full" else "configuration"
+        uses_official_evaluators = evaluator.validate_official_evaluators(selected)
+    comparison = document_comparison or (
+        "architecture-validation" if profile == "full" else "configuration"
+    )
     plan_stage = (
         f"document-{comparison}-{document_kind or 'all'}"
         if stage == "document"
@@ -187,8 +191,11 @@ def run(
         revisions={
             **{name: str(value.get("revision", "")) for name, value in model_lock.items()},
             **(
-                {"omnidocbench-evaluator": OMNIDOCBENCH_REVISION}
-                if stage == "document"
+                {
+                    "omnidocbench-evaluator": OMNIDOCBENCH_REVISION,
+                    "omnidocbench-image": evaluator.official_image_digest(),
+                }
+                if uses_official_evaluators
                 else {}
             ),
         },

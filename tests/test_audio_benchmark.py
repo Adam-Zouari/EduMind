@@ -604,7 +604,7 @@ def test_authoritative_audio_split_requires_all_condition_groups() -> None:
                 "source_revision": "1",
                 "split": "development",
                 "document_family": f"family-{index}",
-                "condition": condition,
+                "conditions": [condition],
             }
         )
     controls = [
@@ -624,6 +624,9 @@ def test_authoritative_audio_split_requires_all_condition_groups() -> None:
 
     with pytest.raises(ValueError, match="lacks required conditions"):
         _validate_manifest_rows(speech, controls, "standard")
+
+    speech[0]["conditions"] = ["noisy", "accented", "multi_speaker"]
+    _validate_manifest_rows(speech, controls, "standard")
 
     assert {"accented", "multi_speaker"} <= REQUIRED_SPEECH_CONDITIONS
 

@@ -170,7 +170,7 @@ def run(
                     float(row["quality_latency_seconds"]),
                     {
                         "sample_type": row["sample_type"],
-                        "condition": row["condition"],
+                        "conditions": row["conditions"],
                     },
                 )
                 for row in output["samples"]
@@ -381,7 +381,7 @@ def _validate_manifest_rows(speech, controls, profile: str) -> None:
                     "source_revision",
                     "split",
                     "document_family",
-                    "condition",
+                    "conditions",
                 )
                 if not item.get(field)
             )
@@ -392,7 +392,28 @@ def _validate_manifest_rows(speech, controls, profile: str) -> None:
                 f"ASR speech sample {item['id']} belongs to {item['split']}, not {expected_split}"
             )
         if authoritative:
-            observed_conditions.add(str(item["condition"]))
+            raw_conditions = item["conditions"]
+            if (
+                not isinstance(raw_conditions, list)
+                or not raw_conditions
+                or not all(isinstance(value, str) and value for value in raw_conditions)
+            ):
+                raise ValueError(
+                    f"ASR speech sample {item['id']} conditions must be a non-empty string list"
+                )
+            conditions = set(raw_conditions)
+            unknown = conditions - REQUIRED_SPEECH_CONDITIONS
+            if unknown:
+                raise ValueError(
+                    f"ASR speech sample {item['id']} has unknown conditions: "
+                    + ", ".join(sorted(unknown))
+                )
+            acoustic = conditions & {"clean", "noisy"}
+            if len(acoustic) != 1:
+                raise ValueError(
+                    f"ASR speech sample {item['id']} must be exactly one of clean or noisy"
+                )
+            observed_conditions.update(conditions)
         duration = float(item["duration_seconds"])
         if duration <= 0 or duration > 30:
             raise ValueError(f"ASR speech sample {item['id']} must be between 0 and 30 seconds")

@@ -31,14 +31,23 @@ def main(stage: str, directory: Path) -> int:
             "--source", choices=("all", "pdf", "image", "docx"), default="all"
         )
         argument_parser.add_argument(
+            "--comparison",
+            choices=("configuration", "architecture"),
+            default="configuration",
+            help=(
+                "configuration screens Docling settings on development; architecture "
+                "compares selected settings on development or finalists on validation"
+            ),
+        )
+        argument_parser.add_argument(
             "--pdf-selection",
             type=Path,
-            help="one PDF Docling configuration selected from development",
+            help="PDF configuration decision (standard) or architecture-finalist decision (full)",
         )
         argument_parser.add_argument(
             "--image-selection",
             type=Path,
-            help="one image Docling configuration selected from development",
+            help="image configuration decision (standard) or architecture-finalist decision (full)",
         )
     arguments = argument_parser.parse_args()
     if stage == "document":
@@ -79,6 +88,12 @@ def main(stage: str, directory: Path) -> int:
 
 def _document_main(arguments, directory: Path) -> int:
     sources = ("pdf", "image", "docx") if arguments.source == "all" else (arguments.source,)
+    _validate_document_arguments(arguments, sources)
+    comparison = (
+        "configuration"
+        if arguments.comparison == "configuration"
+        else f"architecture-{'development' if arguments.profile == 'standard' else 'validation'}"
+    )
     results = []
     for source in sources:
         candidates, decisions = _document_candidates(
@@ -96,6 +111,7 @@ def _document_main(arguments, directory: Path) -> int:
                     component_options={"device": arguments.device},
                     decision_files=decisions,
                     document_kind=source,
+                    document_comparison=comparison,
                 ),
             )
         )
@@ -117,7 +133,8 @@ def _document_main(arguments, directory: Path) -> int:
 
 
 def _document_candidates(source: str, arguments, path: Path):
-    if arguments.profile != "full":
+    comparison = getattr(arguments, "comparison", "configuration")
+    if comparison == "configuration":
         configured = load_candidates(path, arguments.profile)
         if source == "pdf":
             return configured, {}
@@ -141,16 +158,38 @@ def _document_candidates(source: str, arguments, path: Path):
     decision_path = (
         arguments.pdf_selection if source == "pdf" else arguments.image_selection
     )
-    if decision_path is None:
-        raise ValueError(
-            f"Document architecture comparison requires --{source}-selection DECISION_JSON"
+    if arguments.profile == "standard":
+        selected = _document_selection(
+            decision_path, f"document-configuration-{source}", exact=1
         )
-    selected = _document_selection(decision_path, source)
-    return (
-        selected,
-        "docling-vlm-granite-258m",
-        "paddleocr-vl-1.6",
-    ), {source: decision_path}
+        return (
+            selected[0],
+            "docling-vlm-granite-258m",
+            "paddleocr-vl-1.6",
+        ), {source: decision_path}
+    selected = _document_selection(
+        decision_path, f"document-architecture-development-{source}", maximum=3
+    )
+    return selected, {source: decision_path}
+
+
+def _validate_document_arguments(arguments, sources: tuple[str, ...]) -> None:
+    comparison = arguments.comparison
+    if comparison == "configuration":
+        if arguments.profile == "full":
+            raise ValueError(
+                "Document configuration is selected on development; use --profile standard"
+            )
+        if arguments.pdf_selection or arguments.image_selection:
+            raise ValueError("Selection files apply only to --comparison architecture")
+        return
+    if arguments.profile == "smoke":
+        raise ValueError("Document architecture comparison requires standard or full data")
+    for source in sources:
+        if source == "pdf" and arguments.pdf_selection is None:
+            raise ValueError("Document architecture comparison requires --pdf-selection")
+        if source == "image" and arguments.image_selection is None:
+            raise ValueError("Document architecture comparison requires --image-selection")
 
 
 def _component_options(
@@ -181,10 +220,17 @@ def _one_selection(path: Path) -> str:
     return load_engineer_decision(path, exact=1).selected_candidates[0]
 
 
-def _document_selection(path: Path, source: str) -> str:
-    decision = load_engineer_decision(path, exact=1)
+def _document_selection(
+    path: Path | None,
+    expected_stage: str,
+    *,
+    exact: int | None = None,
+    maximum: int | None = None,
+) -> tuple[str, ...]:
+    if path is None:
+        raise ValueError(f"Document comparison requires a decision for {expected_stage}")
+    decision = load_engineer_decision(path, exact=exact, maximum=maximum)
     summary = json.loads(decision.source_summary.read_text(encoding="utf-8"))
-    expected = f"document-configuration-{source}"
-    if summary.get("plan", {}).get("stage") != expected:
-        raise ValueError(f"{path} must select from a completed {expected} run")
-    return decision.selected_candidates[0]
+    if summary.get("plan", {}).get("stage") != expected_stage:
+        raise ValueError(f"{path} must select from a completed {expected_stage} run")
+    return decision.selected_candidates

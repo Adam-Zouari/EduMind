@@ -44,6 +44,7 @@ from edumind.extraction.structured import build_structured_document
 from experiments.benchmarks.rag.chunking_embedding.strategies import (
     build_chunking_strategy,
 )
+from experiments.benchmarks.extraction import run_stage
 from experiments.benchmarks.extraction.run_stage import _document_candidates
 
 
@@ -176,10 +177,8 @@ def test_table_metrics_separate_detection_content_and_tree_similarity(monkeypatc
 
     monkeypatch.setattr(
         document_metrics,
-        "_teds",
-        lambda _reference, _prediction, *, structure_only=False: (
-            0.8 if not structure_only else 0.9
-        ),
+        "score_official_metrics",
+        lambda tables, formulas: ([(0.8, 0.9) for _ in tables], [1.0 for _ in formulas]),
     )
     document = _document(
         "A extra",
@@ -215,6 +214,7 @@ def test_table_metrics_separate_detection_content_and_tree_similarity(monkeypatc
         },
         document,
     )
+    document_metrics.apply_official_metrics([result])
     assert result.metrics["tables.detection_f1"] == 1.0
     assert result.metrics["tables.content_precision"] == 0.5
     assert result.metrics["tables.content_recall"] == 0.5
@@ -324,6 +324,52 @@ def test_document_configuration_matrix_has_no_duplicate_image_modes() -> None:
     assert len(image) == len(set(image)) == 12
     assert all("mode=full_page" in candidate for candidate in image)
     assert docx == ("docling-standard-native",)
+
+
+def test_document_architecture_uses_development_before_validation(monkeypatch) -> None:
+    configuration = "docling-standard|ocr=rapidocr|mode=full_page|table=fast|formula=off"
+    calls = []
+
+    def selected(_path, expected_stage, **_limits):
+        calls.append(expected_stage)
+        if expected_stage == "document-configuration-pdf":
+            return (configuration,)
+        return (configuration, "docling-vlm-granite-258m")
+
+    monkeypatch.setattr(run_stage, "_document_selection", selected)
+    development_arguments = SimpleNamespace(
+        profile="standard",
+        comparison="architecture",
+        pdf_selection=Path("configuration-decision.json"),
+        image_selection=None,
+    )
+    development, _ = _document_candidates(
+        "pdf",
+        development_arguments,
+        Path("experiments/benchmarks/extraction/document/candidates.yaml"),
+    )
+    assert development == (
+        configuration,
+        "docling-vlm-granite-258m",
+        "paddleocr-vl-1.6",
+    )
+
+    validation_arguments = SimpleNamespace(
+        profile="full",
+        comparison="architecture",
+        pdf_selection=Path("architecture-decision.json"),
+        image_selection=None,
+    )
+    validation, _ = _document_candidates(
+        "pdf",
+        validation_arguments,
+        Path("experiments/benchmarks/extraction/document/candidates.yaml"),
+    )
+    assert validation == (configuration, "docling-vlm-granite-258m")
+    assert calls == [
+        "document-configuration-pdf",
+        "document-architecture-development-pdf",
+    ]
 
 
 def test_canonical_document_preserves_exact_offsets_and_structure() -> None:

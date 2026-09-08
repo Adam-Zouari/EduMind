@@ -15,7 +15,12 @@ from edumind.common.artifacts import atomic_write_json
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.contracts import SampleResult
 
-from .metrics import aggregate_evaluations, load_reference, score_document
+from .metrics import (
+    aggregate_evaluations,
+    apply_official_metrics,
+    load_reference,
+    score_document,
+)
 
 
 def evaluate_candidate(
@@ -84,6 +89,7 @@ def evaluate_candidate(
             )
         )
 
+    apply_official_metrics(evaluations)
     resamples = 0 if plan.profile == "smoke" else plan.bootstrap_resamples
     aggregate, intervals = aggregate_evaluations(
         evaluations, resamples=resamples, seed=plan.seed

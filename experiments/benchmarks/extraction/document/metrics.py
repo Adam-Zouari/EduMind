@@ -2,17 +2,10 @@
 
 from __future__ import annotations
 
-import importlib
 import json
-import os
-import shlex
-import shutil
-import subprocess
-import sys
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import numpy as np
 
@@ -25,7 +18,11 @@ from experiments.benchmarks.common.metrics import (
     normalized_tokens,
     word_error_rate,
 )
-from experiments.benchmarks.preparation.evaluators import OMNIDOCBENCH_REVISION
+from .official_metrics import (
+    official_image_digest,
+    score_official_metrics,
+    validate_official_runtime,
+)
 
 VISUAL_KINDS = {"image", "pdf"}
 LAYOUT_KINDS = {
@@ -67,9 +64,10 @@ class DocumentEvaluation:
     groups: tuple[str, ...]
     metrics: dict[str, float] = field(default_factory=dict)
     counts: dict[str, tuple[int, int, int]] = field(default_factory=dict)
-    table_scores: list[tuple[float, float, float, float, float]] = field(
-        default_factory=list
-    )
+    table_content_scores: list[tuple[float, float, float]] = field(default_factory=list)
+    table_pairs: list[tuple[str, str]] = field(default_factory=list)
+    table_scores: list[tuple[float, float, float, float, float]] = field(default_factory=list)
+    formula_pairs: list[tuple[str, str]] = field(default_factory=list)
     formula_scores: list[float] = field(default_factory=list)
 
 
@@ -97,6 +95,23 @@ def validate_reference(item: Mapping[str, object], *, authoritative: bool) -> No
         raise ValueError(f"Visual sample {item.get('id')} requires verified page text")
     if authoritative and not reference.elements:
         raise ValueError(f"Document sample {item.get('id')} requires element annotations")
+    if authoritative:
+        missing_table_html = [
+            element.element_id
+            for element in reference.elements
+            if element.kind is SegmentKind.TABLE and not element.html
+        ]
+        missing_formula_latex = [
+            element.element_id
+            for element in reference.elements
+            if element.kind is SegmentKind.FORMULA and not element.latex
+        ]
+        if missing_table_html or missing_formula_latex:
+            missing = missing_table_html + missing_formula_latex
+            raise ValueError(
+                f"Document sample {item.get('id')} lacks official table/formula references: "
+                + ", ".join(missing[:10])
+            )
     if authoritative and kind in VISUAL_KINDS:
         missing_boxes = [
             element.element_id
@@ -110,27 +125,53 @@ def validate_reference(item: Mapping[str, object], *, authoritative: bool) -> No
             )
 
 
-def validate_official_evaluators(items: Sequence[Mapping[str, object]]) -> None:
+def validate_official_evaluators(items: Sequence[Mapping[str, object]]) -> bool:
     kinds = {
         element.kind
         for item in items
         for element in load_reference(item).elements
     }
-    if SegmentKind.TABLE in kinds:
-        _official_module("table_metric")
-    if SegmentKind.FORMULA in kinds:
-        missing = [
-            name
-            for name in ("pdflatex", "kpsewhich", "magick")
-            if shutil.which(name) is None
-        ]
-        if missing:
-            raise RuntimeError(
-                "Official CDM formula scoring requires system commands: "
-                + ", ".join(missing)
+    tables = SegmentKind.TABLE in kinds
+    formulas = SegmentKind.FORMULA in kinds
+    validate_official_runtime(tables=tables, formulas=formulas)
+    return tables or formulas
+
+
+def apply_official_metrics(records: Sequence[DocumentEvaluation]) -> None:
+    """Batch all official table/formula scoring into one Docker invocation."""
+
+    table_pairs = [pair for record in records for pair in record.table_pairs]
+    formula_pairs = [pair for record in records for pair in record.formula_pairs]
+    table_results, formula_results = score_official_metrics(table_pairs, formula_pairs)
+    table_offset = 0
+    formula_offset = 0
+    for record in records:
+        table_count = len(record.table_pairs)
+        if table_count:
+            official = table_results[table_offset : table_offset + table_count]
+            record.table_scores = [
+                (*content, teds, teds_s)
+                for content, (teds, teds_s) in zip(record.table_content_scores, official)
+            ]
+            record.metrics["tables.teds"] = float(
+                np.mean([value[3] for value in record.table_scores])
             )
-        if _cdm("x", "x") != 1.0:
-            raise RuntimeError("Official CDM evaluator failed its identity preflight")
+            record.metrics["tables.teds_s"] = float(
+                np.mean([value[4] for value in record.table_scores])
+            )
+            table_offset += table_count
+        formula_count = len(record.formula_pairs)
+        if formula_count:
+            record.formula_scores = formula_results[
+                formula_offset : formula_offset + formula_count
+            ]
+            record.metrics["formulas.recognition_similarity"] = float(
+                np.mean(record.formula_scores)
+            )
+            record.metrics["formulas.exact_match"] = float(
+                np.mean([value == 1.0 for value in record.formula_scores])
+            )
+            formula_offset += formula_count
 
 
 def score_document(
@@ -416,33 +457,22 @@ def _score_structured_kind(
         for index, item in enumerate(references):
             prediction = predictions[by_reference[index]] if index in by_reference else None
             content = _content_scores(item.text, prediction.text if prediction else "")
-            full_teds = _teds(item.html or "", _table_html(prediction)) if prediction else 0.0
-            teds_s = (
-                _teds(item.html or "", _table_html(prediction), structure_only=True)
-                if prediction
-                else 0.0
-            )
-            result.table_scores.append((*content, full_teds, teds_s))
+            result.table_content_scores.append(content)
+            result.table_pairs.append((item.html or "", _table_html(prediction)))
         for name, index in (
             ("tables.content_precision", 0),
             ("tables.content_recall", 1),
             ("tables.content_f1", 2),
-            ("tables.teds", 3),
-            ("tables.teds_s", 4),
         ):
             result.metrics[name] = float(
-                np.mean([value[index] for value in result.table_scores])
+                np.mean([value[index] for value in result.table_content_scores])
             )
     if target is SegmentKind.FORMULA and references:
         for index, item in enumerate(references):
             prediction = predictions[by_reference[index]] if index in by_reference else None
-            result.formula_scores.append(
-                _cdm(item.latex or item.text, _formula_latex(prediction)) if prediction else 0.0
+            result.formula_pairs.append(
+                (item.latex or item.text, _formula_latex(prediction))
             )
-        result.metrics["formulas.recognition_similarity"] = float(np.mean(result.formula_scores))
-        result.metrics["formulas.exact_match"] = float(
-            np.mean([value == 1.0 for value in result.formula_scores])
-        )
 
 
 def _aggregate_group(records: Sequence[DocumentEvaluation]) -> dict[str, float]:
@@ -593,103 +623,12 @@ def _document_fingerprint(document: ExtractedDocument) -> str:
     )
 
 
-def _teds(
-    reference_html: str,
-    prediction_html: str,
-    *,
-    structure_only: bool = False,
-) -> float:
-    if not reference_html or not prediction_html:
-        return 0.0
-    module = _official_module("table_metric")
-    return float(
-        module.TEDS(structure_only=structure_only).evaluate(
-            _html(reference_html), _html(prediction_html)
-        )
-    )
-
-
-def _cdm(reference_latex: str, prediction_latex: str) -> float:
-    if not reference_latex or not prediction_latex:
-        return 0.0
-    module = _official_module("cdm_metric")
-    evaluator = module.CDM(output_root=str(Path(os.environ.get("TEMP", ".")) / "cdm"))
-    previous = os.environ.get("CDM_SAVE_VIS")
-    os.environ["CDM_SAVE_VIS"] = "0"
-    try:
-        metrics = evaluator.evaluate(
-            reference_latex,
-            prediction_latex,
-            stable_hash([reference_latex, prediction_latex])[:16],
-        )
-    finally:
-        if previous is None:
-            os.environ.pop("CDM_SAVE_VIS", None)
-        else:
-            os.environ["CDM_SAVE_VIS"] = previous
-    if metrics.get("cdm_eval_error"):
-        raise RuntimeError(f"Official CDM evaluation failed: {metrics['cdm_eval_error']}")
-    return float(metrics["F1_score"])
-
-
-def _official_module(name: str):
-    root = Path(os.getenv("EDUMIND_OMNIDOCBENCH_PATH", PROJECT_ROOT / "data/benchmarks/evaluators/OmniDocBench"))
-    revision_file = root / ".edumind-revision"
-    if not root.is_dir() or not revision_file.is_file():
-        raise RuntimeError(
-            "Official OmniDocBench evaluators are missing; run "
-            "python experiments/benchmarks/prepare.py evaluators"
-        )
-    if revision_file.read_text(encoding="utf-8").strip() != OMNIDOCBENCH_REVISION:
-        raise RuntimeError("OmniDocBench evaluator revision does not match the pinned metric contract")
-    source_root = str(root / "src")
-    if source_root not in sys.path:
-        sys.path.insert(0, source_root)
-    module = importlib.import_module(f"metrics.{name}")
-    module_path = Path(module.__file__).resolve()
-    if root.resolve() not in module_path.parents:
-        raise RuntimeError(f"Conflicting metrics package loaded from {module_path}")
-    if name == "cdm_metric" and os.name == "nt":
-        _enable_windows_cdm_process_adapter()
-    return module
-
-
-def _enable_windows_cdm_process_adapter() -> None:
-    """Keep the official CDM algorithm while replacing its POSIX shell launcher."""
-
-    module_name = "metrics.cdm.modules.latex2bbox_color"
-    module = sys.modules.get(module_name)
-    if module is None:
-        return
-
-    def run_cmd(command: str, timeout_sec: float = 30) -> int:
-        arguments = shlex.split(command.replace(">/dev/null", ""), posix=True)
-        try:
-            completed = subprocess.run(
-                arguments,
-                timeout=timeout_sec,
-                env=module.build_tex_env(),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            return int(completed.returncode)
-        except (OSError, subprocess.TimeoutExpired):
-            return -1
-
-    module.run_cmd = run_cmd
-
-
 def _table_html(segment: ExtractedSegment | None) -> str:
     return str(segment.structured_content.get("html", "")) if segment else ""
 
 
 def _formula_latex(segment: ExtractedSegment | None) -> str:
     return str(segment.structured_content.get("latex", segment.text)) if segment else ""
-
-
-def _html(value: str) -> str:
-    lowered = value.casefold()
-    return value if "<body" in lowered else f"<html><body>{value}</body></html>"
 
 
 def _prf(tp: int, fp: int, fn: int) -> tuple[float, float, float]:
