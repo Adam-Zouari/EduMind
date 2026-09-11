@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-import pytest
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from edumind.extraction.contracts import ExtractionProfile, ExtractionRequest, SourceKind
 from edumind.extraction.extractors.audio import WhisperExtractor
@@ -14,6 +18,7 @@ from experiments.benchmarks.common.resources import ResourceMonitor
 from experiments.benchmarks.extraction.audio.adapters import (
     ASR_PROFILES,
     QwenRuntime,
+    Transcript,
     WhisperRuntime,
 )
 from experiments.benchmarks.extraction.audio.evaluate import (
@@ -31,6 +36,151 @@ from experiments.benchmarks.extraction.audio.runner import (
     _worker_environment,
 )
 from experiments.benchmarks.common.runner import run_benchmark
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize(
+    "relative_path, usage",
+    (
+        ("experiments/benchmarks/extraction/audio/worker.py", "usage: worker.py"),
+        (
+            "experiments/benchmarks/extraction/video/frozen_asr_worker.py",
+            "usage: frozen_asr_worker.py",
+        ),
+        (
+            "experiments/benchmarks/extraction/video/visual_worker.py",
+            "usage: visual_worker.py",
+        ),
+    ),
+)
+def test_fresh_workers_bootstrap_repository_imports(
+    tmp_path, relative_path, usage
+) -> None:
+    completed = subprocess.run(
+        [sys.executable, str(ROOT / relative_path)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode != 0
+    assert usage in completed.stderr
+    assert "ModuleNotFoundError" not in completed.stderr
+
+
+def test_whisper_loader_passes_offline_mode_once(monkeypatch) -> None:
+    import torch
+    from edumind.extraction.extractors.audio import load_whisper_runtime
+
+    captured = {"loads": []}
+
+    class Model:
+        def to(self, device):
+            self.device = torch.device(device)
+            return self
+
+        def eval(self):
+            return self
+
+        def parameters(self):
+            return iter((SimpleNamespace(device=self.device),))
+
+    class ModelLoader:
+        @staticmethod
+        def from_pretrained(path, **kwargs):
+            captured["loads"].append(("model", path, kwargs))
+            return Model()
+
+    class ProcessorLoader:
+        @staticmethod
+        def from_pretrained(path, **kwargs):
+            captured["loads"].append(("processor", path, kwargs))
+            return SimpleNamespace(tokenizer="tokenizer", feature_extractor="features")
+
+    def fake_pipeline(task, **kwargs):
+        captured["pipeline"] = {"task": task, **kwargs}
+        return SimpleNamespace(model=kwargs["model"])
+
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers",
+        SimpleNamespace(
+            AutoModelForSpeechSeq2Seq=ModelLoader,
+            AutoProcessor=ProcessorLoader,
+            pipeline=fake_pipeline,
+        ),
+    )
+    _runtime, dtype = load_whisper_runtime(Path("prepared-whisper"), "cpu")
+
+    assert captured["loads"] == [
+        (
+            "model",
+            "prepared-whisper",
+            {"dtype": torch.float32, "local_files_only": True},
+        ),
+        ("processor", "prepared-whisper", {"local_files_only": True}),
+    ]
+    assert captured["pipeline"]["task"] == "automatic-speech-recognition"
+    assert "local_files_only" not in captured["pipeline"]
+    assert dtype == "float32"
+
+
+def test_mocked_asr_worker_phase_runs_end_to_end(monkeypatch) -> None:
+    from experiments.benchmarks.extraction.audio import worker
+
+    class Runtime:
+        def load(self):
+            return None
+
+        def transcribe(self, path):
+            if "control" in str(path):
+                return Transcript("", ())
+            return Transcript(
+                "alpha beta",
+                ({"text": "alpha beta", "start": 0.0, "end": 1.0},),
+            )
+
+        def close(self):
+            return None
+
+        def parameters(self):
+            return {"candidate": "mock", "device": "cpu"}
+
+    monkeypatch.setattr(worker, "build_runtime", lambda *_args: Runtime())
+    output = worker.execute(
+        {
+            "candidate": "mock",
+            "model_lock": {},
+            "speech": [
+                {
+                    "id": "speech",
+                    "canonical_path": "speech.wav",
+                    "reference": "alpha beta",
+                    "reference_segments": [
+                        {"text": "alpha beta", "start": 0.0, "end": 1.0}
+                    ],
+                    "duration_seconds": 1.0,
+                }
+            ],
+            "reliability": [
+                {
+                    "id": "control",
+                    "canonical_path": "control.wav",
+                    "nonspeech_kind": "silence",
+                    "duration_seconds": 1.0,
+                }
+            ],
+            "device": "cpu",
+            "warmups": 0,
+            "repetitions": 1,
+            "bootstrap_resamples": 0,
+            "seed": 42,
+        }
+    )
+    assert output["metrics"]["word_error_rate"] == 0.0
+    assert output["metrics"]["timestamp_alignment_coverage"] == 1.0
+    assert output["metrics"]["nonspeech_false_transcription_rate"] == 0.0
+    assert len(output["timings"]) == 1
 
 
 def _speech(sample_id: str, reference: str, prediction: str):
@@ -292,6 +442,81 @@ def test_missing_timestamps_fail_but_unaligned_mae_is_null() -> None:
     assert "timestamp_boundary_mae_seconds" not in intervals
 
 
+def test_empty_asr_output_is_a_valid_empty_quality_sample() -> None:
+    row = score_speech(
+        {
+            "id": "empty",
+            "reference": "alpha beta",
+            "duration_seconds": 2.0,
+            "reference_segments": [
+                {"text": "alpha", "start": 0.0, "end": 0.8},
+                {"text": "beta", "start": 1.0, "end": 2.0},
+            ],
+        },
+        "",
+        [],
+        quality_latency_seconds=0.1,
+        repeat_transcript_agreement=True,
+    )
+    assert row["word_deletions"] == 2
+    assert row["character_deletions"] == len("alpha beta")
+    assert row["aligned_timed_segment_count"] == 0
+    assert row["timestamp_boundary_count"] == 0
+    assert row["empty_transcript"] == 1
+    with pytest.raises(ValueError, match="empty transcript"):
+        score_speech(
+            {
+                "id": "contradictory",
+                "reference": "alpha",
+                "duration_seconds": 1.0,
+                "reference_segments": [{"text": "alpha", "start": 0.0, "end": 1.0}],
+            },
+            "",
+            [{"text": "alpha", "start": 0.0, "end": 1.0}],
+            quality_latency_seconds=0.1,
+            repeat_transcript_agreement=True,
+        )
+
+
+def test_timestamp_span_alignment_does_not_reuse_a_broad_prediction() -> None:
+    broad = score_speech(
+        {
+            "id": "broad",
+            "reference": "alpha beta",
+            "duration_seconds": 2.0,
+            "reference_segments": [
+                {"text": "alpha", "start": 0.0, "end": 0.9},
+                {"text": "beta", "start": 1.0, "end": 2.0},
+            ],
+        },
+        "alpha beta",
+        [{"text": "alpha beta", "start": 0.0, "end": 2.0}],
+        quality_latency_seconds=0.1,
+        repeat_transcript_agreement=True,
+    )
+    assert broad["aligned_timed_segment_count"] == 1
+
+    words = score_speech(
+        {
+            "id": "word-span",
+            "reference": "alpha beta",
+            "duration_seconds": 2.0,
+            "reference_segments": [
+                {"text": "alpha beta", "start": 0.0, "end": 2.0}
+            ],
+        },
+        "alpha beta",
+        [
+            {"text": "alpha", "start": 0.1, "end": 0.8},
+            {"text": "beta", "start": 1.1, "end": 1.9},
+        ],
+        quality_latency_seconds=0.1,
+        repeat_transcript_agreement=True,
+    )
+    assert words["aligned_timed_segment_count"] == 1
+    assert words["timestamp_boundary_error_seconds"] == pytest.approx(0.2)
+
+
 def test_audio_registry_and_duration_limit_are_frozen() -> None:
     assert set(ASR_PROFILES) == {
         "whisper-small-en-control",
@@ -384,6 +609,7 @@ def test_asr_runner_logs_flat_metrics_and_required_tables(tmp_path) -> None:
         "timings.parquet",
         "candidate.json",
     }
+    assert candidate["parameters"] == {"device": "cpu"}
 
 
 def test_failed_asr_candidate_keeps_one_sample_artifact(tmp_path) -> None:
@@ -651,6 +877,8 @@ def test_qwen_forced_aligner_uses_official_result_items(monkeypatch) -> None:
         dtype = torch.float32
 
         def generate(self, **_kwargs):
+            assert _kwargs["max_new_tokens"] == 256
+            assert _kwargs["do_sample"] is False
             return torch.tensor([[1, 2, 3]])
 
     class AlignerInputs(dict):
@@ -691,9 +919,59 @@ def test_qwen_forced_aligner_uses_official_result_items(monkeypatch) -> None:
         {"text": "hello", "start": 0.0, "end": 0.4},
         {"text": "world", "start": 0.5, "end": 1.0},
     )
+    parameters = runtime.parameters()
+    assert parameters["max_new_tokens"] == 256
+    assert parameters["aligner_model_class"] == "AutoModelForTokenClassification"
+
+
+def test_qwen_snapshot_uses_the_transformers_compatible_hf_aligner() -> None:
+    from experiments.benchmarks.common.selection import selection_entries
+    from experiments.benchmarks.preparation.models import snapshot_specs
+
+    entry = next(
+        item for item in selection_entries() if item.candidate == "Qwen/Qwen3-ASR-1.7B-hf"
+    )
+    assert snapshot_specs(entry)[1] == (
+        "Qwen/Qwen3-ForcedAligner-0.6B-hf",
+        "c07281df297b9905d24a508279258cccf987a064",
+        "forced-aligner",
+    )
 
 
 def test_required_cuda_monitoring_cannot_report_fabricated_zero() -> None:
     monitor = ResourceMonitor(require_vram=True, report_zero_vram=True)
     with pytest.raises(RuntimeError, match="did not capture"):
         monitor.metrics()
+
+
+def test_cuda_monitor_uses_device_delta_when_wddm_hides_process_bytes() -> None:
+    class Process:
+        pid = os.getpid()
+        usedGpuMemory = None
+
+    class Memory:
+        def __init__(self, used):
+            self.used = used
+
+    class Nvml:
+        @staticmethod
+        def nvmlDeviceGetComputeRunningProcesses(_handle):
+            return [Process()]
+
+        @staticmethod
+        def nvmlDeviceGetGraphicsRunningProcesses(_handle):
+            return []
+
+        @staticmethod
+        def nvmlDeviceGetMemoryInfo(_handle):
+            return Memory(700)
+
+    monitor = ResourceMonitor(require_vram=True)
+    monitor._pynvml = Nvml()
+    monitor._gpu_handles = [object()]
+    monitor._gpu_baseline_bytes = [200]
+
+    monitor._sample()
+
+    assert monitor.metrics()["peak_vram_mb"] == pytest.approx(500 / (1024**2))
+    assert monitor.vram_measurement_method == "nvml-device-delta-wddm"

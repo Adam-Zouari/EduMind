@@ -8,6 +8,8 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
+
 from edumind.common.artifacts import atomic_write_json
 from experiments.benchmarks.common.resources import ResourceMonitor
 from experiments.benchmarks.extraction.audio.adapters import build_runtime
@@ -110,6 +112,7 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
         "intervals": intervals,
         "parameters": {
             **runtime.parameters(),
+            "vram_measurement_method": monitor.vram_measurement_method,
             "seed": int(payload["seed"]),
             "warmups": int(payload["warmups"]),
             "repetitions": int(payload["repetitions"]),

@@ -3,22 +3,15 @@
 from __future__ import annotations
 
 import gc
-import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
-from edumind.extraction.contracts import (
-    ExtractedDocument,
-    ExtractionRequest,
-    ExtractionWarning,
-    SourceKind,
-)
-from edumind.extraction.errors import ExtractionBackendError, MissingDependencyError
+from edumind.extraction.errors import MissingDependencyError
 from edumind.extraction.extractors.audio import load_whisper_runtime, transcribe_whisper
-from edumind.extraction.extractors.base import build_document
+from experiments.benchmarks.common.provenance import package_versions
 
 
 @dataclass(frozen=True)
@@ -143,10 +136,27 @@ class BaseRuntime:
             "decoder": self.profile.decoder,
             "timestamp_method": self.profile.timestamp_method,
             "sample_rate_hz": 16_000,
+            "package_versions": package_versions(
+                (
+                    "torch",
+                    "torchaudio",
+                    "transformers",
+                    "nemo_toolkit",
+                    "moss-transcribe-diarize",
+                    "soundfile",
+                )
+            ),
         }
 
 
 class WhisperRuntime(BaseRuntime):
+    def parameters(self) -> dict[str, object]:
+        return {
+            **super().parameters(),
+            "return_timestamps": "word",
+            "do_sample": False,
+        }
+
     def load(self) -> None:
         self._runtime, self.dtype = load_whisper_runtime(self.model_path, self.device)
 
@@ -167,6 +177,20 @@ class WhisperRuntime(BaseRuntime):
 
 
 class NemoRuntime(BaseRuntime):
+    def parameters(self) -> dict[str, object]:
+        values = {
+            **super().parameters(),
+            "batch_size": 1,
+            "timestamps": True,
+        }
+        if self.profile.candidate == "canary-180m":
+            values.update({"beam_size": 1, "punctuation_and_capitalization": True})
+        else:
+            values.update(
+                {"decoding_strategy": "greedy_batch", "timestamp_level": "segment_then_word"}
+            )
+        return values
+
     def load(self) -> None:
         try:
             import nemo.collections.asr as nemo_asr
@@ -236,7 +260,12 @@ class MossRuntime(BaseRuntime):
         self.attention_report = attention_report
 
     def parameters(self) -> dict[str, object]:
-        return {**super().parameters(), "attention": str(self.attention_report)}
+        return {
+            **super().parameters(),
+            "attention": str(self.attention_report),
+            "max_new_tokens": 2048,
+            "do_sample": False,
+        }
 
     def transcribe(self, source: Path) -> Transcript:
         try:
@@ -275,6 +304,17 @@ class MossRuntime(BaseRuntime):
 
 
 class QwenRuntime(BaseRuntime):
+    def parameters(self) -> dict[str, object]:
+        return {
+            **super().parameters(),
+            "max_new_tokens": 256,
+            "do_sample": False,
+            "forced_language": "English",
+            "alignment_execution": "sequential-unload-reload",
+            "aligner_model_class": "AutoModelForTokenClassification",
+            "aligner_local_files_only": True,
+        }
+
     def load(self) -> None:
         self._load_asr()
         self._runtime = None
@@ -311,7 +351,7 @@ class QwenRuntime(BaseRuntime):
             audio=str(source), language="English"
         ).to(model.device, model.dtype)
         with torch.inference_mode():
-            output_ids = model.generate(**inputs, max_new_tokens=2048, do_sample=False)
+            output_ids = model.generate(**inputs, max_new_tokens=256, do_sample=False)
         generated = output_ids[:, inputs["input_ids"].shape[1] :]
         parsed = processor.decode(generated, return_format="parsed")[0]
         text = str(parsed.get("transcription", "")).strip()
@@ -365,72 +405,6 @@ class QwenRuntime(BaseRuntime):
         ).to(self.device).eval()
         _assert_device(model, self.device)
         return model, processor
-
-
-class ExperimentalAudioExtractor:
-    """Pipeline adapter retained for video runs with a frozen ASR profile."""
-
-    supported_kinds = frozenset({SourceKind.AUDIO})
-
-    def __init__(self, candidate: str, model: str, _revision: str) -> None:
-        profile = ASR_PROFILES.get(candidate)
-        if profile is None or profile.model != model or candidate == "whisper-small-en-control":
-            raise ValueError(f"Unknown experimental ASR candidate: {candidate}")
-        self.candidate = self.engine = self.name = candidate
-        self.model = model
-        self._runtime: BaseRuntime | None = None
-
-    def extract(self, request: ExtractionRequest, kind: SourceKind) -> ExtractedDocument:
-        if request.profile is None:
-            raise ValueError("Resolved extraction profile is required")
-        started = time.perf_counter()
-        try:
-            if self._runtime is None:
-                lock_entry: dict[str, object] = {
-                    "model_path": request.options.get("model_path", "")
-                }
-                if request.options.get("aligner_model_path"):
-                    lock_entry["submodels"] = [
-                        {
-                            "role": "forced-aligner",
-                            "model_path": request.options["aligner_model_path"],
-                        }
-                    ]
-                self._runtime = build_runtime(
-                    self.candidate, {self.model: lock_entry}, request.profile.device
-                )
-                self._runtime.load()
-            transcript = self._runtime.transcribe(request.source_path)
-        except MissingDependencyError:
-            raise
-        except Exception as exc:
-            raise ExtractionBackendError(
-                f"Audio extraction failed with {self.name}", detail=str(exc)
-            ) from exc
-        return build_document(
-            request,
-            kind,
-            request.profile,
-            [str(segment["text"]) for segment in transcript.segments] or [transcript.text],
-            timestamps=[
-                (float(segment["start"]), float(segment["end"]))
-                for segment in transcript.segments
-            ],
-            separators=" ",
-            metadata={
-                "candidate": self.candidate,
-                "model": self.model,
-                "engine_revision": request.profile.engine_revision,
-                "alignment_execution": (
-                    "sequential" if self.candidate == "qwen3-asr-1.7b-aligned" else "native"
-                ),
-            },
-            warnings=[
-                ExtractionWarning("asr_runtime_warning", warning)
-                for warning in transcript.warnings
-            ],
-            seconds=time.perf_counter() - started,
-        )
 
 
 def _nemo_segment(item: Mapping[str, object]) -> dict[str, object]:

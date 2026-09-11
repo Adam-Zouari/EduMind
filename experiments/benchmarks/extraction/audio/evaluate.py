@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from collections import Counter
 from dataclasses import dataclass
+from functools import lru_cache
 
 import numpy as np
 
-from experiments.benchmarks.common.metrics import normalize_prose
+from experiments.benchmarks.common.metrics import normalize_prose, precision_recall_f1
 
 METRIC_DIRECTIONS = {
     "word_error_rate": "min",
@@ -120,7 +122,13 @@ def score_speech(
     word_alignment = align_sequences(reference_words, predicted_words)
     character_alignment = align_sequences(tuple(reference), tuple(hypothesis))
     references = _segments(item.get("reference_segments"), "reference")
-    predictions = _segments(predicted_segments, "prediction")
+    if hypothesis and not predicted_segments:
+        raise ValueError("ASR prediction timestamp segments are missing")
+    if not hypothesis and predicted_segments:
+        raise ValueError("ASR empty transcript has non-empty lexical timestamp segments")
+    predictions = _segments(
+        predicted_segments, "prediction", allow_empty=not hypothesis
+    )
     _validate_predicted_timeline(predictions, float(item["duration_seconds"]))
     timestamp = _timestamp_totals(references, predictions)
     return {
@@ -314,34 +322,31 @@ def _bootstrap(speech, nonspeech, timing_rows, *, resamples: int, seed: int):
 
 
 def _timestamp_totals(reference_segments, predicted_segments) -> dict[str, int | float]:
-    reference_tokens, reference_owners = _segment_tokens(reference_segments)
-    predicted_tokens, predicted_owners = _segment_tokens(predicted_segments)
-    alignment = align_sequences(reference_tokens, predicted_tokens)
-    matched: dict[int, list[int]] = {}
-    for reference_index, predicted_index in alignment.exact_matches:
-        matched.setdefault(reference_owners[reference_index], []).append(
-            predicted_owners[predicted_index]
-        )
+    matches = _ordered_span_matches(reference_segments, predicted_segments)
     error = 0.0
-    aligned = 0
-    for reference_index, predicted_indices in matched.items():
+    for reference_index, start_index, end_index, _ in matches:
         reference = reference_segments[reference_index]
-        predicted = [predicted_segments[index] for index in predicted_indices]
+        predicted = predicted_segments[start_index : end_index + 1]
         predicted_start = min(float(segment["start"]) for segment in predicted)
         predicted_end = max(float(segment["end"]) for segment in predicted)
         error += abs(float(reference["start"]) - predicted_start)
         error += abs(float(reference["end"]) - predicted_end)
-        aligned += 1
     return {
         "reference_timed_segment_count": len(reference_segments),
-        "aligned_timed_segment_count": aligned,
+        "aligned_timed_segment_count": len(matches),
         "timestamp_boundary_error_seconds": error,
-        "timestamp_boundary_count": aligned * 2,
+        "timestamp_boundary_count": len(matches) * 2,
     }
 
 
-def _segments(value: object, label: str) -> list[dict[str, object]]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)) or not value:
+def _segments(
+    value: object, label: str, *, allow_empty: bool = False
+) -> list[dict[str, object]]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError(f"ASR {label} timestamp segments are missing")
+    if not value:
+        if allow_empty:
+            return []
         raise ValueError(f"ASR {label} timestamp segments are missing")
     segments = []
     for raw in value:
@@ -355,14 +360,66 @@ def _segments(value: object, label: str) -> list[dict[str, object]]:
     return segments
 
 
-def _segment_tokens(segments):
-    tokens: list[str] = []
-    owners: list[int] = []
-    for index, segment in enumerate(segments):
-        current = normalize_transcript(str(segment["text"])).split()
-        tokens.extend(current)
-        owners.extend([index] * len(current))
-    return tokens, owners
+def _ordered_span_matches(reference_segments, predicted_segments):
+    """Choose one-to-one ordered spans with deterministic documented tie-breaks."""
+
+    if not reference_segments or not predicted_segments:
+        return ()
+    eligible: dict[int, list[tuple[int, int, float]]] = {}
+    for reference_index, reference in enumerate(reference_segments):
+        expected = normalize_transcript(str(reference["text"])).split()
+        spans: list[tuple[int, int, float]] = []
+        for start in range(len(predicted_segments)):
+            observed: list[str] = []
+            for end in range(start, len(predicted_segments)):
+                observed.extend(
+                    normalize_transcript(str(predicted_segments[end]["text"])).split()
+                )
+                similarity = _token_content_f1(expected, observed)
+                if similarity >= 0.5:
+                    spans.append((start, end, similarity))
+        eligible[reference_index] = spans
+
+    @lru_cache(maxsize=None)
+    def solve(reference_index: int, minimum_prediction: int):
+        if reference_index >= len(reference_segments):
+            return (0.0, 0, ())
+        best = solve(reference_index + 1, minimum_prediction)
+        for start, end, similarity in eligible[reference_index]:
+            if start < minimum_prediction:
+                continue
+            remaining = solve(reference_index + 1, end + 1)
+            candidate = (
+                similarity + remaining[0],
+                1 + remaining[1],
+                ((reference_index, start, end, similarity), *remaining[2]),
+            )
+            if _better_span_solution(candidate, best):
+                best = candidate
+        return best
+
+    return solve(0, 0)[2]
+
+
+def _better_span_solution(candidate, incumbent) -> bool:
+    if abs(candidate[0] - incumbent[0]) > 1e-12:
+        return candidate[0] > incumbent[0]
+    if candidate[1] != incumbent[1]:
+        return candidate[1] > incumbent[1]
+    candidate_positions = tuple((value[1], value[2]) for value in candidate[2])
+    incumbent_positions = tuple((value[1], value[2]) for value in incumbent[2])
+    return candidate_positions < incumbent_positions
+
+
+def _token_content_f1(reference: Sequence[str], prediction: Sequence[str]) -> float:
+    expected = Counter(reference)
+    observed = Counter(prediction)
+    overlap = sum((expected & observed).values())
+    return precision_recall_f1(
+        overlap,
+        sum(observed.values()) - overlap,
+        sum(expected.values()) - overlap,
+    )[2]
 
 
 def _validate_predicted_timeline(segments, duration: float) -> None:

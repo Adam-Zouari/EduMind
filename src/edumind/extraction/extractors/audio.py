@@ -102,16 +102,22 @@ def load_whisper_runtime(model_path: Path, device: str) -> tuple[Any, str]:
         raise ValueError("Whisper device must be cpu or cuda")
     try:
         import torch
-        from transformers import pipeline
+        from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
     except ModuleNotFoundError as exc:
         raise MissingDependencyError("Transformers ASR dependencies are required") from exc
     dtype = torch.float16 if device == "cuda" else torch.float32
+    model = AutoModelForSpeechSeq2Seq.from_pretrained(
+        str(model_path), dtype=dtype, local_files_only=True
+    ).to(device).eval()
+    processor = AutoProcessor.from_pretrained(
+        str(model_path), local_files_only=True
+    )
     runtime = pipeline(
         "automatic-speech-recognition",
-        model=str(model_path),
-        device=0 if device == "cuda" else -1,
-        dtype=dtype,
-        model_kwargs={"local_files_only": True},
+        model=model,
+        tokenizer=processor.tokenizer,
+        feature_extractor=processor.feature_extractor,
+        device=torch.device(device),
     )
     _assert_whisper_device(runtime.model, device)
     return runtime, str(dtype).removeprefix("torch.")

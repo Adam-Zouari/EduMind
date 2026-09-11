@@ -182,6 +182,9 @@ def run(
                 "model_revision": lock_entry.get("revision", ""),
                 "selection_revision": lock_entry.get("selection_revision", ""),
                 "model_path": lock_entry.get("model_path", ""),
+                "model_cache_manifest_sha256": lock_entry.get(
+                    "model_cache_manifest_sha256", ""
+                ),
                 "data_split": split,
                 "ffmpeg_version": ffmpeg_version,
                 "canonical_audio": "mono 16 kHz PCM WAV",
@@ -197,6 +200,16 @@ def run(
                 )
                 parameters["aligner_model_path"] = next(
                     str(item.get("model_path", ""))
+                    for item in lock_entry.get("submodels", [])
+                    if item.get("role") == "forced-aligner"
+                )
+                parameters["aligner_repository"] = next(
+                    str(item.get("repository", ""))
+                    for item in lock_entry.get("submodels", [])
+                    if item.get("role") == "forced-aligner"
+                )
+                parameters["aligner_cache_manifest_sha256"] = next(
+                    str(item.get("cache_manifest_sha256", ""))
                     for item in lock_entry.get("submodels", [])
                     if item.get("role") == "forced-aligner"
                 )
