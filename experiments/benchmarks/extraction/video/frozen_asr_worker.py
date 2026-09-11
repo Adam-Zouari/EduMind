@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import subprocess
 import sys
 import tempfile
 import time
@@ -12,10 +10,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
-from edumind.common.artifacts import atomic_write_json
 from experiments.benchmarks.common.resources import ResourceMonitor
 from experiments.benchmarks.extraction.audio.adapters import build_runtime
 from experiments.benchmarks.extraction.audio.evaluate import align_sequences, normalize_transcript
+from experiments.benchmarks.extraction.media import decode_canonical_audio
+from experiments.benchmarks.extraction.process import json_worker_main
 from experiments.benchmarks.extraction.video.metrics import stitch_text
 
 
@@ -45,8 +44,9 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
                 cold_load_seconds = time.perf_counter() - started
                 decoded_audio: dict[str, Path] = {}
                 first_id = str(items[0]["id"])
-                first_audio, first_command = _decode_audio(
-                    Path(str(items[0]["source_path"])), temporary / f"{first_id}-full.wav"
+                first_audio = temporary / f"{first_id}-full.wav"
+                first_command = decode_canonical_audio(
+                    Path(str(items[0]["source_path"])), first_audio
                 )
                 decoded_audio[first_id] = first_audio
                 commands.append(
@@ -70,9 +70,9 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
                     window_rows = []
                     sample_id = str(item["id"])
                     if sample_id not in decoded_audio:
-                        decoded, command = _decode_audio(
-                            Path(str(item["source_path"])),
-                            temporary / f"{sample_id}-full.wav",
+                        decoded = temporary / f"{sample_id}-full.wav"
+                        command = decode_canonical_audio(
+                            Path(str(item["source_path"])), decoded
                         )
                         decoded_audio[sample_id] = decoded
                         commands.append(
@@ -192,28 +192,6 @@ def _window_starts(duration: float, length: float, overlap: float):
     return starts
 
 
-def _decode_audio(source: Path, destination: Path):
-    command = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-i",
-        str(source),
-        "-vn",
-        "-ac",
-        "1",
-        "-ar",
-        "16000",
-        "-c:a",
-        "pcm_s16le",
-        str(destination),
-    ]
-    subprocess.run(command, check=True, capture_output=True)
-    return destination, command
-
-
 def _slice_wav(source: Path, destination: Path, *, start: float, duration: float):
     """Create deterministic PCM windows from the one decoded per-video WAV."""
 
@@ -258,13 +236,5 @@ def _timestamp_units(segments):
     ]
 
 
-def main() -> int:
-    if len(sys.argv) != 3:
-        raise SystemExit("usage: frozen_asr_worker.py PAYLOAD_JSON RESULT_JSON")
-    payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-    atomic_write_json(Path(sys.argv[2]), execute(payload))
-    return 0
-
-
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(json_worker_main(execute))

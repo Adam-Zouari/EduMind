@@ -5,4 +5,4 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
 from experiments.benchmarks.extraction.video.runner import main
 
-raise SystemExit(main(Path(__file__).parent))
+raise SystemExit(main())

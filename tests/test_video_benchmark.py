@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -60,7 +61,7 @@ def test_video_protocol_lock_is_manifest_bound_and_smoke_only(tmp_path) -> None:
     atomic_write_json(
         bad_path,
         {
-            **lock.payload,
+            **json.loads(path.read_text(encoding="utf-8")),
             "occurrence_matching": {
                 "content_f1_threshold": 0.5,
                 "frame_timestamp_tolerance_seconds": 0.01,
@@ -282,6 +283,7 @@ def test_visual_worker_has_no_asr_execution_dependency() -> None:
 
 
 def test_visual_worker_uses_current_candidate_temp_root(monkeypatch, tmp_path) -> None:
+    from experiments.benchmarks.extraction import process
     from experiments.benchmarks.extraction.video import runner
 
     current = tmp_path / "current-candidate"
@@ -296,7 +298,7 @@ def test_visual_worker_uses_current_candidate_temp_root(monkeypatch, tmp_path) -
         output.write_text("{}", encoding="utf-8")
         return SimpleNamespace(returncode=0, stderr="", stdout="")
 
-    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    monkeypatch.setattr(process.subprocess, "run", fake_run)
     assert runner._run_visual_worker(
         "video-fixed-5s", [], device="cpu"
     ) == {}

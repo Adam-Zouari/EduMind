@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
-import tempfile
 import time
 import uuid
 from collections.abc import Mapping, Sequence
@@ -14,7 +11,7 @@ from pathlib import Path
 from edumind.common.artifacts import atomic_write_json, sha256_file, stable_hash
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.extraction.audio.adapters import ASR_PROFILES
-from experiments.benchmarks.extraction.audio.runner import _worker_environment
+from experiments.benchmarks.extraction.process import run_json_worker
 from experiments.benchmarks.extraction.video.protocol import VideoProtocolLock
 from experiments.benchmarks.preparation.models import load_selected_model_lock
 
@@ -46,26 +43,13 @@ def create_frozen_asr_artifact(
         "overlap_seconds": protocol.overlap_seconds,
         "maximum_overlap_tokens": int(protocol.stitching["maximum_overlap_tokens"]),
     }
-    with tempfile.TemporaryDirectory(prefix="edumind-frozen-asr-") as raw:
-        directory = Path(raw)
-        input_path, result_path = directory / "input.json", directory / "result.json"
-        atomic_write_json(input_path, payload)
-        completed = subprocess.run(
-            [
-                sys.executable,
-                str(Path(__file__).with_name("frozen_asr_worker.py")),
-                str(input_path),
-                str(result_path),
-            ],
-            cwd=PROJECT_ROOT,
-            env=_worker_environment(device),
-            capture_output=True,
-            text=True,
-        )
-        if completed.returncode or not result_path.is_file():
-            detail = (completed.stderr or completed.stdout or "no worker output").strip()
-            raise RuntimeError(f"Frozen video ASR worker failed: {detail[-4000:]}")
-        result = json.loads(result_path.read_text(encoding="utf-8"))
+    result = run_json_worker(
+        Path(__file__).with_name("frozen_asr_worker.py"),
+        payload,
+        device=device,
+        prefix="edumind-frozen-asr-",
+        error_label="Frozen video ASR worker",
+    )
     entry = lock[ASR_PROFILES[audio_candidate].model]
     artifact = {
         "schema_version": 1,

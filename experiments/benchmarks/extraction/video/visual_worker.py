@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import random
 import re
 import subprocess
@@ -15,11 +14,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
 import numpy as np
 
-from edumind.common.artifacts import atomic_write_json
 from edumind.extraction import ExtractionProfile, ExtractionRequest, SourceKind
 from experiments.benchmarks.common.resources import ResourceMonitor
 from experiments.benchmarks.common.provenance import package_versions
 from experiments.benchmarks.extraction.registry import build_experiment_registry
+from experiments.benchmarks.extraction.process import json_worker_main
 from experiments.benchmarks.extraction.video.candidates import frame_command, parse_candidate
 from experiments.benchmarks.extraction.video.metrics import (
     aggregate_quality,
@@ -314,13 +313,5 @@ def _extract_frames(candidate, source: Path, directory: Path):
     return list(zip(frames, timestamps, strict=True)), command
 
 
-def main() -> int:
-    if len(sys.argv) != 3:
-        raise SystemExit("usage: visual_worker.py PAYLOAD_JSON RESULT_JSON")
-    payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-    atomic_write_json(Path(sys.argv[2]), execute(payload))
-    return 0
-
-
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(json_worker_main(execute))

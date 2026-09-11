@@ -5,24 +5,26 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
-import sys
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
 
-from edumind.common.artifacts import atomic_write_json, sha256_file
+from edumind.common.artifacts import sha256_file
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.contracts import BenchmarkPlan, SampleResult
 from experiments.benchmarks.common.datasets import load_manifest
 from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.extraction.audio.adapters import ASR_PROFILES
-from experiments.benchmarks.extraction.audio.runner import _worker_environment
-from experiments.benchmarks.extraction.common import LOCK_CANDIDATES, _lock_paths
+from experiments.benchmarks.extraction.document.profiles import (
+    lock_paths,
+    parse_document_profile,
+)
 from experiments.benchmarks.extraction.document.runner import validate_prepared_components
+from experiments.benchmarks.extraction.media import ffmpeg_version, media_duration
+from experiments.benchmarks.extraction.process import run_json_worker
 from experiments.benchmarks.extraction.video.candidates import (
     FIXED_CANDIDATES,
     SCENE_CANDIDATES,
@@ -30,11 +32,11 @@ from experiments.benchmarks.extraction.video.candidates import (
     hybrid_candidates,
     parse_candidate,
 )
-from experiments.benchmarks.extraction.video.evaluate import directions
 from experiments.benchmarks.extraction.video.frozen_asr import (
     create_frozen_asr_artifact,
     load_frozen_asr_artifact,
 )
+from experiments.benchmarks.extraction.video.metrics import METRIC_DIRECTIONS
 from experiments.benchmarks.extraction.video.protocol import load_protocol_lock
 from experiments.benchmarks.preparation.models import load_selected_model_lock
 
@@ -47,7 +49,7 @@ PROFILE_STAGE = {
 EXPECTED_COUNTS = {"standard": 18, "full": 6, "locked": 6}
 
 
-def main(directory: Path) -> int:
+def main() -> int:
     parser = argparse.ArgumentParser(description="Benchmark visual video extraction")
     parser.add_argument(
         "--profile", choices=("smoke", "standard", "full", "locked"), default="smoke"
@@ -95,7 +97,7 @@ def main(directory: Path) -> int:
         manifest_checksum=manifest.fingerprint,
         profile=arguments.profile,
     )
-    ffmpeg_version = _ffmpeg_version()
+    ffmpeg_identity = ffmpeg_version()
     if arguments.phase == "frozen-asr":
         if arguments.frozen_asr is None:
             raise ValueError("The frozen-asr phase requires --frozen-asr OUTPUT_JSON")
@@ -108,7 +110,7 @@ def main(directory: Path) -> int:
             audio_candidate=audio_candidate,
             audio_decision_path=decision_path,
             device=arguments.device,
-            ffmpeg_version=ffmpeg_version,
+            ffmpeg_version=ffmpeg_identity,
         )
         asr_result = _record_frozen_asr(
             artifact_path,
@@ -161,7 +163,7 @@ def main(directory: Path) -> int:
         image_decision=image_decision,
         decision_files=candidate_decisions,
         device=arguments.device,
-        ffmpeg_version=ffmpeg_version,
+        ffmpeg_version=ffmpeg_identity,
         no_mlflow=arguments.no_mlflow,
     )
     print(
@@ -198,15 +200,17 @@ def run_visual_benchmark(
     ffmpeg_version,
     no_mlflow,
 ):
-    engine, image_options = _image_profile(image_candidate)
-    lock_name = LOCK_CANDIDATES.get(engine, engine)
+    document_profile = parse_document_profile(image_candidate)
+    engine = document_profile.runtime_engine
+    image_options = dict(document_profile.options)
+    lock_name = document_profile.lock_candidate
     lock = load_selected_model_lock(
         PROJECT_ROOT / "data/benchmarks/models/selected.json",
         candidates=(lock_name,),
     )
     entry = lock[lock_name]
     validate_prepared_components(image_candidate, entry)
-    image_options.update(_lock_paths(entry))
+    image_options.update(lock_paths(entry))
     repetitions = 1 if profile == "smoke" else 3
     resamples = 0 if profile == "smoke" else 10_000
     stage = PROFILE_STAGE[profile]
@@ -300,7 +304,7 @@ def run_visual_benchmark(
             },
         )
 
-    all_directions = directions()
+    all_directions = METRIC_DIRECTIONS
     decisions = dict(decision_files)
     if image_decision:
         decisions["document"] = image_decision
@@ -341,29 +345,14 @@ def run_visual_benchmark(
 
 def _run_visual_worker(candidate, items, **settings):
     temporary_root = Path(os.environ.get("TEMP", tempfile.gettempdir()))
-    temporary_root.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(
-        prefix="edumind-video-candidate-", dir=temporary_root
-    ) as raw:
-        directory = Path(raw)
-        input_path, output_path = directory / "input.json", directory / "output.json"
-        atomic_write_json(input_path, {"candidate": candidate, "items": items, **settings})
-        completed = subprocess.run(
-            [
-                sys.executable,
-                str(Path(__file__).with_name("visual_worker.py")),
-                str(input_path),
-                str(output_path),
-            ],
-            cwd=PROJECT_ROOT,
-            env=_worker_environment(str(settings["device"])),
-            capture_output=True,
-            text=True,
-        )
-        if completed.returncode or not output_path.is_file():
-            detail = (completed.stderr or completed.stdout or "no worker output").strip()
-            raise RuntimeError(f"Visual video worker failed: {detail[-4000:]}")
-        return json.loads(output_path.read_text(encoding="utf-8"))
+    return run_json_worker(
+        Path(__file__).with_name("visual_worker.py"),
+        {"candidate": candidate, "items": items, **settings},
+        device=str(settings["device"]),
+        prefix="edumind-video-candidate-",
+        error_label="Visual video worker",
+        temporary_root=temporary_root,
+    )
 
 
 def _record_frozen_asr(
@@ -379,6 +368,7 @@ def _record_frozen_asr(
     no_mlflow,
 ):
     artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    artifact_checksum = sha256_file(artifact_path)
     candidate = str(artifact["audio_candidate"])
     videos = artifact["videos"]
     metrics = artifact["metrics"]
@@ -392,7 +382,7 @@ def _record_frozen_asr(
         bootstrap_resamples=0 if profile == "smoke" else 10_000,
         settings={
             "protocol_checksum": protocol_checksum,
-            "frozen_asr_checksum": sha256_file(artifact_path),
+            "frozen_asr_checksum": artifact_checksum,
         },
     )
     directions_map = {
@@ -447,7 +437,7 @@ def _record_frozen_asr(
                 ],
                 "submodels": artifact.get("submodels", []),
                 "protocol_checksum": protocol_checksum,
-                "frozen_asr_checksum": sha256_file(artifact_path),
+                "frozen_asr_checksum": artifact_checksum,
             },
             intervals,
             {"samples": videos, "ffmpeg_commands": artifact["ffmpeg_commands"]},
@@ -579,28 +569,6 @@ def _selected_image(arguments):
     return decision.selected_candidates[0], arguments.document_selection
 
 
-def _image_profile(candidate: str):
-    factors = candidate.split("|")
-    engine = factors[0]
-    if engine == "docling-standard-native":
-        engine = "docling-standard"
-    if engine not in LOCK_CANDIDATES:
-        raise ValueError(f"Selected document profile is not a visual parser: {candidate}")
-    options: dict[str, object] = {}
-    for factor in factors[1:]:
-        key, value = factor.split("=", 1)
-        mapped = {
-            "ocr": "ocr_engine",
-            "mode": "ocr_mode",
-            "table": "table_mode",
-            "formula": "formula_enrichment",
-        }.get(key)
-        if mapped is None:
-            raise ValueError(f"Unknown document-profile factor: {key}")
-        options[mapped] = value == "on" if key == "formula" else value
-    return engine, options
-
-
 def _validate_manifest(items, profile: str) -> None:
     if not items:
         raise ValueError("Video manifest contains no video samples")
@@ -639,7 +607,7 @@ def _validate_manifest(items, profile: str) -> None:
         duration = float(item["duration_seconds"])
         if duration <= 0:
             raise ValueError(f"Video sample {item.get('id')} has invalid duration")
-        observed_duration = _media_duration(source)
+        observed_duration = media_duration(source)
         if abs(observed_duration - duration) > 0.1:
             raise ValueError(
                 f"Video sample {item.get('id')} duration differs from the asset by more than 0.1s"
@@ -675,34 +643,6 @@ def _manifest(profile: str) -> Path:
         profile
     ]
     return PROJECT_ROOT / f"data/benchmarks/extraction/video-{split}.json"
-
-
-def _ffmpeg_version() -> str:
-    completed = subprocess.run(
-        ["ffmpeg", "-version"], check=True, capture_output=True, text=True
-    )
-    return completed.stdout.splitlines()[0]
-
-
-def _media_duration(path: Path) -> float:
-    completed = subprocess.run(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            str(path),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return float(completed.stdout.strip())
-
-
 def _require_decision_stage(decision, expected_stage: str) -> None:
     summary = json.loads(decision.source_summary.read_text(encoding="utf-8"))
     observed = str(summary.get("plan", {}).get("stage", ""))

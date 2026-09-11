@@ -14,13 +14,10 @@ from edumind.common.artifacts import stable_hash
 @dataclass(frozen=True)
 class VideoProtocolLock:
     path: Path
-    payload: Mapping[str, object]
     checksum: str
-    manifest_checksum: str
     window_length_seconds: float
     overlap_seconds: float
     stitching: Mapping[str, object]
-    unitization: str
     occurrence_matching: Mapping[str, object]
     hybrid_scene_threshold: float
 
@@ -89,13 +86,10 @@ def load_protocol_lock(
         raise ValueError("Video hybrid_scene_threshold must be between 0 and 1")
     return VideoProtocolLock(
         path.resolve(),
-        dict(payload),
         stable_hash(payload),
-        str(payload["manifest_checksum"]),
         length,
         overlap,
         dict(stitching),
-        unitization,
         dict(matching),
         hybrid_threshold,
     )

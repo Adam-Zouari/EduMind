@@ -22,6 +22,16 @@ QUALITY_DIRECTIONS = {
     "timed_visual_occurrence_coverage": "max",
     "duplicate_visual_text_rate": "min",
 }
+OPERATIONAL_DIRECTIONS = {
+    "visual_real_time_factor": "min",
+    "p50_warm_visual_latency_seconds": "min",
+    "p95_warm_visual_latency_seconds": "min",
+    "cold_visual_pipeline_load_seconds": "min",
+    "peak_visual_process_tree_ram_mb": "min",
+    "peak_visual_vram_mb": "min",
+    "mean_selected_frames_per_video": "min",
+}
+METRIC_DIRECTIONS = {**QUALITY_DIRECTIONS, **OPERATIONAL_DIRECTIONS}
 
 
 def score_video(
@@ -82,7 +92,6 @@ def score_video(
             len(matches) / len(occurrences) if occurrences else None
         ),
         "duplicate_visual_text_rate": duplicate,
-        "selected_frame_count": len(predictions),
     }
 
 
