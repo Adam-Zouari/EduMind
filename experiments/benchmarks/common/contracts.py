@@ -39,13 +39,8 @@ class BenchmarkPlan:
     seed: int = 42
     repetitions: int = 1
     bootstrap_resamples: int = 10_000
-    cold_measurements: bool = True
     warmups: int = 2
     settings: Mapping[str, object] = field(default_factory=dict)
-
-    @property
-    def fingerprint(self) -> str:
-        return stable_hash(asdict(self))
 
 
 @dataclass(frozen=True)
