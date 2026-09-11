@@ -1,0 +1,144 @@
+# Document, ASR, and video benchmark repair audit
+
+Audit date: 2026-09-11
+
+Target-scope status: complete. The document, ASR, and video benchmark code now
+implements the frozen methodology and metric contracts. The independent second
+pass found no unresolved correctness or methodology mismatch in those three
+systems.
+
+Application behavior, the end-to-end RAG pipeline, and authoritative dataset
+population were not part of this repair.
+
+## Implemented contract
+
+### Document
+
+- PaddleOCR-VL page indices, table HTML, canonical rows/cells, plain table text,
+  original HTML, exact formula LaTeX, and recoverable conversion warnings are
+  preserved by the native-output adapter.
+- Authoritative references require explicit capabilities. Smoke references may
+  infer them. Table and formula negatives remain explicit through `has_table`
+  and `has_formula`.
+- Visual layout, table, and formula matching is page-restricted, one-to-one,
+  and thresholded at 0.5. Page attribution remains a separate content-first
+  match. Layout boxes affect matching only when `layout_boxes` is claimed.
+- Every configured repetition is attempted and recorded. Any failed measured
+  attempt produces empty quality, failure rate 1, and determinism 0 for that
+  sample. Throughput uses pages from every successful attempt divided by all
+  measured attempt time.
+- Primary models, Paddle layout components, Docling parser components, OCR
+  assets, system executables, revisions, options, package versions, and cache
+  manifests are recorded and verified.
+
+### ASR
+
+- The Qwen profile uses `Qwen/Qwen3-ASR-1.7B-hf` at
+  `bcd2b5b7f32b480ab5790554cfa8347f246a14f3` and the token-classification
+  `Qwen/Qwen3-ForcedAligner-0.6B-hf` at
+  `c07281df297b9905d24a508279258cccf987a064`.
+- Empty transcript plus empty timestamps is a valid zero-quality observation.
+  Lexical text without timestamps and empty text with lexical timestamp units
+  are fatal contradictions.
+- Timestamp alignment uses deterministic dynamic programming over ordered,
+  non-overlapping, non-reusable contiguous predicted spans. Eligibility is
+  normalized token Content F1 at 0.5; optimization and tie-breaking follow the
+  documented total-similarity, match-count, and earliest-span order.
+- Every model's decoder, generation, timestamp, language, batch, device, dtype,
+  revision, path, package version, and cache checksum settings are frozen and
+  persisted. Qwen ASR and alignment load sequentially.
+
+### Video
+
+- Video has a dedicated runner and a fresh visual worker. The obsolete generic
+  document/video benchmark route has been removed.
+- The executable grid is fixed 5/10/20 seconds, scene 0.30/0.40/0.50, and hybrid
+  selected-threshold plus 5/10/20-second maximum gaps. Every selector includes
+  frame zero and uses FFmpeg variable-frame-rate output.
+- Smoke, standard, full, and locked profiles enforce their phase/selection
+  contracts. Locked execution requires exactly one validated configuration.
+- A versioned `VideoProtocolLock` binds the manifest, ASR windows, overlap,
+  deterministic stitching, visible-text units, occurrence thresholds,
+  reviewer/date, and hybrid scene threshold. Authoritative runs reject smoke,
+  missing, or checksum-mismatched locks.
+- Frozen ASR is created once in a separate process and checksummed. Visual
+  children validate and reference it and do not import or invoke ASR. WER is
+  emitted only by the frozen-ASR child.
+- Visual metrics use distinct units and one-to-one timed occurrences. Coverage
+  is maximized first and total raw first-detection delay in seconds is minimized
+  second. Delay and duplication are null in their documented empty cases.
+- Visual RTF, warm p50/p95, explicit parser cold load, process-tree RAM, VRAM,
+  and mean selected frames exclude audio work.
+
+## Independent second-pass findings
+
+The second audit was performed after the initial repair and real-model smoke
+runs. It found and fixed five edge cases:
+
+1. A single unsupported extra page was incorrectly counted as a duplicate page.
+2. Document throughput reused the first successful repetition's page count
+   instead of summing the actual successful attempt counts.
+3. Video occurrence assignment minimized delay relative to interval length
+   instead of the documented raw seconds.
+4. A non-object Paddle block was skipped without a recoverable-conversion
+   warning.
+5. Unclaimed layout boxes could influence content matching for references that
+   declared only types, hierarchy, or reading order.
+
+Each correction has a regression test. Re-audit searches also confirmed that
+the legacy complete-content recall, per-visual-candidate transcript WER, and
+visual-text-prefixed metric names are absent, the old generic video execution
+path is absent, and no stale non-`-hf` Qwen checkpoint identifier remains.
+
+## Verification results
+
+| Check | Result |
+|---|---|
+| Full test suite | 86 passed |
+| Ruff over document/ASR/video and their shared edited code | Passed |
+| Python bytecode compilation | Passed |
+| `pip check` | No broken requirements |
+| `git diff --check` | Passed; line-ending notices only |
+| Generated selected-model lock | All 8 requested entries and all cache/component checksums verified |
+| Pinned OmniDocBench Docker identity preflight | TEDS, TEDS-S, and CDM passed |
+
+A repository-wide Ruff run reports three unrelated existing findings in RAG
+generation and vector-database code. They are outside this audit's requested
+scope and do not occur in the repaired benchmark systems.
+
+## Real-model smoke evidence
+
+The smoke inputs are wiring fixtures, so their quality numbers are not model
+selection evidence.
+
+| System | Candidate | Device | Result | Artifact run |
+|---|---|---:|---|---|
+| ASR | Whisper small.en | CUDA | Success; WER 0.0 | `20260911-010514-a5b73b32` |
+| ASR | Canary 180M | CUDA | Success; WER 0.0 | `20260911-005508-759626bc` |
+| ASR | Parakeet TDT 0.6B v2 | CUDA | Success; WER 0.0 | `20260911-005545-a190a095` |
+| ASR | MOSS Transcribe-Diarize | CUDA | Success; WER 0.0 | `20260911-005626-b12dd683` |
+| ASR | Qwen3 ASR plus exact forced aligner | CUDA | Success; WER 0.0 and timestamp coverage 1.0 | `20260911-005723-891fafba` |
+| Document | Docling Standard | CUDA | Success | `20260911-005859-529d84ee` |
+| Document | Granite Docling 258M | CUDA | Success | `20260911-005949-8a22cef7` |
+| Document | PaddleOCR-VL 1.6 | CPU | Success, including native table conversion | `20260911-002347-8e9d35e3` |
+| Video ASR child | Frozen Whisper artifact | CPU | Success; one ASR artifact for two videos | `20260911-003307-a748b7fb` |
+| Video visual child | Docling fixed 5/10/20-second candidates | CUDA | All three successful; no ASR execution | `20260911-010343-f1babf9e` |
+
+The Paddle table smoke additionally produced three canonical rows, nine cells,
+plain cell text, original HTML, page 1, and no conversion warnings in
+`artifacts/benchmarks/real-smoke/paddle-table.json` (a local ignored artifact).
+
+## Residual limitations outside benchmark code
+
+- Authoritative manifests and the data-reviewed authoritative video protocol
+  values do not yet exist. The runners intentionally reject authoritative work
+  until those inputs are supplied; the committed lock is smoke-only.
+- The installed pinned PaddlePaddle 3.3.1 Windows wheel is not compiled with
+  CUDA. Paddle completed real CPU inference, while the CUDA request failed
+  explicitly and did not fall back silently.
+- This Windows WDDM driver exposes target GPU processes but not per-process
+  memory bytes. CUDA artifacts therefore label the fallback
+  `nvml-device-delta-wddm`, which measures peak device-memory increase from a
+  pre-run baseline after observing the target process.
+- Prepared model snapshots and generated benchmark run artifacts are local,
+  ignored artifacts rather than source-controlled data.

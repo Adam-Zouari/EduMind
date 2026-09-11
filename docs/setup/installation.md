@@ -51,6 +51,22 @@ python -m pip install -e . --no-deps
 python -m pip check
 ```
 
+On a Windows benchmark host using an NVIDIA driver compatible with CUDA 13,
+replace the CPU PyTorch wheels with the matching official build after installing
+the locks:
+
+```powershell
+python -m pip install --upgrade --force-reinstall --no-deps `
+  torch==2.11.0+cu130 torchvision==0.26.0+cu130 torchaudio==2.11.0+cu130 `
+  --index-url https://download.pytorch.org/whl/cu130
+python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+python -m pip check
+```
+
+The version numbers must stay aligned with `requirements/app.lock`. A CUDA
+benchmark is valid only when the requested model remains on `cuda` and the run
+records a non-zero measured VRAM peak; there is no CPU fallback.
+
 Source edits are immediately visible because the repository is installed in editable mode. Rebuilding a wheel is not part of the development workflow.
 
 ## 3. Model storage and immutable lock
@@ -119,7 +135,7 @@ The extraction download contains:
 - [Granite Docling 258M](https://huggingface.co/ibm-granite/granite-docling-258M).
 - [PaddleOCR-VL-1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6) plus its Paddle layout components in a project-controlled cache.
 - [Whisper small.en](https://huggingface.co/openai/whisper-small.en), [Canary 180M](https://huggingface.co/nvidia/canary-180m-flash), [Parakeet TDT 0.6B v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2), [MOSS Transcribe-Diarize](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize), and [Qwen3 ASR 1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B-hf).
-- The Qwen ASR profile also downloads the pinned [Qwen3 ForcedAligner 0.6B](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B). ASR and alignment execute sequentially, while their combined time and peak resource use are measured.
+- The Qwen ASR profile also downloads the pinned Transformers-compatible [Qwen3 ForcedAligner 0.6B-hf](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B-hf/tree/c07281df297b9905d24a508279258cccf987a064). ASR and alignment execute sequentially, while their combined time and peak resource use are measured.
 
 NeMo and MOSS have heavier runtime dependency trees. Install them only inside
 the Python 3.12 project environment from `requirements/benchmarks.lock`; do not

@@ -41,12 +41,14 @@ the authoritative dataset manifests and methodology, then remove the item.
 
 ## Video extraction
 
-- Inspect actual video durations before freezing the long-video ASR window
-  overlap and transcript-stitching policy.
-- Freeze the one-to-one text-matching rule used to decide whether a selected
-  frame captured a timed visible-text occurrence. Inspect the annotations first
-  so the rule is neither too permissive for short labels nor too strict for long
-  slide text; do not tune it on validation or locked-test results.
+- Inspect actual video durations and supply the authoritative
+  `VideoProtocolLock` values for ASR window overlap and normalized
+  suffix/prefix stitching. The committed 30-second/2-second lock is smoke-only
+  and cannot authorize an authoritative run.
+- Supply the authoritative one-to-one occurrence-matching thresholds in that
+  lock after inspecting the annotations, so matching is neither too permissive
+  for short labels nor too strict for long slide text. Do not tune the lock on
+  validation or locked-test results.
 - Confirm that SlideSpeech and the other selected sources are downloadable under
   the recorded terms and that the chosen assets can be checksum-pinned.
 - Verify how many independent validation and locked videos are available before

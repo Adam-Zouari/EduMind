@@ -686,8 +686,11 @@ Every sample requires:
 - only human-verified reference fields, never an unreviewed model prediction.
 
 Document samples additionally contain ordered reference text, per-page text,
-and the applicable element records: kind, text, order, page, hierarchy, bounding
-box, table structure, or formula representation.
+an explicit `reference_capabilities` list, and only the applicable element
+records: kind, text, order, page, hierarchy, bounding box, table structure, or
+formula representation. Table/formula capability claims also include explicit
+`has_table` and `has_formula` booleans so a verified negative is distinguishable
+from a missing annotation.
 
 Speech samples additionally contain:
 
@@ -699,11 +702,21 @@ Speech samples additionally contain:
 Reliability samples contain an empty spoken reference and one of `silence`,
 `music_without_lyrics`, `background_noise`, or `environmental_sound`.
 
-Video samples additionally contain the duration, verified transcript and timed
-speech segments, distinct visible-content references, the start/end interval of
-each visible reference, and annotations identifying intentional reappearance.
+Video samples additionally contain `duration_seconds`, `reference_transcript`,
+`reference_visual_text`, and `visual_occurrences` with text plus `start`/`end`
+for each verified appearance, along with annotations identifying intentional
+reappearance. Each authoritative video manifest has a separate reviewed
+`VideoProtocolLock` bound to its manifest fingerprint.
 The transcript is retained for the frozen-ASR diagnostic, but spoken and visible
 tokens are not merged into a combined quality score.
+
+The generated `FrozenASRArtifact` is a separate checksummed JSON artifact. It
+records its run ID; manifest, protocol, and model-decision fingerprints; selected
+model path, revisions, cache-manifest hash, and submodels; runtime parameters;
+FFmpeg version and exact commands; aggregate WER, latency, RTF, RAM, and VRAM;
+and one row per video containing transcript, token-level timestamp units,
+window records, latency, RTF, and WER counts. Visual children validate the
+artifact's manifest/protocol binding and exact video IDs before use.
 
 Before freezing a manifest:
 

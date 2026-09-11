@@ -18,6 +18,7 @@ advance.
 | Which commands to run and what files they consume or produce | [Benchmark runbook](running.md) |
 | How to obtain and describe benchmark data | [Benchmark dataset guide](datasets.md) |
 | Which model decisions and revisions are machine-readable | [`selection_evidence.csv`](../../experiments/benchmarks/selection_evidence.csv) |
+| What was repaired and independently re-audited for document, ASR, and video | [Repair audit](repair-audit.md) |
 
 These documents have deliberately separate roles. The methodology does not
 repeat formulas or shell commands, and the runbook does not repeat candidate

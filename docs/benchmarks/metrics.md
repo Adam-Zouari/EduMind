@@ -170,6 +170,13 @@ scores macro-average their eligible reference objects, assigning zero to a
 missed reference object. Bootstrap resampling always uses the document as the
 independent unit and recalculates the complete aggregate from that resample.
 
+Eligibility comes from each authoritative reference's explicit
+`reference_capabilities` list: `text`, `pages`, `reading_order`,
+`layout_boxes`, `element_types`, `hierarchy`, `tables`, and `formulas`. Smoke
+fixtures may infer this list from inline annotations. A missing capability omits
+the metric; it never fabricates a zero. Table/formula capabilities use explicit
+`has_table:false` and `has_formula:false` negatives in detection counts.
+
 ### Prose scoring projection
 
 Before prose text is compared, both sides undergo the same four representation
@@ -554,6 +561,10 @@ available, matching maximizes bounding-box Intersection over Union (IoU), with
 maximizes element Content F1 and requires `Content F1 >= 0.5`. The input format
 therefore determines one explicit matching rule; the runner does not silently
 mix the two rules within a document comparison.
+Visual layout, table, and formula pairs must also have equal page numbers;
+identical boxes on different pages never match. Page Attribution Accuracy is
+the deliberate exception: it first matches content while ignoring page, then
+scores whether the predicted page label is correct.
 
 #### Layout Element Precision
 
@@ -1175,6 +1186,11 @@ increments Candidate Failure Rate. A failure that prevents the required
 per-sample record makes the benchmark invocation incomplete and therefore
 non-authoritative. Failed difficult documents can therefore never disappear
 from the denominator and make a candidate look artificially strong.
+Every configured repetition is attempted and written to `timings.parquet`, even
+after an earlier attempt fails. If any measured repetition fails, the sample is
+scored as empty, Candidate Failure Rate is one, and Structured-output
+Determinism is zero. Successful-page throughput still divides by all measured
+attempt time, including failed attempts.
 
 ### Operational performance
 
@@ -1583,8 +1599,14 @@ when the model inserts more words than the entire reference contains.
 **Question:** How accurate are the predicted start/end times, and how much of
 the timed reference could actually be aligned?
 
-After the stage applies one fixed one-to-one segment-alignment rule, Timestamp
-Boundary MAE is calculated as follows:
+For each reference segment, the evaluator enumerates contiguous spans of
+predicted timestamp units and keeps spans whose normalized token Content F1 is
+at least `0.5`. Dynamic programming selects ordered, non-overlapping one-to-one
+matches by maximum total similarity, then match count, then earliest spans.
+No predicted unit can be reused. This lets a segment-level reference match
+several word-level predictions while preventing one broad prediction from
+covering multiple references. The span envelope supplies its minimum start and
+maximum end. Timestamp Boundary MAE is then calculated as follows:
 
 1. Find the absolute start-time error for every aligned segment.
 2. Find the absolute end-time error for every aligned segment.
@@ -1629,6 +1651,12 @@ speech clips producing no lexical text
 
 This exposes complete transcription failures that can be diluted inside corpus
 WER. A process crash is a failed candidate run, not an empty transcript.
+
+An empty transcript with an empty timestamp sequence remains a scoreable speech
+sample: all reference words and characters are deletions, timestamp coverage is
+zero, Boundary MAE is null, and this rate increments. Non-empty transcript text
+without timestamps and empty text with lexical timestamp segments are
+contradictory fatal outputs.
 
 **Range and direction:** The rate lies in `[0, 1]`; lower is better. A dataset
 without speech clips is invalid for this metric.
@@ -1901,6 +1929,11 @@ extracting almost nothing or by extracting large amounts of unsupported text.
 Precision and recall are supporting diagnostics that explain whether a lower F1
 comes from extra text or missing text.
 
+Corpus aggregates are recomputed from the summed per-video distinct-reference,
+distinct-prediction, and matched-unit counts. They are not an unweighted mean of
+the per-video ratios. Timed occurrence coverage and Duplicate Visual Text Rate
+are pooled from their corresponding occurrence counts for the same reason.
+
 **Range and direction:** All three values lie in `[0, 1]`; higher is better. If
 both reference and prediction contain no visible content, the sample is not
 eligible rather than being assigned perfect quality.
@@ -1916,6 +1949,13 @@ Each verified visible-text occurrence has text plus an interval during which it
 is visible. A reference occurrence is covered when a selected frame inside that
 interval yields matching text. Its delay is the first matching frame time minus
 the reference start time.
+
+The protocol lock supplies the normalized Content F1 eligibility threshold and
+freezes frame-time tolerance at zero, so a frame outside the verified interval
+is never eligible. Matching is one-to-one: each reference occurrence and
+each normalized text unit from a selected frame can be used at most once.
+Cardinality is maximized first, then the earliest eligible detections are chosen,
+so repeated frames cannot inflate coverage and delay really is first detection.
 
 ```text
 Timed Visual Occurrence Coverage =

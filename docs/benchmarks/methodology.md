@@ -336,6 +336,15 @@ case-folding, punctuation-to-space replacement, and whitespace collapse. It
 does not dehyphenate words, correct spelling, rewrite numbers, remove headers,
 or alter formulas, code, layout trees, or table trees.
 
+Every authoritative reference declares a `reference_capabilities` list drawn
+from `text`, `pages`, `reading_order`, `layout_boxes`, `element_types`,
+`hierarchy`, `tables`, and `formulas`. Validation and metric eligibility follow
+that declaration instead of assuming that every source has every annotation.
+Smoke fixtures may infer capabilities from their inline annotations. Table and
+formula capability declarations also carry explicit `has_table` and
+`has_formula` booleans so verified negatives contribute false detections while
+missing annotations remain inapplicable.
+
 OmniDocBench annotations act as ground truth for every applicable metric on its
 samples. EduMind calculates the common text, page, layout, detection,
 reliability, and operational metrics so their definitions remain identical for
@@ -421,6 +430,11 @@ Within a standard/full comparison, every profile receives the same
 deterministically shuffled eligible samples, one cold measurement, warmups, and
 three measured repetitions. Smoke uses one measured repetition because it is
 only a wiring check.
+All scheduled repetitions run even after an earlier repetition fails, and each
+attempt has its own timing/error row. If any measured repetition fails, that
+document's quality output is the empty prediction, Candidate Failure Rate is
+one, and Structured-output Determinism is zero. Throughput counts pages from
+successful attempts but divides by the elapsed time of every measured attempt.
 Development determines both the Standard settings and the parser-architecture
 finalists. Validation confirms only those finalists; it is not the first local
 comparison of Granite Docling or PaddleOCR-VL. The locked test is not used for
@@ -499,15 +513,18 @@ The child run stores:
   profile identifier and factors, engine revision and local model path, device,
   language, fixed Docling options, normalization mode, seed, warmups,
   repetitions, and success/failure status;
+- prepared-component identities and cache-manifest checksums for the primary
+  model and every parser dependency, including Paddle layout components;
 - aggregate quality metrics and their `ci_lower` and `ci_upper` values when the
   metric is eligible for an interval;
 - `operational.*` latency, throughput, memory, VRAM, and disk metrics when
   available;
-- a candidate-result JSON containing status, aggregates, intervals, operational
-  values, fingerprint, and any error; and
-- a Parquet artifact with one row per processed sample, including sample ID,
+- a candidate-result JSON containing the resolved parameters, status,
+  aggregates, intervals, operational values, fingerprint, and any error; and
+- `samples.parquet` with one row per processed sample, including sample ID,
   latency, individual metrics, document-group and annotation labels, warnings,
-  and other diagnostic metadata.
+  and other diagnostic metadata, plus `timings.parquet` with one row for every
+  measured repetition and its success/error state.
 
 The MLflow comparison page is used for compact aggregates. The Parquet artifact
 is the detailed evidence: it supports document-group breakdowns, diagnostic
@@ -694,7 +711,7 @@ quality samples.
 | Canary 180M | Compact timestamp-capable challenger. |
 | Parakeet TDT 0.6B v2 | Mid-size profile with word, segment, and character timestamps. |
 | MOSS Transcribe-Diarize | Larger timestamp-capable transcription challenger. Diarization is not scored because speaker identification is not currently an EduMind requirement. |
-| Qwen3 ASR 1.7B + ForcedAligner 0.6B | Strong transcription candidate whose separate aligner provides timestamps. |
+| Qwen3 ASR 1.7B-hf + ForcedAligner 0.6B-hf | Strong transcription candidate whose Transformers token-classification aligner provides timestamps. |
 
 For Qwen, transcription runs first. Its ASR model is unloaded before the forced
 aligner runs. The benchmark still measures transcription plus alignment as one
@@ -751,11 +768,20 @@ fixed evaluator normalization used by WER and CER; the evaluator does not repair
 misspellings, remove repetitions, or rewrite transcripts.
 
 All timestamp outputs are converted to ordered benchmark segments containing
-text, start time, and end time. The evaluator uses one fixed transcript
-alignment to associate predicted timed content with reference segments. It does
-not require candidates to emit the same number of segments and does not truncate
-unequal timestamp arrays. Boundary MAE is calculated only from valid alignments;
-Alignment Coverage records how much of the timed reference aligned.
+text, start time, and end time. For each reference segment, the evaluator
+considers contiguous predicted spans whose normalized token Content F1 is at
+least `0.5`. Dynamic programming chooses ordered, non-overlapping one-to-one
+matches by maximum total similarity, then match count, then earliest span.
+Predicted timestamp units cannot be reused by another reference segment. This
+supports word timestamps and broader segment timestamps without truncating
+unequal arrays. Boundary MAE uses the matched span's minimum start and maximum
+end; Alignment Coverage records how much of the timed reference aligned.
+
+An empty transcript with no timestamp segments is a valid low-quality result:
+all reference words and characters are deletions, timestamp coverage is zero,
+Boundary MAE is null, and Empty Transcript Rate increments. Non-empty text with
+no timestamps remains a fatal candidate error, as does an empty transcript with
+non-empty lexical timestamp segments.
 
 ### Per-candidate execution
 
@@ -788,6 +814,15 @@ recorded. Silent CPU fallback invalidates the profile. If one selected profile
 cannot complete on the requested device, that parent comparison is incomplete;
 the engineer fixes the runtime plan and reruns it instead of comparing partial
 results.
+
+Behavior-changing settings are part of each child artifact: Whisper word
+timestamps and deterministic generation; Canary beam size one, punctuation and
+capitalization, timestamps, and batch size one; Parakeet greedy-batch decoding
+and timestamp level; MOSS `max_new_tokens=2048` with `do_sample=false`; and Qwen
+forced English, `max_new_tokens=256`, deterministic generation, sequential
+ASR unload/alignment load, and token-classification aligner settings. Runtime
+versions, model paths, revisions, cache-manifest checksums, dtype, and device are
+recorded with them.
 
 ### Development, validation, and locked test
 
@@ -924,7 +959,7 @@ Each successful child stores three artifacts:
 |---|---|
 | `samples.parquet` | One row per speech or nonspeech sample with sample ID, condition labels, duration, word/character edit counts, reference lengths, timestamp alignment counts and error totals, reliability and repeat-agreement flags, warnings, and the designated quality-pass latency. It makes every aggregate traceable. |
 | `timings.parquet` | One row per speech clip and measured repetition with latency, duration, RTF, and device. It preserves the observations used for p50, p95, and operational analysis. |
-| `candidate.json` | Candidate status, fingerprint, aggregate metrics, confidence intervals, operational values, and artifact references. |
+| `candidate.json` | Resolved runtime parameters, candidate status, fingerprint, aggregate metrics, confidence intervals, operational values, and artifact references. |
 
 Fields that do not apply to a row are absent or null, not fabricated as zero.
 Raw audio and candidate predictions are not uploaded to MLflow. The frozen
@@ -935,6 +970,13 @@ Every successful standard, full, or locked child must contain all 16 aggregate
 metric fields. Timestamp Boundary MAE is the sole nullable field, under the rule
 above. A CPU profile may report zero VRAM only when execution confirms that no
 GPU process was used; unavailable instrumentation is not converted to zero.
+CUDA children record `vram_measurement_method`. NVML process-tree bytes are
+used directly when the driver exposes them. On Windows WDDM, where NVML can
+identify the benchmark PID but returns no per-process byte count, the monitor
+records `nvml-device-delta-wddm` and measures the peak increase from the
+pre-run device-memory baseline while that PID is present. If neither method
+captures a positive allocation, the CUDA child fails rather than reporting a
+fabricated zero.
 If a candidate crashes, lacks required timestamp output, or cannot produce the
 required artifacts or aggregates, its child remains visible as failed and the
 parent is incomplete. The engineer repairs the problem and reruns the complete
@@ -985,21 +1027,24 @@ truth.
 
 ### Execution
 
-The current direct video command supports only the non-authoritative smoke
-wiring check. Standard, full, and locked execution remains disabled until the
-downloaded video annotations are inspected and the two pending rules in
-[pending-data-review.md](pending-data-review.md)—ASR window stitching and timed
-occurrence text matching—are frozen. The following is the approved design for
-that runner, not a claim that authoritative video evidence can already be
-produced.
+The dedicated runner supports smoke, standard, full, and locked phases. Every
+execution requires a versioned `VideoProtocolLock` bound to the exact manifest
+checksum. The lock freezes an ASR window length no greater than 30 seconds,
+overlap, deterministic normalized suffix/prefix stitching, visible-text
+unitization, occurrence-matching thresholds, protocol version, reviewer, and
+review date. Authoritative phases accept only a data-reviewed authoritative
+lock. The committed 30-second window, 2-second overlap, and test thresholds are
+smoke-only; the authoritative values remain a required data-review output in
+[pending-data-review.md](pending-data-review.md).
 
 ```text
-video
-├─ FFmpeg extracts mono 16 kHz audio → frozen selected ASR
-└─ FFmpeg extracts candidate keyframes → frozen selected document parser
-        ↓
-combine timestamped audio and visual segments
-→ compare with transcript and visible-text references
+video frozen-ASR phase
+└─ FFmpeg mono 16 kHz windows → selected ASR once → FrozenASRArtifact
+
+video visual phase
+└─ candidate FFmpeg keyframes → frozen selected document parser
+   → visible-text and timing metrics
+   → reference the FrozenASRArtifact checksum; never invoke ASR
 ```
 
 Only the keyframe configuration changes. The selected ASR is executed once per

@@ -145,17 +145,50 @@ The runner reads the matching split from
 elsewhere. The locked profile rejects decisions containing more than one ASR
 profile.
 
-The planned authoritative video command requires one selected document parser
-and one selected ASR profile. It is documented here for the future runner and
-currently exits with a clear error; only `--profile smoke` is executable now:
+Video is a two-step benchmark. First, decode and transcribe the phase's audio
+once with the selected ASR and the manifest-bound `VideoProtocolLock`:
 
 ```powershell
-python experiments/benchmarks/extraction/video/run.py --profile standard `
+python experiments/benchmarks/extraction/video/run.py --profile standard --phase frozen-asr `
   --manifest data/benchmarks/extraction/video-development.json `
-  --document-selection DOCUMENT_DECISION `
+  --protocol-lock VIDEO_PROTOCOL_LOCK.json `
   --audio-selection AUDIO_DECISION `
+  --frozen-asr artifacts/video-development-asr.json `
   --device cuda
 ```
+
+Then run visual-only comparisons. Every child validates and references the same
+frozen artifact and never invokes ASR:
+
+```powershell
+python experiments/benchmarks/extraction/video/run.py --profile standard --phase fixed `
+  --manifest data/benchmarks/extraction/video-development.json `
+  --protocol-lock VIDEO_PROTOCOL_LOCK.json `
+  --frozen-asr artifacts/video-development-asr.json `
+  --document-selection DOCUMENT_DECISION `
+  --device cuda
+
+python experiments/benchmarks/extraction/video/run.py --profile standard --phase scene `
+  --manifest data/benchmarks/extraction/video-development.json `
+  --protocol-lock VIDEO_PROTOCOL_LOCK.json `
+  --frozen-asr artifacts/video-development-asr.json `
+  --document-selection DOCUMENT_DECISION `
+  --device cuda
+
+python experiments/benchmarks/extraction/video/run.py --profile standard --phase hybrid `
+  --manifest data/benchmarks/extraction/video-development.json `
+  --protocol-lock VIDEO_PROTOCOL_LOCK.json `
+  --frozen-asr artifacts/video-development-asr.json `
+  --document-selection DOCUMENT_DECISION `
+  --scene-selection SCENE_THRESHOLD_DECISION.json `
+  --device cuda
+```
+
+After recording the scene choice, `--phase all` may rerun the resulting fixed,
+scene, and selected-threshold hybrid configurations in one nine-child
+development parent. The `full` finalist decision must reference that completed
+`video-development` parent; the locked decision must reference the completed
+`video-validation` parent.
 
 Development is an ordered nine-configuration study:
 
@@ -168,8 +201,22 @@ Every configuration includes the first frame. The three comparisons remain in
 the same `EduMind / extraction` MLflow experiment, where their nine child runs
 can be filtered and compared together. Validation runs only the
 engineer-selected finalists; locked test runs one selected configuration once.
-The current video runner must implement this sequence before a video result can
-be treated as authoritative; the existing smoke command remains a wiring check.
+`--profile full` requires a shortlist of at most three development finalists;
+`--profile locked` requires a decision containing exactly one validation
+winner. Authoritative runs reject a smoke-scoped lock, a missing lock, and any
+manifest-checksum mismatch. The committed smoke lock is only for fixture wiring:
+
+```powershell
+python experiments/benchmarks/extraction/video/run.py --profile smoke --phase frozen-asr `
+  --protocol-lock data/benchmarks/extraction/video-protocol-smoke.json `
+  --audio-candidate whisper-small-en-control `
+  --frozen-asr artifacts/video-smoke-asr.json
+
+python experiments/benchmarks/extraction/video/run.py --profile smoke --phase all `
+  --protocol-lock data/benchmarks/extraction/video-protocol-smoke.json `
+  --frozen-asr artifacts/video-smoke-asr.json `
+  --image-candidate "docling-standard|ocr=rapidocr|mode=full_page|table=fast|formula=off"
+```
 
 Extraction candidates are scored without an additional cleanup profile. The
 runner records the parser or ASR output and applies only the fixed evaluator
