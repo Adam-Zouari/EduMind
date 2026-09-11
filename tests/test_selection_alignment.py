@@ -3,6 +3,8 @@ import json
 from collections import Counter
 from pathlib import Path
 
+import pytest
+
 from experiments.benchmarks.common.arguments import load_candidates
 from experiments.benchmarks.common.selection import included_candidates, selection_entries
 from experiments.benchmarks.preparation.models import (
@@ -20,6 +22,7 @@ from experiments.benchmarks.rag.chunking_embedding.profiles import (
 )
 from experiments.benchmarks.rag.generation.models import GENERATOR_PROFILES
 from edumind.rag.contracts import EMBEDDING_SPECS
+from edumind.extraction.pipeline import LOCK_CANDIDATE_BY_ENGINE
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -90,6 +93,12 @@ def test_reranker_audio_and_document_registries_are_exact() -> None:
         ROOT / "experiments/benchmarks/extraction/document/candidates.yaml", "standard"
     )
     assert len(document) == len(set(document)) == 24
+    assert LOCK_CANDIDATE_BY_ENGINE["docling-vlm-granite-258m"] == (
+        "ibm-granite/granite-docling-258M"
+    )
+    assert LOCK_CANDIDATE_BY_ENGINE["paddleocr-vl-1.6"] == (
+        "PaddlePaddle/PaddleOCR-VL-1.6"
+    )
 
 
 def test_preparation_plan_contains_only_approved_models_and_docling() -> None:
@@ -136,3 +145,71 @@ def test_stage_model_lock_ignores_unrequested_missing_models(tmp_path) -> None:
     )
     loaded = load_selected_model_lock(path, candidates=(requested.candidate,))
     assert set(loaded) == {requested.candidate}
+
+
+def test_document_stage_requests_only_its_candidate_models(monkeypatch) -> None:
+    from experiments.benchmarks.extraction import common
+
+    requested = None
+
+    def capture(_path, *, candidates=None):
+        nonlocal requested
+        requested = candidates
+        return {}
+
+    monkeypatch.setattr(common, "load_selected_model_lock", capture)
+    assert common._model_lock(
+        (
+            "docling-standard-native|ocr=rapidocr|mode=full_page|table=fast|formula=off",
+            "docling-vlm-granite-258m",
+            "docling-vlm-granite-258m",
+        )
+    ) == {}
+    assert requested == (
+        "docling-standard",
+        "ibm-granite/granite-docling-258M",
+    )
+
+
+def test_schema_three_model_lock_verifies_the_complete_cache_manifest(tmp_path) -> None:
+    from experiments.benchmarks.preparation.models import _directory_manifest_hash
+
+    entry = next(
+        item for item in selection_entries() if item.candidate == "openai/whisper-small.en"
+    )
+    repository, revision, _ = snapshot_specs(entry)[0]
+    model_path = tmp_path / "model"
+    model_path.mkdir()
+    weights = model_path / "weights.bin"
+    weights.write_bytes(b"pinned")
+    path = tmp_path / "selected.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 3,
+                "models": {
+                    entry.candidate: {
+                        "model": repository,
+                        "revision": revision,
+                        "selection_revision": entry.revision,
+                        "model_path": str(model_path),
+                        "model_cache_manifest_sha256": _directory_manifest_hash(model_path),
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert load_selected_model_lock(path, candidates=(entry.candidate,))
+    weights.write_bytes(b"tampered")
+    with pytest.raises(RuntimeError, match="cache manifest checksum mismatch"):
+        load_selected_model_lock(path, candidates=(entry.candidate,))
+
+
+def test_torch_and_torchaudio_lock_versions_match() -> None:
+    pins = {}
+    for line in (ROOT / "requirements/app.lock").read_text(encoding="utf-8").splitlines():
+        if "==" in line and not line.startswith("#"):
+            name, value = line.split("==", 1)
+            pins[name.casefold()] = value
+    assert pins["torch"] == pins["torchaudio"] == "2.11.0"

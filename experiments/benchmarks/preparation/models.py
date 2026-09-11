@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import subprocess
+import sys
 from collections.abc import Mapping, Sequence
 from importlib.metadata import version
 from pathlib import Path
 
-from edumind.common.artifacts import atomic_write_json, atomic_write_text
+from edumind.common.artifacts import atomic_write_json, atomic_write_text, sha256_file, stable_hash
 from edumind.extraction.extractors.document import DOCLING_VERSION
 
 from experiments.benchmarks.common.selection import SelectionEntry, selection_entries
@@ -89,6 +92,7 @@ def prepare_selected_models(
                     "repository": repository,
                     "revision": revision,
                     "model_path": str(local_directory),
+                    "cache_manifest_sha256": _directory_manifest_hash(local_directory),
                 }
             )
         primary = downloaded[0]
@@ -99,12 +103,17 @@ def prepare_selected_models(
             "revision": primary["revision"],
             "selection_revision": entry.revision,
             "model_path": primary["model_path"],
+            "model_cache_manifest_sha256": primary["cache_manifest_sha256"],
         }
         if len(downloaded) > 1:
             lock_entry["submodels"] = downloaded
         if candidate == "PaddlePaddle/PaddleOCR-VL-1.6":
-            lock_entry["paddle_cache_path"] = str(
-                _prepare_paddle_components(cache_directory, Path(primary["model_path"]))
+            paddle_cache = _prepare_paddle_components(
+                cache_directory, Path(primary["model_path"])
+            )
+            lock_entry["paddle_cache_path"] = str(paddle_cache)
+            lock_entry["paddle_cache_manifest_sha256"] = _directory_manifest_hash(
+                paddle_cache
             )
         _merge_model_lock(output_path, {candidate: lock_entry})
     if docling_components:
@@ -156,6 +165,7 @@ def load_selected_model_lock(
             "app-models` for the controls or the stage-specific model preparation command"
         )
     payload = json.loads(path.read_text(encoding="utf-8"))
+    schema_version = int(payload.get("schema_version", 0))
     raw_models = payload.get("models", {})
     if not isinstance(raw_models, Mapping) or not raw_models:
         raise RuntimeError(f"Model lock is empty or malformed: {path}")
@@ -188,6 +198,17 @@ def load_selected_model_lock(
                     f"Docling lock revision must be {DOCLING_VERSION}, received "
                     f"{entry['revision']}"
                 )
+            if schema_version >= 3 and "tesseract-cli" in entry.get(
+                "prepared_components", []
+            ):
+                system_components = entry.get("system_components")
+                if not isinstance(system_components, Mapping):
+                    raise RuntimeError(
+                        "Docling lock lacks the prepared Tesseract system identity"
+                    )
+                _verify_system_component(
+                    system_components.get("tesseract-cli"), "Tesseract CLI"
+                )
         else:
             if str(entry.get("selection_revision", "")) != approved[candidate].revision:
                 raise RuntimeError(
@@ -216,6 +237,12 @@ def load_selected_model_lock(
         model_path = entry.get("model_path")
         if model_path and not Path(str(model_path)).exists():
             raise RuntimeError(f"Prepared model path no longer exists: {model_path}")
+        if schema_version >= 3 and model_path:
+            _verify_directory_manifest(
+                Path(str(model_path)),
+                entry.get("model_cache_manifest_sha256"),
+                f"{candidate} primary model",
+            )
         submodels = entry.get("submodels", [])
         if isinstance(submodels, Sequence) and not isinstance(submodels, (str, bytes)):
             for submodel in submodels:
@@ -225,6 +252,18 @@ def load_selected_model_lock(
                     raise RuntimeError(
                         f"Prepared submodel path no longer exists: {submodel.get('model_path')}"
                     )
+                if schema_version >= 3 and isinstance(submodel, Mapping):
+                    _verify_directory_manifest(
+                        Path(str(submodel.get("model_path", ""))),
+                        submodel.get("cache_manifest_sha256"),
+                        f"{candidate} {submodel.get('role', 'submodel')}",
+                    )
+        if schema_version >= 3 and entry.get("paddle_cache_path"):
+            _verify_directory_manifest(
+                Path(str(entry["paddle_cache_path"])),
+                entry.get("paddle_cache_manifest_sha256"),
+                f"{candidate} Paddle components",
+            )
         result[candidate] = entry
     missing = sorted(requested - set(result))
     if missing:
@@ -246,7 +285,7 @@ def snapshot_specs(entry: SelectionEntry) -> tuple[tuple[str, str, str], ...]:
         )
         return (
             (entry.candidate, asr_revision, "asr"),
-            ("Qwen/Qwen3-ForcedAligner-0.6B", aligner_revision, "forced-aligner"),
+            ("Qwen/Qwen3-ForcedAligner-0.6B-hf", aligner_revision, "forced-aligner"),
         )
     revision = entry.revision
     if entry.candidate == "PaddlePaddle/PaddleOCR-VL-1.6":
@@ -275,7 +314,7 @@ def _merge_model_lock(path: Path, updates: Mapping[str, object]) -> None:
     atomic_write_json(
         path,
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "selection_package": "benchmark-candidates",
             "models": existing,
         },
@@ -291,16 +330,35 @@ def _prepare_docling_standard(
     if installed != DOCLING_VERSION:
         raise RuntimeError(f"Docling {DOCLING_VERSION} is required, but {installed} is installed")
     docling_directory = cache_directory / "docling-standard"
-    downloadable = [component for component in components if component != "tesseract-cli"]
-    command = ["docling-tools", "models", "download", *downloadable]
-    if "rapidocr" in downloadable:
-        command.extend(["--rapidocr-backend-lang", "onnxruntime:english"])
-    if "easyocr" in downloadable:
-        command.extend(["--easyocr-lang", "en"])
+    downloadable = [
+        component
+        for component in components
+        if component not in {"easyocr", "rapidocr", "tesseract-cli"}
+    ]
+    cli_name = "docling-tools.exe" if os.name == "nt" else "docling-tools"
+    cli_path = Path(sys.executable).resolve().parent / cli_name
+    if not cli_path.is_file():
+        raise RuntimeError(f"The pinned Docling CLI is missing beside Python: {cli_path}")
+    command = [str(cli_path), "models", "download", *downloadable]
     command.extend(["--output-dir", str(docling_directory)])
     subprocess.run(command, check=True)
+    if "easyocr" in components:
+        _prepare_easyocr_english(docling_directory)
+    if "rapidocr" in components:
+        # Docling's generic CLI fetches four backend/language combinations. The
+        # benchmark freezes exactly ONNX Runtime + English, so prepare only that set.
+        from docling.models.stages.ocr.rapid_ocr_model import RapidOcrModel
+
+        RapidOcrModel.download_models(
+            backend="onnxruntime",
+            lang="english",
+            local_dir=docling_directory / RapidOcrModel._model_repo_folder,
+            force=False,
+            progress=True,
+        )
     if not docling_directory.is_dir() or not any(docling_directory.rglob("*")):
         raise RuntimeError("Docling model preparation produced an empty artifact directory")
+    system_components = _prepare_system_components(components)
     _merge_model_lock(
         output_path,
         {
@@ -311,8 +369,53 @@ def _prepare_docling_standard(
                 "revision": installed,
                 "model_path": str(docling_directory),
                 "prepared_components": list(components),
+                "system_components": system_components,
+                "preparation": {
+                    "command": command,
+                    "docling_cli_sha256": sha256_file(cli_path),
+                    "easyocr": {
+                        "languages": ["en"],
+                        "detection_model": "craft",
+                        "recognition_model": "english_g2",
+                        "downloader": (
+                            "docling.models.stages.ocr.easyocr_model."
+                            "EasyOcrModel.download_models"
+                        ),
+                    },
+                    "rapidocr": {
+                        "backend": "onnxruntime",
+                        "language": "english",
+                        "downloader": (
+                            "docling.models.stages.ocr.rapid_ocr_model."
+                            "RapidOcrModel.download_models"
+                        ),
+                    },
+                },
+                "model_cache_manifest_sha256": _directory_manifest_hash(
+                    docling_directory
+                ),
             }
         },
+    )
+
+
+def _prepare_easyocr_english(docling_directory: Path) -> None:
+    """Prepare only the EasyOCR models selected by ``lang=['en']``, idempotently."""
+
+    from docling.models.stages.ocr.easyocr_model import EasyOcrModel
+    from easyocr.config import detection_models, recognition_models
+
+    target = docling_directory / EasyOcrModel._model_repo_folder
+    detector = str(detection_models["craft"]["filename"])
+    recognizer = str(recognition_models["gen2"]["english_g2"]["filename"])
+    if all((target / name).is_file() for name in (detector, recognizer)):
+        return
+    EasyOcrModel.download_models(
+        detection_models=["craft"],
+        recognition_models=["english_g2"],
+        local_dir=target,
+        force=False,
+        progress=True,
     )
 
 
@@ -323,11 +426,15 @@ def _prepare_paddle_components(cache_directory: Path, model_path: Path) -> Path:
     os.environ["PADDLE_PDX_CACHE_HOME"] = str(paddle_cache)
     os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
     try:
+        # PaddleX imports ModelScope, which imports PyTorch. On Windows, load
+        # PyTorch's DLLs first to avoid shared-library name collisions.
+        import torch
         from paddleocr import PaddleOCRVL
     except ModuleNotFoundError as exc:
         raise RuntimeError(
             "PaddleOCR-VL dependencies are required; install requirements/benchmarks.lock"
         ) from exc
+    _ = torch.__version__
     PaddleOCRVL(
         pipeline_version="v1.6",
         vl_rec_backend="native",
@@ -349,3 +456,91 @@ def _prepare_tiktoken(cache_directory: Path) -> None:
     os.environ["TIKTOKEN_CACHE_DIR"] = str(cache_directory)
     tiktoken.get_encoding("cl100k_base").encode("EduMind preparation check")
     atomic_write_text(cache_directory / "cl100k_base.ready", "cl100k_base\n")
+
+
+def _directory_manifest_hash(directory: Path) -> str:
+    """Hash every prepared file name and digest, independent of absolute location."""
+
+    if not directory.is_dir():
+        raise RuntimeError(f"Prepared model directory is missing: {directory}")
+    files = [path for path in directory.rglob("*") if path.is_file()]
+    if not files:
+        raise RuntimeError(f"Prepared model directory is empty: {directory}")
+    return stable_hash(
+        [
+            {
+                "path": path.relative_to(directory).as_posix(),
+                "size": path.stat().st_size,
+                "sha256": sha256_file(path),
+            }
+            for path in sorted(files, key=lambda value: value.relative_to(directory).as_posix())
+        ]
+    )
+
+
+def _verify_directory_manifest(directory: Path, expected: object, label: str) -> None:
+    if not isinstance(expected, str) or not expected:
+        raise RuntimeError(f"Model lock lacks a cache-manifest checksum for {label}")
+    actual = _directory_manifest_hash(directory)
+    if actual != expected:
+        raise RuntimeError(
+            f"Prepared cache manifest checksum mismatch for {label}: "
+            f"expected {expected}, computed {actual}"
+        )
+
+
+def _prepare_system_components(components: Sequence[str]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    if "tesseract-cli" not in components:
+        return result
+    executable = shutil.which("tesseract")
+    if not executable:
+        raise RuntimeError(
+            "The document benchmark includes Tesseract but tesseract is not on PATH"
+        )
+    completed = subprocess.run(
+        [executable, "--version"], check=True, capture_output=True, text=True
+    )
+    languages = subprocess.run(
+        [executable, "--list-langs"], check=True, capture_output=True, text=True
+    )
+    available = [value.strip() for value in languages.stdout.splitlines()[1:] if value.strip()]
+    if "eng" not in available:
+        raise RuntimeError("The document benchmark requires Tesseract English data")
+    match = re.search(r'in\s+"([^"]+)"', languages.stdout.splitlines()[0])
+    english_data = (
+        Path(match.group(1)) / "eng.traineddata"
+        if match
+        else Path(executable).resolve().parent / "tessdata" / "eng.traineddata"
+    )
+    if not english_data.is_file():
+        raise RuntimeError("Cannot locate the selected Tesseract eng.traineddata file")
+    path = Path(executable).resolve()
+    result["tesseract-cli"] = {
+        "path": str(path),
+        "sha256": sha256_file(path),
+        "version": completed.stdout.splitlines()[0].strip(),
+        "languages": available,
+        "english_data_path": str(english_data.resolve()),
+        "english_data_sha256": sha256_file(english_data),
+    }
+    return result
+
+
+def _verify_system_component(value: object, label: str) -> None:
+    if not isinstance(value, Mapping):
+        raise RuntimeError(f"Model lock lacks the {label} identity")
+    path = Path(str(value.get("path", "")))
+    checksum = str(value.get("sha256", ""))
+    if not path.is_file() or not checksum or sha256_file(path) != checksum:
+        raise RuntimeError(f"Prepared {label} executable is missing or changed")
+    if not str(value.get("version", "")).strip():
+        raise RuntimeError(f"Model lock lacks the {label} version")
+    english_data = Path(str(value.get("english_data_path", "")))
+    english_checksum = str(value.get("english_data_sha256", ""))
+    if (
+        not english_data.is_file()
+        or not english_checksum
+        or sha256_file(english_data) != english_checksum
+    ):
+        raise RuntimeError(f"Prepared {label} English model data is missing or changed")
