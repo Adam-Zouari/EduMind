@@ -50,6 +50,16 @@ class DoclingExtractor:
     def _convert(
         self, request: ExtractionRequest, kind: SourceKind
     ) -> Any:
+        converter, _ = self._converter(request, kind)
+        return converter.convert(str(request.source_path)).document
+
+    def initialize_image_pipeline(self, request: ExtractionRequest) -> None:
+        """Initialize the image pipeline without converting a benchmark frame."""
+
+        converter, input_format = self._converter(request, SourceKind.IMAGE)
+        converter.initialize_pipeline(input_format)
+
+    def _converter(self, request: ExtractionRequest, kind: SourceKind):
         try:
             from docling.datamodel.accelerator_options import AcceleratorOptions
             from docling.datamodel.base_models import InputFormat
@@ -118,7 +128,9 @@ class DoclingExtractor:
                 InputFormat.IMAGE: ImageFormatOption(pipeline_options=pipeline),
             }
             self._runtimes[key] = DocumentConverter(format_options=formats)
-        return self._runtimes[key].convert(str(request.source_path)).document
+        return self._runtimes[key], (
+            InputFormat.IMAGE if kind is SourceKind.IMAGE else InputFormat.PDF
+        )
 
 
 def required_directory(request: ExtractionRequest, key: str, label: str) -> Path:

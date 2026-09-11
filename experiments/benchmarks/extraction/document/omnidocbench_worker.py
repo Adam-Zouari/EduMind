@@ -10,6 +10,7 @@ from pathlib import Path
 
 
 def main(input_path: Path, output_path: Path) -> None:
+    sys.path.insert(0, "/opt/omnidocbench")
     sys.path.insert(0, "/opt/omnidocbench/src")
     payload = json.loads(input_path.read_text(encoding="utf-8"))
     result: dict[str, list[object]] = {"tables": [], "formulas": []}

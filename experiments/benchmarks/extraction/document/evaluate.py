@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from .metrics import official_image_digest, validate_official_evaluators, validate_reference
+from .metrics import validate_official_evaluators, validate_reference
+from .official_metrics import official_image_digest
+
+__all__ = ("directions", "official_image_digest", "validate_official_evaluators", "validate_reference")
 
 
 def directions() -> dict[str, str]:

@@ -70,6 +70,8 @@ DEFAULT_PROFILE_BY_KIND = {
 
 LOCK_CANDIDATE_BY_ENGINE = {
     "docling-standard": "docling-standard",
+    "docling-vlm-granite-258m": "ibm-granite/granite-docling-258M",
+    "paddleocr-vl-1.6": "PaddlePaddle/PaddleOCR-VL-1.6",
     "whisper-small-en-control": "openai/whisper-small.en",
 }
 

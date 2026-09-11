@@ -5,10 +5,16 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Mapping
+from html.parser import HTMLParser
 from importlib.metadata import version
 from typing import Any
 
-from edumind.extraction.contracts import ExtractedDocument, ExtractionRequest, SourceKind
+from edumind.extraction.contracts import (
+    ExtractedDocument,
+    ExtractionRequest,
+    ExtractionWarning,
+    SourceKind,
+)
 from edumind.extraction.errors import ExtractionBackendError, MissingDependencyError
 from edumind.extraction.extractors.document import DOCLING_VERSION, required_directory
 from edumind.extraction.structured import build_docling_document, build_structured_document
@@ -29,6 +35,7 @@ class ExperimentalDocumentExtractor:
         if request.profile is None:
             raise ValueError("Resolved extraction profile is required")
         started = time.perf_counter()
+        warnings: tuple[ExtractionWarning, ...] = ()
         try:
             if self.engine == "docling-vlm-granite-258m":
                 document = self._docling_vlm(request)
@@ -43,7 +50,7 @@ class ExperimentalDocumentExtractor:
                     },
                     seconds=time.perf_counter() - started,
                 )
-            elements = self._paddle_vl(request)
+            elements, warnings = self._paddle_vl(request)
         except MissingDependencyError:
             raise
         except Exception as exc:
@@ -59,10 +66,26 @@ class ExperimentalDocumentExtractor:
                 "engine": self.engine,
                 "engine_revision": request.profile.engine_revision,
             },
+            warnings=warnings,
             seconds=time.perf_counter() - started,
         )
 
     def _docling_vlm(self, request: ExtractionRequest):
+        converter, _ = self._docling_converter(request)
+        return converter.convert(str(request.source_path)).document
+
+    def initialize_image_pipeline(self, request: ExtractionRequest) -> None:
+        """Initialize exactly the visual parser lifecycle measured by video."""
+
+        if self.engine == "docling-vlm-granite-258m":
+            from docling.datamodel.base_models import InputFormat
+
+            converter, _ = self._docling_converter(request)
+            converter.initialize_pipeline(InputFormat.IMAGE)
+            return
+        self._paddle_runtime(request)
+
+    def _docling_converter(self, request: ExtractionRequest):
         try:
             from docling.datamodel import vlm_model_specs
             from docling.datamodel.accelerator_options import AcceleratorOptions
@@ -107,19 +130,42 @@ class ExperimentalDocumentExtractor:
                     ),
                 }
             )
-        document = self._runtimes[key].convert(str(request.source_path)).document
-        return document
+        return self._runtimes[key], InputFormat.IMAGE
 
-    def _paddle_vl(self, request: ExtractionRequest):
+    def _paddle_vl(
+        self, request: ExtractionRequest
+    ) -> tuple[list[dict[str, object]], tuple[ExtractionWarning, ...]]:
+        runtime = self._paddle_runtime(request)
+        elements: list[dict[str, object]] = []
+        warnings: list[ExtractionWarning] = []
+        for result in runtime.predict(str(request.source_path)):
+            payload = getattr(result, "json", None)
+            payload = payload() if callable(payload) else payload or {}
+            blocks = _paddle_blocks(payload, warnings=warnings)
+            if not blocks:
+                raise RuntimeError("PaddleOCR-VL result contains no native parsing blocks")
+            elements.extend(blocks)
+        if not elements:
+            raise RuntimeError("PaddleOCR-VL-1.6 produced no pages")
+        for order, element in enumerate(elements):
+            element["order"] = order
+        return elements, tuple(warnings)
+
+    def _paddle_runtime(self, request: ExtractionRequest):
         model_path = required_directory(request, "model_path", "PaddleOCR-VL-1.6")
         paddle_cache = required_directory(request, "paddle_cache_path", "PaddleOCR-VL")
         os.environ["PADDLE_PDX_CACHE_HOME"] = str(paddle_cache)
         os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
         try:
+            # On Windows, Paddle adds DLL search paths whose shared-library names
+            # conflict with PyTorch. PaddleX imports ModelScope (and therefore
+            # PyTorch), so load PyTorch's DLLs before importing Paddle.
+            import torch
             import paddle
             from paddleocr import PaddleOCRVL
         except (ImportError, ModuleNotFoundError) as exc:
             raise MissingDependencyError("PaddleX OCR extras are required") from exc
+        _ = torch.__version__
         paddleocr_version = version("paddleocr")
         if paddleocr_version != "3.7.0" or paddle.__version__ != "3.3.1":
             raise MissingDependencyError(
@@ -134,23 +180,13 @@ class ExperimentalDocumentExtractor:
                 vl_rec_model_dir=str(model_path),
                 device="gpu" if request.profile and request.profile.device == "cuda" else "cpu",
             )
-        elements: list[dict[str, object]] = []
-        for result in self._runtimes[key].predict(str(request.source_path)):
-            payload = getattr(result, "json", None)
-            payload = payload() if callable(payload) else payload or {}
-            blocks = _paddle_blocks(payload)
-            if not blocks:
-                raise RuntimeError("PaddleOCR-VL result contains no native parsing blocks")
-            elements.extend(blocks)
-        if not elements:
-            raise RuntimeError("PaddleOCR-VL-1.6 produced no pages")
-        for order, element in enumerate(elements):
-            element["order"] = order
-        return elements
+        return self._runtimes[key]
 
 
 def _paddle_blocks(
     value: object,
+    *,
+    warnings: list[ExtractionWarning] | None = None,
 ) -> list[dict[str, object]]:
     """Read native Paddle blocks; do not infer structure from rendered Markdown."""
 
@@ -158,7 +194,8 @@ def _paddle_blocks(
         return []
     if isinstance(value.get("res"), Mapping):
         value = value["res"]
-    page_number = int(value["page_index"]) + 1
+    raw_page_index = value.get("page_index")
+    page_number = 1 if raw_page_index is None else int(raw_page_index) + 1
     raw_blocks = value.get("parsing_res_list", [])
     if not isinstance(raw_blocks, list):
         return []
@@ -166,43 +203,167 @@ def _paddle_blocks(
     result: list[dict[str, object]] = []
     for index, raw in enumerate(raw_blocks):
         if not isinstance(raw, Mapping):
+            if warnings is not None:
+                warnings.append(
+                    ExtractionWarning(
+                        "paddle_block_conversion_failed",
+                        f"Skipped Paddle block {index}: block is not an object",
+                        segment_index=len(result),
+                    )
+                )
             continue
-        label = str(raw.get("block_label", "text")).casefold()
-        text = str(raw.get("block_content", ""))
-        kind = {
-            "title": "title",
-            "heading": "heading",
-            "section_header": "heading",
-            "table": "table",
-            "formula": "formula",
-            "equation": "formula",
-            "figure": "figure",
-            "image": "figure",
-            "caption": "caption",
-            "code": "code",
-            "list_item": "list_item",
-        }.get(label, "text")
-        structured: dict[str, object] = {}
-        if kind == "table":
-            structured["html"] = text
-        elif kind == "formula":
-            structured["latex"] = text
-        result.append(
-            {
-                "text": text,
-                "element_id": str(raw.get("block_id", f"page-{page_number}-{index}")),
-                "page_number": page_number,
-                "bounding_box": _paddle_box(raw.get("block_bbox"), page_size),
-                "kind": kind,
-                "structured_content": structured,
-                "metadata": {
-                    "label": label,
-                    "block_order": raw.get("block_order"),
-                    "group_id": raw.get("group_id"),
-                },
-            }
-        )
+        try:
+            label = str(raw.get("block_label", "text")).casefold()
+            native_content = str(raw.get("block_content", ""))
+            text = native_content
+            kind = {
+                "title": "title",
+                "heading": "heading",
+                "section_header": "heading",
+                "table": "table",
+                "formula": "formula",
+                "equation": "formula",
+                "figure": "figure",
+                "image": "figure",
+                "caption": "caption",
+                "code": "code",
+                "list_item": "list_item",
+            }.get(label, "text")
+            structured: dict[str, object] = {}
+            if kind == "table":
+                rows, cells = _parse_table_html(native_content)
+                if not cells:
+                    # Keep the candidate alive and make the degraded conversion explicit.
+                    fallback = _plain_html_text(native_content)
+                    rows = [[fallback]] if fallback else [[]]
+                    cells = (
+                        [{"text": fallback, "row": 0, "column": 0,
+                          "row_span": 1, "column_span": 1}]
+                        if fallback
+                        else []
+                    )
+                    if warnings is not None:
+                        warnings.append(
+                            ExtractionWarning(
+                                "paddle_table_html_malformed",
+                                f"Paddle table block {index} had no parseable cells",
+                                segment_index=len(result),
+                            )
+                        )
+                text = "\n".join("\t".join(cell for cell in row) for row in rows)
+                structured.update({"rows": rows, "cells": cells, "html": native_content})
+            elif kind == "formula":
+                # Formula text is an exact LaTeX payload, not prose.
+                structured["latex"] = native_content
+            result.append(
+                {
+                    "text": text,
+                    "element_id": str(raw.get("block_id", f"page-{page_number}-{index}")),
+                    "page_number": page_number,
+                    "bounding_box": _paddle_box(raw.get("block_bbox"), page_size),
+                    "kind": kind,
+                    "structured_content": structured,
+                    "metadata": {
+                        "label": label,
+                        "block_order": raw.get("block_order"),
+                        "group_id": raw.get("group_id"),
+                    },
+                }
+            )
+        except (TypeError, ValueError) as exc:
+            if warnings is not None:
+                warnings.append(
+                    ExtractionWarning(
+                        "paddle_block_conversion_failed",
+                        f"Skipped Paddle block {index}: {exc}",
+                        segment_index=len(result),
+                    )
+                )
     return result
+
+
+class _TableHTMLParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.rows: list[list[str]] = []
+        self.cells: list[dict[str, object]] = []
+        self._row: list[str] | None = None
+        self._cell_parts: list[str] | None = None
+        self._cell_attrs: dict[str, str] = {}
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        if tag.casefold() == "tr":
+            self._row = []
+        elif tag.casefold() in {"td", "th"}:
+            if self._row is None:
+                self._row = []
+            self._cell_parts = []
+            self._cell_attrs = {str(key).casefold(): str(value) for key, value in attrs}
+
+    def handle_data(self, data: str) -> None:
+        if self._cell_parts is not None:
+            self._cell_parts.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        lowered = tag.casefold()
+        if lowered in {"td", "th"} and self._cell_parts is not None:
+            value = " ".join("".join(self._cell_parts).split())
+            assert self._row is not None
+            column = len(self._row)
+            row = len(self.rows)
+            self._row.append(value)
+            self.cells.append(
+                {
+                    "text": value,
+                    "row": row,
+                    "column": column,
+                    "row_span": _positive_span(self._cell_attrs.get("rowspan")),
+                    "column_span": _positive_span(self._cell_attrs.get("colspan")),
+                    "header": lowered == "th",
+                }
+            )
+            self._cell_parts = None
+            self._cell_attrs = {}
+        elif lowered == "tr" and self._row is not None:
+            self.rows.append(self._row)
+            self._row = None
+
+    def close(self) -> None:
+        super().close()
+        if self._cell_parts is not None:
+            self.handle_endtag("td")
+        if self._row is not None:
+            self.rows.append(self._row)
+            self._row = None
+
+
+def _parse_table_html(value: str) -> tuple[list[list[str]], list[dict[str, object]]]:
+    parser = _TableHTMLParser()
+    parser.feed(value)
+    parser.close()
+    return parser.rows, parser.cells
+
+
+def _plain_html_text(value: str) -> str:
+    class _TextParser(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__(convert_charrefs=True)
+            self.parts: list[str] = []
+
+        def handle_data(self, data: str) -> None:
+            self.parts.append(data)
+
+    parser = _TextParser()
+    parser.feed(value)
+    parser.close()
+    return " ".join(" ".join(parser.parts).split())
+
+
+def _positive_span(value: str | None) -> int:
+    try:
+        return max(1, int(value or 1))
+    except ValueError:
+        return 1
 
 
 def _paddle_box(

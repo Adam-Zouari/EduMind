@@ -16,15 +16,24 @@ from experiments.benchmarks.common.metrics import (
     character_error_rate,
     normalize_prose,
     normalized_tokens,
+    precision_recall_f1,
     word_error_rate,
 )
-from .official_metrics import (
-    official_image_digest,
-    score_official_metrics,
-    validate_official_runtime,
-)
+from .official_metrics import score_official_metrics, validate_official_runtime
 
 VISUAL_KINDS = {"image", "pdf"}
+REFERENCE_CAPABILITIES = frozenset(
+    {
+        "text",
+        "pages",
+        "reading_order",
+        "layout_boxes",
+        "element_types",
+        "hierarchy",
+        "tables",
+        "formulas",
+    }
+)
 LAYOUT_KINDS = {
     SegmentKind.TEXT,
     SegmentKind.TITLE,
@@ -57,6 +66,7 @@ class ReferenceDocument:
     text: str
     pages: Mapping[int, str]
     elements: tuple[ReferenceElement, ...]
+    capabilities: frozenset[str]
 
 
 @dataclass
@@ -72,50 +82,102 @@ class DocumentEvaluation:
 
 
 def load_reference(item: Mapping[str, object]) -> ReferenceDocument:
-    reference_path = item.get("reference_path")
-    if reference_path:
-        path = PROJECT_ROOT / str(reference_path)
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(payload, Mapping):
-            raise ValueError(f"Reference document must be a JSON object: {path}")
-        return _reference_from_mapping(payload)
-    return _reference_from_mapping(item)
+    return _reference_from_mapping(_reference_payload(item))
 
 
 def validate_reference(item: Mapping[str, object], *, authoritative: bool) -> None:
+    payload = _reference_payload(item)
     reference = load_reference(item)
-    if not reference.text.strip():
+    raw_capabilities = payload.get("reference_capabilities")
+    if authoritative and raw_capabilities is None:
+        raise ValueError(
+            f"Authoritative document sample {item.get('id')} requires "
+            "reference_capabilities"
+        )
+    if raw_capabilities is not None:
+        _validate_capability_list(raw_capabilities, item.get("id"))
+    if "text" in reference.capabilities and not reference.text.strip():
         raise ValueError(f"Document sample {item.get('id')} has no verified reference text")
     if authoritative and not item.get("reference_path"):
         raise ValueError(
             f"Authoritative document sample {item.get('id')} requires reference_path"
         )
     kind = str(item.get("kind"))
-    if kind in VISUAL_KINDS and not reference.pages:
+    if "pages" in reference.capabilities and not reference.pages:
         raise ValueError(f"Visual sample {item.get('id')} requires verified page text")
-    if authoritative and not reference.elements:
-        raise ValueError(f"Document sample {item.get('id')} requires element annotations")
-    if authoritative:
+    layout_capabilities = {
+        "reading_order", "layout_boxes", "element_types", "hierarchy"
+    }
+    if reference.capabilities & layout_capabilities and not reference.elements:
+        raise ValueError(
+            f"Document sample {item.get('id')} claims layout capabilities without elements"
+        )
+    if "tables" in reference.capabilities:
+        table_presence = _presence(payload, item, "has_table")
+        if table_presence is None and authoritative:
+            raise ValueError(
+                f"Document sample {item.get('id')} with table annotations must set has_table"
+            )
+        table_elements = [
+            element for element in reference.elements if element.kind is SegmentKind.TABLE
+        ]
+        if table_presence and not table_elements:
+            raise ValueError(
+                f"Document sample {item.get('id')} sets has_table:true without table references"
+            )
+        if table_presence is False and table_elements:
+            raise ValueError(
+                f"Document sample {item.get('id')} sets has_table:false with table references"
+            )
         missing_table_html = [
             element.element_id
-            for element in reference.elements
-            if element.kind is SegmentKind.TABLE and not element.html
+            for element in table_elements
+            if not element.html
         ]
+        if missing_table_html:
+            raise ValueError(
+                f"Document sample {item.get('id')} lacks official table references: "
+                + ", ".join(missing_table_html[:10])
+            )
+    if "formulas" in reference.capabilities:
+        formula_presence = _presence(payload, item, "has_formula")
+        if formula_presence is None and authoritative:
+            raise ValueError(
+                f"Document sample {item.get('id')} with formula annotations must set has_formula"
+            )
+        formula_elements = [
+            element for element in reference.elements if element.kind is SegmentKind.FORMULA
+        ]
+        if formula_presence and not formula_elements:
+            raise ValueError(
+                f"Document sample {item.get('id')} sets has_formula:true without formula references"
+            )
+        if formula_presence is False and formula_elements:
+            raise ValueError(
+                f"Document sample {item.get('id')} sets has_formula:false with formula references"
+            )
         missing_formula_latex = [
             element.element_id
-            for element in reference.elements
-            if element.kind is SegmentKind.FORMULA and not element.latex
+            for element in formula_elements
+            if not element.latex
         ]
-        if missing_table_html or missing_formula_latex:
-            missing = missing_table_html + missing_formula_latex
+        if missing_formula_latex:
             raise ValueError(
-                f"Document sample {item.get('id')} lacks official table/formula references: "
-                + ", ".join(missing[:10])
+                f"Document sample {item.get('id')} lacks official formula references: "
+                + ", ".join(missing_formula_latex[:10])
             )
-    if authoritative and kind in VISUAL_KINDS:
+    if "hierarchy" in reference.capabilities and not any(
+        element.parent_id is not None or element.hierarchy_level is not None
+        for element in reference.elements
+    ):
+        raise ValueError(
+            f"Document sample {item.get('id')} claims hierarchy without hierarchy annotations"
+        )
+    if "layout_boxes" in reference.capabilities:
         missing_boxes = [
             element.element_id
             for element in reference.elements
+            if element.kind in LAYOUT_KINDS
             if element.bounding_box is None
         ]
         if missing_boxes:
@@ -123,16 +185,33 @@ def validate_reference(item: Mapping[str, object], *, authoritative: bool) -> No
                 f"Visual sample {item.get('id')} has elements without normalized boxes: "
                 + ", ".join(missing_boxes[:10])
             )
+    page_matched_kinds = set(LAYOUT_KINDS)
+    if "tables" in reference.capabilities:
+        page_matched_kinds.add(SegmentKind.TABLE)
+    if "formulas" in reference.capabilities:
+        page_matched_kinds.add(SegmentKind.FORMULA)
+    if kind in VISUAL_KINDS and any(
+        element.page_number is None
+        for element in reference.elements
+        if element.kind in page_matched_kinds
+    ):
+        raise ValueError(
+            f"Visual sample {item.get('id')} has matched elements without page numbers"
+        )
 
 
 def validate_official_evaluators(items: Sequence[Mapping[str, object]]) -> bool:
-    kinds = {
-        element.kind
-        for item in items
-        for element in load_reference(item).elements
-    }
-    tables = SegmentKind.TABLE in kinds
-    formulas = SegmentKind.FORMULA in kinds
+    references = [load_reference(item) for item in items]
+    tables = any(
+        "tables" in reference.capabilities
+        and any(element.kind is SegmentKind.TABLE for element in reference.elements)
+        for reference in references
+    )
+    formulas = any(
+        "formulas" in reference.capabilities
+        and any(element.kind is SegmentKind.FORMULA for element in reference.elements)
+        for reference in references
+    )
     validate_official_runtime(tables=tables, formulas=formulas)
     return tables or formulas
 
@@ -186,10 +265,11 @@ def score_document(
     groups = _document_groups(item)
     result = DocumentEvaluation(groups)
     hypothesis = document.text if document else ""
-    result.metrics.update(_text_metrics(reference, hypothesis))
+    if "text" in reference.capabilities:
+        result.metrics.update(_text_metrics(reference, hypothesis))
     predicted = tuple(document.segments) if document else ()
 
-    if kind in VISUAL_KINDS:
+    if "pages" in reference.capabilities:
         result.metrics.update(_page_metrics(reference, predicted))
         # Page attribution follows content matches and then checks the page label.
         # Matching by box alone could count unrelated text at the same coordinates.
@@ -215,26 +295,48 @@ def score_document(
         if segment.kind in LAYOUT_KINDS
         and (segment.text.strip() or segment.bounding_box is not None)
     )
-    if layout_references or layout_predictions:
-        matches = _match_elements(layout_references, layout_predictions, visual=kind in VISUAL_KINDS)
+    layout_enabled = bool(
+        reference.capabilities
+        & {"reading_order", "layout_boxes", "element_types", "hierarchy"}
+    )
+    if layout_enabled:
+        matches = _match_elements(
+            layout_references,
+            layout_predictions,
+            visual=kind in VISUAL_KINDS,
+            use_boxes="layout_boxes" in reference.capabilities,
+        )
         result.counts["layout"] = (
             len(matches),
             len(layout_predictions) - len(matches),
             len(layout_references) - len(matches),
         )
-        result.metrics.update(_layout_metrics(layout_references, layout_predictions, matches))
-        reading_order = _reading_order(matches, layout_references, layout_predictions)
-        if reading_order is not None:
-            result.metrics["text.reading_order_accuracy"] = reading_order
+        result.metrics.update(
+            _layout_metrics(
+                layout_references,
+                layout_predictions,
+                matches,
+                capabilities=reference.capabilities,
+            )
+        )
+        if "reading_order" in reference.capabilities:
+            reading_order = _reading_order(matches, layout_references, layout_predictions)
+            if reading_order is not None:
+                result.metrics["text.reading_order_accuracy"] = reading_order
 
-    _score_structured_kind(result, reference, predicted, SegmentKind.TABLE, kind, item)
-    _score_structured_kind(result, reference, predicted, SegmentKind.FORMULA, kind, item)
+    if "tables" in reference.capabilities:
+        _score_structured_kind(result, reference, predicted, SegmentKind.TABLE, kind)
+    if "formulas" in reference.capabilities:
+        _score_structured_kind(result, reference, predicted, SegmentKind.FORMULA, kind)
     result.metrics["reliability.empty_output_rate"] = float(not hypothesis.strip())
-    duplicate_rate = _duplicate_content_rate(reference.text, hypothesis)
-    if duplicate_rate is not None:
-        result.metrics["reliability.duplicate_content_rate"] = duplicate_rate
+    if "text" in reference.capabilities:
+        duplicate_rate = _duplicate_content_rate(reference.text, hypothesis)
+        if duplicate_rate is not None:
+            result.metrics["reliability.duplicate_content_rate"] = duplicate_rate
     result.metrics["reliability.candidate_failure_rate"] = float(failed)
-    if repeated_documents:
+    if failed:
+        result.metrics["reliability.structured_output_determinism"] = 0.0
+    elif repeated_documents:
         fingerprints = {_document_fingerprint(value) for value in repeated_documents}
         result.metrics["reliability.structured_output_determinism"] = float(
             len(fingerprints) == 1
@@ -323,7 +425,14 @@ def _reference_from_mapping(payload: Mapping[str, object]) -> ReferenceDocument:
             )
     if not pages and payload.get("kind") == "image":
         pages[1] = text
-    return ReferenceDocument(text, pages, tuple(elements))
+    raw_capabilities = payload.get("reference_capabilities")
+    capabilities = (
+        frozenset(str(value) for value in raw_capabilities)
+        if isinstance(raw_capabilities, Sequence)
+        and not isinstance(raw_capabilities, (str, bytes))
+        else _infer_capabilities(payload, text, pages, elements)
+    )
+    return ReferenceDocument(text, pages, tuple(elements), capabilities)
 
 
 def _text_metrics(reference: ReferenceDocument, hypothesis: str) -> dict[str, float]:
@@ -379,24 +488,33 @@ def _unsupported_near_duplicates(predicted: Sequence[str], reference: Sequence[s
         max(
             0,
             len(group)
-            - sum(_content_f1(group[0], expected) >= 0.95 for expected in reference),
+            - max(
+                1,
+                sum(
+                    _content_f1(group[0], expected) >= 0.95
+                    for expected in reference
+                ),
+            ),
         )
         for group in groups
     )
 
 
-def _layout_metrics(references, predictions, matches) -> dict[str, float]:
+def _layout_metrics(
+    references, predictions, matches, *, capabilities: frozenset[str]
+) -> dict[str, float]:
     tp, fp, fn = len(matches), len(predictions) - len(matches), len(references) - len(matches)
-    precision, recall, f1 = _prf(tp, fp, fn)
+    precision, recall, f1 = precision_recall_f1(tp, fp, fn)
     result = {
         "layout.element_precision": precision,
         "layout.element_recall": recall,
         "layout.element_f1": f1,
     }
-    if matches:
+    if matches and "element_types" in capabilities:
         result["layout.element_type_accuracy"] = sum(
             references[left].kind is predictions[right].kind for left, right, _ in matches
         ) / len(matches)
+    if matches and "hierarchy" in capabilities:
         hierarchy = []
         reference_to_prediction = {
             references[left].element_id: predictions[right].element_id
@@ -419,22 +537,20 @@ def _layout_metrics(references, predictions, matches) -> dict[str, float]:
             hierarchy.append(float(parent_correct and level_correct))
         if hierarchy:
             result["layout.hierarchy_accuracy"] = float(np.mean(hierarchy))
+    if matches and "layout_boxes" in capabilities:
         boxes = [score for left, right, score in matches if references[left].bounding_box and predictions[right].bounding_box]
         if boxes:
             result["layout.mean_bounding_box_iou"] = float(np.mean(boxes))
     return result
 
 
-def _score_structured_kind(
-    result, reference, predicted, target, source_kind, item
-) -> None:
+def _score_structured_kind(result, reference, predicted, target, source_kind) -> None:
     references = tuple(element for element in reference.elements if element.kind is target)
     predictions = tuple(segment for segment in predicted if segment.kind is target)
     annotation_key = "tables" if target is SegmentKind.TABLE else "formulas"
-    presence_key = "has_table" if target is SegmentKind.TABLE else "has_formula"
-    annotated = bool(references) or bool(predictions) or presence_key in item
-    if not annotated:
-        return
+    # This function is reached only when the explicit capability is present.
+    # Keep a count row even for a verified negative stored in a reference file so
+    # false positives contribute to pooled detection metrics.
     result.counts[annotation_key] = (
         0, len(predictions), len(references)
     )
@@ -444,7 +560,7 @@ def _score_structured_kind(
     result.counts[annotation_key] = (
         len(matches), len(predictions) - len(matches), len(references) - len(matches)
     )
-    precision, recall, f1 = _prf(*result.counts[annotation_key])
+    precision, recall, f1 = precision_recall_f1(*result.counts[annotation_key])
     result.metrics.update(
         {
             f"{annotation_key}.detection_precision": precision,
@@ -488,7 +604,7 @@ def _aggregate_group(records: Sequence[DocumentEvaluation]) -> dict[str, float]:
         tp, fp, fn = (sum(value[index] for value in counts) for index in range(3))
         if tp + fp + fn == 0:
             continue
-        precision, recall, f1 = _prf(tp, fp, fn)
+        precision, recall, f1 = precision_recall_f1(tp, fp, fn)
         values[f"{category}.detection_precision" if category != "layout" else "layout.element_precision"] = precision
         values[f"{category}.detection_recall" if category != "layout" else "layout.element_recall"] = recall
         values[f"{category}.detection_f1" if category != "layout" else "layout.element_f1"] = f1
@@ -509,13 +625,17 @@ def _aggregate_group(records: Sequence[DocumentEvaluation]) -> dict[str, float]:
     return values
 
 
-def _match_elements(references, predictions, *, visual: bool):
+def _match_elements(
+    references, predictions, *, visual: bool, use_boxes: bool | None = None
+):
     if not references or not predictions:
         return []
     scores = np.zeros((len(references), len(predictions)), dtype=np.float64)
     for left, reference in enumerate(references):
         for right, prediction in enumerate(predictions):
-            if visual and reference.bounding_box:
+            if visual and reference.page_number != prediction.page_number:
+                continue
+            if visual and use_boxes is not False and reference.bounding_box:
                 scores[left, right] = (
                     _iou(reference.bounding_box, prediction.bounding_box)
                     if prediction.bounding_box
@@ -586,10 +706,11 @@ def _content_scores(reference: str, prediction: str) -> tuple[float, float, floa
     left = Counter(normalized_tokens(reference))
     right = Counter(normalized_tokens(prediction))
     overlap = sum((left & right).values())
-    precision = overlap / sum(right.values()) if right else 0.0
-    recall = overlap / sum(left.values()) if left else float(not right)
-    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
-    return precision, recall, f1
+    return precision_recall_f1(
+        overlap,
+        sum(right.values()) - overlap,
+        sum(left.values()) - overlap,
+    )
 
 
 def _duplicate_content_rate(reference: str, prediction: str) -> float | None:
@@ -631,13 +752,6 @@ def _formula_latex(segment: ExtractedSegment | None) -> str:
     return str(segment.structured_content.get("latex", segment.text)) if segment else ""
 
 
-def _prf(tp: int, fp: int, fn: int) -> tuple[float, float, float]:
-    precision = tp / (tp + fp) if tp + fp else 0.0
-    recall = tp / (tp + fn) if tp + fn else 0.0
-    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
-    return precision, recall, f1
-
-
 def _iou(left, right) -> float:
     x1, y1 = max(left[0], right[0]), max(left[1], right[1])
     x2, y2 = min(left[2], right[2]), min(left[3], right[3])
@@ -657,8 +771,8 @@ def _canonical(value: str) -> str:
 def _kind(value: object) -> SegmentKind:
     try:
         return SegmentKind(str(value))
-    except ValueError:
-        return SegmentKind.TEXT
+    except ValueError as exc:
+        raise ValueError(f"Unknown reference element kind: {value}") from exc
 
 
 def _box(value: object) -> tuple[float, float, float, float] | None:
@@ -676,3 +790,65 @@ def _optional_int(value: object) -> int | None:
 
 def _optional_string(value: object) -> str | None:
     return None if value in (None, "") else str(value)
+
+
+def _reference_payload(item: Mapping[str, object]) -> Mapping[str, object]:
+    reference_path = item.get("reference_path")
+    if not reference_path:
+        return item
+    path = PROJECT_ROOT / str(reference_path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping):
+        raise ValueError(f"Reference document must be a JSON object: {path}")
+    return payload
+
+
+def _validate_capability_list(value: object, sample_id: object) -> None:
+    if (
+        not isinstance(value, Sequence)
+        or isinstance(value, (str, bytes))
+        or not value
+        or not all(isinstance(item, str) for item in value)
+        or len(set(value)) != len(value)
+    ):
+        raise ValueError(
+            f"Document sample {sample_id} reference_capabilities must be a non-empty "
+            "unique string list"
+        )
+    unknown = sorted(set(value) - REFERENCE_CAPABILITIES)
+    if unknown:
+        raise ValueError(
+            f"Document sample {sample_id} has unknown reference capabilities: "
+            + ", ".join(unknown)
+        )
+
+
+def _infer_capabilities(payload, text, pages, elements) -> frozenset[str]:
+    capabilities: set[str] = set()
+    if text.strip():
+        capabilities.add("text")
+    if pages:
+        capabilities.add("pages")
+    if elements:
+        capabilities.add("element_types")
+    if len(elements) >= 2:
+        capabilities.add("reading_order")
+    if any(element.bounding_box is not None for element in elements):
+        capabilities.add("layout_boxes")
+    if any(
+        element.parent_id is not None or element.hierarchy_level is not None
+        for element in elements
+    ):
+        capabilities.add("hierarchy")
+    if any(element.kind is SegmentKind.TABLE for element in elements) or "has_table" in payload:
+        capabilities.add("tables")
+    if any(element.kind is SegmentKind.FORMULA for element in elements) or "has_formula" in payload:
+        capabilities.add("formulas")
+    return frozenset(capabilities)
+
+
+def _presence(
+    payload: Mapping[str, object], item: Mapping[str, object], key: str
+) -> bool | None:
+    value = payload.get(key, item.get(key))
+    return value if isinstance(value, bool) else None

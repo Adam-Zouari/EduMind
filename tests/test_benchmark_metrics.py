@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-import pytest
-from types import SimpleNamespace
+import json
+import sys
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from experiments.benchmarks.common.metrics import (
     average_precision_at_k,
@@ -30,6 +33,7 @@ from experiments.benchmarks.common.metrics import (
 from experiments.benchmarks.extraction.document.metrics import (
     aggregate_evaluations,
     score_document,
+    validate_reference,
 )
 from experiments.benchmarks.extraction.document.adapters import _paddle_blocks
 from edumind.extraction import (
@@ -46,6 +50,24 @@ from experiments.benchmarks.rag.chunking_embedding.strategies import (
 )
 from experiments.benchmarks.extraction import run_stage
 from experiments.benchmarks.extraction.run_stage import _document_candidates
+
+
+def test_official_metric_worker_bootstraps_both_omnidocbench_import_roots(
+    tmp_path, monkeypatch
+) -> None:
+    from experiments.benchmarks.extraction.document import omnidocbench_worker
+
+    input_path = tmp_path / "input.json"
+    output_path = tmp_path / "output.json"
+    input_path.write_text(
+        json.dumps({"tables": [], "formulas": []}), encoding="utf-8"
+    )
+    monkeypatch.setattr(omnidocbench_worker.sys, "path", list(sys.path))
+    omnidocbench_worker.main(input_path, output_path)
+    assert omnidocbench_worker.sys.path[:2] == [
+        "/opt/omnidocbench/src",
+        "/opt/omnidocbench",
+    ]
 
 
 def test_interval_overlap_is_clamped_and_union_avoids_double_counting() -> None:
@@ -292,6 +314,27 @@ def test_page_metrics_detect_an_unsupported_repeated_page() -> None:
     assert scores.metrics["pages.duplicate_page_rate"] == 1 / 3
 
 
+def test_page_metrics_do_not_call_one_unique_extra_page_a_duplicate() -> None:
+    prediction = _document(
+        "alpha\ngamma",
+        (
+            ExtractedSegment("alpha", 0, 5, page_number=1),
+            ExtractedSegment("gamma", 6, 11, page_number=2),
+        ),
+        kind=SourceKind.PDF,
+    )
+    scores = score_document(
+        {
+            "id": "unique-extra-page",
+            "kind": "pdf",
+            "reference": "alpha",
+            "reference_page_texts": ["alpha"],
+        },
+        prediction,
+    )
+    assert scores.metrics["pages.duplicate_page_rate"] == 0.0
+
+
 def test_paddle_native_json_is_converted_without_markdown_inference() -> None:
     blocks = _paddle_blocks(
         {
@@ -312,6 +355,279 @@ def test_paddle_native_json_is_converted_without_markdown_inference() -> None:
     )
     assert blocks[0]["kind"] == "table"
     assert blocks[0]["bounding_box"] == [0.1, 0.1, 0.9, 0.9]
+
+
+def test_paddle_image_tables_formulas_and_recoverable_html_are_canonical() -> None:
+    from edumind.extraction import ExtractionWarning
+
+    warnings: list[ExtractionWarning] = []
+    blocks = _paddle_blocks(
+        {
+            "page_index": None,
+            "parsing_res_list": [
+                {
+                    "block_label": "table",
+                    "block_content": (
+                        "<table><tr><th>A</th><th>B</th></tr>"
+                        "<tr><td>1</td><td>2</td></tr></table>"
+                    ),
+                },
+                {"block_label": "formula", "block_content": r"\frac{x}{y}"},
+                {"block_label": "table", "block_content": "<table><tr>broken"},
+            ],
+        },
+        warnings=warnings,
+    )
+    assert all(block["page_number"] == 1 for block in blocks)
+    assert blocks[0]["text"] == "A\tB\n1\t2"
+    assert blocks[0]["structured_content"]["rows"] == [["A", "B"], ["1", "2"]]
+    assert len(blocks[0]["structured_content"]["cells"]) == 4
+    assert blocks[1]["text"] == r"\frac{x}{y}"
+    assert blocks[1]["structured_content"]["latex"] == r"\frac{x}{y}"
+    assert blocks[2]["structured_content"]["rows"] == [["broken"]]
+    assert warnings[0].code == "paddle_table_html_malformed"
+
+
+def test_paddle_malformed_block_is_skipped_with_a_conversion_warning() -> None:
+    from edumind.extraction import ExtractionWarning
+
+    warnings: list[ExtractionWarning] = []
+    blocks = _paddle_blocks(
+        {
+            "page_index": None,
+            "parsing_res_list": [
+                "not-an-object",
+                {"block_label": "text", "block_content": "kept"},
+            ],
+        },
+        warnings=warnings,
+    )
+    assert [block["text"] for block in blocks] == ["kept"]
+    assert [warning.code for warning in warnings] == [
+        "paddle_block_conversion_failed"
+    ]
+
+
+def test_visual_layout_table_and_formula_never_match_across_pages() -> None:
+    text = "same\n\nsame\n\nsame"
+    document = _document(
+        text,
+        (
+            ExtractedSegment(
+                "same", 0, 4, page_number=2, bounding_box=(0.1, 0.1, 0.5, 0.5)
+            ),
+            ExtractedSegment(
+                "same",
+                6,
+                10,
+                page_number=2,
+                bounding_box=(0.1, 0.1, 0.5, 0.5),
+                kind=SegmentKind.TABLE,
+                structured_content={"rows": [["same"]], "html": "<table><tr><td>same</td></tr></table>"},
+            ),
+            ExtractedSegment(
+                "same",
+                12,
+                16,
+                page_number=2,
+                bounding_box=(0.1, 0.1, 0.5, 0.5),
+                kind=SegmentKind.FORMULA,
+                structured_content={"latex": "same"},
+            ),
+        ),
+        kind=SourceKind.PDF,
+    )
+    item = {
+        "id": "cross-page",
+        "kind": "pdf",
+        "reference": "same",
+        "reference_capabilities": [
+            "text", "pages", "layout_boxes", "element_types", "tables", "formulas"
+        ],
+        "reference_page_texts": ["same"],
+        "has_table": True,
+        "has_formula": True,
+        "reference_elements": [
+            {"id": "text", "kind": "text", "text": "same", "page_number": 1, "bounding_box": [0.1, 0.1, 0.5, 0.5]},
+            {"id": "table", "kind": "table", "text": "same", "html": "<table><tr><td>same</td></tr></table>", "page_number": 1, "bounding_box": [0.1, 0.1, 0.5, 0.5]},
+            {"id": "formula", "kind": "formula", "text": "same", "latex": "same", "page_number": 1, "bounding_box": [0.1, 0.1, 0.5, 0.5]},
+        ],
+    }
+    result = score_document(item, document)
+    assert result.metrics["layout.element_f1"] == 0.0
+    assert result.metrics["tables.detection_f1"] == 0.0
+    assert result.metrics["formulas.detection_f1"] == 0.0
+    # Page attribution remains content-first and therefore still observes the wrong page.
+    assert result.metrics["pages.page_attribution_accuracy"] == 0.0
+
+
+def test_unclaimed_layout_boxes_do_not_change_content_matching() -> None:
+    document = _document(
+        "same",
+        (
+            ExtractedSegment(
+                "same",
+                0,
+                4,
+                page_number=1,
+                bounding_box=(0.6, 0.6, 0.9, 0.9),
+            ),
+        ),
+        kind=SourceKind.PDF,
+    )
+    result = score_document(
+        {
+            "id": "types-with-unclaimed-boxes",
+            "kind": "pdf",
+            "reference_capabilities": ["element_types"],
+            "reference_elements": [
+                {
+                    "id": "text",
+                    "kind": "text",
+                    "text": "same",
+                    "page_number": 1,
+                    "bounding_box": [0.1, 0.1, 0.4, 0.4],
+                }
+            ],
+        },
+        document,
+    )
+    assert result.metrics["layout.element_f1"] == 1.0
+    assert result.metrics["layout.element_type_accuracy"] == 1.0
+    assert "layout.mean_bounding_box_iou" not in result.metrics
+
+
+def test_authoritative_reference_capabilities_are_explicit_and_conditional(tmp_path) -> None:
+    path = tmp_path / "reference.json"
+    path.write_text(
+        '{"text":"verified","reference_capabilities":["text","tables"],'
+        '"has_table":false,"elements":[]}',
+        encoding="utf-8",
+    )
+    validate_reference(
+        {"id": "negative", "kind": "docx", "reference_path": str(path)},
+        authoritative=True,
+    )
+    missing = tmp_path / "missing-capabilities.json"
+    missing.write_text('{"text":"verified"}', encoding="utf-8")
+    with pytest.raises(ValueError, match="reference_capabilities"):
+        validate_reference(
+            {"id": "missing", "kind": "docx", "reference_path": str(missing)},
+            authoritative=True,
+        )
+
+
+def test_authoritative_reference_rejects_contradictory_structured_negatives(tmp_path) -> None:
+    path = tmp_path / "reference.json"
+    path.write_text(
+        '{"reference_capabilities":["tables"],"has_table":false,'
+        '"elements":[{"kind":"table","text":"A","html":"<table><tr><td>A</td></tr></table>"}]}',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="has_table:false"):
+        validate_reference(
+            {"id": "contradiction", "kind": "docx", "reference_path": str(path)},
+            authoritative=True,
+        )
+
+
+def test_document_directions_omit_unclaimed_reference_metrics() -> None:
+    from experiments.benchmarks.extraction.document.evaluate import directions
+    from experiments.benchmarks.extraction.document.runner import directions_for
+
+    selected = directions_for(
+        [
+            {
+                "id": "pages-only",
+                "kind": "pdf",
+                "reference_capabilities": ["pages"],
+                "reference_page_texts": ["page"],
+            }
+        ],
+        directions(),
+    )
+    assert "pages.page_content_f1" in selected
+    assert "text.content_f1" not in selected
+    assert "layout.mean_bounding_box_iou" not in selected
+
+
+def test_docling_candidate_requires_every_behavior_component() -> None:
+    from experiments.benchmarks.extraction.document.runner import (
+        validate_prepared_components,
+    )
+
+    candidate = (
+        "docling-standard|ocr=tesseract|mode=full_page|table=accurate|formula=on"
+    )
+    with pytest.raises(RuntimeError, match="code_formula, tesseract-cli"):
+        validate_prepared_components(
+            candidate, {"prepared_components": ["layout", "tableformer"]}
+        )
+    validate_prepared_components(
+        candidate,
+        {
+            "prepared_components": [
+                "layout",
+                "tableformer",
+                "code_formula",
+                "tesseract-cli",
+            ]
+        },
+    )
+
+
+def test_document_runner_keeps_all_attempts_and_empties_partial_failure(monkeypatch) -> None:
+    from experiments.benchmarks.common.contracts import BenchmarkPlan
+    from experiments.benchmarks.extraction.document import runner
+
+    first_document = _document(
+        "alpha", (ExtractedSegment("alpha", 0, 5, page_number=1),),
+        kind=SourceKind.PDF,
+    )
+    second_document = _document(
+        "alpha\nbeta",
+        (
+            ExtractedSegment("alpha", 0, 5, page_number=1),
+            ExtractedSegment("beta", 6, 10, page_number=2),
+        ),
+        kind=SourceKind.PDF,
+    )
+    outcomes = iter(
+        [(first_document, 0.1), RuntimeError("second failed"), (second_document, 0.2)]
+    )
+
+    def extract_once(*_args):
+        value = next(outcomes)
+        if isinstance(value, Exception):
+            raise value
+        document, latency = value
+        return document.text, document, latency
+
+    monkeypatch.setattr(runner, "_cold_latency", lambda *_args: 0.01)
+    clock = iter((0.0, 1.0, 1.1, 2.0))
+    monkeypatch.setattr(runner.time, "perf_counter", lambda: next(clock))
+    samples, _operational, aggregate, _parameters, _intervals, artifacts = (
+        runner.evaluate_candidate(
+            "docling-standard-native",
+            [{"id": "sample", "kind": "pdf", "reference": "alpha"}],
+            BenchmarkPlan(
+                "extraction", "document-test", "standard", "fixture", ("candidate",),
+                repetitions=3, warmups=0, bootstrap_resamples=0,
+            ),
+            {},
+            {"device": "cpu"},
+            None,
+            extract_once,
+        )
+    )
+    assert len(artifacts["timings"]) == 3
+    assert [row["success"] for row in artifacts["timings"]] == [True, False, True]
+    assert samples[0].metrics["text.content_f1"] == 0.0
+    assert samples[0].metrics["reliability.candidate_failure_rate"] == 1.0
+    assert samples[0].metrics["reliability.structured_output_determinism"] == 0.0
+    assert aggregate["reliability.candidate_failure_rate"] == 1.0
+    assert _operational["batch_pages_per_minute"] == pytest.approx(450.0)
+    assert _operational["p50_warm_latency_per_page_seconds"] == pytest.approx(0.1)
 
 
 def test_document_configuration_matrix_has_no_duplicate_image_modes() -> None:
