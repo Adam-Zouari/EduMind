@@ -154,6 +154,23 @@ def normalized_tokens(text: str) -> list[str]:
     return normalize_prose(text).split()
 
 
+def precision_recall_f1(
+    true_positive: int | float,
+    false_positive: int | float,
+    false_negative: int | float,
+) -> tuple[float, float, float]:
+    """Return the shared count-based PR/F1 arithmetic without defining units."""
+
+    if min(true_positive, false_positive, false_negative) < 0:
+        raise ValueError("Precision/recall counts must be non-negative")
+    precision_denominator = true_positive + false_positive
+    recall_denominator = true_positive + false_negative
+    precision = true_positive / precision_denominator if precision_denominator else 0.0
+    recall = true_positive / recall_denominator if recall_denominator else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    return float(precision), float(recall), float(f1)
+
+
 def exact_match(answer: str, reference: str) -> float:
     return float(normalized_tokens(answer) == normalized_tokens(reference))
 

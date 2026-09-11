@@ -256,6 +256,8 @@ def _run_candidate(
     metrics: dict[str, float | None] = {}
     intervals: dict[str, dict[str, float]] = {}
     operational: dict[str, float] = {}
+    candidate_parameters: dict[str, object] = {}
+    resource_parameters: dict[str, object] = {}
     artifact_names: list[str] = []
     sample_artifact_path: Path | None = None
     fingerprint = stable_hash({"run": run_fingerprint, "candidate": candidate})
@@ -271,6 +273,9 @@ def _run_candidate(
                         evaluated = evaluator(candidate)
                 finally:
                     operational.update(resources.metrics())
+                    resource_parameters["vram_measurement_method"] = (
+                        resources.vram_measurement_method
+                    )
             else:
                 with _temporary_environment(temporary_directory):
                     evaluated = evaluator(candidate)
@@ -278,7 +283,9 @@ def _run_candidate(
             operational = {**dict(evaluated[1]), **operational}
             candidate_metrics = dict(evaluated[2]) if len(evaluated) >= 3 else {}
             if len(evaluated) >= 4:
-                tracking.parameters(evaluated[3])
+                candidate_parameters = dict(evaluated[3])
+                candidate_parameters.update(resource_parameters)
+                tracking.parameters(candidate_parameters)
             candidate_intervals = dict(evaluated[4]) if len(evaluated) >= 5 else {}
             artifact_tables = dict(evaluated[5]) if len(evaluated) >= 6 else {}
             if not samples:
@@ -349,6 +356,7 @@ def _run_candidate(
                 candidate_path,
                 {
                     **_payload(result, include_samples=False),
+                    "parameters": candidate_parameters,
                     "artifacts": artifact_names,
                 },
             )

@@ -25,12 +25,15 @@ class ResourceMonitor:
         self._ram_sampled = False
         self._peak_vram_bytes = 0
         self._vram_sampled = False
+        self._process_vram_sampled = False
+        self._device_delta_vram_sampled = False
         self._peak_temporary_bytes = 0
         self._temporary_directory = temporary_directory
         self._require_vram = require_vram
         self._report_zero_vram = report_zero_vram
         self._pynvml: Any | None = None
         self._gpu_handles: list[Any] = []
+        self._gpu_baseline_bytes: list[int] = []
 
     def __enter__(self) -> ResourceMonitor:
         try:
@@ -41,6 +44,10 @@ class ResourceMonitor:
             self._gpu_handles = [
                 pynvml.nvmlDeviceGetHandleByIndex(index)
                 for index in range(pynvml.nvmlDeviceGetCount())
+            ]
+            self._gpu_baseline_bytes = [
+                int(pynvml.nvmlDeviceGetMemoryInfo(handle).used)
+                for handle in self._gpu_handles
             ]
             if self._require_vram and not self._gpu_handles:
                 raise RuntimeError("CUDA ASR benchmark requested but NVML found no GPU")
@@ -87,6 +94,16 @@ class ResourceMonitor:
             values["peak_temporary_disk_mb"] = self._peak_temporary_bytes / (1024**2)
         return values
 
+    @property
+    def vram_measurement_method(self) -> str:
+        if self._process_vram_sampled:
+            return "nvml-process-tree"
+        if self._device_delta_vram_sampled:
+            return "nvml-device-delta-wddm"
+        if self._report_zero_vram and not self._require_vram:
+            return "cpu-zero"
+        return "unavailable"
+
     def _run(self) -> None:
         while not self._stop.wait(self.interval_seconds):
             self._sample()
@@ -113,18 +130,41 @@ class ResourceMonitor:
         except (ImportError, OSError):
             pass
         if self._pynvml is not None:
-            for handle in self._gpu_handles:
+            for index, handle in enumerate(self._gpu_handles):
                 try:
-                    processes = self._pynvml.nvmlDeviceGetComputeRunningProcesses(handle)
-                    self._vram_sampled = True
-                    self._peak_vram_bytes = max(
-                        self._peak_vram_bytes,
-                        sum(
-                            int(process.usedGpuMemory)
-                            for process in processes
-                            if process.pid in process_ids and process.usedGpuMemory
-                        ),
+                    processes = list(
+                        self._pynvml.nvmlDeviceGetComputeRunningProcesses(handle)
                     )
+                    try:
+                        processes.extend(
+                            self._pynvml.nvmlDeviceGetGraphicsRunningProcesses(handle)
+                        )
+                    except Exception:
+                        pass
+                    by_pid = {int(process.pid): process for process in processes}
+                    selected = [
+                        process for pid, process in by_pid.items() if pid in process_ids
+                    ]
+                    self._vram_sampled = True
+                    reported = [
+                        int(process.usedGpuMemory)
+                        for process in selected
+                        if process.usedGpuMemory not in (None, 0)
+                    ]
+                    if reported:
+                        self._process_vram_sampled = True
+                        self._peak_vram_bytes = max(
+                            self._peak_vram_bytes, sum(reported)
+                        )
+                    elif selected:
+                        # Windows WDDM exposes the target PID through NVML but
+                        # returns usedGpuMemory=None. In that case, measure the
+                        # increase in device memory from the pre-run baseline.
+                        used = int(self._pynvml.nvmlDeviceGetMemoryInfo(handle).used)
+                        delta = max(0, used - self._gpu_baseline_bytes[index])
+                        if delta:
+                            self._device_delta_vram_sampled = True
+                            self._peak_vram_bytes = max(self._peak_vram_bytes, delta)
                 except Exception:  # a required CUDA run is rejected by metrics()
                     continue
         if self._temporary_directory is not None:

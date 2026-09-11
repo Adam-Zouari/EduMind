@@ -7,6 +7,7 @@ import os
 import platform
 import subprocess
 from collections.abc import Mapping
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from edumind.common.artifacts import sha256_file
@@ -93,3 +94,14 @@ def hardware_summary() -> Mapping[str, object]:
         summary["gpus"] = []
     return summary
 
+
+def package_versions(distributions: tuple[str, ...]) -> dict[str, str | None]:
+    """Return installed distribution versions without hiding absent optional runtimes."""
+
+    result: dict[str, str | None] = {}
+    for distribution in distributions:
+        try:
+            result[distribution] = version(distribution)
+        except PackageNotFoundError:
+            result[distribution] = None
+    return result
