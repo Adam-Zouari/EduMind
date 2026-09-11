@@ -95,6 +95,13 @@ def prepare_smoke_fixtures(root: Path, *, modality: str = "all") -> Path:
             finally:
                 temporary_image.unlink(missing_ok=True)
                 temporary_audio.unlink(missing_ok=True)
+            duration = _media_duration(destination)
+            sample["duration_seconds"] = duration
+            sample["reference_transcript"] = text
+            sample["reference_visual_text"] = [text]
+            sample["visual_occurrences"] = [
+                {"text": text, "start": 0.0, "end": duration}
+            ]
         sample["asset_sha256"] = sha256_file(destination)
     payload["checksum"] = manifest_content_checksum(payload["samples"])
     atomic_write_json(manifest_path, payload)
@@ -187,6 +194,25 @@ def _synthesize_speech(text: str, destination: Path) -> None:
         ],
         check=True,
     )
+
+
+def _media_duration(path: Path) -> float:
+    completed = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return float(completed.stdout.strip())
 
 
 def _prepare_audio_reliability(root: Path) -> None:

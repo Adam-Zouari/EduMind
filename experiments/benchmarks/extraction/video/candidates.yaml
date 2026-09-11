@@ -1,2 +1,14 @@
-smoke: [video-hybrid]
-standard: [video-fixed, video-scene, video-hybrid]
+smoke:
+  - video-fixed-5s
+  - video-fixed-10s
+  - video-fixed-20s
+  - video-scene-0.30
+  - video-scene-0.40
+  - video-scene-0.50
+  - video-hybrid-0.40-5s
+  - video-hybrid-0.40-10s
+  - video-hybrid-0.40-20s
+standard:
+  fixed: [video-fixed-5s, video-fixed-10s, video-fixed-20s]
+  scene: [video-scene-0.30, video-scene-0.40, video-scene-0.50]
+  hybrid: dynamic-from-scene-selection

@@ -1,51 +1,19 @@
-"""Quality contract for combined audio and visual video extraction."""
+"""Exact metric contract for visual video candidates."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from experiments.benchmarks.extraction.video.metrics import QUALITY_DIRECTIONS
 
-from experiments.benchmarks.common.metrics import word_error_rate
-from experiments.benchmarks.extraction.video.metrics import (
-    content_scores,
-    duplicate_line_rate,
-)
-
-
-def metrics(reference: str, hypothesis: str, item: Mapping[str, object], document):
-    scores: dict[str, float] = {}
-    audio_count = int(document.metadata.get("audio_segment_count", 0))
-    audio_text = "\n".join(segment.text for segment in document.segments[:audio_count])
-    visual_segments = document.segments[audio_count:]
-    visual_text = "\n".join(segment.text for segment in visual_segments)
-    transcript_reference = str(item.get("reference_transcript", reference))
-    scores["transcript_word_error_rate"] = word_error_rate(transcript_reference, audio_text)
-    scores["complete_content_recall"] = content_scores(reference, hypothesis)[
-        "content_recall"
-    ]
-    if "reference_visual_text" in item:
-        visual_reference = item["reference_visual_text"]
-        if isinstance(visual_reference, Sequence) and not isinstance(visual_reference, str):
-            visual_reference = "\n".join(str(value) for value in visual_reference)
-        visual_scores = content_scores(str(visual_reference), visual_text)
-        scores.update(
-            {
-                "visual_text_precision": visual_scores["content_precision"],
-                "visual_text_recall": visual_scores["content_recall"],
-                "visual_text_f1": visual_scores["content_f1"],
-                "duplicate_visual_text_rate": duplicate_line_rate(visual_text),
-            }
-        )
-    return scores
+OPERATIONAL_DIRECTIONS = {
+    "visual_real_time_factor": "min",
+    "p50_warm_visual_latency_seconds": "min",
+    "p95_warm_visual_latency_seconds": "min",
+    "cold_visual_pipeline_load_seconds": "min",
+    "peak_visual_process_tree_ram_mb": "min",
+    "peak_visual_vram_mb": "min",
+    "mean_selected_frames_per_video": "min",
+}
 
 
 def directions() -> dict[str, str]:
-    return {
-        "transcript_word_error_rate": "min",
-        "visual_text_precision": "max",
-        "visual_text_recall": "max",
-        "visual_text_f1": "max",
-        "complete_content_recall": "max",
-        "operational.p95_latency_seconds": "min",
-        "operational.peak_process_tree_ram_mb": "min",
-        "operational.real_time_factor": "min",
-    }
+    return {**QUALITY_DIRECTIONS, **OPERATIONAL_DIRECTIONS}

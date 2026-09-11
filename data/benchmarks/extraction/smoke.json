@@ -1,5 +1,5 @@
 {
-  "checksum": "1bfaf5523ac8e4bf58b4b0eb05bf8968463360f782322caa4b436ff59fbfefb1",
+  "checksum": "0671e081c9f2b9f908385624a9d5fe695e3e81c84cfd24b961e16c6c8b93a3da",
   "license": "CC0-1.0",
   "name": "edumind-smoke-extraction",
   "preprocessing_version": "extraction-fixtures-v1",
@@ -8,9 +8,19 @@
     {
       "asset_sha256": "816ae80e6345304256f3aeaa7e5eb7b7d27733167969d5ad4853a92ebb4bb94d",
       "document_family": "scan",
+      "has_formula": false,
+      "has_table": false,
       "id": "image-01",
       "kind": "image",
       "reference": "Cell biology explains how cells obtain energy.",
+      "reference_capabilities": [
+        "text",
+        "pages",
+        "layout_boxes",
+        "element_types",
+        "tables",
+        "formulas"
+      ],
       "reference_elements": [
         {
           "bounding_box": [
@@ -34,9 +44,19 @@
     {
       "asset_sha256": "987a88da2486b74a15d9486591ab3a6e6afd4c0cfac0c5d5b6638657d5afbd53",
       "document_family": "phone_photo",
+      "has_formula": false,
+      "has_table": false,
       "id": "image-02",
       "kind": "image",
       "reference": "Mitosis produces two daughter cells.",
+      "reference_capabilities": [
+        "text",
+        "pages",
+        "layout_boxes",
+        "element_types",
+        "tables",
+        "formulas"
+      ],
       "reference_elements": [
         {
           "bounding_box": [
@@ -60,9 +80,19 @@
     {
       "asset_sha256": "6621ce0a5d685b0b2d17c8639d31eba06580eb2e8505cf2a7f5ca42011bdc916",
       "document_family": "digital",
+      "has_formula": false,
+      "has_table": false,
       "id": "pdf-01",
       "kind": "pdf",
       "reference": "The chapter introduces linear algebra.",
+      "reference_capabilities": [
+        "text",
+        "pages",
+        "layout_boxes",
+        "element_types",
+        "tables",
+        "formulas"
+      ],
       "reference_elements": [
         {
           "bounding_box": [
@@ -86,9 +116,19 @@
     {
       "asset_sha256": "fc256f8abaa38c8e3e31c73fce202b11e864fc0df32ec68b7434a4bcc311b1c3",
       "document_family": "digital",
+      "has_formula": false,
+      "has_table": false,
       "id": "pdf-02",
       "kind": "pdf",
       "reference": "Vectors have magnitude and direction.",
+      "reference_capabilities": [
+        "text",
+        "pages",
+        "layout_boxes",
+        "element_types",
+        "tables",
+        "formulas"
+      ],
       "reference_elements": [
         {
           "bounding_box": [
@@ -112,9 +152,19 @@
     {
       "asset_sha256": "cf45708a4812725802152747ad665c1bcfa5ba7fd67f60241fee064185fad0b3",
       "document_family": "native",
+      "has_formula": false,
+      "has_table": false,
       "id": "docx-01",
       "kind": "docx",
       "reference": "Heading\nFirst list item\nSecond list item",
+      "reference_capabilities": [
+        "text",
+        "reading_order",
+        "element_types",
+        "hierarchy",
+        "tables",
+        "formulas"
+      ],
       "reference_elements": [
         {
           "hierarchy_level": 1,
@@ -141,9 +191,17 @@
     {
       "asset_sha256": "7310e7ab54fc030ad57a8d53ee40b899f0d9d7b3de0bc81c880a121fb0513507",
       "document_family": "native",
+      "has_formula": false,
+      "has_table": false,
       "id": "docx-02",
       "kind": "docx",
       "reference": "A caption describes the embedded image.",
+      "reference_capabilities": [
+        "text",
+        "element_types",
+        "tables",
+        "formulas"
+      ],
       "reference_elements": [
         {
           "id": "docx-02-text",
@@ -186,17 +244,41 @@
     },
     {
       "asset_sha256": "eeb7270e79fbc4c4f59033317735268d2c13b79c7c5de1e088908dc35a3bb4df",
+      "duration_seconds": 2.645,
       "id": "video-01",
       "kind": "video",
       "reference": "The slide defines a binary search tree.",
-      "source_path": "data/benchmarks/fixtures/extraction/video-01.mp4"
+      "reference_transcript": "The slide defines a binary search tree.",
+      "reference_visual_text": [
+        "The slide defines a binary search tree."
+      ],
+      "source_path": "data/benchmarks/fixtures/extraction/video-01.mp4",
+      "visual_occurrences": [
+        {
+          "end": 2.645,
+          "start": 0.0,
+          "text": "The slide defines a binary search tree."
+        }
+      ]
     },
     {
       "asset_sha256": "c843661912e8c1abed2f7fdb998089ba77e55ccce42aa2f512caeb7c9c483961",
+      "duration_seconds": 2.855,
       "id": "video-02",
       "kind": "video",
       "reference": "The lecturer balances the chemical equation.",
-      "source_path": "data/benchmarks/fixtures/extraction/video-02.mp4"
+      "reference_transcript": "The lecturer balances the chemical equation.",
+      "reference_visual_text": [
+        "The lecturer balances the chemical equation."
+      ],
+      "source_path": "data/benchmarks/fixtures/extraction/video-02.mp4",
+      "visual_occurrences": [
+        {
+          "end": 2.855,
+          "start": 0.0,
+          "text": "The lecturer balances the chemical equation."
+        }
+      ]
     }
   ],
   "source": "EduMind deterministic modality fixtures",

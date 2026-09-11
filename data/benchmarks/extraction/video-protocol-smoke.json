@@ -1,0 +1,23 @@
+{
+  "asr_window": {
+    "length_seconds": 30,
+    "overlap_seconds": 2
+  },
+  "hybrid_scene_threshold": 0.4,
+  "manifest_checksum": "07945c0d2c565289d3628c45864e682cac4a14f078e5ce1f6321e0a9ce6492f8",
+  "occurrence_matching": {
+    "content_f1_threshold": 0.5,
+    "frame_timestamp_tolerance_seconds": 0.0
+  },
+  "protocol_version": "video-smoke-v1",
+  "review_date": "2026-09-10",
+  "reviewer": "EduMind deterministic smoke fixture",
+  "schema_version": 1,
+  "scope": "smoke",
+  "stitching": {
+    "maximum_overlap_tokens": 64,
+    "method": "normalized_suffix_prefix",
+    "normalization": "asr-minimal-v1"
+  },
+  "visible_text_unitization": "normalized_lines_distinct_v1"
+}
