@@ -33,8 +33,8 @@ from experiments.benchmarks.extraction.audio.runner import (
     REQUIRED_SPEECH_CONDITIONS,
     _validate_reliability_split_isolation,
     _validate_manifest_rows,
-    _worker_environment,
 )
+from experiments.benchmarks.extraction.process import worker_environment
 from experiments.benchmarks.common.runner import run_benchmark
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -556,7 +556,7 @@ def test_audio_registry_and_duration_limit_are_frozen() -> None:
     with pytest.raises(ValueError, match="between 0 and 30"):
         _validate_manifest_rows(speech, controls, "smoke")
 
-    cpu_environment = _worker_environment("cpu")
+    cpu_environment = worker_environment("cpu")
     assert cpu_environment["CUDA_VISIBLE_DEVICES"] == ""
     assert cpu_environment["NVIDIA_VISIBLE_DEVICES"] == "none"
 

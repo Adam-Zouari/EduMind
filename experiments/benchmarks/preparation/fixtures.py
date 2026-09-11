@@ -12,6 +12,10 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 from edumind.common.artifacts import atomic_write_json, sha256_file
 
 from experiments.benchmarks.common.datasets import manifest_content_checksum
+from experiments.benchmarks.extraction.media import (
+    canonical_wav_duration,
+    media_duration,
+)
 
 
 def prepare_smoke_fixtures(root: Path, *, modality: str = "all") -> Path:
@@ -53,7 +57,7 @@ def prepare_smoke_fixtures(root: Path, *, modality: str = "all") -> Path:
             _write_minimal_docx(destination, text)
         elif kind == "audio":
             _synthesize_speech(text, destination)
-            duration = _wav_duration(destination)
+            duration = canonical_wav_duration(destination)
             sample["duration_seconds"] = duration
             sample["reference_segments"] = [
                 {"text": text, "start": 0.0, "end": duration}
@@ -95,7 +99,7 @@ def prepare_smoke_fixtures(root: Path, *, modality: str = "all") -> Path:
             finally:
                 temporary_image.unlink(missing_ok=True)
                 temporary_audio.unlink(missing_ok=True)
-            duration = _media_duration(destination)
+            duration = media_duration(destination)
             sample["duration_seconds"] = duration
             sample["reference_transcript"] = text
             sample["reference_visual_text"] = [text]
@@ -196,25 +200,6 @@ def _synthesize_speech(text: str, destination: Path) -> None:
     )
 
 
-def _media_duration(path: Path) -> float:
-    completed = subprocess.run(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            str(path),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return float(completed.stdout.strip())
-
-
 def _prepare_audio_reliability(root: Path) -> None:
     manifest_path = root / "data/benchmarks/extraction/audio-reliability-smoke.json"
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -225,7 +210,7 @@ def _prepare_audio_reliability(root: Path) -> None:
             destination,
             noise=sample["nonspeech_kind"] == "background_noise",
         )
-        sample["duration_seconds"] = _wav_duration(destination)
+        sample["duration_seconds"] = canonical_wav_duration(destination)
         sample["asset_sha256"] = sha256_file(destination)
     payload["checksum"] = manifest_content_checksum(payload["samples"])
     atomic_write_json(manifest_path, payload)
@@ -242,8 +227,3 @@ def _write_pcm(destination: Path, *, noise: bool) -> None:
         audio.setsampwidth(2)
         audio.setframerate(16_000)
         audio.writeframes(frames)
-
-
-def _wav_duration(path: Path) -> float:
-    with wave.open(str(path), "rb") as audio:
-        return audio.getnframes() / audio.getframerate()

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import random
 import sys
 import time
@@ -10,7 +9,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
-from edumind.common.artifacts import atomic_write_json
 from experiments.benchmarks.common.resources import ResourceMonitor
 from experiments.benchmarks.extraction.audio.adapters import build_runtime
 from experiments.benchmarks.extraction.audio.evaluate import (
@@ -19,6 +17,7 @@ from experiments.benchmarks.extraction.audio.evaluate import (
     score_nonspeech,
     score_speech,
 )
+from experiments.benchmarks.extraction.process import json_worker_main
 
 
 def execute(payload: dict[str, object]) -> dict[str, object]:
@@ -120,13 +119,5 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
     }
 
 
-def main() -> int:
-    if len(sys.argv) != 3:
-        raise SystemExit("usage: worker.py PAYLOAD_JSON RESULT_JSON")
-    payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-    atomic_write_json(Path(sys.argv[2]), execute(payload))
-    return 0
-
-
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(json_worker_main(execute))

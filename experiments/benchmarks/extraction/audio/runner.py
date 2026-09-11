@@ -4,15 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import subprocess
-import sys
 import tempfile
-import wave
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from edumind.common.artifacts import atomic_write_json, sha256_file, stable_hash
+from edumind.common.artifacts import sha256_file, stable_hash
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.arguments import load_candidates
 from experiments.benchmarks.common.contracts import BenchmarkPlan, SampleResult
@@ -25,6 +21,12 @@ from experiments.benchmarks.extraction.audio.evaluate import (
     PRIMARY_METRICS,
     normalize_transcript,
 )
+from experiments.benchmarks.extraction.media import (
+    canonical_wav_duration,
+    decode_canonical_audio,
+    ffmpeg_version,
+)
+from experiments.benchmarks.extraction.process import run_json_worker
 from experiments.benchmarks.preparation.models import load_selected_model_lock
 
 SPEECH_COUNTS = {"standard": 54, "full": 18, "locked": 18}
@@ -119,7 +121,7 @@ def run(
         canonical_directory = Path(raw_directory)
         canonical_speech = _canonicalize(speech, canonical_directory / "speech")
         canonical_controls = _canonicalize(controls, canonical_directory / "reliability")
-        ffmpeg_version = _ffmpeg_version()
+        ffmpeg_identity = ffmpeg_version()
         repetitions = 1 if profile == "smoke" else 3
         resamples = 0 if profile == "smoke" else 10_000
         plan = BenchmarkPlan(
@@ -136,7 +138,7 @@ def run(
                 "channels": 1,
                 "encoding": "PCM signed 16-bit little-endian",
                 "maximum_duration_seconds": 30,
-                "ffmpeg_version": ffmpeg_version,
+                "ffmpeg_version": ffmpeg_identity,
                 "ffmpeg_commands": {
                     str(item["id"]): item["ffmpeg_command"]
                     for item in [*canonical_speech, *canonical_controls]
@@ -186,32 +188,27 @@ def run(
                     "model_cache_manifest_sha256", ""
                 ),
                 "data_split": split,
-                "ffmpeg_version": ffmpeg_version,
+                "ffmpeg_version": ffmpeg_identity,
                 "canonical_audio": "mono 16 kHz PCM WAV",
                 "maximum_duration_seconds": 30,
                 "speech_manifest_checksum": speech_manifest.fingerprint,
                 "reliability_manifest_checksum": reliability_manifest.fingerprint,
             }
             if candidate == "qwen3-asr-1.7b-aligned":
-                parameters["aligner_revision"] = next(
-                    str(item.get("revision", ""))
+                aligner = next(
+                    item
                     for item in lock_entry.get("submodels", [])
                     if item.get("role") == "forced-aligner"
                 )
-                parameters["aligner_model_path"] = next(
-                    str(item.get("model_path", ""))
-                    for item in lock_entry.get("submodels", [])
-                    if item.get("role") == "forced-aligner"
-                )
-                parameters["aligner_repository"] = next(
-                    str(item.get("repository", ""))
-                    for item in lock_entry.get("submodels", [])
-                    if item.get("role") == "forced-aligner"
-                )
-                parameters["aligner_cache_manifest_sha256"] = next(
-                    str(item.get("cache_manifest_sha256", ""))
-                    for item in lock_entry.get("submodels", [])
-                    if item.get("role") == "forced-aligner"
+                parameters.update(
+                    {
+                        "aligner_revision": str(aligner.get("revision", "")),
+                        "aligner_model_path": str(aligner.get("model_path", "")),
+                        "aligner_repository": str(aligner.get("repository", "")),
+                        "aligner_cache_manifest_sha256": str(
+                            aligner.get("cache_manifest_sha256", "")
+                        ),
+                    }
                 )
             operational = {
                 name: float(metrics.pop(name))
@@ -277,10 +274,8 @@ def _run_worker(
     directory,
 ):
     safe = "".join(character if character.isalnum() else "-" for character in candidate)
-    payload_path = directory / f"{safe}-input.json"
-    output_path = directory / f"{safe}-output.json"
-    atomic_write_json(
-        payload_path,
+    return run_json_worker(
+        Path(__file__).with_name("worker.py"),
         {
             "candidate": candidate,
             "model_lock": model_lock,
@@ -292,25 +287,11 @@ def _run_worker(
             "bootstrap_resamples": bootstrap_resamples,
             "seed": seed,
         },
+        device=device,
+        prefix=f"{safe}-",
+        error_label="ASR worker",
+        temporary_root=directory,
     )
-    environment = _worker_environment(device)
-    try:
-        completed = subprocess.run(
-            [sys.executable, str(Path(__file__).with_name("worker.py")), str(payload_path), str(output_path)],
-            cwd=PROJECT_ROOT,
-            env=environment,
-            capture_output=True,
-            text=True,
-        )
-        if completed.returncode:
-            detail = (completed.stderr or completed.stdout or "no worker output").strip()
-            raise RuntimeError(f"ASR worker failed: {detail[-4000:]}")
-        if not output_path.is_file():
-            raise RuntimeError("ASR worker completed without a result file")
-        return json.loads(output_path.read_text(encoding="utf-8"))
-    finally:
-        payload_path.unlink(missing_ok=True)
-        output_path.unlink(missing_ok=True)
 
 
 def _canonicalize(samples: Sequence[Mapping[str, object]], directory: Path):
@@ -323,25 +304,8 @@ def _canonicalize(samples: Sequence[Mapping[str, object]], directory: Path):
         if not source.is_file() or not expected or sha256_file(source) != expected:
             raise ValueError(f"Missing or invalid audio asset for {item.get('id')}: {source}")
         destination = directory / f"{index:04d}.wav"
-        command = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-i",
-            str(source),
-            "-vn",
-            "-ac",
-            "1",
-            "-ar",
-            "16000",
-            "-c:a",
-            "pcm_s16le",
-            str(destination),
-        ]
-        subprocess.run(command, check=True)
-        duration = _wav_duration(destination)
+        command = decode_canonical_audio(source, destination)
+        duration = canonical_wav_duration(destination)
         if duration > 30.0 + 1e-6:
             raise ValueError(f"Audio sample {item['id']} exceeds the 30-second limit")
         if abs(duration - float(item["duration_seconds"])) > 0.1:
@@ -571,25 +535,3 @@ def _speech_manifest(profile: str) -> Path:
 def _reliability_manifest(profile: str) -> Path:
     name = "audio-reliability-smoke.json" if profile == "smoke" else "audio-reliability.json"
     return PROJECT_ROOT / "data/benchmarks/extraction" / name
-
-
-def _wav_duration(path: Path) -> float:
-    with wave.open(str(path), "rb") as audio:
-        if audio.getnchannels() != 1 or audio.getframerate() != 16_000 or audio.getsampwidth() != 2:
-            raise ValueError(f"FFmpeg did not produce canonical mono 16 kHz PCM audio: {path}")
-        return audio.getnframes() / audio.getframerate()
-
-
-def _ffmpeg_version() -> str:
-    completed = subprocess.run(
-        ["ffmpeg", "-version"], check=True, capture_output=True, text=True
-    )
-    return completed.stdout.splitlines()[0].strip()
-
-
-def _worker_environment(device: str) -> dict[str, str]:
-    environment = os.environ.copy()
-    if device == "cpu":
-        environment["CUDA_VISIBLE_DEVICES"] = ""
-        environment["NVIDIA_VISIBLE_DEVICES"] = "none"
-    return environment
