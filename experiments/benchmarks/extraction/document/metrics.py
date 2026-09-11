@@ -21,6 +21,51 @@ from experiments.benchmarks.common.metrics import (
 )
 from .official_metrics import score_official_metrics, validate_official_runtime
 
+METRIC_DIRECTIONS = {
+    "text.content_precision": "max",
+    "text.content_recall": "max",
+    "text.content_f1": "max",
+    "text.character_error_rate": "min",
+    "text.word_error_rate": "min",
+    "text.reading_order_accuracy": "max",
+    "pages.page_coverage": "max",
+    "pages.page_content_f1": "max",
+    "pages.page_attribution_accuracy": "max",
+    "pages.duplicate_page_rate": "min",
+    "layout.element_precision": "max",
+    "layout.element_recall": "max",
+    "layout.element_f1": "max",
+    "layout.element_type_accuracy": "max",
+    "layout.hierarchy_accuracy": "max",
+    "layout.mean_bounding_box_iou": "max",
+    "tables.detection_precision": "max",
+    "tables.detection_recall": "max",
+    "tables.detection_f1": "max",
+    "tables.content_precision": "max",
+    "tables.content_recall": "max",
+    "tables.content_f1": "max",
+    "tables.teds": "max",
+    "tables.teds_s": "max",
+    "formulas.detection_precision": "max",
+    "formulas.detection_recall": "max",
+    "formulas.detection_f1": "max",
+    "formulas.recognition_similarity": "max",
+    "formulas.exact_match": "max",
+    "reliability.empty_output_rate": "min",
+    "reliability.duplicate_content_rate": "min",
+    "reliability.structured_output_determinism": "max",
+    "reliability.candidate_failure_rate": "min",
+    "operational.first_item_latency_seconds": "min",
+    "operational.p50_warm_latency_per_page_seconds": "min",
+    "operational.p95_warm_latency_per_page_seconds": "min",
+    "operational.p50_complete_document_latency_seconds": "min",
+    "operational.p95_complete_document_latency_seconds": "min",
+    "operational.batch_pages_per_minute": "max",
+    "operational.peak_process_tree_ram_mb": "min",
+    "operational.peak_vram_mb": "min",
+    "operational.peak_temporary_disk_mb": "min",
+}
+
 VISUAL_KINDS = {"image", "pdf"}
 REFERENCE_CAPABILITIES = frozenset(
     {
@@ -82,12 +127,27 @@ class DocumentEvaluation:
 
 
 def load_reference(item: Mapping[str, object]) -> ReferenceDocument:
-    return _reference_from_mapping(_reference_payload(item))
+    return load_reference_data(item)[1]
 
 
-def validate_reference(item: Mapping[str, object], *, authoritative: bool) -> None:
+def load_reference_data(
+    item: Mapping[str, object],
+) -> tuple[Mapping[str, object], ReferenceDocument]:
     payload = _reference_payload(item)
-    reference = load_reference(item)
+    return payload, _reference_from_mapping(payload)
+
+
+def validate_reference(
+    item: Mapping[str, object],
+    *,
+    authoritative: bool,
+    payload: Mapping[str, object] | None = None,
+    reference: ReferenceDocument | None = None,
+) -> None:
+    if payload is None:
+        payload = _reference_payload(item)
+    if reference is None:
+        reference = _reference_from_mapping(payload)
     raw_capabilities = payload.get("reference_capabilities")
     if authoritative and raw_capabilities is None:
         raise ValueError(
@@ -200,8 +260,7 @@ def validate_reference(item: Mapping[str, object], *, authoritative: bool) -> No
         )
 
 
-def validate_official_evaluators(items: Sequence[Mapping[str, object]]) -> bool:
-    references = [load_reference(item) for item in items]
+def validate_official_evaluators(references: Sequence[ReferenceDocument]) -> bool:
     tables = any(
         "tables" in reference.capabilities
         and any(element.kind is SegmentKind.TABLE for element in reference.elements)
@@ -257,10 +316,11 @@ def score_document(
     item: Mapping[str, object],
     document: ExtractedDocument | None,
     *,
+    reference: ReferenceDocument | None = None,
     repeated_documents: Sequence[ExtractedDocument] = (),
     failed: bool = False,
 ) -> DocumentEvaluation:
-    reference = load_reference(item)
+    reference = reference or load_reference(item)
     kind = str(item["kind"])
     groups = _document_groups(item)
     result = DocumentEvaluation(groups)

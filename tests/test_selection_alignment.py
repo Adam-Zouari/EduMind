@@ -148,7 +148,7 @@ def test_stage_model_lock_ignores_unrequested_missing_models(tmp_path) -> None:
 
 
 def test_document_stage_requests_only_its_candidate_models(monkeypatch) -> None:
-    from experiments.benchmarks.extraction import common
+    from experiments.benchmarks.extraction.document import benchmark
 
     requested = None
 
@@ -157,8 +157,8 @@ def test_document_stage_requests_only_its_candidate_models(monkeypatch) -> None:
         requested = candidates
         return {}
 
-    monkeypatch.setattr(common, "load_selected_model_lock", capture)
-    assert common._model_lock(
+    monkeypatch.setattr(benchmark, "load_selected_model_lock", capture)
+    assert benchmark._model_lock(
         (
             "docling-standard-native|ocr=rapidocr|mode=full_page|table=fast|formula=off",
             "docling-vlm-granite-258m",

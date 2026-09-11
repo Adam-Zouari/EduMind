@@ -9,15 +9,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
 from edumind.extraction import ExtractionPipeline
-from experiments.benchmarks.extraction.common import _extract_once
+from experiments.benchmarks.extraction.document.benchmark import extract_once
 from experiments.benchmarks.extraction.registry import build_experiment_registry
 
 
 def main(payload_path: Path) -> int:
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
     pipeline = ExtractionPipeline(registry=build_experiment_registry())
-    _extract_once(
-        "document",
+    extract_once(
         payload["candidate"],
         payload["item"],
         payload["model_lock"],

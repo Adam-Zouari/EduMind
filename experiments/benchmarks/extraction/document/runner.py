@@ -19,19 +19,26 @@ from experiments.benchmarks.common.provenance import package_versions
 from .metrics import (
     aggregate_evaluations,
     apply_official_metrics,
-    load_reference,
     score_document,
 )
+from .profiles import parse_document_profile
 
 
 def evaluate_candidate(
-    candidate, items, plan, model_lock, component_options, pipeline, extract_once
+    candidate,
+    items,
+    plan,
+    model_lock,
+    component_options,
+    references,
+    pipeline,
+    extract_once,
 ):
     ordered = list(items)
     random.Random(plan.seed).shuffle(ordered)
     first_latency = _cold_latency(candidate, ordered[0], model_lock, component_options)
     for _ in range(plan.warmups):
-        extract_once("document", candidate, ordered[0], model_lock, component_options, pipeline)
+        extract_once(candidate, ordered[0], model_lock, component_options, pipeline)
 
     samples, evaluations = [], []
     timing_rows: list[dict[str, object]] = []
@@ -45,8 +52,8 @@ def evaluate_candidate(
         for repetition in range(plan.repetitions):
             started = time.perf_counter()
             try:
-                _, document, latency = extract_once(
-                    "document", candidate, item, model_lock, component_options, pipeline
+                document, latency = extract_once(
+                    candidate, item, model_lock, component_options, pipeline
                 )
                 documents.append(document)
                 latencies.append(latency)
@@ -100,6 +107,7 @@ def evaluate_candidate(
         evaluation = score_document(
             item,
             document,
+            reference=references[str(item["id"])],
             repeated_documents=documents if all_succeeded else (),
             failed=not all_succeeded,
         )
@@ -177,14 +185,9 @@ def evaluate_candidate(
                     ).items()
                 }
             )
-    engine = candidate.partition("|")[0]
-    lock_name = {
-        "docling-standard-native": "docling-standard",
-        "docling-standard": "docling-standard",
-        "docling-vlm-granite-258m": "ibm-granite/granite-docling-258M",
-        "paddleocr-vl-1.6": "PaddlePaddle/PaddleOCR-VL-1.6",
-    }.get(engine, engine)
-    lock_entry = model_lock.get(lock_name, {})
+    document_profile = parse_document_profile(candidate)
+    engine = document_profile.requested_engine
+    lock_entry = model_lock.get(document_profile.lock_candidate, {})
     parameters = {
         "engine": engine,
         "engine_revision": lock_entry.get("revision", "system"),
@@ -244,8 +247,7 @@ def evaluate_candidate(
                 "paddlepaddle_version": "3.3.1",
             }
         )
-    for factor in candidate.split("|")[1:]:
-        key, value = factor.split("=", 1)
+    for key, value in document_profile.factors.items():
         parameters[key] = value
     return (
         samples,
@@ -271,14 +273,10 @@ def evaluate_candidate(
 def validate_prepared_components(candidate, lock_entry) -> None:
     """Reject Docling configurations whose parser dependencies were not locked."""
 
-    engine = candidate.partition("|")[0]
-    if engine != "docling-standard":
+    profile = parse_document_profile(candidate)
+    if profile.requested_engine != "docling-standard":
         return
-    factors = {
-        key: value
-        for raw in candidate.split("|")[1:]
-        for key, value in (raw.split("=", 1),)
-    }
+    factors = profile.factors
     required = {
         "layout",
         "tableformer",
@@ -302,7 +300,7 @@ def validate_prepared_components(candidate, lock_entry) -> None:
         )
 
 
-def directions_for(items, available):
+def directions_for(references, available):
     names = {
         "reliability.empty_output_rate",
         "reliability.structured_output_determinism", "reliability.candidate_failure_rate",
@@ -312,7 +310,7 @@ def directions_for(items, available):
         "operational.peak_process_tree_ram_mb", "operational.peak_vram_mb",
         "operational.peak_temporary_disk_mb",
     }
-    capabilities = set().union(*(load_reference(item).capabilities for item in items))
+    capabilities = set().union(*(reference.capabilities for reference in references))
     if "text" in capabilities:
         names.update(
             {
@@ -348,8 +346,7 @@ def directions_for(items, available):
     has_table_references = any(
         "tables" in reference.capabilities
         and any(element.kind.value == "table" for element in reference.elements)
-        for item in items
-        for reference in (load_reference(item),)
+        for reference in references
     )
     if "tables" in capabilities and has_table_references:
         names.update(name for name in available if name.startswith("tables.detection_"))
@@ -365,8 +362,7 @@ def directions_for(items, available):
     has_formula_references = any(
         "formulas" in reference.capabilities
         and any(element.kind.value == "formula" for element in reference.elements)
-        for item in items
-        for reference in (load_reference(item),)
+        for reference in references
     )
     if "formulas" in capabilities and has_formula_references:
         names.update(name for name in available if name.startswith("formulas.detection_"))

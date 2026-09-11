@@ -1,4 +1,4 @@
-"""Shared execution plumbing for direct extraction experiments."""
+"""Document benchmark orchestration and direct extraction plumbing."""
 
 from __future__ import annotations
 
@@ -12,21 +12,26 @@ from edumind.extraction import ExtractionPipeline, ExtractionProfile, SourceKind
 from experiments.benchmarks.common.contracts import BenchmarkPlan, BenchmarkResult
 from experiments.benchmarks.common.datasets import load_manifest
 from experiments.benchmarks.common.runner import run_benchmark
-from experiments.benchmarks.extraction.document import runner as document_runner
+from experiments.benchmarks.extraction.document import runner
+from experiments.benchmarks.extraction.document.metrics import (
+    METRIC_DIRECTIONS,
+    load_reference_data,
+    validate_official_evaluators,
+    validate_reference,
+)
+from experiments.benchmarks.extraction.document.official_metrics import (
+    official_image_digest,
+)
+from experiments.benchmarks.extraction.document.profiles import (
+    lock_paths,
+    parse_document_profile,
+)
 from experiments.benchmarks.extraction.registry import build_experiment_registry
 from experiments.benchmarks.preparation.evaluators import OMNIDOCBENCH_REVISION
 from experiments.benchmarks.preparation.models import load_selected_model_lock
 
-STAGES = {"document"}
-LOCK_CANDIDATES = {
-    "docling-standard": "docling-standard",
-    "docling-vlm-granite-258m": "ibm-granite/granite-docling-258M",
-    "paddleocr-vl-1.6": "PaddlePaddle/PaddleOCR-VL-1.6",
-}
-
 
 def run(
-    stage: str,
     profile: str,
     candidates: tuple[str, ...],
     *,
@@ -37,10 +42,7 @@ def run(
     document_kind: str | None = None,
     document_comparison: str | None = None,
 ) -> BenchmarkResult:
-    if stage not in STAGES:
-        raise ValueError(f"Unknown extraction stage: {stage}")
-    from experiments.benchmarks.extraction.document import evaluate as evaluator
-    manifest = load_manifest(manifest_path or _manifest(stage, profile))
+    manifest = load_manifest(manifest_path or _manifest(profile))
     selected = [
         item
         for item in manifest.samples
@@ -48,11 +50,11 @@ def run(
         and (document_kind is None or item.get("kind") == document_kind)
     ]
     if not selected:
-        raise ValueError(f"Manifest {manifest.name} has no samples for {stage}")
+        raise ValueError(f"Manifest {manifest.name} has no document samples")
     minimum = _minimum_samples(profile, document_kind)
     if minimum and len(selected) < minimum:
         raise ValueError(
-            f"{stage} {profile} requires at least {minimum} frozen samples; "
+            f"Document {profile} requires at least {minimum} frozen samples; "
             f"manifest contains {len(selected)}"
         )
     _validate_assets(
@@ -60,17 +62,28 @@ def run(
         require_checksums=True,
         require_provenance=profile in {"standard", "full"},
     )
-    component_options = dict(component_options or {})
+    loaded_references = {
+        str(item["id"]): load_reference_data(item) for item in selected
+    }
     for item in selected:
-        evaluator.validate_reference(item, authoritative=profile in {"standard", "full"})
-    uses_official_evaluators = evaluator.validate_official_evaluators(selected)
+        payload, reference = loaded_references[str(item["id"])]
+        validate_reference(
+            item,
+            authoritative=profile in {"standard", "full"},
+            payload=payload,
+            reference=reference,
+        )
+    references = {
+        sample_id: reference for sample_id, (_, reference) in loaded_references.items()
+    }
+    uses_official_evaluators = validate_official_evaluators(tuple(references.values()))
+    component_options = dict(component_options or {})
     comparison = document_comparison or (
         "architecture-validation" if profile == "full" else "configuration"
     )
-    plan_stage = f"document-{comparison}-{document_kind or 'all'}"
     plan = BenchmarkPlan(
         "extraction",
-        plan_stage,
+        f"document-{comparison}-{document_kind or 'all'}",
         profile,
         manifest.name,
         candidates,
@@ -80,39 +93,42 @@ def run(
     )
     model_lock = _model_lock(candidates)
     for candidate in candidates:
-        lock_name = _lock_candidate(candidate)
-        document_runner.validate_prepared_components(
-            candidate, model_lock.get(lock_name, {})
+        document_profile = parse_document_profile(candidate)
+        runner.validate_prepared_components(
+            candidate, model_lock.get(document_profile.lock_candidate, {})
         )
+
     def evaluate(candidate: str):
         pipeline = ExtractionPipeline(registry=build_experiment_registry())
-        return document_runner.evaluate_candidate(
+        return runner.evaluate_candidate(
             candidate,
             selected,
             plan,
             model_lock,
             component_options,
+            references,
             pipeline,
-            _extract_once,
+            extract_once,
         )
 
-    directions = document_runner.directions_for(selected, evaluator.directions())
-    primary_metrics = document_runner.primary_metrics(directions)
-    required_metrics = document_runner.required_metrics(directions)
+    directions = runner.directions_for(tuple(references.values()), METRIC_DIRECTIONS)
     return run_benchmark(
         plan,
         evaluate,
         dataset_checksum=manifest.fingerprint,
         directions=directions,
-        primary_metric=primary_metrics,
-        required_metrics=required_metrics,
-        paired_metrics=document_runner.paired_metrics(directions),
+        primary_metric=runner.primary_metrics(directions),
+        required_metrics=runner.required_metrics(directions),
+        paired_metrics=runner.paired_metrics(directions),
         revisions={
-            **{name: str(value.get("revision", "")) for name, value in model_lock.items()},
+            **{
+                name: str(value.get("revision", ""))
+                for name, value in model_lock.items()
+            },
             **(
                 {
                     "omnidocbench-evaluator": OMNIDOCBENCH_REVISION,
-                    "omnidocbench-image": evaluator.official_image_digest(),
+                    "omnidocbench-image": official_image_digest(),
                 }
                 if uses_official_evaluators
                 else {}
@@ -121,6 +137,34 @@ def run(
         decision_files=decision_files,
         no_mlflow=no_mlflow,
     )
+
+
+def extract_once(candidate, item, model_lock, component_options, pipeline):
+    started = time.perf_counter()
+    kind = SourceKind(str(item["kind"]))
+    document_profile = parse_document_profile(candidate)
+    lock_entry = model_lock.get(document_profile.lock_candidate, {})
+    raw_options = item.get("options", {})
+    options = dict(raw_options) if isinstance(raw_options, Mapping) else {}
+    options.update(component_options)
+    options.update(document_profile.options)
+    options.update(lock_paths(lock_entry))
+    document = pipeline.extract(
+        PROJECT_ROOT / str(item["source_path"]),
+        source_kind=kind,
+        profile=ExtractionProfile(
+            name=f"benchmark-{candidate}",
+            engine=document_profile.runtime_engine,
+            engine_revision=str(lock_entry.get("revision", "system")),
+            preprocessing="raw",
+            normalization="none",
+            routing="direct",
+            device=str(item.get("device") or component_options.get("device") or "cpu"),
+            options=options,
+        ),
+        use_cache=False,
+    )
+    return document, time.perf_counter() - started
 
 
 def _minimum_samples(profile: str, document_kind: str | None) -> int:
@@ -133,33 +177,6 @@ def _minimum_samples(profile: str, document_kind: str | None) -> int:
     if document_kind:
         return targets[profile][document_kind]
     return sum(targets[profile].values())
-
-
-def _extract_once(stage, candidate, item, model_lock, component_options, pipeline):
-    if stage != "document":
-        raise ValueError("The shared extraction path supports document benchmarks only")
-    started = time.perf_counter()
-    kind = SourceKind(str(item["kind"]))
-    engine = candidate.partition("|")[0]
-    engine = "docling-standard" if engine == "docling-standard-native" else engine
-    lock_name = _lock_candidate(candidate)
-    lock_entry = model_lock.get(lock_name, {})
-    document = pipeline.extract(
-        PROJECT_ROOT / str(item["source_path"]),
-        source_kind=kind,
-        profile=ExtractionProfile(
-            name=f"benchmark-{candidate}",
-            engine=engine,
-            engine_revision=str(lock_entry.get("revision", "system")),
-            preprocessing="raw",
-            normalization="none",
-            routing="direct",
-            device=_device(component_options, item),
-            options=_options(item, lock_entry, component_options, candidate),
-        ),
-        use_cache=False,
-    )
-    return document.text, document, time.perf_counter() - started
 
 
 def _validate_assets(
@@ -202,59 +219,20 @@ def _validate_assets(
                 raise ValueError(f"Extraction reference checksum mismatch: {reference}")
 
 
-def _device(component_options, item) -> str:
-    return str(item.get("device") or component_options.get("device") or "cpu")
-
-
-def _options(
-    item: Mapping[str, object],
-    lock_entry: Mapping[str, object],
-    component_options: Mapping[str, object],
-    candidate: str,
-) -> dict[str, object]:
-    raw = item.get("options", {})
-    result = dict(raw) if isinstance(raw, Mapping) else {}
-    result.update(component_options)
-    if candidate.startswith("docling-standard|"):
-        for factor in candidate.split("|")[1:]:
-            key, value = factor.split("=", 1)
-            result[
-                {
-                    "ocr": "ocr_engine",
-                    "mode": "ocr_mode",
-                    "table": "table_mode",
-                    "formula": "formula_enrichment",
-                }[key]
-            ] = value == "on" if key == "formula" else value
-    result.update(_lock_paths(lock_entry))
-    return result
-
-
-def _lock_candidate(candidate: str) -> str:
-    engine = candidate.partition("|")[0]
-    if engine == "docling-standard-native":
-        engine = "docling-standard"
-    return LOCK_CANDIDATES.get(engine, engine)
-
-
 def _model_lock(candidates: tuple[str, ...]) -> dict[str, dict[str, object]]:
-    required = tuple(dict.fromkeys(_lock_candidate(candidate) for candidate in candidates))
+    required = tuple(
+        dict.fromkeys(
+            parse_document_profile(candidate).lock_candidate for candidate in candidates
+        )
+    )
     return load_selected_model_lock(
         PROJECT_ROOT / "data/benchmarks/models/selected.json",
         candidates=required,
     )
 
 
-def _manifest(stage: str, profile: str) -> Path:
+def _manifest(profile: str) -> Path:
     if profile == "smoke":
         return PROJECT_ROOT / "data/benchmarks/extraction/smoke.json"
     split = "development" if profile == "standard" else "validation"
-    return PROJECT_ROOT / f"data/benchmarks/extraction/{stage}-{split}.json"
-
-
-def _lock_paths(entry: Mapping[str, object]) -> dict[str, object]:
-    return {
-        str(key): value
-        for key, value in entry.items()
-        if str(key).endswith("_path") or str(key).endswith("_dir")
-    }
+    return PROJECT_ROOT / f"data/benchmarks/extraction/document-{split}.json"

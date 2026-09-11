@@ -1,4 +1,4 @@
-"""Entry-point helper used by each extraction stage's run.py."""
+"""Command-line orchestration for document benchmark phases."""
 
 from __future__ import annotations
 
@@ -7,47 +7,42 @@ from pathlib import Path
 
 from experiments.benchmarks.common.arguments import load_candidates, parser
 from experiments.benchmarks.common.decisions import load_engineer_decision
-from experiments.benchmarks.extraction.common import run
+from experiments.benchmarks.extraction.document.benchmark import run
 
 
-def main(stage: str, directory: Path) -> int:
-    if stage == "video":
-        from experiments.benchmarks.extraction.video.runner import main as video_main
-
-        return video_main(directory)
-    if stage != "document":
-        raise ValueError(f"Unknown extraction stage: {stage}")
-    argument_parser = parser(f"Benchmark {stage} extraction", shortlist=False)
+def main(directory: Path) -> int:
+    argument_parser = parser("Benchmark document extraction", shortlist=False)
     argument_parser.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
-    if stage == "document":
-        argument_parser.add_argument(
-            "--source", choices=("all", "pdf", "image", "docx"), default="all"
-        )
-        argument_parser.add_argument(
-            "--comparison",
-            choices=("configuration", "architecture"),
-            default="configuration",
-            help=(
-                "configuration screens Docling settings on development; architecture "
-                "compares selected settings on development or finalists on validation"
-            ),
-        )
-        argument_parser.add_argument(
-            "--pdf-selection",
-            type=Path,
-            help="PDF configuration decision (standard) or architecture-finalist decision (full)",
-        )
-        argument_parser.add_argument(
-            "--image-selection",
-            type=Path,
-            help="image configuration decision (standard) or architecture-finalist decision (full)",
-        )
+    argument_parser.add_argument(
+        "--source", choices=("all", "pdf", "image", "docx"), default="all"
+    )
+    argument_parser.add_argument(
+        "--comparison",
+        choices=("configuration", "architecture"),
+        default="configuration",
+        help=(
+            "configuration screens Docling settings on development; architecture "
+            "compares selected settings on development or finalists on validation"
+        ),
+    )
+    argument_parser.add_argument(
+        "--pdf-selection",
+        type=Path,
+        help="PDF configuration decision (standard) or architecture-finalist decision (full)",
+    )
+    argument_parser.add_argument(
+        "--image-selection",
+        type=Path,
+        help="image configuration decision (standard) or architecture-finalist decision (full)",
+    )
     arguments = argument_parser.parse_args()
     return _document_main(arguments, directory)
 
 
 def _document_main(arguments, directory: Path) -> int:
-    sources = ("pdf", "image", "docx") if arguments.source == "all" else (arguments.source,)
+    sources = (
+        ("pdf", "image", "docx") if arguments.source == "all" else (arguments.source,)
+    )
     _validate_document_arguments(arguments, sources)
     comparison = (
         "configuration"
@@ -63,7 +58,6 @@ def _document_main(arguments, directory: Path) -> int:
             (
                 source,
                 run(
-                    "document",
                     arguments.profile,
                     candidates,
                     manifest_path=arguments.manifest,
@@ -144,12 +138,18 @@ def _validate_document_arguments(arguments, sources: tuple[str, ...]) -> None:
             raise ValueError("Selection files apply only to --comparison architecture")
         return
     if arguments.profile == "smoke":
-        raise ValueError("Document architecture comparison requires standard or full data")
+        raise ValueError(
+            "Document architecture comparison requires standard or full data"
+        )
     for source in sources:
         if source == "pdf" and arguments.pdf_selection is None:
-            raise ValueError("Document architecture comparison requires --pdf-selection")
+            raise ValueError(
+                "Document architecture comparison requires --pdf-selection"
+            )
         if source == "image" and arguments.image_selection is None:
-            raise ValueError("Document architecture comparison requires --image-selection")
+            raise ValueError(
+                "Document architecture comparison requires --image-selection"
+            )
 
 
 def _document_selection(
@@ -160,7 +160,9 @@ def _document_selection(
     maximum: int | None = None,
 ) -> tuple[str, ...]:
     if path is None:
-        raise ValueError(f"Document comparison requires a decision for {expected_stage}")
+        raise ValueError(
+            f"Document comparison requires a decision for {expected_stage}"
+        )
     decision = load_engineer_decision(path, exact=exact, maximum=maximum)
     summary = json.loads(decision.source_summary.read_text(encoding="utf-8"))
     if summary.get("plan", {}).get("stage") != expected_stage:

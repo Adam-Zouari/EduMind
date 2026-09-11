@@ -31,10 +31,14 @@ from experiments.benchmarks.common.metrics import (
     word_error_rate,
 )
 from experiments.benchmarks.extraction.document.metrics import (
+    METRIC_DIRECTIONS,
     aggregate_evaluations,
+    load_reference,
     score_document,
     validate_reference,
 )
+from experiments.benchmarks.extraction.document import cli as document_cli
+from experiments.benchmarks.extraction.document.cli import _document_candidates
 from experiments.benchmarks.extraction.document.adapters import _paddle_blocks
 from edumind.extraction import (
     ExtractedDocument,
@@ -48,8 +52,6 @@ from edumind.extraction.structured import build_structured_document
 from experiments.benchmarks.rag.chunking_embedding.strategies import (
     build_chunking_strategy,
 )
-from experiments.benchmarks.extraction import run_stage
-from experiments.benchmarks.extraction.run_stage import _document_candidates
 
 
 def test_official_metric_worker_bootstraps_both_omnidocbench_import_roots(
@@ -532,19 +534,20 @@ def test_authoritative_reference_rejects_contradictory_structured_negatives(tmp_
 
 
 def test_document_directions_omit_unclaimed_reference_metrics() -> None:
-    from experiments.benchmarks.extraction.document.evaluate import directions
     from experiments.benchmarks.extraction.document.runner import directions_for
 
     selected = directions_for(
         [
-            {
-                "id": "pages-only",
-                "kind": "pdf",
-                "reference_capabilities": ["pages"],
-                "reference_page_texts": ["page"],
-            }
+            load_reference(
+                {
+                    "id": "pages-only",
+                    "kind": "pdf",
+                    "reference_capabilities": ["pages"],
+                    "reference_page_texts": ["page"],
+                }
+            )
         ],
-        directions(),
+        METRIC_DIRECTIONS,
     )
     assert "pages.page_content_f1" in selected
     assert "text.content_f1" not in selected
@@ -601,7 +604,7 @@ def test_document_runner_keeps_all_attempts_and_empties_partial_failure(monkeypa
         if isinstance(value, Exception):
             raise value
         document, latency = value
-        return document.text, document, latency
+        return document, latency
 
     monkeypatch.setattr(runner, "_cold_latency", lambda *_args: 0.01)
     clock = iter((0.0, 1.0, 1.1, 2.0))
@@ -616,6 +619,7 @@ def test_document_runner_keeps_all_attempts_and_empties_partial_failure(monkeypa
             ),
             {},
             {"device": "cpu"},
+            {"sample": load_reference({"reference": "alpha"})},
             None,
             extract_once,
         )
@@ -652,7 +656,7 @@ def test_document_architecture_uses_development_before_validation(monkeypatch) -
             return (configuration,)
         return (configuration, "docling-vlm-granite-258m")
 
-    monkeypatch.setattr(run_stage, "_document_selection", selected)
+    monkeypatch.setattr(document_cli, "_document_selection", selected)
     development_arguments = SimpleNamespace(
         profile="standard",
         comparison="architecture",
