@@ -1191,11 +1191,39 @@ video-extraction profile.
 Which complete chunker/embedding pair retrieves verified educational evidence
 best?
 
-Chunking and embedding are evaluated together. A chunker cannot be scored until
-its chunks are represented and ranked, and an embedding cannot be judged without
-the passages it embeds.
+### Terminology and unit of comparison
 
-### Chunking strategies
+Chunking and embedding are evaluated together. The candidate is the complete
+`chunker|embedding` pair: a chunker cannot be scored until its chunks are
+represented and ranked, and an embedding cannot be judged independently of the
+passages it embeds. This phase isolates that pair by using exact cosine search;
+it does not test BM25, rank fusion, a reranker, a vector database, a generator,
+or final answer quality.
+
+Each pair produces:
+
+- one chunk manifest with stable IDs and source offsets;
+- one ranked retrieval list for every answerable question;
+- evidence matches and per-question quality values; and
+- timing, resource, warning, and validity records.
+
+Quality is evaluated on answerable questions with verified evidence. The
+answerability label remains in the manifest for downstream generation and final
+RAG evaluation, but this phase does not ask a dense retriever to abstain. An
+unanswerable question has no gold evidence and therefore cannot receive a
+fabricated retrieval-quality score.
+
+One answerable question is one scoring sample. Because questions from the same
+paper are related, the source document—not the individual question—is the
+independent resampling unit. Repeated query executions improve timing
+measurement but do not create additional quality samples.
+
+### Candidate pairs
+
+The development comparison crosses every declared chunking strategy with every
+declared embedding model. The result belongs to the complete pair.
+
+#### Chunking strategies
 
 | Strategy | What it tests |
 |---|---|
@@ -1208,7 +1236,7 @@ the passages it embeds.
 | Section-aware 512/64 | Preserves authored Markdown sections before splitting oversized sections. |
 | Structure-aware 512/64 | Preserves headings, tables, formulas, and table-row boundaries where possible. |
 
-### Embedding models
+#### Embedding models
 
 | Model | Role in the comparison |
 |---|---|
@@ -1239,45 +1267,246 @@ Each question stores answerability, accepted answers, evidence type, and exact
 half-open evidence offsets. The structured supplement contains table, formula,
 and mixed-evidence questions because QASPER is primarily text.
 
-### Execution
+### Common input and output rules
 
-Standard evaluates all:
+Every pair receives the same frozen documents, answerable questions, and
+evidence annotations. Candidate-specific text repair, query rewriting, reranking,
+and approximate vector search are not allowed in this phase.
 
-```text
-8 chunkers × 8 embeddings = 64 complete pairs
-```
+Each answerable question contains one or more independently useful **gold
+evidence units**. A unit has a stable ID, one mutually exclusive evidence type,
+and one or more exact half-open source intervals. Units must be atomic enough to
+fit inside a valid candidate chunk. A table unit includes any row/column headers
+needed to interpret its selected cells, and a formula unit includes the complete
+expression. Evidence that genuinely requires different modalities or separated
+support is represented by multiple units and the question is labelled `mixed`.
 
-For every pair:
+For the rank-aware and unit-recall metrics, chunk `j` covers evidence unit `i`
+only when that single chunk contains every required source interval for the
+unit. Partial overlap does not turn a fragment into complete evidence. This
+rule makes boundary fragmentation visible and avoids candidate-specific fuzzy
+matching. The metric roles, counting behavior, and edge cases are summarized in
+[metrics.md](metrics.md).
+
+Evidence-token Precision uses the frozen evaluation tokenizer
+`tiktoken:cl100k_base` for every candidate. It never uses each embedding model's
+tokenizer for scoring, because changing the counting unit between candidates
+would make their precision values incomparable. Model-specific tokenizers are
+used separately for input-compatibility validation.
+
+The declared matrix has 64 planned pairs, but a pair is eligible for inference
+only when every generated chunk and answerable query fits the embedding model's
+own input contract, including query/document prefixes and required special
+tokens. The preflight records the model-token count of every input. It never
+silently truncates, changes a strategy's size, or splits chunks again only for
+a short-context model; any of those actions would create a different candidate.
+
+This distinction matters for the 256-word-piece MiniLM control. Nominal
+`cl100k_base` chunk sizes are not MiniLM word-piece counts, and the 384/512-token
+strategies cannot be assumed compatible with it. Every planned pair remains
+accounted for in the phase result: an expected contract incompatibility is
+recorded as `incompatible`, while an eligible pair that crashes is an unexpected
+failure and makes the comparison incomplete.
+
+### Per-candidate execution
+
+One child run executes one planned pair in a fresh operating-system process.
+The requested device, dtype, model and tokenizer revisions, query/document
+prefixes, pooling, normalization, seed, warmups, and repetitions are fixed and
+recorded. Silent device fallback or unrecorded truncation invalidates the child.
+
+An eligible pair performs:
 
 ```text
 split documents into chunks with exact source offsets
-→ embed every chunk
-→ embed each question
-→ rank with exact NumPy cosine search
-→ retain the top 20
-→ compare retrieved spans with verified evidence spans
+-> validate every chunk with the candidate model tokenizer
+-> embed every valid chunk
+-> embed each answerable question
+-> rank with exact NumPy cosine search and deterministic tie-breaking
+-> retain the top 20 as the auditable retrieval artifact
+-> score the first five against verified evidence units and source spans
 ```
 
 Exact NumPy search removes vector-database approximation from this experiment.
 For semantic chunking, the tested embedding also creates the boundaries; that
 result intentionally represents the complete semantic-chunker/embedding pair.
+The search scores the complete candidate corpus, retains the top 20 only for
+near-miss diagnosis, and scores the first five. The `@5` cutoff matches the
+downstream retrieval policy; this phase adds no token budget, context curve, or
+additional cutoffs.
+
+Corpus-build timing starts after model and tokenizer loading and includes
+chunking, document embedding, and searchable-matrix/metadata assembly. Query
+latency includes query tokenization, query embedding, exact cosine scoring, and
+deterministic top-five selection. Each query's median measured repetition is its
+warm-latency observation. Model downloads, data downloads, and environment setup
+are excluded.
+
+A successful child must account for every expected document and answerable
+query, produce the expected number and dimension of finite nonzero vectors, use
+zero truncated inputs, and reproduce the same ordered top-five IDs for repeated
+identical queries. An expected input-limit incompatibility stops after preflight
+and remains recorded as `incompatible`. An eligible pair that crashes, runs out
+of memory, or produces malformed output is failed and makes the comparison
+incomplete.
+
+### Development, validation, and locked test
+
+```text
+smoke:
+declared chunking and embedding paths on tiny committed fixtures
+-> verify compatibility checks, embedding, ranking, scoring, and artifacts
+
+development / standard:
+8 chunkers × 8 embeddings = 64 planned pair records on 100 papers
+-> run every eligible pair and record expected incompatibilities
+-> engineer selects up to three complete finalist pairs
+
+validation / full:
+selected finalists on 40 unseen papers
+-> engineer records exactly one selected chunker/embedding pair
+
+locked test:
+the selected pair runs only inside the one frozen complete-system evaluation
+on 40 locked papers -> no further component tuning
+```
+
+Smoke validates wiring only. Development compares the declared matrix;
+validation checks the finalists on unseen papers. Every planned development
+pair remains accounted for even when preflight proves it incompatible. The
+locked split is reserved for the final complete system and is not another
+chunking/embedding selection round.
 
 ### Metrics and why they are used
 
-| Role | Metrics | Why they are needed |
+| Category | Metrics | Why they are needed |
 |---|---|---|
-| Primary | nDCG@3/@5, rank-aware Context Precision@3/@5, Context Recall@3/@5, Context Recall under 2,048 tokens | Measures early graded ranking, context cleanliness, evidence-span coverage, and coverage at equal context cost. |
-| Secondary | nDCG@10, Hit Rate@5/@10, MRR | Shows deeper ranking and whether at least one useful passage appears. |
-| Diagnostic | Precision/Recall@1/@3/@5/@10, MAP@3/@5/@10, Hit Rate@1/@3, Context Precision/Recall@1/@10 | Helps explain behavior, but binary chunk relevance depends on candidate-created boundaries. |
-| Evidence slices | Primary metrics repeated for text, table, formula, and mixed questions | Reveals candidates that work well only on the majority evidence type. |
-| Operational | Chunk count, mean/p95 chunk tokens, indexing time, p50/p95 query latency, vector storage, RAM, VRAM, determinism | Explains the storage and execution cost behind retrieval quality. |
+| Retrieval quality | **alpha-nDCG@5**, **Evidence-unit Recall@5**, **Evidence-token Precision@5**; nDCG@5 diagnostic | Measures novelty and order, evidence completeness, and context concentration; nDCG provides the conventional ranking view. |
+| Evidence slices | Retrieval metrics repeated for text, table, formula, and mixed questions | Reveals a pair that performs well only on the majority evidence type. |
+| Operational | Corpus-build time and source-token throughput, p50/p95 warm query latency, peak process-tree RAM, peak VRAM | Measures the observed preparation, query, and hardware cost of the complete pair. |
+| Workload and storage | Corpus counts, source and indexed-token counts, chunk count and lengths, embedding dimension and dtype, matrix bytes | Explains how much work and storage each pair creates without treating those values as quality. |
 
-Chunk-level Recall and MAP are comparable within one fixed chunker. Across
-different chunkers, the number of relevant chunks changes with the boundaries,
-so decisions use span-based Context Recall and graded nDCG instead.
+The three bold metrics are primary and are reviewed separately. nDCG is
+diagnostic, `alpha=0.5` is fixed, and no weighted overall score is created.
+First-hit metrics and chunk-level precision/recall are omitted because they add
+little coverage information or use denominators changed by the chunker. Exact
+definitions, examples, directions, and confidence-interval rules are in
+[metrics.md](metrics.md#chunking-and-embedding).
+
+The four retrieval metrics are reported overall and for mutually exclusive
+`text`, `table`, `formula`, and `mixed` slices. A mixed question requires at least
+two evidence types. Each slice reports its contributing question and document
+counts. Unanswerable questions remain a workload count and do not enter
+retrieval-quality aggregates.
+
+### MLflow result structure
+
+Chunking/embedding uses the RAG experiment and one parent per fair comparison:
+
+```text
+MLflow experiment: EduMind / rag
+├── parent: rag-chunking-embedding-smoke-<timestamp>
+│   └── one child per smoke-tested pair
+├── parent: rag-chunking-embedding-standard-development-<timestamp>
+│   └── 64 child records: one per planned chunker|embedding pair
+└── parent: rag-chunking-embedding-full-validation-<timestamp>
+    └── up to three child runs: one per engineer-selected finalist pair
+```
+
+Each parent stores the phase, dataset and checksum, candidate plan,
+compatibility matrix, seed, repetitions, metric contract, model lock, Git and
+dependency provenance, hardware, and any engineer-decision file. Its direct
+metrics contain completion counts only: planned, eligible, incompatible,
+successful, and unexpectedly failed pairs. `plan.json`, `provenance.json`,
+`metric_contract.json`, `compatibility_matrix.json`, `leaderboard.parquet`,
+paired comparisons, and `summary.json` are parent artifacts. The chosen pair's
+locked result is logged later with the one complete-system locked-test run, not
+as another component-selection parent.
+
+Each child is one planned pair. Its run name is the complete pair identifier,
+`<chunker_id>|<embedding_id>`. Parameters contain the resolved chunker and
+embedding contracts, model and tokenizer revisions and checksums, device, dtype,
+prefixes, pooling, normalization, evaluation tokenizer, evidence rule,
+`top_k=5`, `alpha=0.5`, seed, warmups, repetitions, split, and manifest checksum.
+The child has no child runs for documents, questions, repetitions, or metrics.
+
+A valid child logs:
+
+```text
+quality.overall.alpha_ndcg_at_5
+quality.overall.evidence_unit_recall_at_5
+quality.overall.evidence_token_precision_at_5
+quality.overall.ndcg_at_5
+
+quality.text.<metric>
+quality.table.<metric>
+quality.formula.<metric>
+quality.mixed.<metric>
+
+operational.corpus_build_seconds
+operational.corpus_build_source_tokens_per_second
+operational.query_latency_ms_p50
+operational.query_latency_ms_p95
+operational.peak_process_tree_ram_mb
+operational.peak_vram_mb
+
+workload.source_tokens
+workload.indexed_token_occurrences
+workload.document_count
+workload.answerable_query_count
+workload.unanswerable_query_count
+workload.chunk_count
+workload.chunk_tokens_mean
+workload.chunk_tokens_p95
+workload.embedding_dimension
+workload.embedding_matrix_bytes
+```
+
+Primary, diagnostic, operational, and workload are documentation roles; they are
+not repeated as MLflow prefixes. The prefixes above describe metric families
+and evidence slices. Eligible uncertainty bounds use the shared `.ci_lower` and
+`.ci_upper` suffixes.
+Validity counters such as expected/processed documents and queries, truncated
+inputs, failed cases, nonfinite/zero-norm vectors, dimension mismatches, and
+determinism mismatches are logged under `validity.*`. The final decision is also
+stored as a `benchmark.valid` tag and a `validation.status` tag whose value is
+`passed`, `failed`, or `incompatible`. MLflow scalar values do not replace the
+detailed `validation_report.json` artifact. Stored dtype is a parameter in the
+resolved embedding contract rather than a numeric metric.
+
+Each successful child stores:
+
+| Artifact | Contents and purpose |
+|---|---|
+| `chunk_manifest.parquet` | One row per chunk with source document, exact offsets, strategy metadata, and token counts. |
+| `query_metrics.parquet` | One row per answerable question with the four retrieval-quality values and evidence slice. |
+| `retrievals.parquet` | Ordered top-20 chunk IDs and scores for near-miss diagnosis; only the first five are scored. |
+| `evidence_matches.parquet` | Trace from each question and evidence unit to the chunks that recovered it. |
+| `timings.parquet` | One row per query and measured repetition with warm latency and success state. |
+| `resources.parquet` | Timestamped process-tree RAM and VRAM samples. |
+| `candidate.json` | Resolved contracts, status, fingerprint, aggregates, confidence intervals, operational values, and artifact references. |
+| `validation_report.json` | Compatibility and validity checks, counts, limits, checksums, and any errors. |
+
+Raw documents, model weights, and a full embedding matrix are not duplicated
+into every child; frozen inputs, offsets, revisions, and checksums make the rows
+reproducible. An incompatible child logs its reason and validation report but no
+quality metrics. An unexpected execution failure remains visible with MLflow
+status `FAILED` and makes the parent comparison incomplete.
+
+Aggregation and uncertainty follow the
+[chunking and embedding confidence-interval contract](metrics.md#chunking-and-embedding-confidence-intervals).
+Evidence slices use the classifications above and report their contributing
+question and document counts.
 
 The engineer approves up to three complete chunker/embedding pairs. No separate
-embedding winner or chunker winner is required.
+embedding winner or chunker winner is required. Advancement jointly reviews
+alpha-nDCG@5, Evidence-unit Recall@5, and Evidence-token Precision@5 as the three
+primary quality dimensions. Diagnostic nDCG@5, uncertainty, evidence slices,
+and operational feasibility explain or constrain that judgment; they are not
+steps in an automatic lexicographic ranking. The decision and rationale are
+stored in a versioned engineer-decision file that references the parent/child
+MLflow run IDs and all governing checksums. The benchmark never promotes a
+candidate automatically.
 
 ## 5. Retrieval and reranking
 
@@ -1323,8 +1552,11 @@ the selected semantic chunker requires its embedding to create boundaries.
 
 ### Metrics and why they are used
 
-The metric roles stay the same as in chunking/embedding so changing only the
-retrieval strategy remains interpretable:
+This downstream phase deliberately introduces a 2,048-token packing policy and
+therefore retains its own budget-aware, multi-cutoff metric contract. Those
+metrics compare retrieval and reranking methods after the chunker/embedding pair
+has been selected; they do not flow backward into the four-metric
+chunking/embedding decision:
 
 - **Primary:** nDCG@3/@5, Context Precision@3/@5, Context Recall@3/@5, and
   Context Recall under 2,048 tokens.

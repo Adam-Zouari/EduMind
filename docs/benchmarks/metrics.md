@@ -2163,7 +2163,278 @@ estimate summarizes the observed videos, while video resampling estimates the
 uncertainty around it. A narrow interval indicates a more precise corpus-level
 estimate; it does not describe the range of individual-video F1 values.
 
-## Retrieval quality
+## Chunking and embedding
+
+The chunking/embedding experiment evaluates one complete
+`chunker|embedding` pair at a time with exact cosine search. Three metrics answer
+different selection questions; nDCG is retained only as a conventional ranking
+diagnostic. None is combined into a weighted score.
+
+### Metric summary
+
+#### Retrieval quality
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| alpha-nDCG@5 | Primary | Are different required evidence units placed early instead of being displaced by duplicate chunks? | Higher |
+| Evidence-unit Recall@5 | Primary | How many required evidence units appear anywhere in the first five chunks, regardless of their order? | Higher |
+| Evidence-token Precision@5 | Primary | What share of the tokens returned in the first five chunks is relevant evidence? | Higher |
+| nDCG@5 | Diagnostic | How early do relevant chunks appear when repeated evidence is not penalized? | Higher |
+
+`@5` means the first five ranked chunks.
+
+#### Operational performance
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Corpus-Build Time | Operational | How long does chunking, document embedding, and searchable-matrix preparation take? | Lower |
+| Corpus-Build Throughput | Operational | How many original source tokens are processed per second? | Higher |
+| p50 Warm Query Latency | Operational | What is normal query-embedding and exact-search latency? | Lower |
+| p95 Warm Query Latency | Operational | What is slow-case warm query latency? | Lower |
+| Peak Process-Tree RAM | Operational | How much total system memory does the pair require? | Lower at equal quality |
+| Peak VRAM | Operational | How much GPU memory does the pair require? | Lower at equal quality |
+
+#### Workload and storage descriptors
+
+| Value | Role | Question answered | Direction |
+|---|---|---|---|
+| Corpus Counts | Workload descriptor | How many documents and answerable/unanswerable questions were represented in the run? | Descriptive |
+| Source Tokens | Workload descriptor | How large was the original corpus before chunk overlap? | Descriptive |
+| Indexed-Token Occurrences | Workload descriptor | How much text was embedded after overlap and repeated context were counted? | Descriptive |
+| Chunk Count | Workload descriptor | How many searchable vectors and metadata records did the strategy create? | Descriptive |
+| Mean/p95 Chunk Tokens | Workload descriptor | What typical and long-tail chunk sizes did the strategy actually produce? | Descriptive |
+| Embedding Dimension and Dtype | Storage descriptor | What shape and numeric representation did each vector use? | Descriptive |
+| Embedding-Matrix Bytes | Storage descriptor | How much storage did the complete chunk-vector matrix occupy? | Descriptive |
+
+### Retrieval quality
+
+#### Alpha-nDCG@5
+
+**Question:** Are different required evidence units placed early instead of
+being displaced by duplicate chunks?
+
+Alpha-nDCG rewards useful evidence more when it appears near the top and reduces
+the credit for later chunks that repeat the same evidence. With the frozen
+`alpha=0.5` setting, each repetition receives half the remaining novelty credit.
+
+**Example:** If the first two chunks contain the same evidence and the third
+contains different evidence, the second chunk is discounted as a duplicate.
+Moving the different evidence to rank 2 improves the score.
+
+This is the primary metric because overlapping strategies can otherwise look
+strong by returning several versions of the same useful passage.
+
+**Range and direction:** `[0, 1]`; higher is better. A question for which no
+candidate chunk contains verified evidence receives zero.
+
+#### Evidence-unit Recall@5
+
+**Question:** How many required evidence units appear anywhere in the first five
+chunks, regardless of their order?
+
+Each required evidence unit counts once when at least one of the first five
+chunks contains it completely. Repeated copies do not add credit, and partial
+fragments do not count as recovered units.
+
+**Example:** If a question needs three evidence units and the first five chunks
+contain two of them, recall is approximately `0.67`.
+
+This primary metric catches rankings that look good near the top but still miss
+part of the evidence needed for a complete answer. It also makes a separate Hit
+Rate unnecessary.
+
+**Range and direction:** `[0, 1]`; higher is better.
+
+#### Evidence-token Precision@5
+
+**Question:** What share of the tokens returned in the first five chunks is
+relevant evidence?
+
+The metric compares evidence-bearing source tokens with all source tokens in
+the first five chunks. Every candidate uses the same evaluation tokenizer, and
+text repeated through chunk overlap is counted each time it is returned.
+
+**Example:** If 160 of 600 retrieved tokens are relevant evidence, precision is
+approximately `0.27`. The remaining tokens are additional context not counted
+as relevant evidence by the reference annotations.
+
+This primary metric does not impose a context budget or penalize a chunk merely
+for being large. It reports how concentrated the returned context is around the
+verified evidence.
+
+**Range and direction:** `[0, 1]`; higher is better. Empty retrieved text
+receives zero.
+
+#### nDCG@5
+
+**Question:** How early do relevant chunks appear when repeated evidence is not
+penalized?
+
+nDCG gives more credit when chunks containing verified evidence appear earlier.
+Unlike alpha-nDCG, it does not reduce the credit for repeated evidence.
+
+**Example:** A ranking can have high nDCG when its first two chunks contain the
+same relevant passage. Alpha-nDCG will be lower because the second chunk adds no
+new evidence.
+
+nDCG is kept as a familiar diagnostic for conventional ranking quality. It does
+not drive selection because alpha-nDCG already measures early ranking while also
+accounting for repeated evidence.
+
+**Range and direction:** `[0, 1]`; higher is better. A question for which no
+candidate chunk contains verified evidence receives zero.
+
+### Why the metrics are not interchangeable
+
+| Metric | What changes it | What it does not answer directly |
+|---|---|---|
+| alpha-nDCG@5 | The order of the chunks and whether early chunks add different evidence | The share of returned tokens that is relevant evidence |
+| Evidence-unit Recall@5 | Whether each required evidence unit appears anywhere in the first five chunks | Whether the units are ordered well or surrounded by extra context |
+| Evidence-token Precision@5 | How much returned text is relevant evidence | Whether all required units were found or placed early |
+| nDCG@5 | How early relevant chunks appear under the conventional ranking view | Whether those chunks repeat evidence already retrieved |
+
+The first three metrics are complementary. Reordering the same five chunks can
+change alpha-nDCG without changing recall or token precision. Adding
+non-evidence text to those chunks can lower token precision without changing
+which evidence units were recovered. Missing one required unit lowers recall
+even when the remaining relevant chunks are ranked early. nDCG deliberately
+overlaps with alpha-nDCG; it is kept only to show what a conventional ranking
+metric would report when redundancy is ignored.
+
+### Worked candidate interpretation
+
+Suppose a valid pair reports:
+
+```text
+alpha-nDCG@5                 = 0.74
+Evidence-unit Recall@5       = 0.82
+Evidence-token Precision@5  = 0.44
+nDCG@5                       = 0.81
+```
+
+The nDCG result says that relevant chunks generally appear early. The lower
+alpha-nDCG result says that some of those early chunks repeat evidence instead
+of adding something new. Recall says that 82% of the required evidence units are
+present somewhere in the first five chunks, leaving 18% missing. Token precision
+says that 44% of the returned tokens are relevant evidence and 56% are
+additional context according to the reference annotations. The candidate
+therefore ranks relevant chunks well, but still repeats some evidence, misses
+some required evidence, and returns more additional context than evidence. No
+formula combines these values.
+
+### Operational performance
+
+The phase calls preparation of the searchable embedding matrix **corpus build**.
+It is not the later vector-server indexing experiment.
+
+#### Corpus-build elapsed time and throughput
+
+**Question:** How much steady-state work is required to chunk and embed the
+fixed corpus?
+
+Timing begins after the model and tokenizer are loaded. It includes chunk
+creation, document embedding, and embedding-matrix/metadata assembly, and
+excludes downloads and environment installation.
+
+Corpus-build throughput divides the number of original source tokens in the
+frozen corpus by corpus-build wall-clock seconds. Original source tokens use the
+fixed evaluation tokenizer. Indexed-token occurrences are not used because
+overlap would otherwise reward a candidate for duplicating text.
+
+**Range and direction:** elapsed seconds are non-negative and lower is better at
+equal quality; source tokens/second are non-negative and higher is better at
+equal quality.
+
+#### Warm query latency p50 and p95
+
+**Question:** What are normal and slow-tail times for query embedding plus exact
+cosine top-five search?
+
+After warmup, execute every query for the configured measured repetitions. Use
+that query's median repetition as its latency observation, then calculate p50
+and p95 across eligible questions. Search timing includes query tokenization,
+query embedding, cosine scoring, deterministic ordering, and top-five
+selection. It excludes corpus build.
+
+p99 is not authoritative in this phase because the corpus does not provide
+enough thousands of independent query requests to estimate a stable one-percent
+tail. The vector-server load benchmark measures p99 under controlled
+concurrency.
+
+**Range and direction:** non-negative milliseconds per query; lower is better at
+equal quality.
+
+#### Peak process-tree RAM and peak VRAM
+
+**Question:** What maximum system and GPU memory does the complete pair require
+during corpus build and query evaluation?
+
+Peak RAM is the largest sampled resident-memory total across the benchmark
+worker and its child processes. Peak VRAM uses the shared process-attributed
+resource-monitor contract. The artifact identifies the measurement method.
+
+**Range and direction:** non-negative MiB; lower is better at equal quality. A
+confirmed CPU-only run may report zero VRAM; unavailable GPU instrumentation is
+not converted to zero.
+
+### Workload and storage descriptors
+
+These values explain operational outcomes. They are numeric and chartable but
+are not quality metrics or independent winner-selection objectives.
+
+Source tokens count the frozen corpus once with `tiktoken:cl100k_base`, while
+indexed-token occurrences count all generated chunks, including overlap. This
+separates fixed corpus size from the embedding workload created by a strategy.
+Chunk counts and chunk-length summaries explain search work and the actual size
+distribution produced by each strategy.
+
+The recorded embedding-matrix byte count is the authoritative storage value and
+is cross-checked against chunk count, embedding dimension, and stored dtype.
+These descriptors explain quality and speed differences but cannot compensate
+for worse retrieval quality.
+
+### Chunking and embedding confidence intervals
+
+#### Which values receive an interval
+
+| Value | 95% confidence interval? | Rule |
+|---|---:|---|
+| Standard and full alpha-nDCG@5, Evidence-unit Recall@5, Evidence-token Precision@5, and nDCG@5 | Yes | Resample source documents and recalculate each aggregate. |
+| Text, table, formula, and mixed evidence slices | Yes, when enough documents contribute | Resample only the contributing source documents. |
+| p50/p95 warm query latency | Conditional | Report only when enough independent query observations support the percentile estimate. |
+| Smoke metrics | No authoritative interval | Smoke validates execution and is too small for selection claims. |
+| Corpus-build time and throughput | No | One corpus-build observation cannot estimate uncertainty. |
+| Peak RAM and VRAM | No | Report the observed peak without invented bounds. |
+| Workload and storage descriptors | No | These are observed properties of the candidate and fixed corpus, not sampled quality estimates. |
+
+#### Calculation
+
+Quality is first calculated for each answerable question. Questions are averaged
+within their source document so a paper with many questions cannot dominate the
+result. Standard and full runs then use 10,000 bootstrap resamples of complete
+documents with seed 42 and take the 2.5th and 97.5th percentiles as the 95%
+confidence bounds. Paired candidate comparisons resample the same aligned
+documents.
+
+If too few documents contribute to a slice or conditional latency interval, the
+point estimate remains available but the interval is omitted rather than
+reported as artificially precise.
+
+#### Interpretation
+
+An alpha-nDCG@5 of `0.74` with a 95% confidence interval of `[0.70, 0.78]`
+means `0.74` is the observed aggregate, while resampling complete source
+documents estimates its uncertainty. The interval does not describe the range
+of individual-question scores. Candidate-difference claims use the aligned
+paired comparison rather than judging overlap between two separate intervals.
+
+## Retrieval and reranking quality
+
+This is a separate downstream contract. Unlike chunking/embedding selection,
+the retrieval/reranking phase deliberately introduces a 2,048-token packing
+policy and compares dense, lexical, fusion, and reranking methods. Its existing
+budget and multi-cutoff metrics do not flow backward into selection of the
+chunker/embedding pair.
 
 For chunk interval `[c_start, c_end)` and evidence interval
 `[e_start, e_end)`, overlap is:
