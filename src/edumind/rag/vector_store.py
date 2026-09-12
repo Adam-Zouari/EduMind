@@ -150,14 +150,24 @@ class VectorStore:
             return False
 
     def reset_collection(self) -> None:
+        not_found = _load_chromadb().errors.NotFoundError
         try:
             self.client.delete_collection(name=self.collection_name)
-        except Exception:
+        except not_found:
             pass
-        self.collection = self.client.get_or_create_collection(
-            name=self.collection_name,
-            metadata={"hnsw:space": self.distance_metric},
-        )
+        except Exception as exc:
+            raise RAGConfigurationError(
+                f"Could not reset Chroma collection {self.collection_name!r}"
+            ) from exc
+        try:
+            self.collection = self.client.get_or_create_collection(
+                name=self.collection_name,
+                metadata={"hnsw:space": self.distance_metric},
+            )
+        except Exception as exc:
+            raise RAGConfigurationError(
+                f"Could not recreate Chroma collection {self.collection_name!r}"
+            ) from exc
         self._manifest = None
 
     def _upsert(self, chunks: Sequence[ChunkRecord]) -> None:
