@@ -32,7 +32,11 @@ def export_review(
     question_count: int = 20,
     seed: int = 42,
 ) -> Path:
-    decision = load_engineer_decision(selection_path, exact=finalist_count)
+    decision = load_engineer_decision(
+        selection_path,
+        exact=finalist_count,
+        expected_source=("rag", "final", "standard"),
+    )
     summary_path = decision.source_summary
     payload = json.loads(summary_path.read_text(encoding="utf-8"))
     by_name = {

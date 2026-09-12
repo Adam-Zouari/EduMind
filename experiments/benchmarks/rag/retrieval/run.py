@@ -9,7 +9,7 @@ from edumind.rag.contracts import PRODUCTION_EMBEDDING_MODEL
 from experiments.benchmarks.common.arguments import load_candidates, parser, resolved_candidates
 from experiments.benchmarks.common.contracts import BenchmarkPlan
 from experiments.benchmarks.common.decisions import load_engineer_decision
-from experiments.benchmarks.common.datasets import load_manifest
+from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
 from experiments.benchmarks.rag.evaluation import RETRIEVAL_DIRECTIONS, evaluate
@@ -31,15 +31,30 @@ manifest_path = arguments.manifest or PROJECT_ROOT / (
     else f"data/benchmarks/rag/rag-selection-{'dev' if arguments.profile == 'standard' else 'validation'}.json"
 )
 manifest = load_manifest(manifest_path)
+require_manifest_split(
+    manifest,
+    arguments.profile,
+    {
+        "smoke": {"smoke"},
+        "standard": {"dev", "development"},
+        "full": {"validation"},
+    }[arguments.profile],
+)
 if arguments.shortlist:
     candidates = resolved_candidates(
-        directory / "candidates.yaml", arguments.profile, arguments.shortlist
+        directory / "candidates.yaml",
+        arguments.profile,
+        arguments.shortlist,
+        expected_source=("rag", "retrieval", "standard"),
+        maximum=3,
     )
 else:
     methods = load_candidates(directory / "candidates.yaml", arguments.profile)
     pairs = (
         load_engineer_decision(
-            arguments.embedding_selection, maximum=3
+            arguments.embedding_selection,
+            maximum=3,
+            expected_source=("rag", "chunking-embedding", "full"),
         ).selected_candidates
         if arguments.embedding_selection
         else (f"token-256-32|{PRODUCTION_EMBEDDING_MODEL}",)

@@ -40,11 +40,16 @@ def main() -> int:
     parser.add_argument("--no-mlflow", action="store_true")
     arguments = parser.parse_args()
     database_decision = load_engineer_decision(
-        arguments.database_selection, minimum=2, maximum=3
+        arguments.database_selection,
+        minimum=2,
+        maximum=3,
+        expected_source=("vectordb-server-v4", "dense-ann", "full"),
     )
     database_payload = _payload(database_decision.source_summary)
-    embedding = _single_selection(arguments.embedding_selection)
-    retrieval = _single_selection(arguments.retrieval_selection)
+    embedding = _single_selection(
+        arguments.embedding_selection, "chunking-embedding"
+    )
+    retrieval = _single_selection(arguments.retrieval_selection, "retrieval")
     candidates = database_decision.selected_candidates
     chunker_name, embedding_name = embedding.split("|", 1)
     manifest = load_manifest(PROJECT_ROOT / "data/benchmarks/rag/rag-selection-validation.json")
@@ -198,8 +203,12 @@ def _payload(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _single_selection(path: Path) -> str:
-    return load_engineer_decision(path, exact=1).selected_candidates[0]
+def _single_selection(path: Path, stage: str) -> str:
+    return load_engineer_decision(
+        path,
+        exact=1,
+        expected_source=("rag", stage, "full"),
+    ).selected_candidates[0]
 
 
 def _config(payload, candidate, dimension):

@@ -26,6 +26,7 @@ def load_engineer_decision(
     minimum: int = 1,
     maximum: int | None = None,
     exact: int | None = None,
+    expected_source: tuple[str, str, str] | None = None,
 ) -> EngineerDecision:
     """Load a decision and prove that it references complete comparable evidence."""
 
@@ -47,11 +48,28 @@ def load_engineer_decision(
         raise ValueError(
             f"{source_summary} is incomplete; an engineer may select only from a complete run"
         )
-    profile = summary.get("plan", {}).get("profile")
+    plan = summary.get("plan")
+    if not isinstance(plan, dict):
+        raise ValueError(f"{source_summary} has no valid benchmark plan")
+    suite = str(plan.get("suite", ""))
+    stage = str(plan.get("stage", ""))
+    profile = str(plan.get("profile", ""))
     if profile not in {"standard", "full"}:
         raise ValueError(
             f"{source_summary} uses profile {profile!r}; smoke runs cannot support selection"
         )
+    if expected_source is not None:
+        fields = ("suite", "stage", "profile")
+        observed_source = (suite, stage, profile)
+        for field, observed, expected in zip(
+            fields, observed_source, expected_source, strict=True
+        ):
+            if observed == expected:
+                continue
+            raise ValueError(
+                f"{source_summary} must select from {field} {expected!r}, "
+                f"received {observed!r}"
+            )
 
     source_run_id = payload.get("source_run_id")
     if not isinstance(source_run_id, str) or source_run_id != summary.get("run_id"):
@@ -97,10 +115,10 @@ def load_engineer_decision(
         raise ValueError(f"{path} selected_date must use YYYY-MM-DD") from exc
 
     return EngineerDecision(
-        source_summary,
-        source_run_id,
-        tuple(selected),
-        selected_by.strip(),
-        selected_date,
-        reason.strip(),
+        source_summary=source_summary,
+        source_run_id=source_run_id,
+        selected_candidates=tuple(selected),
+        selected_by=selected_by.strip(),
+        selected_date=selected_date,
+        reason=reason.strip(),
     )

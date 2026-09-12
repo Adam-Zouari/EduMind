@@ -6,11 +6,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
 from edumind.common.paths import PROJECT_ROOT
 from edumind.common.artifacts import atomic_write_json
-from edumind.rag.contracts import PRODUCTION_EMBEDDING_MODEL
 from experiments.benchmarks.common.arguments import parser, resolved_candidates
 from experiments.benchmarks.common.contracts import BenchmarkPlan
 from experiments.benchmarks.common.decisions import load_engineer_decision
-from experiments.benchmarks.common.datasets import load_manifest
+from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
 from experiments.benchmarks.rag.evaluation import RETRIEVAL_QUALITY_DIRECTIONS, build_index
@@ -43,15 +42,34 @@ manifest_path = arguments.manifest or PROJECT_ROOT / (
     else f"data/benchmarks/rag/rag-selection-{'validation' if arguments.profile == 'standard' else 'locked-test'}.json"
 )
 manifest = load_manifest(manifest_path)
-candidates = resolved_candidates(directory / "candidates.yaml", arguments.profile, arguments.shortlist)
+require_manifest_split(
+    manifest,
+    arguments.profile,
+    {
+        "smoke": "smoke",
+        "standard": "validation",
+        "full": "locked-test",
+    }[arguments.profile],
+)
+candidates = resolved_candidates(
+    directory / "candidates.yaml",
+    arguments.profile,
+    arguments.shortlist,
+    expected_source=("rag", "final", "standard"),
+    exact=1 if arguments.profile == "full" else None,
+)
 if arguments.shortlist is None and (arguments.retrieval_selection or arguments.generation_selection):
     if not arguments.retrieval_selection or not arguments.generation_selection:
         raise ValueError("Provide both --retrieval-selection and --generation-selection")
     retrievals = load_engineer_decision(
-        arguments.retrieval_selection, maximum=3
+        arguments.retrieval_selection,
+        maximum=3,
+        expected_source=("rag", "retrieval", "full"),
     ).selected_candidates
     generators = load_engineer_decision(
-        arguments.generation_selection, maximum=3
+        arguments.generation_selection,
+        maximum=3,
+        expected_source=("rag", "generation", "full"),
     ).selected_candidates
     candidates = tuple(
         f"{retrieval}@@{generator}@@top_k={top_k}"
@@ -95,11 +113,7 @@ plan = BenchmarkPlan(
 )
 
 def evaluate(candidate):
-    if "@@" in candidate:
-        chunker, embedding, retrieval, generator, top_k_value = candidate.split("@@", 4)
-    else:
-        retrieval, generator, top_k_value = candidate.split("|", 2)
-        chunker, embedding = "token-256-32", PRODUCTION_EMBEDDING_MODEL
+    chunker, embedding, retrieval, generator, top_k_value = candidate.split("@@", 4)
     pair = (chunker, embedding)
     if pair not in indexes:
         indexes[pair] = build_index(

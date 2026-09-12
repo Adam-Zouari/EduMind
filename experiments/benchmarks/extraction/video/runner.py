@@ -14,7 +14,7 @@ import numpy as np
 from edumind.common.artifacts import sha256_file
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.contracts import BenchmarkPlan, SampleResult
-from experiments.benchmarks.common.datasets import load_manifest
+from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
 from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.extraction.audio.adapters import ASR_PROFILES
@@ -78,11 +78,7 @@ def main() -> int:
         "full": "validation",
         "locked": "locked-test",
     }[arguments.profile]
-    if manifest.split != expected_split:
-        raise ValueError(
-            f"Video {arguments.profile} requires split {expected_split}, "
-            f"received {manifest.split}"
-        )
+    require_manifest_split(manifest, arguments.profile, expected_split)
     items = [dict(item) for item in manifest.samples if item.get("kind") == "video"]
     _validate_manifest(items, arguments.profile)
     protocol_path = arguments.protocol_lock or (
@@ -503,10 +499,13 @@ def _candidates(arguments, protocol_threshold: float):
             arguments.shortlist,
             exact=1 if arguments.profile == "locked" else None,
             maximum=1 if arguments.profile == "locked" else 3,
-        )
-        _require_decision_stage(
-            decision,
-            "video-development" if arguments.profile == "full" else "video-validation",
+            expected_source=(
+                "extraction",
+                "video-development"
+                if arguments.profile == "full"
+                else "video-validation",
+                "standard" if arguments.profile == "full" else "full",
+            ),
         )
         for candidate in decision.selected_candidates:
             parse_candidate(candidate)
@@ -522,8 +521,11 @@ def _candidates(arguments, protocol_threshold: float):
     if arguments.phase in {"hybrid", "all"} and arguments.profile != "smoke":
         if arguments.scene_selection is None:
             raise ValueError("Authoritative hybrid video runs require --scene-selection")
-        scene_decision = load_engineer_decision(arguments.scene_selection, exact=1)
-        _require_decision_stage(scene_decision, "video-development-scene")
+        scene_decision = load_engineer_decision(
+            arguments.scene_selection,
+            exact=1,
+            expected_source=("extraction", "video-development-scene", "standard"),
+        )
         selected = scene_decision.selected_candidates[0]
         parsed = parse_candidate(selected)
         if parsed.strategy != "scene":
@@ -550,9 +552,13 @@ def _selected_audio(arguments):
         return arguments.audio_candidate, path
     if arguments.audio_selection is None:
         raise ValueError("Frozen ASR creation requires --audio-selection")
-    decision = load_engineer_decision(arguments.audio_selection, exact=1)
-    if arguments.profile != "smoke":
-        _require_decision_stage(decision, "audio-validation")
+    decision = load_engineer_decision(
+        arguments.audio_selection,
+        exact=1,
+        expected_source=("extraction", "audio-validation", "full")
+        if arguments.profile != "smoke"
+        else None,
+    )
     return decision.selected_candidates[0], arguments.audio_selection
 
 
@@ -563,9 +569,17 @@ def _selected_image(arguments):
         return arguments.image_candidate, None
     if arguments.document_selection is None:
         raise ValueError("Visual video execution requires --document-selection")
-    decision = load_engineer_decision(arguments.document_selection, exact=1)
-    if arguments.profile != "smoke":
-        _require_decision_stage(decision, "document-architecture-validation-image")
+    decision = load_engineer_decision(
+        arguments.document_selection,
+        exact=1,
+        expected_source=(
+            "extraction",
+            "document-architecture-validation-image",
+            "full",
+        )
+        if arguments.profile != "smoke"
+        else None,
+    )
     return decision.selected_candidates[0], arguments.document_selection
 
 
@@ -643,10 +657,3 @@ def _manifest(profile: str) -> Path:
         profile
     ]
     return PROJECT_ROOT / f"data/benchmarks/extraction/video-{split}.json"
-def _require_decision_stage(decision, expected_stage: str) -> None:
-    summary = json.loads(decision.source_summary.read_text(encoding="utf-8"))
-    observed = str(summary.get("plan", {}).get("stage", ""))
-    if observed != expected_stage:
-        raise ValueError(
-            f"{decision.source_summary} must select from {expected_stage}, received {observed}"
-        )

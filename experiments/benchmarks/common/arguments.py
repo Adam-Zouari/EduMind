@@ -52,11 +52,26 @@ def _string_list(value: object) -> bool:
     )
 
 
-def resolved_candidates(path: Path, profile: str, shortlist: Path | None) -> tuple[str, ...]:
+def resolved_candidates(
+    path: Path,
+    profile: str,
+    shortlist: Path | None,
+    *,
+    expected_source: tuple[str, str, str] | None = None,
+    minimum: int = 1,
+    maximum: int | None = None,
+    exact: int | None = None,
+) -> tuple[str, ...]:
     if shortlist is None:
         if profile == "full":
             raise ValueError(
                 "Full profiles run engineer-selected finalists only; provide --shortlist DECISION_JSON"
             )
         return load_candidates(path, profile)
-    return load_engineer_decision(shortlist).selected_candidates
+    return load_engineer_decision(
+        shortlist,
+        expected_source=expected_source,
+        minimum=minimum,
+        maximum=maximum,
+        exact=exact,
+    ).selected_candidates

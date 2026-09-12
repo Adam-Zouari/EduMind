@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.arguments import parser, resolved_candidates
 from experiments.benchmarks.common.contracts import BenchmarkPlan
-from experiments.benchmarks.common.datasets import load_manifest
+from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
 from experiments.benchmarks.rag.generation.evaluate import GENERATION_DIRECTIONS, evaluate_candidate
@@ -27,7 +27,22 @@ manifest_path = arguments.manifest or PROJECT_ROOT / (
     else f"data/benchmarks/rag/rag-selection-{'dev' if arguments.profile == 'standard' else 'validation'}.json"
 )
 manifest = load_manifest(manifest_path)
-candidates = resolved_candidates(directory / "candidates.yaml", arguments.profile, arguments.shortlist)
+require_manifest_split(
+    manifest,
+    arguments.profile,
+    {
+        "smoke": {"smoke"},
+        "standard": {"dev", "development"},
+        "full": {"validation"},
+    }[arguments.profile],
+)
+candidates = resolved_candidates(
+    directory / "candidates.yaml",
+    arguments.profile,
+    arguments.shortlist,
+    expected_source=("rag", "generation", "standard"),
+    maximum=3,
+)
 model_lock = load_selected_model_lock(
     PROJECT_ROOT / "data/benchmarks/models/selected.json"
 )

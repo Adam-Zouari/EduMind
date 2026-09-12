@@ -79,6 +79,21 @@ def load_manifest(path: str | Path, *, verify_checksum: bool = True) -> DatasetM
     return manifest
 
 
+def require_manifest_split(
+    manifest: DatasetManifest,
+    profile: str,
+    expected: str | Sequence[str],
+) -> None:
+    """Reject a manifest that does not belong to the requested benchmark profile."""
+
+    allowed = {expected} if isinstance(expected, str) else set(expected)
+    if manifest.split not in allowed:
+        raise DatasetValidationError(
+            f"Profile {profile} requires split {sorted(allowed)}, "
+            f"received {manifest.split!r}"
+        )
+
+
 def manifest_content_checksum(samples: Sequence[Mapping[str, object]]) -> str:
     import hashlib
 

@@ -12,7 +12,11 @@ from edumind.common.artifacts import sha256_file, stable_hash
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.arguments import load_candidates
 from experiments.benchmarks.common.contracts import BenchmarkPlan, SampleResult
-from experiments.benchmarks.common.datasets import assert_no_split_leakage, load_manifest
+from experiments.benchmarks.common.datasets import (
+    assert_no_split_leakage,
+    load_manifest,
+    require_manifest_split,
+)
 from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.extraction.audio.adapters import ASR_PROFILES
@@ -96,10 +100,7 @@ def run(
         profile, "smoke"
     )
     _validate_reliability_split_isolation(reliability_manifest.samples)
-    if speech_manifest.split != split:
-        raise ValueError(
-            f"ASR {profile} requires the {split} speech split, received {speech_manifest.split}"
-        )
+    require_manifest_split(speech_manifest, profile, split)
     controls = [
         item
         for item in reliability_manifest.samples
@@ -519,7 +520,15 @@ def _candidates(path: Path, profile: str, shortlist: Path | None) -> tuple[str, 
         return load_candidates(path, profile)
     if shortlist is None:
         raise ValueError(f"ASR {profile} requires --shortlist DECISION_JSON")
-    return load_engineer_decision(shortlist, exact=1 if profile == "locked" else None).selected_candidates
+    return load_engineer_decision(
+        shortlist,
+        exact=1 if profile == "locked" else None,
+        expected_source=(
+            "extraction",
+            "audio-development" if profile == "full" else "audio-validation",
+            "standard" if profile == "full" else "full",
+        ),
+    ).selected_candidates
 
 
 def _speech_manifest(profile: str) -> Path:

@@ -163,8 +163,10 @@ def _document_selection(
         raise ValueError(
             f"Document comparison requires a decision for {expected_stage}"
         )
-    decision = load_engineer_decision(path, exact=exact, maximum=maximum)
-    summary = json.loads(decision.source_summary.read_text(encoding="utf-8"))
-    if summary.get("plan", {}).get("stage") != expected_stage:
-        raise ValueError(f"{path} must select from a completed {expected_stage} run")
+    decision = load_engineer_decision(
+        path,
+        exact=exact,
+        maximum=maximum,
+        expected_source=("extraction", expected_stage, "standard"),
+    )
     return decision.selected_candidates

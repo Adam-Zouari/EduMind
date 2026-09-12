@@ -8,6 +8,7 @@ from experiments.benchmarks.common.datasets import (
     DatasetValidationError,
     assert_no_split_leakage,
     load_manifest,
+    require_manifest_split,
 )
 from experiments.benchmarks.preparation.fixtures import _write_minimal_docx
 from edumind.common.paths import PROJECT_ROOT
@@ -26,6 +27,13 @@ def test_manifest_checksum_tampering_is_detected(tmp_path) -> None:
     path.write_text(content, encoding="utf-8")
     with pytest.raises(DatasetValidationError, match="checksum"):
         load_manifest(path)
+
+
+def test_manifest_split_must_match_the_requested_profile() -> None:
+    manifest = load_manifest(PROJECT_ROOT / "data/benchmarks/rag/smoke.json")
+    require_manifest_split(manifest, "smoke", "smoke")
+    with pytest.raises(DatasetValidationError, match="Profile standard requires split"):
+        require_manifest_split(manifest, "standard", {"dev", "development"})
 
 
 def test_document_level_leakage_is_rejected() -> None:

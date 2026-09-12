@@ -200,8 +200,24 @@ def test_engineer_decision_requires_a_complete_non_smoke_run(tmp_path: Path) -> 
         encoding="utf-8",
     )
 
-    decision = load_engineer_decision(decision_path, exact=1)
+    decision = load_engineer_decision(
+        decision_path,
+        exact=1,
+        expected_source=("test-suite", "completion", "standard"),
+    )
     assert decision.selected_candidates == ("chosen",)
+    with pytest.raises(ValueError, match="stage 'other'"):
+        load_engineer_decision(
+            decision_path, expected_source=("test-suite", "other", "standard")
+        )
+    with pytest.raises(ValueError, match="suite 'other'"):
+        load_engineer_decision(
+            decision_path, expected_source=("other", "completion", "standard")
+        )
+    with pytest.raises(ValueError, match="profile 'full'"):
+        load_engineer_decision(
+            decision_path, expected_source=("test-suite", "completion", "full")
+        )
 
     summary_path = result.artifact_directory / "summary.json"
     summary = json.loads(summary_path.read_text(encoding="utf-8"))

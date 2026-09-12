@@ -39,7 +39,13 @@ def main() -> int:
     )
     parser.add_argument("--no-mlflow", action="store_true")
     arguments = parser.parse_args()
-    candidates = resolved_candidates(DIRECTORY / "candidates.yaml", arguments.profile, arguments.shortlist)
+    candidates = resolved_candidates(
+        DIRECTORY / "candidates.yaml",
+        arguments.profile,
+        arguments.shortlist,
+        expected_source=("vectordb-server-v4", "dense-ann", "standard"),
+        maximum=3,
+    )
     if arguments.profile == "full" and len(candidates) > 3:
         raise ValueError("Select at most three vector-database finalists before full")
     revisions = image_lock()
@@ -223,7 +229,11 @@ def _real_corpus(selection_path: Path) -> Corpus:
     from experiments.benchmarks.preparation.models import load_selected_model_lock
     from experiments.benchmarks.rag.evaluation import build_index
 
-    selected = load_engineer_decision(selection_path, exact=1).selected_candidates[0]
+    selected = load_engineer_decision(
+        selection_path,
+        exact=1,
+        expected_source=("rag", "chunking-embedding", "full"),
+    ).selected_candidates[0]
     chunker, embedding = selected.split("|", 1)
     manifest = load_manifest(PROJECT_ROOT / "data/benchmarks/rag/rag-selection-validation.json")
     model_lock = load_selected_model_lock(

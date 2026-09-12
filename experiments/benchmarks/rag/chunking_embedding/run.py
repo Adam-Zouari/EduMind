@@ -8,7 +8,7 @@ from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.arguments import load_candidates, parser
 from experiments.benchmarks.common.contracts import BenchmarkPlan
 from experiments.benchmarks.common.decisions import load_engineer_decision
-from experiments.benchmarks.common.datasets import load_manifest
+from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
 from experiments.benchmarks.rag.chunking_embedding.benchmark import (
@@ -31,16 +31,11 @@ manifest_path = arguments.manifest or PROJECT_ROOT / (
     else f"data/benchmarks/rag/rag-selection-{'dev' if arguments.profile == 'standard' else 'validation'}.json"
 )
 manifest = load_manifest(manifest_path)
-expected_split = {
+require_manifest_split(manifest, arguments.profile, {
     "smoke": {"smoke"},
     "standard": {"dev", "development"},
     "full": {"validation"},
-}[arguments.profile]
-if manifest.split not in expected_split:
-    raise ValueError(
-        f"Profile {arguments.profile} requires split {sorted(expected_split)}, "
-        f"received {manifest.split!r}"
-    )
+}[arguments.profile])
 candidate_path = directory / "candidates.yaml"
 declared = load_candidates(candidate_path, "standard")
 if arguments.profile == "standard":
@@ -50,16 +45,11 @@ if arguments.profile == "standard":
 elif arguments.profile == "full":
     if arguments.shortlist is None:
         raise ValueError("Full chunking/embedding requires --shortlist DECISION_JSON")
-    decision = load_engineer_decision(arguments.shortlist, maximum=3)
-    source_summary = json.loads(decision.source_summary.read_text(encoding="utf-8"))
-    source_plan = source_summary.get("plan", {})
-    if source_plan.get("stage") != "chunking-embedding" or source_plan.get(
-        "profile"
-    ) != "standard":
-        raise ValueError(
-            "Full chunking/embedding requires finalists selected from a complete "
-            "standard chunking-embedding run"
-        )
+    decision = load_engineer_decision(
+        arguments.shortlist,
+        maximum=3,
+        expected_source=("rag", "chunking-embedding", "standard"),
+    )
     candidates = decision.selected_candidates
     unknown = sorted(set(candidates) - set(declared))
     if unknown:
