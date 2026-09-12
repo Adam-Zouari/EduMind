@@ -19,6 +19,7 @@ from experiments.benchmarks.preparation.fixtures import prepare_smoke_fixtures
 from experiments.benchmarks.preparation.evaluators import prepare_evaluators
 from experiments.benchmarks.preparation.models import (
     DOCLING_BENCHMARK_COMPONENTS,
+    EMBEDDING_COMPONENTS,
     EXTRACTION_COMPONENTS,
     MODEL_COMPONENTS,
     RAG_COMPONENTS,
@@ -36,6 +37,7 @@ def main() -> int:
         nargs="?",
         choices=(
             "app-models",
+            "embedding-models",
             "rag-models",
             "extraction-models",
             "all-models",
@@ -107,8 +109,14 @@ def main() -> int:
         outputs = prepare_public_assets(
             arguments.plan, arguments.output or root / "data/benchmarks/raw"
         )
-    elif arguments.target in {"rag-models", "extraction-models", "all-models"}:
+    elif arguments.target in {
+        "embedding-models",
+        "rag-models",
+        "extraction-models",
+        "all-models",
+    }:
         components = {
+            "embedding-models": EMBEDDING_COMPONENTS,
             "rag-models": RAG_COMPONENTS,
             "extraction-models": EXTRACTION_COMPONENTS,
             "all-models": MODEL_COMPONENTS,

@@ -34,19 +34,22 @@ class EmbeddingSpec:
         return stable_hash(asdict(self))
 
 
+PRODUCTION_EMBEDDING_MODEL = "Alibaba-NLP/gte-modernbert-base"
+
+
 EMBEDDING_SPECS: dict[str, EmbeddingSpec] = {
-    "sentence-transformers/all-MiniLM-L6-v2": EmbeddingSpec(
-        "sentence-transformers/all-MiniLM-L6-v2",
+    PRODUCTION_EMBEDDING_MODEL: EmbeddingSpec(
+        PRODUCTION_EMBEDDING_MODEL,
         "from-lock",
-        "sentence-transformers/all-MiniLM-L6-v2",
+        PRODUCTION_EMBEDDING_MODEL,
         None,
         "",
         "",
         True,
-        384,
+        768,
         "cosine",
-        256,
-        "mean",
+        8192,
+        "cls",
     ),
 }
 

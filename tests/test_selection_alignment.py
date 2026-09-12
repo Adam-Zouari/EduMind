@@ -5,10 +5,16 @@ from pathlib import Path
 
 import pytest
 
+from edumind.common.config import ConfigurationError, load_settings
+from edumind.extraction.pipeline import LOCK_CANDIDATE_BY_ENGINE
+from edumind.rag.contracts import EMBEDDING_SPECS, PRODUCTION_EMBEDDING_MODEL
 from experiments.benchmarks.common.arguments import load_candidates
 from experiments.benchmarks.common.selection import included_candidates, selection_entries
 from experiments.benchmarks.preparation.models import (
+    APP_CANDIDATES,
     DOCLING_BENCHMARK_COMPONENTS,
+    EMBEDDING_COMPONENTS,
+    EMBEDDING_SNAPSHOT_IGNORE_PATTERNS,
     EXTRACTION_COMPONENTS,
     MODEL_COMPONENTS,
     RAG_COMPONENTS,
@@ -21,10 +27,6 @@ from experiments.benchmarks.rag.chunking_embedding.profiles import (
     EXPERIMENTAL_EMBEDDING_SPECS,
 )
 from experiments.benchmarks.rag.generation.models import GENERATOR_PROFILES
-from edumind.rag.contracts import EMBEDDING_SPECS
-from edumind.extraction.pipeline import LOCK_CANDIDATE_BY_ENGINE
-
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -39,11 +41,27 @@ def test_selection_history_counts_and_keys_are_preserved() -> None:
         "include": 29,
         "exclude": 37,
     }
+    gte = next(
+        row
+        for row in rows
+        if row["candidate"] == "Alibaba-NLP/gte-modernbert-base"
+    )
+    assert gte["purpose"] == "control"
+    assert gte["decision"] == "include"
+    assert gte["approx_params_b"] == "0.149"
+    assert gte["public_benchmark"] == "BEIR (15)"
+    assert gte["public_metric"] == "Avg nDCG@10"
+    assert gte["public_score"] == "55.33"
+    assert gte["candidate_revision"] == (
+        "e7f32e3c00f91d699e8c43b53106206bcc72bb22"
+    )
+    assert gte["license"] == "Apache-2.0"
+    assert gte["reviewed_date"] == "2026-09-12"
 
 
 def test_executable_model_registries_match_approved_selection() -> None:
     approved_embeddings = set(included_candidates("embedding"))
-    assert set(EMBEDDING_SPECS) == {"sentence-transformers/all-MiniLM-L6-v2"}
+    assert set(EMBEDDING_SPECS) == {PRODUCTION_EMBEDDING_MODEL}
     assert set(EMBEDDING_SPECS) | set(EXPERIMENTAL_EMBEDDING_SPECS) == approved_embeddings
     assert all(
         spec.revision == "from-lock"
@@ -61,6 +79,50 @@ def test_executable_model_registries_match_approved_selection() -> None:
     assert {model for model, _ in GENERATOR_PROFILES.values()} == set(
         included_candidates("generator")
     )
+
+
+def test_gte_production_contract_and_fixed_chunking_tokenizer() -> None:
+    spec = EMBEDDING_SPECS[PRODUCTION_EMBEDDING_MODEL]
+    assert spec.revision == "from-lock"
+    assert spec.tokenizer == PRODUCTION_EMBEDDING_MODEL
+    assert spec.dimension == 768
+    assert spec.maximum_length == 8192
+    assert spec.pooling == "cls"
+    assert spec.similarity == "cosine"
+    assert spec.normalize is True
+    assert spec.query_prefix == spec.document_prefix == ""
+    assert spec.trust_remote_code is False
+
+    settings = load_settings(ROOT / "config/base.yaml")
+    assert settings.embedding.model_name == PRODUCTION_EMBEDDING_MODEL
+    assert settings.embedding.dimension == spec.dimension
+    assert settings.embedding.maximum_length == spec.maximum_length
+    assert settings.chunking.tokenizer == "cl100k_base"
+    assert PRODUCTION_EMBEDDING_MODEL in APP_CANDIDATES
+
+    with pytest.raises(ConfigurationError, match="frozen 'cl100k_base'"):
+        load_settings(
+            ROOT / "config/base.yaml",
+            overrides={"chunking": {"tokenizer": "embedding"}},
+        )
+
+
+def test_embedding_documentation_matches_executable_registry() -> None:
+    selected = set(included_candidates("embedding"))
+    model_selection = (ROOT / "docs/benchmarks/model-selection.md").read_text(
+        encoding="utf-8"
+    )
+    methodology = (ROOT / "docs/benchmarks/methodology.md").read_text(
+        encoding="utf-8"
+    )
+    metrics = (ROOT / "docs/benchmarks/metrics.md").read_text(encoding="utf-8")
+
+    assert all(candidate in model_selection for candidate in selected)
+    assert PRODUCTION_EMBEDDING_MODEL in model_selection
+    assert "GTE ModernBERT base" in methodology
+    assert "tiktoken:cl100k_base" in methodology
+    assert "tiktoken:cl100k_base" in metrics
+    assert "Tokenizers are controls, not candidates" in model_selection
 
 
 def test_reranker_audio_and_document_registries_are_exact() -> None:
@@ -109,16 +171,25 @@ def test_preparation_plan_contains_only_approved_models_and_docling() -> None:
     }
     selected = selected_model_names(MODEL_COMPONENTS)
     assert set(selected) == approved
+    assert set(selected_model_names(EMBEDDING_COMPONENTS)) == set(
+        included_candidates("embedding")
+    )
     assert set(selected_model_names(RAG_COMPONENTS)) <= approved
     assert set(selected_model_names(EXTRACTION_COMPONENTS)) <= approved
     plan = preparation_plan(selected, DOCLING_BENCHMARK_COMPONENTS)
     assert {str(item["candidate"]) for item in plan} == approved | {"docling-standard"}
 
 
+def test_embedding_preparation_excludes_unused_export_formats() -> None:
+    assert "onnx/**" in EMBEDDING_SNAPSHOT_IGNORE_PATTERNS
+    assert "openvino/**" in EMBEDDING_SNAPSHOT_IGNORE_PATTERNS
+    assert "*.gguf" in EMBEDDING_SNAPSHOT_IGNORE_PATTERNS
+
+
 def test_stage_model_lock_ignores_unrequested_missing_models(tmp_path) -> None:
     entries = {entry.candidate: entry for entry in selection_entries()}
     requested = entries["openai/whisper-small.en"]
-    unrelated = entries["sentence-transformers/all-MiniLM-L6-v2"]
+    unrelated = entries[PRODUCTION_EMBEDDING_MODEL]
     requested_directory = tmp_path / "whisper"
     requested_directory.mkdir()
 

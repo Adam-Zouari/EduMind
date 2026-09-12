@@ -5,6 +5,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
 from edumind.common.paths import PROJECT_ROOT
+from edumind.rag.contracts import PRODUCTION_EMBEDDING_MODEL
 from experiments.benchmarks.common.arguments import load_candidates, parser, resolved_candidates
 from experiments.benchmarks.common.contracts import BenchmarkPlan
 from experiments.benchmarks.common.decisions import load_engineer_decision
@@ -41,7 +42,7 @@ else:
             arguments.embedding_selection, maximum=3
         ).selected_candidates
         if arguments.embedding_selection
-        else ("token-256-32|sentence-transformers/all-MiniLM-L6-v2",)
+        else (f"token-256-32|{PRODUCTION_EMBEDDING_MODEL}",)
     )
     candidates = tuple(
         f"{pair.replace('|', '@@', 1)}@@{method}" for pair in pairs for method in methods

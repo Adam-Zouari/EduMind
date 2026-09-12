@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
-from edumind.rag.contracts import EmbeddingSpec, embedding_spec as production_embedding_spec
+from edumind.rag.contracts import (
+    EMBEDDING_SPECS,
+    EmbeddingSpec,
+    embedding_spec as production_embedding_spec,
+)
 
 EXPERIMENTAL_EMBEDDING_SPECS: dict[str, EmbeddingSpec] = {
     "Snowflake/snowflake-arctic-embed-m-v2.0": EmbeddingSpec(
@@ -48,6 +52,7 @@ EXPERIMENTAL_EMBEDDING_SPECS: dict[str, EmbeddingSpec] = {
         "cosine",
         32768,
         "last-token",
+        interface="query-document",
     ),
     "Qwen/Qwen3-Embedding-0.6B": EmbeddingSpec(
         "Qwen/Qwen3-Embedding-0.6B",
@@ -88,6 +93,7 @@ EXPERIMENTAL_EMBEDDING_SPECS: dict[str, EmbeddingSpec] = {
         "cosine",
         32768,
         "last-token",
+        interface="query-document",
     ),
     "Qwen/Qwen3-Embedding-4B": EmbeddingSpec(
         "Qwen/Qwen3-Embedding-4B",
@@ -113,7 +119,7 @@ def embedding_spec(
     document_device: str = "cpu",
     query_device: str = "cpu",
 ) -> EmbeddingSpec:
-    if name == "sentence-transformers/all-MiniLM-L6-v2":
+    if name in EMBEDDING_SPECS:
         return production_embedding_spec(
             name,
             revision=revision,

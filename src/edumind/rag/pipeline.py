@@ -17,7 +17,7 @@ from .embedder import Embedder
 from .errors import RAGConfigurationError
 from .llm_generator import HuggingFaceGenerator
 from .text_chunker import TextChunker, TokenChunkingStrategy
-from .tokenizers import LazyHuggingFaceOffsetTokenizer, OffsetTokenizer, TiktokenOffsetTokenizer
+from .tokenizers import OffsetTokenizer, TiktokenOffsetTokenizer
 from .types import AnswerResult, IngestDocument, IngestReport, RetrievalHit, VectorStoreSettings
 from .vector_store import VectorStore
 
@@ -65,14 +65,8 @@ class RAGPipeline:
                 "Embedding configuration violates the audited model contract for "
                 f"{self.embedding_spec.model_name}: {', '.join(mismatches)}"
             )
-        self.tokenizer = tokenizer or (
-            LazyHuggingFaceOffsetTokenizer(
-                self.embedding_spec.tokenizer,
-                self.embedding_spec.revision,
-                self.embedding_spec.local_path,
-            )
-            if self.settings.chunking.tokenizer == "embedding"
-            else TiktokenOffsetTokenizer(self.settings.chunking.tokenizer)
+        self.tokenizer = tokenizer or TiktokenOffsetTokenizer(
+            self.settings.chunking.tokenizer
         )
         self.embedder = embedder or Embedder(
             spec=self.embedding_spec, batch_size=self.settings.embedding.batch_size

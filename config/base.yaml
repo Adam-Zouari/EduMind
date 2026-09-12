@@ -8,22 +8,22 @@ extraction:
   maximum_upload_bytes: 104857600
 
 embedding:
-  model_name: sentence-transformers/all-MiniLM-L6-v2
-  dimension: 384
+  model_name: Alibaba-NLP/gte-modernbert-base
+  dimension: 768
   indexing_device: cpu
   query_device: cpu
   query_prefix: ""
   document_prefix: ""
   normalize: true
   similarity: cosine
-  maximum_length: 256
+  maximum_length: 8192
   batch_size: 32
 
 chunking:
   strategy: token
   chunk_size: 256
   chunk_overlap: 32
-  tokenizer: embedding
+  tokenizer: cl100k_base
 
 vector:
   backend: chroma-server

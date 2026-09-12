@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import ClassVar
 
 from edumind.common.artifacts import stable_hash
 from edumind.rag.contracts import ChunkingStrategy
@@ -30,6 +31,8 @@ class SentenceChunkingStrategy:
         )
 
     def split(self, text: str) -> list[tuple[int, int, int]]:
+        if not text.strip():
+            return []
         sentence_spans = [
             (match.start(), match.end()) for match in re.finditer(r"[^.!?\n]+(?:[.!?]+|\n|$)", text)
         ]
@@ -40,7 +43,9 @@ class SentenceChunkingStrategy:
         for index in range(0, len(sentence_spans), step):
             selected = sentence_spans[index : index + self.sentences]
             start, end = selected[0][0], selected[-1][1]
-            chunks.append((start, end, self.tokenizer.count(text[start:end])))
+            tokens = self.tokenizer.count(text[start:end])
+            if tokens:
+                chunks.append((start, end, tokens))
             if index + self.sentences >= len(sentence_spans):
                 break
         return chunks
@@ -52,10 +57,21 @@ class RecursiveCharacterChunkingStrategy:
     size: int = 1000
     overlap: int = 200
     name: str = "recursive-character"
+    separators: ClassVar[tuple[str, ...]] = ("\n\n", "\n", ". ", " ")
+    minimum_boundary_ratio: ClassVar[float] = 0.5
 
     @property
     def fingerprint(self) -> str:
-        return stable_hash({"name": self.name, "size": self.size, "overlap": self.overlap})
+        return stable_hash(
+            {
+                "name": self.name,
+                "tokenizer": self.tokenizer.name,
+                "size": self.size,
+                "overlap": self.overlap,
+                "separators": self.separators,
+                "minimum_boundary_ratio": self.minimum_boundary_ratio,
+            }
+        )
 
     def split(self, text: str) -> list[tuple[int, int, int]]:
         if not text.strip():
@@ -66,13 +82,14 @@ class RecursiveCharacterChunkingStrategy:
             target = min(start + self.size, len(text))
             end = target
             if target < len(text):
-                boundaries = [
-                    text.rfind(separator, start, target) for separator in ("\n\n", "\n", ". ", " ")
-                ]
-                boundary = max(boundaries)
-                if boundary > start + self.size // 2:
-                    end = boundary + 1
-            chunks.append((start, end, self.tokenizer.count(text[start:end])))
+                for separator in self.separators:
+                    boundary = text.rfind(separator, start, target)
+                    if boundary > start + self.size * self.minimum_boundary_ratio:
+                        end = boundary + len(separator)
+                        break
+            tokens = self.tokenizer.count(text[start:end])
+            if tokens:
+                chunks.append((start, end, tokens))
             if end >= len(text):
                 break
             start = max(start + 1, end - self.overlap)
@@ -88,11 +105,13 @@ class SemanticChunkingStrategy:
         self,
         tokenizer: OffsetTokenizer,
         embed_sentences,
+        boundary_embedding_fingerprint: str,
         maximum_tokens: int = 384,
         percentile: float = 0.2,
     ) -> None:
         self.tokenizer = tokenizer
         self.embed_sentences = embed_sentences
+        self.boundary_embedding_fingerprint = boundary_embedding_fingerprint
         self.maximum_tokens = maximum_tokens
         self.percentile = percentile
 
@@ -102,6 +121,7 @@ class SemanticChunkingStrategy:
             {
                 "name": self.name,
                 "tokenizer": self.tokenizer.name,
+                "boundary_embedding_fingerprint": self.boundary_embedding_fingerprint,
                 "maximum_tokens": self.maximum_tokens,
                 "percentile": self.percentile,
             }
@@ -110,17 +130,29 @@ class SemanticChunkingStrategy:
     def split(self, text: str) -> list[tuple[int, int, int]]:
         import numpy as np
 
+        if not text.strip():
+            return []
         spans = [(m.start(), m.end()) for m in re.finditer(r"[^.!?\n]+(?:[.!?]+|\n|$)", text)]
         if len(spans) < 2:
-            return [(0, len(text), self.tokenizer.count(text))] if text else []
+            return self._bounded(text, 0, len(text))
         sentences = [text[start:end] for start, end in spans]
         vectors = np.asarray(self.embed_sentences(sentences), dtype=float)
+        if vectors.ndim != 2 or vectors.shape[0] != len(sentences):
+            raise RuntimeError("Semantic sentence embeddings have an invalid shape")
+        if not np.isfinite(vectors).all():
+            raise RuntimeError("Semantic sentence embeddings contain non-finite values")
         norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-        norms[norms == 0] = 1
+        if np.any(norms == 0):
+            raise RuntimeError("Semantic sentence embeddings contain zero-norm vectors")
         vectors /= norms
         similarities = np.sum(vectors[:-1] * vectors[1:], axis=1)
-        threshold = float(np.quantile(similarities, self.percentile))
-        break_after = {index for index, score in enumerate(similarities) if score <= threshold}
+        if float(np.ptp(similarities)) <= np.finfo(similarities.dtype).eps:
+            break_after: set[int] = set()
+        else:
+            threshold = float(np.quantile(similarities, self.percentile))
+            break_after = {
+                index for index, score in enumerate(similarities) if score <= threshold
+            }
         chunks: list[tuple[int, int, int]] = []
         start_index = 0
         for index in range(len(spans)):
@@ -130,6 +162,7 @@ class SemanticChunkingStrategy:
                 chunks.extend(self._bounded(text, start, end))
                 start_index = index + 1
         return chunks
+
     def _bounded(self, text: str, start: int, end: int) -> list[tuple[int, int, int]]:
         local = self.tokenizer.spans(text[start:end])
         if not local:
@@ -310,7 +343,17 @@ def _structured_spans(text: str) -> list[tuple[int, int]]:
     html_tables = [
         match.span() for match in re.finditer(r"(?is)<table\b.*?</table>", text)
     ]
-    return sorted({*formulas, *tables, *html_tables})
+    return _merge_spans(sorted({*formulas, *tables, *html_tables}))
+
+
+def _merge_spans(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    merged: list[tuple[int, int]] = []
+    for start, end in spans:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(end, merged[-1][1]))
+        else:
+            merged.append((start, end))
+    return merged
 
 
 def _split_structured_unit(
@@ -334,26 +377,41 @@ def _split_structured_unit(
         proposed_end = line.end()
         if group_end > group_start and tokenizer.count(block[group_start:proposed_end]) > size:
             absolute_start, absolute_end = start + group_start, start + group_end
-            result.append(
-                (absolute_start, absolute_end, tokenizer.count(text[absolute_start:absolute_end]))
+            result.extend(
+                _bounded_span(
+                    text, absolute_start, absolute_end, tokenizer, size, overlap
+                )
             )
             group_start = line.start()
         group_end = proposed_end
     if group_end > group_start:
         absolute_start, absolute_end = start + group_start, start + group_end
-        if tokenizer.count(text[absolute_start:absolute_end]) <= size:
-            result.append(
-                (absolute_start, absolute_end, tokenizer.count(text[absolute_start:absolute_end]))
-            )
-        else:
-            result.extend(
-                _token_spans(text, absolute_start, absolute_end, tokenizer, size, overlap)
-            )
+        result.extend(
+            _bounded_span(text, absolute_start, absolute_end, tokenizer, size, overlap)
+        )
     return result
 
 
+def _bounded_span(
+    text: str,
+    start: int,
+    end: int,
+    tokenizer: OffsetTokenizer,
+    size: int,
+    overlap: int,
+) -> list[tuple[int, int, int]]:
+    tokens = tokenizer.count(text[start:end])
+    if tokens <= size:
+        return [(start, end, tokens)] if tokens else []
+    return _token_spans(text, start, end, tokenizer, size, overlap)
+
+
 def build_chunking_strategy(
-    name: str, *, tokenizer: OffsetTokenizer | None = None, embed_sentences=None
+    name: str,
+    *,
+    tokenizer: OffsetTokenizer | None = None,
+    embed_sentences=None,
+    semantic_embedding_fingerprint: str | None = None,
 ) -> ChunkingStrategy:
     tokenizer = tokenizer or TiktokenOffsetTokenizer()
     if name == "token-256-32":
@@ -371,7 +429,13 @@ def build_chunking_strategy(
             raise ValueError(
                 "Semantic chunking requires the production sentence embedding function"
             )
-        return SemanticChunkingStrategy(tokenizer, embed_sentences)
+        if not semantic_embedding_fingerprint:
+            raise ValueError(
+                "Semantic chunking requires the boundary-embedding fingerprint"
+            )
+        return SemanticChunkingStrategy(
+            tokenizer, embed_sentences, semantic_embedding_fingerprint
+        )
     if name == "section-aware-512-64":
         return SectionAwareChunkingStrategy(tokenizer)
     if name == "structure-aware-512-64":

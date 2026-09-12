@@ -1,5 +1,5 @@
 smoke:
-  - token-256-32|sentence-transformers/all-MiniLM-L6-v2
+  - token-256-32|Alibaba-NLP/gte-modernbert-base
 
 # The standard run is intentionally the complete 8 x 8 matrix. Screening an
 # embedding with only one chunker can hide chunker/model interactions.
@@ -15,7 +15,7 @@ standard:
       - section-aware-512-64
       - structure-aware-512-64
     embedding:
-      - sentence-transformers/all-MiniLM-L6-v2
+      - Alibaba-NLP/gte-modernbert-base
       - Snowflake/snowflake-arctic-embed-m-v2.0
       - codefuse-ai/F2LLM-v2-0.6B
       - Octen/Octen-Embedding-0.6B

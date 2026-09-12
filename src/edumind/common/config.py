@@ -32,15 +32,15 @@ class ModelSettings:
 
 @dataclass(frozen=True)
 class EmbeddingSettings:
-    model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
-    dimension: int = 384
+    model_name: str = "Alibaba-NLP/gte-modernbert-base"
+    dimension: int = 768
     indexing_device: str = "cpu"
     query_device: str = "cpu"
     query_prefix: str = ""
     document_prefix: str = ""
     normalize: bool = True
     similarity: str = "cosine"
-    maximum_length: int = 256
+    maximum_length: int = 8192
     batch_size: int = 32
 
 
@@ -49,7 +49,7 @@ class ChunkingSettings:
     strategy: str = "token"
     chunk_size: int = 256
     chunk_overlap: int = 32
-    tokenizer: str = "embedding"
+    tokenizer: str = "cl100k_base"
 
 
 @dataclass(frozen=True)
@@ -230,6 +230,12 @@ def _build(raw: Mapping[str, object]) -> Settings:
     chunking_strategy = str(chunking.get("strategy", "token"))
     if chunking_strategy != "token":
         raise ConfigurationError("The provisional application supports only token chunking")
+    chunking_tokenizer = str(chunking.get("tokenizer", "cl100k_base"))
+    if chunking_tokenizer != "cl100k_base":
+        raise ConfigurationError(
+            "The provisional application supports only the frozen 'cl100k_base' "
+            "chunking tokenizer"
+        )
     top_k = _integer(retrieval, "top_k", 5)
     candidate_k = _integer(retrieval, "candidate_k", 20)
     if candidate_k < top_k:
@@ -273,21 +279,21 @@ def _build(raw: Mapping[str, object]) -> Settings:
         ),
         embedding=EmbeddingSettings(
             model_name=str(embedding.get("model_name", EmbeddingSettings.model_name)),
-            dimension=_integer(embedding, "dimension", 384),
+            dimension=_integer(embedding, "dimension", 768),
             indexing_device=str(embedding.get("indexing_device", "cpu")),
             query_device=str(embedding.get("query_device", "cpu")),
             query_prefix=str(embedding.get("query_prefix", "")),
             document_prefix=str(embedding.get("document_prefix", "")),
             normalize=bool(embedding.get("normalize", True)),
             similarity=similarity,
-            maximum_length=_integer(embedding, "maximum_length", 256),
+            maximum_length=_integer(embedding, "maximum_length", 8192),
             batch_size=_integer(embedding, "batch_size", 32),
         ),
         chunking=ChunkingSettings(
             strategy=chunking_strategy,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
-            tokenizer=str(chunking.get("tokenizer", "embedding")),
+            tokenizer=chunking_tokenizer,
         ),
         vector=VectorSettings(
             backend=backend,

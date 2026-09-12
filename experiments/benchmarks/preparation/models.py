@@ -14,6 +14,7 @@ from pathlib import Path
 
 from edumind.common.artifacts import atomic_write_json, atomic_write_text, sha256_file, stable_hash
 from edumind.extraction.extractors.document import DOCLING_VERSION
+from edumind.rag.contracts import PRODUCTION_EMBEDDING_MODEL
 
 from experiments.benchmarks.common.selection import SelectionEntry, selection_entries
 
@@ -21,9 +22,19 @@ MODEL_COMPONENTS = frozenset(
     {"embedding", "reranker", "generator", "evaluator", "asr", "document_extraction"}
 )
 RAG_COMPONENTS = frozenset({"embedding", "reranker", "generator", "evaluator"})
+EMBEDDING_COMPONENTS = frozenset({"embedding"})
 EXTRACTION_COMPONENTS = frozenset({"asr", "document_extraction"})
+EMBEDDING_SNAPSHOT_IGNORE_PATTERNS = (
+    "onnx/**",
+    "openvino/**",
+    "*.gguf",
+    "*.onnx",
+    "*.tflite",
+    "tf_model.h5",
+    "flax_model.msgpack",
+)
 APP_CANDIDATES = (
-    "sentence-transformers/all-MiniLM-L6-v2",
+    PRODUCTION_EMBEDDING_MODEL,
     "Qwen/Qwen3-1.7B",
     "openai/whisper-small.en",
 )
@@ -70,7 +81,8 @@ def prepare_selected_models(
         print(json.dumps(preparation_plan(selected, docling_components), indent=2))
         return output_path
     huggingface_home = cache_directory.parent / "huggingface"
-    os.environ["HF_HOME"] = str(huggingface_home)
+    # Keep the caller's normal HF_HOME so an existing `hf auth login` remains
+    # available. Only transient Hub cache files belong in the project cache.
     os.environ["HF_HUB_CACHE"] = str(huggingface_home / "hub")
     try:
         from huggingface_hub import snapshot_download
@@ -82,10 +94,20 @@ def prepare_selected_models(
     for candidate in selected:
         entry = entries[candidate]
         snapshots = snapshot_specs(entry)
+        ignore_patterns = (
+            EMBEDDING_SNAPSHOT_IGNORE_PATTERNS
+            if entry.component == "embedding"
+            else ()
+        )
         downloaded: list[dict[str, str]] = []
         for repository, revision, role in snapshots:
             local_directory = cache_directory / repository.replace("/", "--")
-            snapshot_download(repo_id=repository, revision=revision, local_dir=local_directory)
+            snapshot_download(
+                repo_id=repository,
+                revision=revision,
+                local_dir=local_directory,
+                ignore_patterns=ignore_patterns or None,
+            )
             downloaded.append(
                 {
                     "role": role,
@@ -105,6 +127,8 @@ def prepare_selected_models(
             "model_path": primary["model_path"],
             "model_cache_manifest_sha256": primary["cache_manifest_sha256"],
         }
+        if ignore_patterns:
+            lock_entry["snapshot_ignore_patterns"] = list(ignore_patterns)
         if len(downloaded) > 1:
             lock_entry["submodels"] = downloaded
         if candidate == "PaddlePaddle/PaddleOCR-VL-1.6":

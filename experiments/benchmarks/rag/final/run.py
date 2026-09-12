@@ -6,6 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
 from edumind.common.paths import PROJECT_ROOT
 from edumind.common.artifacts import atomic_write_json
+from edumind.rag.contracts import PRODUCTION_EMBEDDING_MODEL
 from experiments.benchmarks.common.arguments import parser, resolved_candidates
 from experiments.benchmarks.common.contracts import BenchmarkPlan
 from experiments.benchmarks.common.decisions import load_engineer_decision
@@ -98,7 +99,7 @@ def evaluate(candidate):
         chunker, embedding, retrieval, generator, top_k_value = candidate.split("@@", 4)
     else:
         retrieval, generator, top_k_value = candidate.split("|", 2)
-        chunker, embedding = "token-256-32", "sentence-transformers/all-MiniLM-L6-v2"
+        chunker, embedding = "token-256-32", PRODUCTION_EMBEDDING_MODEL
     pair = (chunker, embedding)
     if pair not in indexes:
         indexes[pair] = build_index(

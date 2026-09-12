@@ -29,7 +29,7 @@ class TiktokenOffsetTokenizer:
                 f"Tiktoken encoding {encoding_name} is not prepared locally; run a model "
                 "preparation target before this benchmark."
             )
-        os.environ.setdefault("TIKTOKEN_CACHE_DIR", str(cache_directory))
+        os.environ["TIKTOKEN_CACHE_DIR"] = str(cache_directory)
         try:
             import tiktoken
         except ModuleNotFoundError as exc:
@@ -65,68 +65,3 @@ class TiktokenOffsetTokenizer:
             return ""
         ids = self.encoding.encode(text, disallowed_special=())
         return self.encoding.decode(ids[:maximum_tokens])
-
-
-class HuggingFaceOffsetTokenizer:
-    def __init__(
-        self, model_name: str, revision: str = "main", local_path: str | None = None
-    ) -> None:
-        try:
-            from transformers import AutoTokenizer
-        except ModuleNotFoundError as exc:
-            raise RuntimeError(
-                "transformers is required for exact model-tokenizer chunking"
-            ) from exc
-        options = {"use_fast": True, "local_files_only": True}
-        if local_path is None:
-            options["revision"] = revision
-        self.tokenizer = AutoTokenizer.from_pretrained(local_path or model_name, **options)
-        if not self.tokenizer.is_fast:
-            raise RuntimeError(f"Tokenizer {model_name} does not expose exact offset mappings")
-        self.name = f"huggingface:{model_name}@{revision}"
-
-    def spans(self, text: str) -> list[tuple[int, int]]:
-        payload = self.tokenizer(text, add_special_tokens=False, return_offsets_mapping=True)
-        return [(int(start), int(end)) for start, end in payload["offset_mapping"]]
-
-    def count(self, text: str) -> int:
-        return len(self.tokenizer.encode(text, add_special_tokens=False))
-
-    def truncate(self, text: str, maximum_tokens: int) -> str:
-        token_ids = self.tokenizer.encode(text, add_special_tokens=False)[:maximum_tokens]
-        return str(self.tokenizer.decode(token_ids, skip_special_tokens=True))
-
-
-class LazyHuggingFaceOffsetTokenizer:
-    """Defer optional tokenizer loading until the first indexing/query operation."""
-
-    def __init__(
-        self, model_name: str, revision: str, local_path: str | None = None
-    ) -> None:
-        self.model_name = model_name
-        self.revision = revision
-        self.local_path = local_path
-        self.name = f"huggingface:{model_name}@{revision}"
-        self._runtime: HuggingFaceOffsetTokenizer | None = None
-
-    def _get(self) -> HuggingFaceOffsetTokenizer:
-        if self._runtime is None:
-            try:
-                self._runtime = HuggingFaceOffsetTokenizer(
-                    self.model_name, self.revision, self.local_path
-                )
-            except OSError as exc:
-                raise RuntimeError(
-                    f"Tokenizer {self.model_name}@{self.revision} is not prepared locally. "
-                    "Run the model preparation command."
-                ) from exc
-        return self._runtime
-
-    def spans(self, text: str) -> list[tuple[int, int]]:
-        return self._get().spans(text)
-
-    def count(self, text: str) -> int:
-        return self._get().count(text)
-
-    def truncate(self, text: str, maximum_tokens: int) -> str:
-        return self._get().truncate(text, maximum_tokens)
