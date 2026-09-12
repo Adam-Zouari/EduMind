@@ -18,7 +18,7 @@ from edumind.extraction import ExtractionProfile, ExtractionRequest, SourceKind
 from experiments.benchmarks.common.resources import ResourceMonitor
 from experiments.benchmarks.common.provenance import package_versions
 from experiments.benchmarks.extraction.registry import build_experiment_registry
-from experiments.benchmarks.extraction.process import json_worker_main
+from experiments.benchmarks.common.process import json_worker_main
 from experiments.benchmarks.extraction.video.candidates import frame_command, parse_candidate
 from experiments.benchmarks.extraction.video.metrics import (
     aggregate_quality,

@@ -34,7 +34,7 @@ from experiments.benchmarks.extraction.audio.runner import (
     _validate_reliability_split_isolation,
     _validate_manifest_rows,
 )
-from experiments.benchmarks.extraction.process import worker_environment
+from experiments.benchmarks.common.process import worker_environment
 from experiments.benchmarks.common.runner import run_benchmark
 
 ROOT = Path(__file__).resolve().parents[1]

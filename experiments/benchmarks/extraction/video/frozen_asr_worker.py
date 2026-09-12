@@ -14,7 +14,7 @@ from experiments.benchmarks.common.resources import ResourceMonitor
 from experiments.benchmarks.extraction.audio.adapters import build_runtime
 from experiments.benchmarks.extraction.audio.evaluate import align_sequences, normalize_transcript
 from experiments.benchmarks.extraction.media import decode_canonical_audio
-from experiments.benchmarks.extraction.process import json_worker_main
+from experiments.benchmarks.common.process import json_worker_main
 from experiments.benchmarks.extraction.video.metrics import stitch_text
 
 

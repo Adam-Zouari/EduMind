@@ -17,7 +17,7 @@ from experiments.benchmarks.extraction.audio.evaluate import (
     score_nonspeech,
     score_speech,
 )
-from experiments.benchmarks.extraction.process import json_worker_main
+from experiments.benchmarks.common.process import json_worker_main
 
 
 def execute(payload: dict[str, object]) -> dict[str, object]:

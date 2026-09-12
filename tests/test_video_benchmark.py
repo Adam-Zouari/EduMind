@@ -283,7 +283,7 @@ def test_visual_worker_has_no_asr_execution_dependency() -> None:
 
 
 def test_visual_worker_uses_current_candidate_temp_root(monkeypatch, tmp_path) -> None:
-    from experiments.benchmarks.extraction import process
+    from experiments.benchmarks.common import process
     from experiments.benchmarks.extraction.video import runner
 
     current = tmp_path / "current-candidate"

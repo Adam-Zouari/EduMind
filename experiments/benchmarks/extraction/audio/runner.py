@@ -26,7 +26,7 @@ from experiments.benchmarks.extraction.media import (
     decode_canonical_audio,
     ffmpeg_version,
 )
-from experiments.benchmarks.extraction.process import run_json_worker
+from experiments.benchmarks.common.process import run_json_worker
 from experiments.benchmarks.preparation.models import load_selected_model_lock
 
 SPEECH_COUNTS = {"standard": 54, "full": 18, "locked": 18}

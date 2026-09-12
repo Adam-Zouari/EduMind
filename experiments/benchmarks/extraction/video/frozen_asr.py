@@ -11,7 +11,7 @@ from pathlib import Path
 from edumind.common.artifacts import atomic_write_json, sha256_file, stable_hash
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.extraction.audio.adapters import ASR_PROFILES
-from experiments.benchmarks.extraction.process import run_json_worker
+from experiments.benchmarks.common.process import run_json_worker
 from experiments.benchmarks.extraction.video.protocol import VideoProtocolLock
 from experiments.benchmarks.preparation.models import load_selected_model_lock
 

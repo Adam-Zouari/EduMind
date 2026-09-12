@@ -24,7 +24,7 @@ from experiments.benchmarks.extraction.document.profiles import (
 )
 from experiments.benchmarks.extraction.document.runner import validate_prepared_components
 from experiments.benchmarks.extraction.media import ffmpeg_version, media_duration
-from experiments.benchmarks.extraction.process import run_json_worker
+from experiments.benchmarks.common.process import run_json_worker
 from experiments.benchmarks.extraction.video.candidates import (
     FIXED_CANDIDATES,
     SCENE_CANDIDATES,

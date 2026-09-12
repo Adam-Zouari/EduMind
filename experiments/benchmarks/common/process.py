@@ -1,4 +1,4 @@
-"""Fresh-process helpers shared by extraction benchmark workers."""
+"""Fresh-process helpers shared by benchmark workers."""
 
 from __future__ import annotations
 
