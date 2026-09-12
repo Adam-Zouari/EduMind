@@ -65,7 +65,7 @@ def main() -> int:
         selected_configs: dict[str, dict[str, int]] = {}
         with DockerMonitor(candidate) as docker:
             for workload_number, (name, corpus) in enumerate(workloads):
-                size, dimension = len(corpus.vectors), corpus.vectors.shape[1]
+                size = len(corpus.vectors)
                 config, trials, unsupported = _select_config(
                     candidate, corpus, arguments.profile
                 )

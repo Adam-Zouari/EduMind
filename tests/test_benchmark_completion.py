@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from experiments.benchmarks.common.contracts import BenchmarkPlan, SampleResult
+from experiments.benchmarks.common.contracts import (
+    BenchmarkPlan,
+    CandidateExecutionError,
+    SampleResult,
+)
 from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.runner import run_benchmark
 import experiments.benchmarks.common.runner as benchmark_runner
@@ -85,6 +89,95 @@ def test_different_sample_sets_make_comparison_incomplete(tmp_path: Path) -> Non
     assert any("different sample set" in problem for problem in result.completion_problems)
 
 
+def test_input_limit_failure_is_audited_and_fails_parent(
+    tmp_path: Path,
+) -> None:
+    def evaluator(_candidate: str):
+        raise CandidateExecutionError(
+            "input limit",
+            parameters={"maximum_length": 256},
+            artifacts={
+                "validation_report": {
+                    "status": "failed",
+                    "reason_code": "input_length_exceeded",
+                }
+            },
+        )
+
+    result = _run(tmp_path, _plan("oversized"), evaluator)
+    assert result.complete is False
+    assert result.candidates[0].status == "failed"
+    summary = json.loads(
+        (result.artifact_directory / "summary.json").read_text(encoding="utf-8")
+    )
+    assert summary["completion"]["failed_candidates"] == 1
+    assert "incompatible_candidates" not in summary["completion"]
+    assert not (result.artifact_directory / "compatibility_matrix.json").exists()
+    assert (
+        result.artifact_directory
+        / "candidates"
+        / "oversized"
+        / "validation_report.json"
+    ).is_file()
+
+
+def test_failed_candidate_preserves_empty_audit_table(tmp_path: Path) -> None:
+    def evaluator(_candidate: str):
+        raise CandidateExecutionError(
+            "all queries failed",
+            artifacts={"query_metrics": []},
+        )
+
+    result = _run(tmp_path, _plan("failed"), evaluator)
+
+    assert result.candidates[0].status == "failed"
+    assert (
+        result.artifact_directory
+        / "candidates"
+        / "failed"
+        / "query_metrics.parquet"
+    ).is_file()
+
+
+def test_paired_comparisons_resample_document_groups(tmp_path: Path) -> None:
+    plan = _plan("left", "right")
+
+    def evaluator(candidate: str):
+        values = (1.0, 1.0, 0.0) if candidate == "left" else (0.0, 0.0, 0.0)
+        samples = [
+            SampleResult(
+                sample_id,
+                {"quality": value},
+                0.01,
+                {"document_id": document_id},
+            )
+            for sample_id, document_id, value in zip(
+                ("q1", "q2", "q3"), ("a", "a", "b"), values, strict=True
+            )
+        ]
+        return samples, {"p95_latency_seconds": 0.01}
+
+    result = run_benchmark(
+        plan,
+        evaluator,
+        dataset_checksum="fixed-checksum",
+        directions={"quality": "max", "operational.p95_latency_seconds": "min"},
+        primary_metric="quality",
+        paired_metrics=("quality",),
+        paired_group_key="document_id",
+        no_mlflow=True,
+        artifact_root=tmp_path,
+    )
+    summary = json.loads(
+        (result.artifact_directory / "summary.json").read_text(encoding="utf-8")
+    )
+    comparison = summary["paired_comparisons"][0]["metrics"]["quality"]
+    expected = 0.5 if summary["paired_comparisons"][0]["left"] == "left" else -0.5
+    assert comparison["left_minus_right"] == expected
+    assert comparison["paired_samples"] == 3
+    assert comparison["paired_resampling_units"] == 2
+
+
 def test_engineer_decision_requires_a_complete_non_smoke_run(tmp_path: Path) -> None:
     result = _run(
         tmp_path,
@@ -140,6 +233,9 @@ def test_incomplete_candidate_and_parent_are_marked_failed_in_tracking(
             del values
 
         def metrics(self, values) -> None:
+            del values
+
+        def tags(self, values) -> None:
             del values
 
         def artifact(self, path, artifact_path=None) -> None:

@@ -12,6 +12,7 @@ from edumind.rag.tokenizers import TiktokenOffsetTokenizer
 from edumind.rag.types import RetrievalHit
 
 from experiments.benchmarks.common.contracts import DatasetManifest, SampleResult
+from experiments.benchmarks.common.datasets import evidence_units
 from experiments.benchmarks.common.metrics import (
     balanced_accuracy,
     balanced_accuracy_interval,
@@ -26,10 +27,7 @@ from experiments.benchmarks.rag.evaluation import (
     reranker_for,
     retrieval_metrics,
 )
-from experiments.benchmarks.rag.generation.models import (
-    GENERATOR_PROFILES,
-    generator_for,
-)
+from experiments.benchmarks.rag.generation.models import generator_for
 
 GENERATION_DIRECTIONS = {
     "exact_match": "max",
@@ -176,7 +174,6 @@ def evaluate_candidate(
         )
         if not references:
             references = [str(question.get("answer", ""))]
-        reference = references[0]
         repeated_metrics = []
         for measurement, repeat_prediction in zip(repeated, repeat_predictions, strict=True):
             repeat_answer = measurement.answer
@@ -305,8 +302,12 @@ def evaluate_candidate(
 
 def _frozen_hits(question, documents, tokenizer) -> tuple[list[RetrievalHit], str, float]:
     document = documents[str(question["document_id"])]
-    evidence = [row for row in question.get("evidence", []) if isinstance(row, Mapping)]
-    texts = [str(row.get("text") or document[int(row["start"]):int(row["end"])]).strip() for row in evidence]
+    texts = [
+        "\n".join(
+            document[interval.start : interval.end] for interval in unit.intervals
+        ).strip()
+        for unit in evidence_units(question)
+    ]
     if not texts:
         texts = [tokenizer.truncate(document, 3500)]
     packed_texts = []
@@ -380,11 +381,22 @@ def _retrieved_hits(question, index, method, top_k, reranker) -> tuple[list[Retr
 def _supported_contexts(question, hits) -> set[int]:
     result = set()
     for rank_number, hit in enumerate(hits, 1):
-        for evidence in question.get("evidence", []):
-            if hit.metadata.get("document_id") != evidence.get("document_id"):
-                continue
-            if "start" not in hit.metadata or max(0, min(int(hit.metadata["end"]), int(evidence["end"])) - max(int(hit.metadata["start"]), int(evidence["start"]))) > 0:
+        for unit in evidence_units(question):
+            if any(
+                hit.metadata.get("document_id") == interval.document_id
+                and (
+                    "start" not in hit.metadata
+                    or max(
+                        0,
+                        min(int(hit.metadata["end"]), interval.end)
+                        - max(int(hit.metadata["start"]), interval.start),
+                    )
+                    > 0
+                )
+                for interval in unit.intervals
+            ):
                 result.add(rank_number)
+                break
     return result
 
 

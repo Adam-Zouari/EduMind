@@ -9,6 +9,29 @@ from pathlib import Path
 from edumind.common.artifacts import stable_hash
 
 
+class CandidateExecutionError(RuntimeError):
+    """Unexpected measured failure that still carries partial audit evidence."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        parameters: Mapping[str, object] | None = None,
+        artifacts: Mapping[str, object] | None = None,
+        samples: tuple[SampleResult, ...] = (),
+        metrics: Mapping[str, float | None] | None = None,
+        intervals: Mapping[str, Mapping[str, float]] | None = None,
+        operational: Mapping[str, float] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.parameters = dict(parameters or {})
+        self.artifacts = dict(artifacts or {})
+        self.samples = samples
+        self.metrics = dict(metrics or {})
+        self.intervals = dict(intervals or {})
+        self.operational = dict(operational or {})
+
+
 @dataclass(frozen=True)
 class DatasetManifest:
     name: str

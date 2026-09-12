@@ -1,46 +1,446 @@
 {
-  "name": "edumind-smoke-rag",
-  "version": "1.0.0",
-  "task": "rag",
-  "split": "smoke",
-  "source": "EduMind hand-verified fixtures",
+  "checksum": "0f581e14d7b8b543ae7b27657e911a21f25ac3862a84ddd22033d94b83c8c24c",
   "license": "CC0-1.0",
-  "revision": "1",
-  "checksum": "b5b2a81a6f10105f0a09f9d6bd9438b669e940da7ca4d5499677758568df8e6d",
-  "preprocessing_version": "offsets-v1",
-  "split_seed": 42,
+  "name": "edumind-smoke-rag",
+  "preprocessing_version": "evidence-units-v2",
+  "revision": "2",
   "samples": [
-    {"id":"paper-01","kind":"document","text":"Photosynthesis converts light energy into chemical energy in plant cells. Chlorophyll absorbs primarily blue and red wavelengths. Oxygen is released when water molecules are split.","source":"paper-01.txt"},
-    {"id":"paper-02","kind":"document","text":"Newton's first law describes inertia when net force is zero. The second law relates force to mass times acceleration. The third law states that interaction forces are equal and opposite.","source":"paper-02.txt"},
-    {"id":"paper-03","kind":"document","text":"A relational database stores data in tables with defined schemas. Primary keys uniquely identify table rows. Foreign keys represent relationships between tables.","source":"paper-03.txt"},
-    {"id":"paper-04","kind":"document","text":"The water cycle includes evaporation, condensation, and precipitation. Solar energy drives evaporation from oceans and lakes. Condensation forms clouds when water vapor cools.","source":"paper-04.txt"},
-    {"id":"paper-05","kind":"document","text":"Supervised learning trains models with labeled examples. Classification predicts discrete categories. Regression predicts continuous numerical values.","source":"paper-05.txt"},
-    {"id":"paper-06","kind":"document","text":"Deoxyribonucleic acid carries hereditary information in living organisms. DNA contains the bases adenine, cytosine, guanine, and thymine. Complementary strands pair adenine with thymine and cytosine with guanine.","source":"paper-06.txt"},
-    {"id":"paper-07","kind":"document","text":"A compiler translates source code into another representation before execution. Lexical analysis groups characters into tokens. Syntax analysis checks whether tokens follow the language grammar.","source":"paper-07.txt"},
-    {"id":"paper-08","kind":"document","text":"Plate tectonics explains the motion of Earth's lithospheric plates. Divergent boundaries create new crust as plates separate. Convergent boundaries can produce subduction when plates collide.","source":"paper-08.txt"},
-    {"id":"q01","kind":"question","document_id":"paper-01","question":"What does photosynthesis convert light energy into?","answer":"chemical energy","answerable":true,"answer_type":"extractive","evidence":[{"document_id":"paper-01","start":0,"end":73,"text":"Photosynthesis converts light energy into chemical energy in plant cells."}]},
-    {"id":"q02","kind":"question","document_id":"paper-01","question":"Which wavelengths does chlorophyll primarily absorb?","answer":"blue and red wavelengths","answerable":true,"answer_type":"extractive","evidence":[{"document_id":"paper-01","start":74,"end":129,"text":"Chlorophyll absorbs primarily blue and red wavelengths."}]},
-    {"id":"q03","kind":"question","document_id":"paper-01","question":"What temperature maximizes photosynthesis in this document?","answer":"","answerable":false,"answer_type":"unanswerable","evidence":[]},
-    {"id":"q04","kind":"question","document_id":"paper-02","question":"What condition is associated with inertia in Newton's first law?","answer":"net force is zero","answerable":true,"answer_type":"extractive","evidence":[{"document_id":"paper-02","start":0,"end":60,"text":"Newton's first law describes inertia when net force is zero."}]},
-    {"id":"q05","kind":"question","document_id":"paper-02","question":"How does Newton's second law relate force, mass, and acceleration?","answer":"force equals mass times acceleration","answerable":true,"answer_type":"extractive","evidence":[{"document_id":"paper-02","start":61,"end":117,"text":"The second law relates force to mass times acceleration."}]},
-    {"id":"q06","kind":"question","document_id":"paper-02","question":"Who first measured gravitational waves?","answer":"","answerable":false,"answer_type":"unanswerable","evidence":[]},
-    {"id":"q07","kind":"question","document_id":"paper-03","question":"How does a relational database organize data?","answer":"in tables with defined schemas","answerable":true,"answer_type":"extractive","evidence":[{"document_id":"paper-03","start":0,"end":65,"text":"A relational database stores data in tables with defined schemas."}]},
-    {"id":"q08","kind":"question","document_id":"paper-03","question":"What is the purpose of a primary key?","answer":"to uniquely identify table rows","answerable":true,"answer_type":"extractive","evidence":[{"document_id":"paper-03","start":66,"end":108,"text":"Primary keys uniquely identify table rows."}]},
-    {"id":"q09","kind":"question","document_id":"paper-03","question":"Which SQL engine is fastest?","answer":"","answerable":false,"answer_type":"unanswerable","evidence":[]},
-    {"id":"q10","kind":"question","document_id":"paper-04","question":"Which three processes are named in the water cycle?","answer":"evaporation, condensation, and precipitation","answerable":true,"answer_type":"extractive","evidence":[{"document_id":"paper-04","start":0,"end":70,"text":"The water cycle includes evaporation, condensation, and precipitation."}]},
-    {"id":"q11","kind":"question","document_id":"paper-04","question":"What drives evaporation from oceans and lakes?","answer":"solar energy","answerable":true,"answer_type":"extractive","evidence":[{"document_id":"paper-04","start":71,"end":125,"text":"Solar energy drives evaporation from oceans and lakes."}]},
-    {"id":"q12","kind":"question","document_id":"paper-04","question":"How salty is the referenced lake?","answer":"","answerable":false,"answer_type":"unanswerable","evidence":[]},
-    {"id":"q13","kind":"question","document_id":"paper-05","question":"What kind of examples are used in supervised learning?","answer":"labeled examples","answerable":true,"answer_type":"extractive","evidence":[{"document_id":"paper-05","start":0,"end":56,"text":"Supervised learning trains models with labeled examples."}]},
-    {"id":"q14","kind":"question","document_id":"paper-05","question":"What does regression predict?","answer":"continuous numerical values","answerable":true,"answer_type":"extractive","evidence":[{"document_id":"paper-05","start":102,"end":150,"text":"Regression predicts continuous numerical values."}]},
-    {"id":"q15","kind":"question","document_id":"paper-05","question":"Which optimizer was used in the experiment?","answer":"","answerable":false,"answer_type":"unanswerable","evidence":[]},
-    {"id":"q16","kind":"question","document_id":"paper-06","question":"What information does DNA carry?","answer":"hereditary information","answerable":true,"answer_type":"extractive","evidence":[{"document_id":"paper-06","start":0,"end":73,"text":"Deoxyribonucleic acid carries hereditary information in living organisms."}]},
-    {"id":"q17","kind":"question","document_id":"paper-06","question":"Which four bases does DNA contain?","answer":"adenine, cytosine, guanine, and thymine","answerable":true,"answer_type":"extractive","evidence":[{"document_id":"paper-06","start":74,"end":137,"text":"DNA contains the bases adenine, cytosine, guanine, and thymine."}]},
-    {"id":"q18","kind":"question","document_id":"paper-06","question":"How many genes does the organism have?","answer":"","answerable":false,"answer_type":"unanswerable","evidence":[]},
-    {"id":"q19","kind":"question","document_id":"paper-07","question":"What does a compiler do before execution?","answer":"translates source code into another representation","answerable":true,"answer_type":"extractive","evidence":[{"document_id":"paper-07","start":0,"end":79,"text":"A compiler translates source code into another representation before execution."}]},
-    {"id":"q20","kind":"question","document_id":"paper-07","question":"What happens during lexical analysis?","answer":"characters are grouped into tokens","answerable":true,"answer_type":"extractive","evidence":[{"document_id":"paper-07","start":80,"end":127,"text":"Lexical analysis groups characters into tokens."}]},
-    {"id":"q21","kind":"question","document_id":"paper-07","question":"Which programming language compiles fastest?","answer":"","answerable":false,"answer_type":"unanswerable","evidence":[]},
-    {"id":"q22","kind":"question","document_id":"paper-08","question":"What does plate tectonics explain?","answer":"the motion of Earth's lithospheric plates","answerable":true,"answer_type":"extractive","evidence":[{"document_id":"paper-08","start":0,"end":67,"text":"Plate tectonics explains the motion of Earth's lithospheric plates."}]},
-    {"id":"q23","kind":"question","document_id":"paper-08","question":"What happens at divergent boundaries?","answer":"new crust is created as plates separate","answerable":true,"answer_type":"extractive","evidence":[{"document_id":"paper-08","start":68,"end":125,"text":"Divergent boundaries create new crust as plates separate."}]},
-    {"id":"q24","kind":"question","document_id":"paper-08","question":"What is the age of the oldest plate?","answer":"","answerable":false,"answer_type":"unanswerable","evidence":[]}
-  ]
+    {
+      "id": "paper-01",
+      "kind": "document",
+      "source": "paper-01.txt",
+      "text": "Photosynthesis converts light energy into chemical energy in plant cells. Chlorophyll absorbs primarily blue and red wavelengths. Oxygen is released when water molecules are split."
+    },
+    {
+      "id": "paper-02",
+      "kind": "document",
+      "source": "paper-02.txt",
+      "text": "Newton's first law describes inertia when net force is zero. The second law relates force to mass times acceleration. The third law states that interaction forces are equal and opposite."
+    },
+    {
+      "id": "paper-03",
+      "kind": "document",
+      "source": "paper-03.txt",
+      "text": "A relational database stores data in tables with defined schemas. Primary keys uniquely identify table rows. Foreign keys represent relationships between tables."
+    },
+    {
+      "id": "paper-04",
+      "kind": "document",
+      "source": "paper-04.txt",
+      "text": "The water cycle includes evaporation, condensation, and precipitation. Solar energy drives evaporation from oceans and lakes. Condensation forms clouds when water vapor cools."
+    },
+    {
+      "id": "paper-05",
+      "kind": "document",
+      "source": "paper-05.txt",
+      "text": "Supervised learning trains models with labeled examples. Classification predicts discrete categories. Regression predicts continuous numerical values."
+    },
+    {
+      "id": "paper-06",
+      "kind": "document",
+      "source": "paper-06.txt",
+      "text": "Deoxyribonucleic acid carries hereditary information in living organisms. DNA contains the bases adenine, cytosine, guanine, and thymine. Complementary strands pair adenine with thymine and cytosine with guanine."
+    },
+    {
+      "id": "paper-07",
+      "kind": "document",
+      "source": "paper-07.txt",
+      "text": "A compiler translates source code into another representation before execution. Lexical analysis groups characters into tokens. Syntax analysis checks whether tokens follow the language grammar."
+    },
+    {
+      "id": "paper-08",
+      "kind": "document",
+      "source": "paper-08.txt",
+      "text": "Plate tectonics explains the motion of Earth's lithospheric plates. Divergent boundaries create new crust as plates separate. Convergent boundaries can produce subduction when plates collide."
+    },
+    {
+      "answer": "chemical energy",
+      "answer_type": "extractive",
+      "answerable": true,
+      "document_id": "paper-01",
+      "evidence": [
+        {
+          "document_id": "paper-01",
+          "end": 73,
+          "id": "q01-e1",
+          "start": 0,
+          "text": "Photosynthesis converts light energy into chemical energy in plant cells."
+        }
+      ],
+      "evidence_type": "text",
+      "id": "q01",
+      "kind": "question",
+      "question": "What does photosynthesis convert light energy into?"
+    },
+    {
+      "answer": "blue and red wavelengths",
+      "answer_type": "extractive",
+      "answerable": true,
+      "document_id": "paper-01",
+      "evidence": [
+        {
+          "document_id": "paper-01",
+          "end": 129,
+          "id": "q02-e1",
+          "start": 74,
+          "text": "Chlorophyll absorbs primarily blue and red wavelengths."
+        }
+      ],
+      "evidence_type": "text",
+      "id": "q02",
+      "kind": "question",
+      "question": "Which wavelengths does chlorophyll primarily absorb?"
+    },
+    {
+      "answer": "",
+      "answer_type": "unanswerable",
+      "answerable": false,
+      "document_id": "paper-01",
+      "evidence": [],
+      "id": "q03",
+      "kind": "question",
+      "question": "What temperature maximizes photosynthesis in this document?"
+    },
+    {
+      "answer": "net force is zero",
+      "answer_type": "extractive",
+      "answerable": true,
+      "document_id": "paper-02",
+      "evidence": [
+        {
+          "document_id": "paper-02",
+          "end": 60,
+          "id": "q04-e1",
+          "start": 0,
+          "text": "Newton's first law describes inertia when net force is zero."
+        }
+      ],
+      "evidence_type": "text",
+      "id": "q04",
+      "kind": "question",
+      "question": "What condition is associated with inertia in Newton's first law?"
+    },
+    {
+      "answer": "force equals mass times acceleration",
+      "answer_type": "extractive",
+      "answerable": true,
+      "document_id": "paper-02",
+      "evidence": [
+        {
+          "document_id": "paper-02",
+          "end": 117,
+          "id": "q05-e1",
+          "start": 61,
+          "text": "The second law relates force to mass times acceleration."
+        }
+      ],
+      "evidence_type": "text",
+      "id": "q05",
+      "kind": "question",
+      "question": "How does Newton's second law relate force, mass, and acceleration?"
+    },
+    {
+      "answer": "",
+      "answer_type": "unanswerable",
+      "answerable": false,
+      "document_id": "paper-02",
+      "evidence": [],
+      "id": "q06",
+      "kind": "question",
+      "question": "Who first measured gravitational waves?"
+    },
+    {
+      "answer": "in tables with defined schemas",
+      "answer_type": "extractive",
+      "answerable": true,
+      "document_id": "paper-03",
+      "evidence": [
+        {
+          "document_id": "paper-03",
+          "end": 65,
+          "id": "q07-e1",
+          "start": 0,
+          "text": "A relational database stores data in tables with defined schemas."
+        }
+      ],
+      "evidence_type": "text",
+      "id": "q07",
+      "kind": "question",
+      "question": "How does a relational database organize data?"
+    },
+    {
+      "answer": "to uniquely identify table rows",
+      "answer_type": "extractive",
+      "answerable": true,
+      "document_id": "paper-03",
+      "evidence": [
+        {
+          "document_id": "paper-03",
+          "end": 108,
+          "id": "q08-e1",
+          "start": 66,
+          "text": "Primary keys uniquely identify table rows."
+        }
+      ],
+      "evidence_type": "text",
+      "id": "q08",
+      "kind": "question",
+      "question": "What is the purpose of a primary key?"
+    },
+    {
+      "answer": "",
+      "answer_type": "unanswerable",
+      "answerable": false,
+      "document_id": "paper-03",
+      "evidence": [],
+      "id": "q09",
+      "kind": "question",
+      "question": "Which SQL engine is fastest?"
+    },
+    {
+      "answer": "evaporation, condensation, and precipitation",
+      "answer_type": "extractive",
+      "answerable": true,
+      "document_id": "paper-04",
+      "evidence": [
+        {
+          "document_id": "paper-04",
+          "end": 70,
+          "id": "q10-e1",
+          "start": 0,
+          "text": "The water cycle includes evaporation, condensation, and precipitation."
+        }
+      ],
+      "evidence_type": "text",
+      "id": "q10",
+      "kind": "question",
+      "question": "Which three processes are named in the water cycle?"
+    },
+    {
+      "answer": "solar energy",
+      "answer_type": "extractive",
+      "answerable": true,
+      "document_id": "paper-04",
+      "evidence": [
+        {
+          "document_id": "paper-04",
+          "end": 125,
+          "id": "q11-e1",
+          "start": 71,
+          "text": "Solar energy drives evaporation from oceans and lakes."
+        }
+      ],
+      "evidence_type": "text",
+      "id": "q11",
+      "kind": "question",
+      "question": "What drives evaporation from oceans and lakes?"
+    },
+    {
+      "answer": "",
+      "answer_type": "unanswerable",
+      "answerable": false,
+      "document_id": "paper-04",
+      "evidence": [],
+      "id": "q12",
+      "kind": "question",
+      "question": "How salty is the referenced lake?"
+    },
+    {
+      "answer": "labeled examples",
+      "answer_type": "extractive",
+      "answerable": true,
+      "document_id": "paper-05",
+      "evidence": [
+        {
+          "document_id": "paper-05",
+          "end": 56,
+          "id": "q13-e1",
+          "start": 0,
+          "text": "Supervised learning trains models with labeled examples."
+        }
+      ],
+      "evidence_type": "text",
+      "id": "q13",
+      "kind": "question",
+      "question": "What kind of examples are used in supervised learning?"
+    },
+    {
+      "answer": "continuous numerical values",
+      "answer_type": "extractive",
+      "answerable": true,
+      "document_id": "paper-05",
+      "evidence": [
+        {
+          "document_id": "paper-05",
+          "end": 150,
+          "id": "q14-e1",
+          "start": 102,
+          "text": "Regression predicts continuous numerical values."
+        }
+      ],
+      "evidence_type": "text",
+      "id": "q14",
+      "kind": "question",
+      "question": "What does regression predict?"
+    },
+    {
+      "answer": "",
+      "answer_type": "unanswerable",
+      "answerable": false,
+      "document_id": "paper-05",
+      "evidence": [],
+      "id": "q15",
+      "kind": "question",
+      "question": "Which optimizer was used in the experiment?"
+    },
+    {
+      "answer": "hereditary information",
+      "answer_type": "extractive",
+      "answerable": true,
+      "document_id": "paper-06",
+      "evidence": [
+        {
+          "document_id": "paper-06",
+          "end": 73,
+          "id": "q16-e1",
+          "start": 0,
+          "text": "Deoxyribonucleic acid carries hereditary information in living organisms."
+        }
+      ],
+      "evidence_type": "text",
+      "id": "q16",
+      "kind": "question",
+      "question": "What information does DNA carry?"
+    },
+    {
+      "answer": "adenine, cytosine, guanine, and thymine",
+      "answer_type": "extractive",
+      "answerable": true,
+      "document_id": "paper-06",
+      "evidence": [
+        {
+          "document_id": "paper-06",
+          "end": 137,
+          "id": "q17-e1",
+          "start": 74,
+          "text": "DNA contains the bases adenine, cytosine, guanine, and thymine."
+        }
+      ],
+      "evidence_type": "text",
+      "id": "q17",
+      "kind": "question",
+      "question": "Which four bases does DNA contain?"
+    },
+    {
+      "answer": "",
+      "answer_type": "unanswerable",
+      "answerable": false,
+      "document_id": "paper-06",
+      "evidence": [],
+      "id": "q18",
+      "kind": "question",
+      "question": "How many genes does the organism have?"
+    },
+    {
+      "answer": "translates source code into another representation",
+      "answer_type": "extractive",
+      "answerable": true,
+      "document_id": "paper-07",
+      "evidence": [
+        {
+          "document_id": "paper-07",
+          "end": 79,
+          "id": "q19-e1",
+          "start": 0,
+          "text": "A compiler translates source code into another representation before execution."
+        }
+      ],
+      "evidence_type": "text",
+      "id": "q19",
+      "kind": "question",
+      "question": "What does a compiler do before execution?"
+    },
+    {
+      "answer": "characters are grouped into tokens",
+      "answer_type": "extractive",
+      "answerable": true,
+      "document_id": "paper-07",
+      "evidence": [
+        {
+          "document_id": "paper-07",
+          "end": 127,
+          "id": "q20-e1",
+          "start": 80,
+          "text": "Lexical analysis groups characters into tokens."
+        }
+      ],
+      "evidence_type": "text",
+      "id": "q20",
+      "kind": "question",
+      "question": "What happens during lexical analysis?"
+    },
+    {
+      "answer": "",
+      "answer_type": "unanswerable",
+      "answerable": false,
+      "document_id": "paper-07",
+      "evidence": [],
+      "id": "q21",
+      "kind": "question",
+      "question": "Which programming language compiles fastest?"
+    },
+    {
+      "answer": "the motion of Earth's lithospheric plates",
+      "answer_type": "extractive",
+      "answerable": true,
+      "document_id": "paper-08",
+      "evidence": [
+        {
+          "document_id": "paper-08",
+          "end": 67,
+          "id": "q22-e1",
+          "start": 0,
+          "text": "Plate tectonics explains the motion of Earth's lithospheric plates."
+        }
+      ],
+      "evidence_type": "text",
+      "id": "q22",
+      "kind": "question",
+      "question": "What does plate tectonics explain?"
+    },
+    {
+      "answer": "new crust is created as plates separate",
+      "answer_type": "extractive",
+      "answerable": true,
+      "document_id": "paper-08",
+      "evidence": [
+        {
+          "document_id": "paper-08",
+          "end": 125,
+          "id": "q23-e1",
+          "start": 68,
+          "text": "Divergent boundaries create new crust as plates separate."
+        }
+      ],
+      "evidence_type": "text",
+      "id": "q23",
+      "kind": "question",
+      "question": "What happens at divergent boundaries?"
+    },
+    {
+      "answer": "",
+      "answer_type": "unanswerable",
+      "answerable": false,
+      "document_id": "paper-08",
+      "evidence": [],
+      "id": "q24",
+      "kind": "question",
+      "question": "What is the age of the oldest plate?"
+    }
+  ],
+  "source": "EduMind hand-verified fixtures",
+  "split": "smoke",
+  "split_seed": 42,
+  "task": "rag",
+  "version": "2.0.0"
 }

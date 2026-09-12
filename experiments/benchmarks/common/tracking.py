@@ -17,6 +17,7 @@ class Tracker(Protocol):
 
     def parameters(self, values: Mapping[str, object]) -> None: ...
     def metrics(self, values: Mapping[str, float]) -> None: ...
+    def tags(self, values: Mapping[str, object]) -> None: ...
     def artifact(self, path: Path, artifact_path: str | None = None) -> None: ...
     def mark_failed(self) -> None: ...
 
@@ -31,6 +32,9 @@ class NoTracking:
         del values
 
     def metrics(self, values: Mapping[str, float]) -> None:
+        del values
+
+    def tags(self, values: Mapping[str, object]) -> None:
         del values
 
     def artifact(self, path: Path, artifact_path: str | None = None) -> None:
@@ -63,6 +67,9 @@ class MLflowTracking:
 
     def metrics(self, values: Mapping[str, float]) -> None:
         self.mlflow.log_metrics({key: float(value) for key, value in values.items()})
+
+    def tags(self, values: Mapping[str, object]) -> None:
+        self.mlflow.set_tags({key: str(value)[:500] for key, value in values.items()})
 
     def artifact(self, path: Path, artifact_path: str | None = None) -> None:
         self.mlflow.log_artifact(str(path), artifact_path=artifact_path)

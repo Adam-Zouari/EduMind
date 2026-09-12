@@ -48,14 +48,14 @@ def prepare_qasper(output_directory: Path, *, seed: int = 42) -> list[Path]:
         samples = _qasper_samples(selected)
         payload = {
             "name": f"qasper-{manifest_split}",
-            "version": "1.0.0",
+            "version": "2.0.0",
             "task": "rag",
             "split": manifest_split,
             "source": QASPER_DATASET,
             "license": "CC-BY-4.0",
             "revision": QASPER_REVISION,
             "checksum": manifest_content_checksum(samples),
-            "preprocessing_version": "qasper-normalized-text-v1",
+            "preprocessing_version": "qasper-evidence-units-v2",
             "split_seed": seed,
             "selected_ids": sorted(paper_ids),
             "samples": samples,
@@ -76,6 +76,11 @@ def prepare_rag_selection_manifest(
     if qasper.split != structured.split:
         raise ValueError(
             f"RAG source splits differ: {qasper.split!r} versus {structured.split!r}"
+        )
+    if qasper.split_seed != structured.split_seed:
+        raise ValueError(
+            "RAG source split seeds differ: "
+            f"{qasper.split_seed} versus {structured.split_seed}"
         )
     structured_questions = [
         sample for sample in structured.samples if sample.get("kind") == "question"
@@ -128,8 +133,8 @@ def prepare_rag_selection_manifest(
         "license": f"{qasper.license};{structured.license}",
         "revision": f"{qasper.revision}+{structured.revision}",
         "checksum": manifest_content_checksum(combined),
-        "preprocessing_version": "structured-rag-markdown-v1",
-        "split_seed": 42,
+        "preprocessing_version": "structured-rag-evidence-units-v2",
+        "split_seed": qasper.split_seed,
         "samples": combined,
     }
     atomic_write_json(output_path, payload)
@@ -284,8 +289,14 @@ def _answers_and_evidence(
                             "QASPER evidence offset validation failed for "
                             f"{paper_id}: {normalized[:80]}"
                         )
+                    if document.find(normalized, start + 1) >= 0:
+                        raise ValueError(
+                            "QASPER evidence text has an ambiguous source offset for "
+                            f"{paper_id}: {normalized[:80]}"
+                        )
                     item = {
                         "id": f"{paper_id}:{start}:{start + len(normalized)}",
+                        "evidence_type": "text",
                         "document_id": paper_id,
                         "start": start,
                         "end": start + len(normalized),
@@ -347,4 +358,3 @@ def _records(value: object) -> list[dict[str, Any]]:
         }
         for index in range(count)
     ]
-

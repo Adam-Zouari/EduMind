@@ -23,7 +23,13 @@ from edumind.common.artifacts import (
 )
 from edumind.common.paths import PROJECT_ROOT
 
-from .contracts import BenchmarkPlan, BenchmarkResult, CandidateResult, SampleResult
+from .contracts import (
+    BenchmarkPlan,
+    BenchmarkResult,
+    CandidateExecutionError,
+    CandidateResult,
+    SampleResult,
+)
 from .provenance import git_provenance, hardware_summary
 from .resources import ResourceMonitor
 from .metrics import paired_bootstrap_interval
@@ -46,7 +52,7 @@ Evaluator = Callable[
         Mapping[str, float],
         Mapping[str, object],
         Mapping[str, Mapping[str, float]],
-        Mapping[str, Sequence[Mapping[str, object]]],
+        Mapping[str, object],
     ],
 ]
 
@@ -70,6 +76,12 @@ def run_benchmark(
     paired_comparisons: bool = True,
     candidate_artifact_name: str | None = None,
     nullable_metrics: Sequence[str] = (),
+    sample_artifact_name: str = "samples",
+    resource_artifact_name: str | None = None,
+    resource_monitor_options: Mapping[str, object] | None = None,
+    monitor_temporary_disk: bool = True,
+    paired_group_key: str | None = None,
+    run_name_prefix: str | None = None,
 ) -> BenchmarkResult:
     if not plan.candidates:
         raise ValueError("A benchmark plan must contain at least one candidate")
@@ -92,7 +104,10 @@ def run_benchmark(
         raise ValueError(
             "Nullable metrics are not required metrics: " + ", ".join(unknown_nullable)
         )
-    run_name = f"{plan.suite}-{plan.stage}-{time.strftime('%Y%m%d-%H%M%S')}"
+    run_name = (
+        f"{run_name_prefix or f'{plan.suite}-{plan.stage}'}-"
+        f"{time.strftime('%Y%m%d-%H%M%S')}"
+    )
     run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     directory = artifact_root / plan.suite / plan.stage / run_id
     provenance = {
@@ -129,6 +144,8 @@ def run_benchmark(
     plan_payload = {**asdict(plan), "metric_contract": metric_contract}
     atomic_write_json(plan_path, plan_payload)
     atomic_write_json(provenance_path, provenance)
+    metric_contract_path = directory / "metric_contract.json"
+    atomic_write_json(metric_contract_path, metric_contract)
     tracking = tracker(disabled=no_mlflow, experiment=f"EduMind / {plan.suite}")
     run_fingerprint = stable_hash({"plan": plan_payload, "provenance": provenance})
     results: list[CandidateResult] = []
@@ -158,6 +175,7 @@ def run_benchmark(
         )
         tracking.artifact(plan_path)
         tracking.artifact(provenance_path)
+        tracking.artifact(metric_contract_path)
         for input_name, input_path in (input_artifacts or {}).items():
             tracking.artifact(input_path, f"inputs/{input_name}")
         for decision_name, decision_path in (decision_files or {}).items():
@@ -176,12 +194,28 @@ def run_benchmark(
                     operational_prefix,
                     candidate_artifact_name,
                     nullable_metrics,
+                    sample_artifact_name,
+                    resource_artifact_name,
+                    resource_monitor_options,
+                    monitor_temporary_disk,
                 )
             )
 
         successful = [result for result in results if result.status == "success"]
+        failed = [result for result in results if result.status == "failed"]
         problems = _completion_problems(results)
         complete = not problems
+        paired_comparisons_payload = (
+            []
+            if plan.profile == "smoke" or not paired_comparisons
+            else _paired_comparisons(
+                successful,
+                {name: directions[name] for name in paired},
+                resamples=plan.bootstrap_resamples,
+                seed=plan.seed,
+                group_key=paired_group_key,
+            )
+        )
         summary = {
             "run_id": run_id,
             "fingerprint": run_fingerprint,
@@ -190,21 +224,12 @@ def run_benchmark(
             "metric_contract": metric_contract,
             "provenance": provenance,
             "candidates": [_payload(result, include_samples=False) for result in results],
-            "paired_comparisons": (
-                []
-                if plan.profile == "smoke" or not paired_comparisons
-                else _paired_comparisons(
-                    successful,
-                    {name: directions[name] for name in paired},
-                    resamples=plan.bootstrap_resamples,
-                    seed=plan.seed,
-                )
-            ),
+            "paired_comparisons": paired_comparisons_payload,
             "complete": complete,
             "completion": {
                 "planned_candidates": len(plan.candidates),
                 "successful_candidates": len(successful),
-                "failed_candidates": len(plan.candidates) - len(successful),
+                "failed_candidates": len(failed),
                 "sample_count": len(successful[0].samples) if successful else 0,
                 "problems": problems,
             },
@@ -217,13 +242,37 @@ def run_benchmark(
             },
         }
         summary_path = directory / "summary.json"
+        paired_path = directory / "paired_comparisons.json"
+        leaderboard_path = directory / "leaderboard.parquet"
+        atomic_write_json(paired_path, paired_comparisons_payload)
+        pd.DataFrame(
+            [
+                {
+                    "candidate": candidate.candidate,
+                    **candidate.metrics,
+                    **{
+                        f"{operational_prefix}{name}": value
+                        for name, value in candidate.operational.items()
+                    },
+                }
+                for candidate in successful
+            ]
+        ).to_parquet(leaderboard_path, index=False)
         atomic_write_json(summary_path, summary)
-        tracking.artifact(summary_path)
+        for path in (leaderboard_path, paired_path, summary_path):
+            tracking.artifact(path)
         tracking.metrics(
             {
                 "benchmark_complete": float(complete),
+                "planned_candidates": float(len(plan.candidates)),
                 "successful_candidates": float(len(successful)),
-                "failed_candidates": float(len(plan.candidates) - len(successful)),
+                "failed_candidates": float(len(failed)),
+            }
+        )
+        tracking.tags(
+            {
+                "benchmark.valid": str(complete).lower(),
+                "validation.status": "passed" if complete else "failed",
             }
         )
         if not complete:
@@ -251,6 +300,10 @@ def _run_candidate(
     operational_prefix,
     candidate_artifact_name,
     nullable_metrics,
+    sample_artifact_name,
+    resource_artifact_name,
+    resource_monitor_options,
+    monitor_temporary_disk,
 ) -> CandidateResult:
     samples: list[SampleResult] = []
     metrics: dict[str, float | None] = {}
@@ -260,6 +313,7 @@ def _run_candidate(
     resource_parameters: dict[str, object] = {}
     artifact_names: list[str] = []
     sample_artifact_path: Path | None = None
+    resource_rows: list[dict[str, object]] = []
     fingerprint = stable_hash({"run": run_fingerprint, "candidate": candidate})
     with tracking.run(candidate, nested=True):
         try:
@@ -267,12 +321,18 @@ def _run_candidate(
             temporary_directory = directory / "temporary" / _safe(candidate)
             temporary_directory.mkdir(parents=True, exist_ok=True)
             if monitor_resources:
-                resources = ResourceMonitor(temporary_directory=temporary_directory)
+                resources = ResourceMonitor(
+                    temporary_directory=(
+                        temporary_directory if monitor_temporary_disk else None
+                    ),
+                    **dict(resource_monitor_options or {}),
+                )
                 try:
                     with _temporary_environment(temporary_directory), resources:
                         evaluated = evaluator(candidate)
                 finally:
                     operational.update(resources.metrics())
+                    resource_rows = resources.samples()
                     resource_parameters["vram_measurement_method"] = (
                         resources.vram_measurement_method
                     )
@@ -288,18 +348,19 @@ def _run_candidate(
                 tracking.parameters(candidate_parameters)
             candidate_intervals = dict(evaluated[4]) if len(evaluated) >= 5 else {}
             artifact_tables = dict(evaluated[5]) if len(evaluated) >= 6 else {}
+            if resource_artifact_name and resource_rows:
+                artifact_tables.setdefault(resource_artifact_name, resource_rows)
             if not samples:
                 raise RuntimeError("Candidate produced no samples")
             _validate_sample_ids(samples)
             if artifact_tables:
-                if "samples" not in artifact_tables:
-                    artifact_tables["samples"] = _sample_rows(samples)
-                for name, rows in artifact_tables.items():
-                    table_path = _write_table(directory, candidate, name, rows)
-                    if name == "samples":
-                        sample_artifact_path = table_path
-                    artifact_names.append(table_path.name)
-                    tracking.artifact(table_path)
+                if sample_artifact_name not in artifact_tables:
+                    artifact_tables[sample_artifact_name] = _sample_rows(samples)
+                written = _persist_candidate_artifacts(
+                    directory, candidate, artifact_tables, tracking
+                )
+                artifact_names.extend(path.name for path in written.values())
+                sample_artifact_path = written.get(sample_artifact_name)
             else:
                 sample_path = _write_samples(directory, candidate, samples)
                 tracking.artifact(sample_path)
@@ -348,19 +409,80 @@ def _run_candidate(
                 }
             )
             tracking.parameters({"candidate_status": "success"})
-            candidate_path = _candidate_path(
-                directory, candidate, candidate_artifact_name
+            tracking.tags(
+                {"benchmark.valid": "true", "validation.status": "passed"}
             )
-            artifact_names.append(candidate_path.name)
-            atomic_write_json(
-                candidate_path,
-                {
-                    **_payload(result, include_samples=False),
-                    "parameters": candidate_parameters,
-                    "artifacts": artifact_names,
-                },
+            candidate_path = _write_candidate_result(
+                directory,
+                candidate,
+                candidate_artifact_name,
+                result,
+                artifact_names,
+                candidate_parameters,
             )
             tracking.artifact(candidate_path)
+            return result
+        except CandidateExecutionError as exc:
+            if "temporary_directory" in locals():
+                shutil.rmtree(temporary_directory, ignore_errors=True)
+            samples = list(exc.samples)
+            metrics = dict(exc.metrics)
+            intervals = dict(exc.intervals)
+            operational = {**dict(exc.operational), **operational}
+            candidate_parameters = {**exc.parameters, **resource_parameters}
+            tracking.parameters(
+                {
+                    **candidate_parameters,
+                    "candidate_status": "failed",
+                    "candidate_error": str(exc),
+                }
+            )
+            artifact_payloads = dict(exc.artifacts)
+            if resource_artifact_name and resource_rows:
+                artifact_payloads.setdefault(resource_artifact_name, resource_rows)
+            if samples and sample_artifact_name not in artifact_payloads:
+                artifact_payloads[sample_artifact_name] = _sample_rows(samples)
+            written = _persist_candidate_artifacts(
+                directory, candidate, artifact_payloads, tracking
+            )
+            artifact_names.extend(path.name for path in written.values())
+            result = CandidateResult(
+                candidate,
+                "failed",
+                fingerprint,
+                metrics,
+                intervals,
+                tuple(samples),
+                operational,
+                str(exc),
+            )
+            partial_metrics = {
+                **metrics,
+                **{
+                    f"{operational_prefix}{key}": value
+                    for key, value in operational.items()
+                },
+            }
+            tracking.metrics(
+                {
+                    key: float(value)
+                    for key, value in partial_metrics.items()
+                    if _finite_number(value)
+                }
+            )
+            candidate_path = _write_candidate_result(
+                directory,
+                candidate,
+                candidate_artifact_name,
+                result,
+                artifact_names,
+                candidate_parameters,
+            )
+            tracking.artifact(candidate_path)
+            tracking.tags(
+                {"benchmark.valid": "false", "validation.status": "failed"},
+            )
+            tracking.mark_failed()
             return result
         except Exception as exc:
             if "temporary_directory" in locals():
@@ -377,6 +499,9 @@ def _run_candidate(
                 error,
             )
             tracking.parameters({"candidate_status": "failed", "candidate_error": error})
+            tracking.tags(
+                {"benchmark.valid": "false", "validation.status": "failed"}
+            )
             partial_metrics = {
                 **metrics,
                 **{f"{operational_prefix}{key}": value for key, value in operational.items()},
@@ -393,17 +518,12 @@ def _run_candidate(
                     sample_artifact_path = _write_samples(directory, candidate, samples)
                     artifact_names.append(sample_artifact_path.name)
                 tracking.artifact(sample_artifact_path)
-            candidate_path = _candidate_path(
-                directory, candidate, candidate_artifact_name
-            )
-            if candidate_path.name not in artifact_names:
-                artifact_names.append(candidate_path.name)
-            atomic_write_json(
-                candidate_path,
-                {
-                    **_payload(result, include_samples=False),
-                    "artifacts": artifact_names,
-                },
+            candidate_path = _write_candidate_result(
+                directory,
+                candidate,
+                candidate_artifact_name,
+                result,
+                artifact_names,
             )
             tracking.artifact(candidate_path)
             tracking.mark_failed()
@@ -443,12 +563,68 @@ def _write_table(
     return path
 
 
+def _write_candidate_artifact(
+    directory: Path,
+    candidate: str,
+    name: str,
+    payload: object,
+) -> Path:
+    if isinstance(payload, Mapping):
+        if not name or any(
+            character not in "abcdefghijklmnopqrstuvwxyz0123456789_-"
+            for character in name
+        ):
+            raise ValueError(f"Invalid candidate artifact name: {name}")
+        path = directory / "candidates" / _safe(candidate) / f"{name}.json"
+        atomic_write_json(path, payload)
+        return path
+    if not isinstance(payload, Sequence) or isinstance(payload, (str, bytes)):
+        raise TypeError(f"Candidate artifact {name} must be an object or row sequence")
+    return _write_table(directory, candidate, name, payload)
+
+
+def _persist_candidate_artifacts(
+    directory: Path,
+    candidate: str,
+    payloads: Mapping[str, object],
+    tracking,
+) -> dict[str, Path]:
+    paths = {
+        name: _write_candidate_artifact(directory, candidate, name, payload)
+        for name, payload in payloads.items()
+    }
+    for path in paths.values():
+        tracking.artifact(path)
+    return paths
+
+
 def _candidate_path(directory: Path, candidate: str, name: str | None) -> Path:
     if name is None:
         return directory / "candidates" / f"{_safe(candidate)}.json"
     if name != "candidate.json":
         raise ValueError("The supported fixed candidate artifact name is candidate.json")
     return directory / "candidates" / _safe(candidate) / name
+
+
+def _write_candidate_result(
+    directory: Path,
+    candidate: str,
+    name: str | None,
+    result: CandidateResult,
+    artifact_names: list[str],
+    parameters: Mapping[str, object] | None = None,
+) -> Path:
+    path = _candidate_path(directory, candidate, name)
+    if path.name not in artifact_names:
+        artifact_names.append(path.name)
+    payload = {
+        **_payload(result, include_samples=False),
+        "artifacts": artifact_names,
+    }
+    if parameters is not None:
+        payload["parameters"] = dict(parameters)
+    atomic_write_json(path, payload)
+    return path
 
 
 def _payload(result: CandidateResult, *, include_samples: bool) -> dict[str, object]:
@@ -539,7 +715,7 @@ def _finite_number(value: object) -> bool:
 
 def _completion_problems(results: list[CandidateResult]) -> list[str]:
     problems: list[str] = []
-    failed = [result for result in results if result.status != "success"]
+    failed = [result for result in results if result.status == "failed"]
     for result in failed:
         problems.append(f"candidate {result.candidate} failed: {result.error or 'unknown error'}")
 
@@ -563,7 +739,14 @@ def _completion_problems(results: list[CandidateResult]) -> list[str]:
     return problems
 
 
-def _paired_comparisons(results, directions, *, resamples: int, seed: int):
+def _paired_comparisons(
+    results,
+    directions,
+    *,
+    resamples: int,
+    seed: int,
+    group_key: str | None = None,
+):
     comparisons = []
     quality_metrics = [name for name in directions if not name.startswith("operational.")]
     for left_index, left in enumerate(results):
@@ -581,9 +764,45 @@ def _paired_comparisons(results, directions, *, resamples: int, seed: int):
                 ]
                 if not paired_ids:
                     continue
+                left_values = [
+                    left_samples[sample_id].metrics[metric] for sample_id in paired_ids
+                ]
+                right_values = [
+                    right_samples[sample_id].metrics[metric] for sample_id in paired_ids
+                ]
+                paired_units = len(paired_ids)
+                if group_key is not None:
+                    grouped_left: dict[str, list[float]] = {}
+                    grouped_right: dict[str, list[float]] = {}
+                    for sample_id, left_value, right_value in zip(
+                        paired_ids, left_values, right_values, strict=True
+                    ):
+                        left_group = str(
+                            left_samples[sample_id].metadata.get(group_key, "")
+                        )
+                        right_group = str(
+                            right_samples[sample_id].metadata.get(group_key, "")
+                        )
+                        if not left_group or left_group != right_group:
+                            raise ValueError(
+                                f"Paired metric {metric} has inconsistent {group_key} "
+                                f"for sample {sample_id}"
+                            )
+                        grouped_left.setdefault(left_group, []).append(float(left_value))
+                        grouped_right.setdefault(right_group, []).append(float(right_value))
+                    groups = sorted(grouped_left)
+                    left_values = [
+                        sum(grouped_left[group]) / len(grouped_left[group])
+                        for group in groups
+                    ]
+                    right_values = [
+                        sum(grouped_right[group]) / len(grouped_right[group])
+                        for group in groups
+                    ]
+                    paired_units = len(groups)
                 interval = paired_bootstrap_interval(
-                    [left_samples[sample_id].metrics[metric] for sample_id in paired_ids],
-                    [right_samples[sample_id].metrics[metric] for sample_id in paired_ids],
+                    left_values,
+                    right_values,
                     resamples=resamples,
                     seed=seed,
                 )
@@ -594,6 +813,7 @@ def _paired_comparisons(results, directions, *, resamples: int, seed: int):
                     "confidence": interval.confidence,
                     "direction": directions[metric],
                     "paired_samples": len(paired_ids),
+                    "paired_resampling_units": paired_units,
                 }
             comparisons.append({"left": left.candidate, "right": right.candidate, "metrics": metrics})
     return comparisons

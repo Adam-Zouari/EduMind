@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from .contracts import DatasetManifest
@@ -11,6 +12,23 @@ from .contracts import DatasetManifest
 
 class DatasetValidationError(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class EvidenceInterval:
+    document_id: str
+    start: int
+    end: int
+
+
+@dataclass(frozen=True)
+class EvidenceUnit:
+    identifier: str
+    evidence_type: str
+    intervals: tuple[EvidenceInterval, ...]
+
+
+EVIDENCE_TYPES = frozenset({"text", "table", "formula"})
 
 
 def load_manifest(path: str | Path, *, verify_checksum: bool = True) -> DatasetManifest:
@@ -78,24 +96,181 @@ def validate_evidence(manifest: DatasetManifest) -> None:
         for sample in manifest.samples
         if sample.get("kind") == "document"
     }
+    if not documents or any(not text.strip() for text in documents.values()):
+        raise DatasetValidationError("RAG manifests require non-empty source documents")
     for sample in manifest.samples:
         if sample.get("kind") != "question":
             continue
-        raw_evidence = sample.get("evidence", [])
-        if not isinstance(raw_evidence, (list, tuple)):
-            raise DatasetValidationError(f"Evidence must be a sequence in question {sample['id']}")
-        for evidence in raw_evidence:
-            if not isinstance(evidence, Mapping):
+        question_id = str(sample["id"])
+        if not str(sample.get("question", "")).strip():
+            raise DatasetValidationError(f"Question {question_id} has empty text")
+        document_id = str(sample.get("document_id", ""))
+        if document_id not in documents:
+            raise DatasetValidationError(
+                f"Question {question_id} refers to an unknown document"
+            )
+        answerable = sample.get("answerable")
+        if not isinstance(answerable, bool):
+            raise DatasetValidationError(
+                f"Question {question_id} must declare boolean answerable"
+            )
+        units = evidence_units(sample)
+        if answerable and not units:
+            raise DatasetValidationError(
+                f"Answerable question {question_id} requires verified evidence units"
+            )
+        if not answerable and units:
+            raise DatasetValidationError(
+                f"Unanswerable question {question_id} cannot contain evidence units"
+            )
+        identifiers = [unit.identifier for unit in units]
+        if len(identifiers) != len(set(identifiers)):
+            raise DatasetValidationError(
+                f"Question {question_id} contains duplicate evidence-unit IDs"
+            )
+        signatures = [
+            (
+                unit.evidence_type,
+                tuple(
+                    (interval.document_id, interval.start, interval.end)
+                    for interval in unit.intervals
+                ),
+            )
+            for unit in units
+        ]
+        if len(signatures) != len(set(signatures)):
+            raise DatasetValidationError(
+                f"Question {question_id} contains duplicate evidence units"
+            )
+        question_type = str(sample.get("evidence_type", ""))
+        if answerable and question_type not in EVIDENCE_TYPES | {"mixed"}:
+            raise DatasetValidationError(
+                f"Question {question_id} has unsupported evidence_type {question_type!r}"
+            )
+        unit_types = {unit.evidence_type for unit in units}
+        if question_type == "mixed" and len(unit_types) < 2:
+            raise DatasetValidationError(
+                f"Mixed question {question_id} requires at least two evidence types"
+            )
+        if question_type in EVIDENCE_TYPES and unit_types - {question_type}:
+            raise DatasetValidationError(
+                f"Question {question_id} evidence units contradict evidence_type {question_type!r}"
+            )
+        for unit in units:
+            document_ids = {interval.document_id for interval in unit.intervals}
+            if len(document_ids) != 1:
                 raise DatasetValidationError(
-                    f"Evidence must be an object in question {sample['id']}"
+                    f"Evidence unit {unit.identifier} must fit within one source document"
                 )
-            document = documents.get(str(evidence.get("document_id")))
-            start, end = int(evidence.get("start", -1)), int(evidence.get("end", -1))
-            if document is None or start < 0 or end < start or end > len(document):
-                raise DatasetValidationError(f"Invalid evidence offset in question {sample['id']}")
-            expected = evidence.get("text")
-            if expected is not None and document[start:end] != expected:
-                raise DatasetValidationError(f"Evidence text mismatch in question {sample['id']}")
+            if document_ids != {document_id}:
+                raise DatasetValidationError(
+                    f"Evidence unit {unit.identifier} does not belong to question "
+                    f"document {document_id}"
+                )
+            coordinates = [(interval.start, interval.end) for interval in unit.intervals]
+            if coordinates != sorted(coordinates) or any(
+                left[1] > right[0] for left, right in zip(coordinates, coordinates[1:])
+            ):
+                raise DatasetValidationError(
+                    f"Evidence unit {unit.identifier} intervals must be ordered and non-overlapping"
+                )
+            for interval in unit.intervals:
+                document = documents.get(interval.document_id)
+                if (
+                    document is None
+                    or interval.start < 0
+                    or interval.end <= interval.start
+                    or interval.end > len(document)
+                ):
+                    raise DatasetValidationError(
+                        f"Invalid evidence offset in question {question_id}"
+                    )
+            _validate_evidence_text(sample, unit, documents)
+
+
+def evidence_units(question: Mapping[str, object]) -> tuple[EvidenceUnit, ...]:
+    """Parse the frozen RAG evidence-unit representation without fuzzy inference."""
+
+    raw_evidence = question.get("evidence", [])
+    if not isinstance(raw_evidence, Sequence) or isinstance(raw_evidence, (str, bytes)):
+        raise DatasetValidationError(
+            f"Evidence must be a sequence in question {question.get('id', '')}"
+        )
+    question_type = str(question.get("evidence_type", ""))
+    units: list[EvidenceUnit] = []
+    for raw_unit in raw_evidence:
+        if not isinstance(raw_unit, Mapping):
+            raise DatasetValidationError(
+                f"Evidence must be an object in question {question.get('id', '')}"
+            )
+        identifier = str(raw_unit.get("id", "")).strip()
+        if not identifier:
+            raise DatasetValidationError(
+                f"Every evidence unit requires a stable ID in question {question.get('id', '')}"
+            )
+        evidence_type = str(raw_unit.get("evidence_type", question_type))
+        if evidence_type not in EVIDENCE_TYPES:
+            raise DatasetValidationError(
+                f"Evidence unit {identifier} has unsupported type {evidence_type!r}"
+            )
+        raw_intervals = raw_unit.get("intervals")
+        if raw_intervals is None:
+            raw_intervals = [raw_unit]
+        if not isinstance(raw_intervals, Sequence) or isinstance(
+            raw_intervals, (str, bytes)
+        ):
+            raise DatasetValidationError(
+                f"Evidence unit {identifier} intervals must be a sequence"
+            )
+        intervals: list[EvidenceInterval] = []
+        for raw_interval in raw_intervals:
+            if not isinstance(raw_interval, Mapping):
+                raise DatasetValidationError(
+                    f"Evidence unit {identifier} contains a malformed interval"
+                )
+            start = raw_interval.get("start")
+            end = raw_interval.get("end")
+            if (
+                not isinstance(start, int)
+                or isinstance(start, bool)
+                or not isinstance(end, int)
+                or isinstance(end, bool)
+            ):
+                raise DatasetValidationError(
+                    f"Evidence unit {identifier} has non-integer offsets"
+                )
+            intervals.append(
+                EvidenceInterval(str(raw_interval.get("document_id", "")), start, end)
+            )
+        if not intervals:
+            raise DatasetValidationError(
+                f"Evidence unit {identifier} requires at least one interval"
+            )
+        units.append(EvidenceUnit(identifier, evidence_type, tuple(intervals)))
+    return tuple(units)
+
+
+def _validate_evidence_text(
+    question: Mapping[str, object],
+    unit: EvidenceUnit,
+    documents: Mapping[str, str],
+) -> None:
+    raw_units = question.get("evidence", [])
+    raw_unit = next(
+        raw
+        for raw in raw_units
+        if isinstance(raw, Mapping) and str(raw.get("id", "")) == unit.identifier
+    )
+    raw_intervals = raw_unit.get("intervals")
+    source_rows = raw_intervals if raw_intervals is not None else [raw_unit]
+    for raw, interval in zip(source_rows, unit.intervals, strict=True):
+        if not isinstance(raw, Mapping) or raw.get("text") is None:
+            continue
+        document = documents[interval.document_id]
+        if document[interval.start : interval.end] != str(raw["text"]):
+            raise DatasetValidationError(
+                f"Evidence text mismatch in question {question.get('id', '')}"
+            )
 
 
 def assert_no_split_leakage(manifests: Sequence[DatasetManifest]) -> None:

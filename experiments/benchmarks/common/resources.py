@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from pathlib import Path
 from types import TracebackType
 from typing import Any
@@ -34,8 +35,11 @@ class ResourceMonitor:
         self._pynvml: Any | None = None
         self._gpu_handles: list[Any] = []
         self._gpu_baseline_bytes: list[int] = []
+        self._started_at = 0.0
+        self._samples: list[dict[str, object]] = []
 
     def __enter__(self) -> ResourceMonitor:
+        self._started_at = time.perf_counter()
         try:
             import pynvml
 
@@ -50,12 +54,12 @@ class ResourceMonitor:
                 for handle in self._gpu_handles
             ]
             if self._require_vram and not self._gpu_handles:
-                raise RuntimeError("CUDA ASR benchmark requested but NVML found no GPU")
+                raise RuntimeError("CUDA benchmark requested but NVML found no GPU")
         except Exception as exc:  # optional except when a CUDA profile requires it
             self._pynvml = None
             if self._require_vram:
                 raise RuntimeError(
-                    "CUDA ASR benchmarks require working NVML VRAM measurement"
+                    "CUDA benchmarks require working NVML VRAM measurement"
                 ) from exc
         self._sample()
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -94,6 +98,11 @@ class ResourceMonitor:
             values["peak_temporary_disk_mb"] = self._peak_temporary_bytes / (1024**2)
         return values
 
+    def samples(self) -> list[dict[str, object]]:
+        """Return timestamped resource observations for benchmark artifacts."""
+
+        return [dict(row) for row in self._samples]
+
     @property
     def vram_measurement_method(self) -> str:
         if self._process_vram_sampled:
@@ -110,6 +119,8 @@ class ResourceMonitor:
 
     def _sample(self) -> None:
         process_ids = {os.getpid()}
+        ram_bytes: int | None = None
+        vram_bytes: int | None = None
         try:
             import psutil
 
@@ -127,9 +138,11 @@ class ResourceMonitor:
                 self._peak_ram_bytes,
                 resident,
             )
+            ram_bytes = resident
         except (ImportError, OSError):
             pass
         if self._pynvml is not None:
+            sampled_vram = 0
             for index, handle in enumerate(self._gpu_handles):
                 try:
                     processes = list(
@@ -153,9 +166,7 @@ class ResourceMonitor:
                     ]
                     if reported:
                         self._process_vram_sampled = True
-                        self._peak_vram_bytes = max(
-                            self._peak_vram_bytes, sum(reported)
-                        )
+                        sampled_vram += sum(reported)
                     elif selected:
                         # Windows WDDM exposes the target PID through NVML but
                         # returns usedGpuMemory=None. In that case, measure the
@@ -164,9 +175,12 @@ class ResourceMonitor:
                         delta = max(0, used - self._gpu_baseline_bytes[index])
                         if delta:
                             self._device_delta_vram_sampled = True
-                            self._peak_vram_bytes = max(self._peak_vram_bytes, delta)
+                            sampled_vram += delta
                 except Exception:  # a required CUDA run is rejected by metrics()
                     continue
+            if self._vram_sampled:
+                self._peak_vram_bytes = max(self._peak_vram_bytes, sampled_vram)
+                vram_bytes = sampled_vram
         if self._temporary_directory is not None:
             try:
                 size = sum(
@@ -177,3 +191,13 @@ class ResourceMonitor:
                 self._peak_temporary_bytes = max(self._peak_temporary_bytes, size)
             except OSError:
                 pass
+        self._samples.append(
+            {
+                "elapsed_seconds": max(0.0, time.perf_counter() - self._started_at),
+                "process_tree_ram_mb": (
+                    ram_bytes / (1024**2) if ram_bytes is not None else None
+                ),
+                "vram_mb": vram_bytes / (1024**2) if vram_bytes is not None else None,
+                "vram_measurement_method": self.vram_measurement_method,
+            }
+        )
