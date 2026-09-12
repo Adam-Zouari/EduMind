@@ -73,19 +73,3 @@ def included_candidates(component: str) -> tuple[str, ...]:
     return tuple(
         entry.candidate for entry in selection_entries() if entry.component == component
     )
-
-
-def included_revisions(*components: str) -> dict[str, str]:
-    allowed = set(components)
-    return {
-        entry.candidate: entry.revision
-        for entry in selection_entries()
-        if not allowed or entry.component in allowed
-    }
-
-
-def require_included(component: str, candidate: str) -> SelectionEntry:
-    for entry in selection_entries():
-        if entry.component == component and entry.candidate == candidate:
-            return entry
-    raise ValueError(f"Candidate is not approved for {component}: {candidate}")

@@ -18,6 +18,7 @@ from experiments.benchmarks.common.metrics import (
     balanced_accuracy_interval,
     citation_scores,
     exact_match,
+    precision_recall_f1,
     rouge_l,
     token_f1,
 )
@@ -457,10 +458,9 @@ def _refusal_scores(answerable, predicted_answerable):
     tp = sum(left and right for left, right in zip(truth, predicted))
     fp = sum(not left and right for left, right in zip(truth, predicted))
     fn = sum(left and not right for left, right in zip(truth, predicted))
-    precision = tp / (tp + fp) if tp + fp else 0.0
-    recall = tp / (tp + fn) if tp + fn else 0.0
+    precision, recall, f1 = precision_recall_f1(tp, fp, fn)
     return {
         "refusal_precision": precision,
         "refusal_recall": recall,
-        "refusal_f1": 2 * precision * recall / (precision + recall) if precision + recall else 0.0,
+        "refusal_f1": f1,
     }
