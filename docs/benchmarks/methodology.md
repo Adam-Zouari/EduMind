@@ -1240,7 +1240,7 @@ declared embedding model. The result belongs to the complete pair.
 
 | Model | Role in the comparison |
 |---|---|
-| MiniLM L6 v2 | Lightweight production control. |
+| GTE ModernBERT base | 149M lightweight production control with an 8,192-token input limit. |
 | Snowflake Arctic Embed M v2 | Strong small-model retrieval candidate with a long input limit. |
 | F2LLM v2 0.6B | Alternative 0.6B retrieval architecture. |
 | Octen Embedding 0.6B | Strong 0.6B retrieval challenger. |
@@ -1292,21 +1292,17 @@ Evidence-token Precision uses the frozen evaluation tokenizer
 `tiktoken:cl100k_base` for every candidate. It never uses each embedding model's
 tokenizer for scoring, because changing the counting unit between candidates
 would make their precision values incomparable. Model-specific tokenizers are
-used separately for input-compatibility validation.
+used separately to prepare inference inputs and validate their exact lengths.
+The fixed tokenizer is a protocol control, not another benchmark candidate. A
+future multilingual protocol may evaluate tokenizer sensitivity separately
+before freezing a replacement.
 
-The declared matrix has 64 planned pairs, but a pair is eligible for inference
-only when every generated chunk and answerable query fits the embedding model's
-own input contract, including query/document prefixes and required special
-tokens. The preflight records the model-token count of every input. It never
-silently truncates, changes a strategy's size, or splits chunks again only for
-a short-context model; any of those actions would create a different candidate.
-
-This distinction matters for the 256-word-piece MiniLM control. Nominal
-`cl100k_base` chunk sizes are not MiniLM word-piece counts, and the 384/512-token
-strategies cannot be assumed compatible with it. Every planned pair remains
-accounted for in the phase result: an expected contract incompatibility is
-recorded as `incompatible`, while an eligible pair that crashes is an unexpected
-failure and makes the comparison incomplete.
+Every one of the 64 planned pairs must fit the embedding model's native input
+contract, including query/document prefixes and required special tokens. The
+preflight records native-token counts for every generated chunk and answerable
+query. It never silently truncates, changes a strategy's size, or splits chunks
+again for one model. An oversized input is reported as
+`input_length_exceeded`; the child fails and the comparison is incomplete.
 
 ### Per-candidate execution
 
@@ -1345,10 +1341,9 @@ are excluded.
 A successful child must account for every expected document and answerable
 query, produce the expected number and dimension of finite nonzero vectors, use
 zero truncated inputs, and reproduce the same ordered top-five IDs for repeated
-identical queries. An expected input-limit incompatibility stops after preflight
-and remains recorded as `incompatible`. An eligible pair that crashes, runs out
-of memory, or produces malformed output is failed and makes the comparison
-incomplete.
+identical queries. An input-limit violation stops after preflight with its
+complete validation report. It is a failed child, like a crash, out-of-memory
+condition, or malformed output, and makes the comparison incomplete.
 
 ### Development, validation, and locked test
 
@@ -1359,7 +1354,7 @@ declared chunking and embedding paths on tiny committed fixtures
 
 development / standard:
 8 chunkers × 8 embeddings = 64 planned pair records on 100 papers
--> run every eligible pair and record expected incompatibilities
+-> run and account for all 64 pairs
 -> engineer selects up to three complete finalist pairs
 
 validation / full:
@@ -1371,11 +1366,10 @@ the selected pair runs only inside the one frozen complete-system evaluation
 on 40 locked papers -> no further component tuning
 ```
 
-Smoke validates wiring only. Development compares the declared matrix;
-validation checks the finalists on unseen papers. Every planned development
-pair remains accounted for even when preflight proves it incompatible. The
-locked split is reserved for the final complete system and is not another
-chunking/embedding selection round.
+Smoke validates wiring only. Development compares the declared matrix, and
+validation checks the finalists on unseen papers. A failed pair makes its parent
+comparison incomplete. The locked split is reserved for the final complete
+system and is not another chunking/embedding selection round.
 
 ### Metrics and why they are used
 
@@ -1413,12 +1407,11 @@ MLflow experiment: EduMind / rag
     └── up to three child runs: one per engineer-selected finalist pair
 ```
 
-Each parent stores the phase, dataset and checksum, candidate plan,
-compatibility matrix, seed, repetitions, metric contract, model lock, Git and
+Each parent stores the phase, dataset and checksum, candidate plan, seed,
+repetitions, metric contract, model lock, Git and
 dependency provenance, hardware, and any engineer-decision file. Its direct
-metrics contain completion counts only: planned, eligible, incompatible,
-successful, and unexpectedly failed pairs. `plan.json`, `provenance.json`,
-`metric_contract.json`, `compatibility_matrix.json`, `leaderboard.parquet`,
+metrics contain completion counts only: planned, successful, and failed pairs.
+`plan.json`, `provenance.json`, `metric_contract.json`, `leaderboard.parquet`,
 paired comparisons, and `summary.json` are parent artifacts. The chosen pair's
 locked result is logged later with the one complete-system locked-test run, not
 as another component-selection parent.
@@ -1470,7 +1463,7 @@ Validity counters such as expected/processed documents and queries, truncated
 inputs, failed cases, nonfinite/zero-norm vectors, dimension mismatches, and
 determinism mismatches are logged under `validity.*`. The final decision is also
 stored as a `benchmark.valid` tag and a `validation.status` tag whose value is
-`passed`, `failed`, or `incompatible`. MLflow scalar values do not replace the
+`passed` or `failed`. MLflow scalar values do not replace the
 detailed `validation_report.json` artifact. Stored dtype is a parameter in the
 resolved embedding contract rather than a numeric metric.
 
@@ -1485,13 +1478,13 @@ Each successful child stores:
 | `timings.parquet` | One row per query and measured repetition with warm latency and success state. |
 | `resources.parquet` | Timestamped process-tree RAM and VRAM samples. |
 | `candidate.json` | Resolved contracts, status, fingerprint, aggregates, confidence intervals, operational values, and artifact references. |
-| `validation_report.json` | Compatibility and validity checks, counts, limits, checksums, and any errors. |
+| `validation_report.json` | Input-length and validity checks, counts, limits, checksums, and any errors. |
 
 Raw documents, model weights, and a full embedding matrix are not duplicated
 into every child; frozen inputs, offsets, revisions, and checksums make the rows
-reproducible. An incompatible child logs its reason and validation report but no
-quality metrics. An unexpected execution failure remains visible with MLflow
-status `FAILED` and makes the parent comparison incomplete.
+reproducible. Any failed child logs its reason and available validation evidence,
+remains visible with MLflow status `FAILED`, and makes the parent comparison
+incomplete.
 
 Aggregation and uncertainty follow the
 [chunking and embedding confidence-interval contract](metrics.md#chunking-and-embedding-confidence-intervals).

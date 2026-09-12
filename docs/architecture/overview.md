@@ -42,7 +42,7 @@ ExtractedDocument
  source checksum, model/profile revision, warnings)
   |
   v
-token 256/32 chunks -> normalized MiniLM vectors -> Chroma HTTP
+cl100k_base token 256/32 chunks -> normalized GTE ModernBERT vectors -> Chroma HTTP
   |
   v
 dense candidates -> 2,048-token context pack -> numbered evidence

@@ -57,7 +57,7 @@ controls**. They are baselines, not claims that these components are already the
 | Document extraction | Docling Standard; RapidOCR; PDF-aware OCR for PDFs; full-page OCR for images; TableFormer fast; formula enrichment off |
 | Speech extraction | Whisper `small.en` |
 | Chunking | Token chunks, 256 tokens with 32-token overlap |
-| Embeddings | `sentence-transformers/all-MiniLM-L6-v2` |
+| Embeddings | `Alibaba-NLP/gte-modernbert-base`, 768 dimensions, 8,192-token native limit |
 | Retrieval | Dense top-5 retrieval packed into a 2,048-token evidence budget |
 | Vector server | Chroma over HTTP at `127.0.0.1:8001` |
 | Generation | Pinned Hugging Face `Qwen/Qwen3-1.7B`, CPU, thinking disabled |
@@ -94,6 +94,11 @@ streamlit run src/edumind/ui/streamlit_app.py
 
 The [application run guide](docs/setup/running.md) owns stop, readiness, and
 troubleshooting commands.
+
+Existing MiniLM Chroma indexes are intentionally rejected by the new GTE
+fingerprint. Follow the explicit
+[reset and reindex procedure](docs/setup/installation.md#migrating-an-existing-minilm-index);
+EduMind never deletes the old index automatically.
 
 ## How component selection works
 

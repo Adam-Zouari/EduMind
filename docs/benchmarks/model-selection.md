@@ -84,7 +84,7 @@ Candidate-specific links appear in the relevant table row. A benchmark shared by
 | Component | Control | Purpose |
 |---|---|---|
 | Chunking | Token 256/32 | Current fixed-window chunking. |
-| Embedding | `sentence-transformers/all-MiniLM-L6-v2` at `c9745ed1d9f207416be6d2e6f8de32d1f16199bf` | Current lightweight embedding. |
+| Embedding | [`Alibaba-NLP/gte-modernbert-base`](https://huggingface.co/Alibaba-NLP/gte-modernbert-base/tree/e7f32e3c00f91d699e8c43b53106206bcc72bb22) at `e7f32e3c00f91d699e8c43b53106206bcc72bb22` | Provisional 149M lightweight control with an 8,192-token input limit, 768-dimensional CLS-pooled normalized embeddings, and an Apache 2.0 license. Its official card reports 55.33 average nDCG@10 on 15 BEIR retrieval datasets. |
 | Reranking | `cross-encoder/ms-marco-MiniLM-L6-v2` at `233902d25c440f23af6f7d6e94d2946bac0bee0a` | Established cross-encoder baseline. |
 | Generation | [`Qwen/Qwen3-1.7B`](https://huggingface.co/Qwen/Qwen3-1.7B/tree/b9352fbb8ce704292730cf54b3b1dceb2a808738), thinking disabled | Small direct-checkpoint control executed through the same Hugging Face runtime as the candidates. |
 | Document extraction | Docling Standard baseline configuration | Current unified-parser reference. |
@@ -108,12 +108,19 @@ Approximate size groups observed in the reviewed shortlist:
 
 | Approximate size | Included candidates | Why they are included | Evidence |
 |---|---|---|---|
-| ≤350M | `Snowflake/snowflake-arctic-embed-m-v2.0` | Highest eligible English Retrieval result in the frozen ≤350M comparison: **58.4**. | [MTEB record](https://leaderboard.mteb.org/models/Snowflake/snowflake-arctic-embed-m-v2.0); [pinned comparison](https://github.com/ibm-granite/granite-embedding-models/tree/250b8522ad2a7ea0c1e26f089d3de212390f614b); [pinned model card](https://huggingface.co/Snowflake/snowflake-arctic-embed-m-v2.0/blob/95c2741480856aa9666782eb4afe11959938017f/README.md) |
+| ≤350M | `Alibaba-NLP/gte-modernbert-base` control; `Snowflake/snowflake-arctic-embed-m-v2.0` candidate | GTE is the lightweight long-context production control and reports **55.33 BEIR-15 average nDCG@10**. Snowflake is the strongest commercially usable model in the separate frozen English MTEB-v2 screening table (**58.4 Retrieval**). These public protocols are not used to rank the two models against each other. | [pinned GTE model card](https://huggingface.co/Alibaba-NLP/gte-modernbert-base/blob/e7f32e3c00f91d699e8c43b53106206bcc72bb22/README.md); [Snowflake MTEB record](https://leaderboard.mteb.org/models/Snowflake/snowflake-arctic-embed-m-v2.0); [pinned comparison](https://github.com/ibm-granite/granite-embedding-models/tree/250b8522ad2a7ea0c1e26f089d3de212390f614b); [pinned Snowflake model card](https://huggingface.co/Snowflake/snowflake-arctic-embed-m-v2.0/blob/95c2741480856aa9666782eb4afe11959938017f/README.md) |
 | >350M–800M | `Qwen/Qwen3-Embedding-0.6B`; `Octen/Octen-Embedding-0.6B`; `codefuse-ai/F2LLM-v2-0.6B` | Qwen leads the directly comparable MTEB screen (**61.83 Retrieval**). Octen has strong RTEB evidence and F2LLM has official MTEB task results, but their available aggregates are not directly comparable to Qwen's frozen result. | [Qwen MTEB](https://leaderboard.mteb.org/models/Qwen/Qwen3-Embedding-0.6B); [Octen/RTEB](https://leaderboard.mteb.org/benchmark/RTEB%28beta%29); [F2LLM MTEB](https://leaderboard.mteb.org/models/codefuse-ai/F2LLM-v2-0.6B) |
 | >800M–1.5B | `nvidia/Nemotron-3-Embed-1B-BF16` | NVIDIA's common RTEB-16 table reports **72.38 average nDCG@10**, above the reviewed nearby-size models in that table. | [MTEB record](https://leaderboard.mteb.org/models/nvidia/Nemotron-3-Embed-1B-BF16); [pinned RTEB table](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16/blame/c932836c54f75b7df5da0b0f519ea4cfd276a8e4/README.md) |
 | >1.5B–4.5B | `Qwen/Qwen3-Embedding-4B`; `Octen/Octen-Embedding-4B` | Qwen reports **68.46 MTEB English-v2 Retrieval** and Octen reports **0.7747 RTEB public mean**. The protocols differ, so both proceed to the same local benchmark. | [Qwen MTEB](https://leaderboard.mteb.org/models/Qwen/Qwen3-Embedding-4B); [Octen/RTEB](https://leaderboard.mteb.org/benchmark/RTEB%28beta%29) |
 
-The MiniLM control is evaluated with every compatible chunker. Public evidence sources and exact candidate revisions are recorded in `selection_evidence.csv`.
+The GTE ModernBERT control is evaluated with every chunker. Public evidence sources and exact candidate revisions are recorded in `selection_evidence.csv`.
+
+The benchmark freezes `cl100k_base` as its common chunking and scoring tokenizer.
+Tokenizers are controls, not candidates: allowing each embedding model to redefine
+chunk boundaries would confound tokenizer, chunker, and embedding effects. Each
+embedding model still uses its own native tokenizer to prepare inference inputs
+and enforce its input-length contract. A future multilingual benchmark version
+may run a separate tokenizer-sensitivity study before freezing a new protocol.
 
 ### Chunking candidates
 

@@ -18,8 +18,8 @@ question -> query embedding -> ranked hits -> token-budget context -> answer
 
 | Component | Provisional default |
 |---|---|
-| Chunker | Token 256/32 with exact source offsets |
-| Embedding | Pinned MiniLM, 384 dimensions, normalized cosine vectors |
+| Chunker | Token 256/32 with exact source offsets measured by `cl100k_base` |
+| Embedding | Pinned GTE ModernBERT base, 768 dimensions, normalized cosine vectors |
 | Vector store | Chroma HTTP server |
 | Retrieval | Dense top-5 from 20 candidates |
 | Context packing | Ranked evidence capped at 2,048 tokens |

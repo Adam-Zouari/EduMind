@@ -103,16 +103,26 @@ Prepare only the provisional application controls:
 python experiments/benchmarks/prepare.py app-models
 ```
 
-This installs MiniLM embeddings, Hugging Face Qwen3 1.7B, Whisper `small.en`,
+This downloads the pinned GTE ModernBERT base embedding snapshot, Hugging Face
+Qwen3 1.7B, Whisper `small.en`,
 and only the Docling components used by the provisional application: layout,
 TableFormer, and RapidOCR. Prepare the additional experiment candidates and
 Docling components separately or together:
 
 ```powershell
+python experiments/benchmarks/prepare.py embedding-models
 python experiments/benchmarks/prepare.py rag-models
 python experiments/benchmarks/prepare.py extraction-models
 python experiments/benchmarks/prepare.py all-models
 ```
+
+`embedding-models` prepares only the eight candidates used by the
+chunking--embedding matrix. `rag-models` is the aggregate RAG target and also
+prepares the selected rerankers, generators, and evaluator.
+Embedding preparation excludes alternate ONNX, OpenVINO, GGUF, TensorFlow,
+Flax, and TFLite exports because these benchmarks load the native Transformers
+checkpoint. The exact exclusions and resulting directory checksum are recorded
+in the model lock.
 
 Downloads are resumable through Hugging Face and are placed in deterministic project directories. Preparation never substitutes a newer repository head when the pinned revision is unavailable.
 
@@ -120,12 +130,31 @@ Downloads are resumable through Hugging Face and are placed in deterministic pro
 
 The RAG download contains these exact approved identities:
 
-- Embeddings: [MiniLM](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2), [Snowflake Arctic Embed M v2](https://huggingface.co/Snowflake/snowflake-arctic-embed-m-v2.0), [F2LLM v2 0.6B](https://huggingface.co/codefuse-ai/F2LLM-v2-0.6B), [Octen 0.6B](https://huggingface.co/Octen/Octen-Embedding-0.6B), [Qwen3 Embedding 0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B), [Nemotron Embed 1B](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16), [Octen 4B](https://huggingface.co/Octen/Octen-Embedding-4B), and [Qwen3 Embedding 4B](https://huggingface.co/Qwen/Qwen3-Embedding-4B).
+- Embeddings: [GTE ModernBERT base](https://huggingface.co/Alibaba-NLP/gte-modernbert-base/tree/e7f32e3c00f91d699e8c43b53106206bcc72bb22), [Snowflake Arctic Embed M v2](https://huggingface.co/Snowflake/snowflake-arctic-embed-m-v2.0), [F2LLM v2 0.6B](https://huggingface.co/codefuse-ai/F2LLM-v2-0.6B), [Octen 0.6B](https://huggingface.co/Octen/Octen-Embedding-0.6B), [Qwen3 Embedding 0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B), [Nemotron Embed 1B](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16), [Octen 4B](https://huggingface.co/Octen/Octen-Embedding-4B), and [Qwen3 Embedding 4B](https://huggingface.co/Qwen/Qwen3-Embedding-4B).
 - Rerankers: [MiniLM control](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2), [Ettin 150M](https://huggingface.co/cross-encoder/ettin-reranker-150m-v1), [Ettin 400M](https://huggingface.co/cross-encoder/ettin-reranker-400m-v1), [Ettin 1B](https://huggingface.co/cross-encoder/ettin-reranker-1b-v1), and [Qwen3 Reranker 4B](https://huggingface.co/Qwen/Qwen3-Reranker-4B).
 - Generators: [Qwen3 1.7B control](https://huggingface.co/Qwen/Qwen3-1.7B), [MiniCPM5 1B](https://huggingface.co/openbmb/MiniCPM5-1B), [G9v3 3B](https://huggingface.co/ai9stars/G9v3-3B), and [Qwen3.5 4B](https://huggingface.co/Qwen/Qwen3.5-4B).
 - Diagnostic evaluator: [HHEM](https://huggingface.co/vectara/hallucination_evaluation_model).
 
 Generators run with native checkpoint precision, no quantization, no automatic CPU/GPU split, temperature 0, and seed 42. The benchmark records the whole-model device.
+
+### Migrating an existing MiniLM index
+
+GTE produces 768-dimensional vectors, so an existing 384-dimensional MiniLM
+collection cannot be reused. EduMind keeps the `edumind` collection name and
+checks its embedding/chunking fingerprint at startup; it rejects the old index
+instead of deleting or silently mixing vectors.
+
+After preparing the new application models, stop the application and explicitly
+remove the dedicated Chroma volume, then recreate it:
+
+```powershell
+docker compose -f infrastructure/chroma.yml down -v
+docker compose -f infrastructure/chroma.yml up -d
+```
+
+This deletes the existing local Chroma data. Re-upload the source documents to
+rebuild the index with GTE. No application or benchmark command performs this
+destructive migration automatically.
 
 ### Extraction models
 
