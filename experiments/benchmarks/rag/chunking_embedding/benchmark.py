@@ -18,6 +18,7 @@ from experiments.benchmarks.common.contracts import (
     DatasetManifest,
     SampleResult,
 )
+from experiments.benchmarks.common.datasets import evidence_units
 from experiments.benchmarks.common.provenance import package_versions
 from experiments.benchmarks.common.process import run_json_worker
 from experiments.benchmarks.rag.evaluation import (
@@ -28,9 +29,12 @@ from experiments.benchmarks.rag.evaluation import (
 
 from .metrics import (
     ALPHA,
+    ALPHA_NDCG_METRICS,
     AUDIT_K,
+    MAX_QUALITY_K,
+    PRIMARY_QUALITY_METRICS,
+    QUALITY_CUTOFFS,
     QUALITY_METRICS,
-    TOP_K,
     aggregate_quality,
     eligible_counts,
     latency_intervals,
@@ -53,28 +57,37 @@ OPERATIONAL_DIRECTIONS = {
     "operational.peak_process_tree_ram_mb": "min",
     "operational.peak_vram_mb": "min",
 }
-PRIMARY_METRICS = (
-    "quality.overall.alpha_ndcg_at_5",
-    "quality.overall.evidence_unit_recall_at_5",
-    "quality.overall.evidence_token_precision_at_5",
+PRIMARY_METRICS = tuple(
+    f"quality.overall.{metric}" for metric in PRIMARY_QUALITY_METRICS
 )
-PAIRED_METRICS = (*PRIMARY_METRICS, "quality.overall.ndcg_at_5")
+PAIRED_METRICS = (
+    *PRIMARY_METRICS,
+    *(f"quality.overall.{metric}" for metric in ALPHA_NDCG_METRICS),
+)
 WORKER = Path(__file__).with_name("worker.py")
 
 
 def directions_for(manifest: DatasetManifest) -> tuple[dict[str, str], tuple[str, ...]]:
     """Declare only the evidence slices present in this frozen manifest."""
 
-    slices = {
-        str(question["evidence_type"])
-        for question in _answerable_questions(manifest)
-    }
-    quality = {
-        name: direction
-        for name, direction in QUALITY_DIRECTIONS.items()
-        if name.startswith("quality.overall.")
-        or name.split(".", 2)[1] in slices
-    }
+    questions = _answerable_questions(manifest)
+    scopes = {"overall", *(str(question["evidence_type"]) for question in questions)}
+    alpha_questions = [
+        question for question in questions if len(evidence_units(question)) >= 2
+    ]
+    alpha_scopes = (
+        {"overall", *(str(question["evidence_type"]) for question in alpha_questions)}
+        if alpha_questions
+        else set()
+    )
+    quality = {}
+    for name, direction in QUALITY_DIRECTIONS.items():
+        _, scope, metric = name.split(".", 2)
+        if scope not in scopes:
+            continue
+        if metric in ALPHA_NDCG_METRICS and scope not in alpha_scopes:
+            continue
+        quality[name] = direction
     directions = {**quality, **OPERATIONAL_DIRECTIONS}
     return directions, tuple(directions)
 
@@ -157,9 +170,9 @@ def evaluate_candidate(
                 )
         if len(rankings) != plan.repetitions:
             continue
-        first_ids = [position for position, _ in rankings[0]][:TOP_K]
+        first_ids = [position for position, _ in rankings[0]][:MAX_QUALITY_K]
         deterministic = all(
-            [position for position, _ in ranking][:TOP_K] == first_ids
+            [position for position, _ in ranking][:MAX_QUALITY_K] == first_ids
             for ranking in rankings[1:]
         )
         if not deterministic:
@@ -178,7 +191,7 @@ def evaluate_candidate(
                 {
                     "document_id": str(question["document_id"]),
                     "evidence_type": evidence_type,
-                    "deterministic_top_5": deterministic,
+                    f"deterministic_top_{MAX_QUALITY_K}": deterministic,
                 },
             )
         )
@@ -202,7 +215,7 @@ def evaluate_candidate(
                     "start": chunk.start,
                     "end": chunk.end,
                     "cosine_similarity": similarity,
-                    "scored": rank <= TOP_K,
+                    "scored": rank <= MAX_QUALITY_K,
                 }
             )
         match_rows.extend(
@@ -588,7 +601,8 @@ def _parameters(
         "exact_search": "numpy-cosine-stable-corpus-order-v1",
         "evaluation_tokenizer": "tiktoken:cl100k_base",
         "evidence_coverage_rule": "single-chunk-complete-unit-v1",
-        "top_k": TOP_K,
+        "quality_cutoffs": QUALITY_CUTOFFS,
+        "maximum_scored_rank": MAX_QUALITY_K,
         "artifact_top_k": AUDIT_K,
         "alpha": ALPHA,
         "seed": plan.seed,

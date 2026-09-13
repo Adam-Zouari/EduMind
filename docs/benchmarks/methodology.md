@@ -1320,21 +1320,21 @@ split documents into chunks with exact source offsets
 -> embed each answerable question
 -> rank with exact NumPy cosine search and deterministic tie-breaking
 -> retain the top 20 as the auditable retrieval artifact
--> score the first five against verified evidence units and source spans
+-> score the first three and first five against verified evidence units and source spans
 ```
 
 Exact NumPy search removes vector-database approximation from this experiment.
 For semantic chunking, the tested embedding also creates the boundaries; that
 result intentionally represents the complete semantic-chunker/embedding pair.
 The search scores the complete candidate corpus, retains the top 20 only for
-near-miss diagnosis, and scores the first five. The `@5` cutoff matches the
-downstream retrieval policy; this phase adds no token budget, context curve, or
-additional cutoffs.
+near-miss diagnosis, and scores both `@3` and `@5`. These cutoffs match the two
+downstream Final-RAG context counts; this phase adds no token budget or context
+curve.
 
 Corpus-build timing starts after model and tokenizer loading and includes
 chunking, document embedding, and searchable-matrix/metadata assembly. Query
 latency includes query tokenization, query embedding, exact cosine scoring, and
-deterministic top-five selection. Each query's median measured repetition is its
+deterministic top-20 selection. Each query's median measured repetition is its
 warm-latency observation. Model downloads, data downloads, and environment setup
 are excluded.
 
@@ -1375,23 +1375,26 @@ system and is not another chunking/embedding selection round.
 
 | Category | Metrics | Why they are needed |
 |---|---|---|
-| Retrieval quality | **alpha-nDCG@5**, **Evidence-unit Recall@5**, **Evidence-token Precision@5**; nDCG@5 diagnostic | Measures novelty and order, evidence completeness, and context concentration; nDCG provides the conventional ranking view. |
+| Retrieval quality | **nDCG@3/@5**, **Evidence-unit Recall@3/@5**, **Evidence-token Precision@3/@5**; alpha-nDCG@3/@5 diagnostic | Measures conventional relevance order, evidence completeness, and context concentration; alpha-nDCG diagnoses repeated evidence on eligible multi-evidence questions. |
 | Evidence slices | Retrieval metrics repeated for text, table, formula, and mixed questions | Reveals a pair that performs well only on the majority evidence type. |
 | Operational | Corpus-build time and source-token throughput, p50/p95 warm query latency, peak process-tree RAM, peak VRAM | Measures the observed preparation, query, and hardware cost of the complete pair. |
 | Workload and storage | Corpus counts, source and indexed-token counts, chunk count and lengths, embedding dimension and dtype, matrix bytes | Explains how much work and storage each pair creates without treating those values as quality. |
 
-The three bold metrics are primary and are reviewed separately. nDCG is
-diagnostic, `alpha=0.5` is fixed, and no weighted overall score is created.
+The three bold metric families are primary and are reviewed separately at both
+cutoffs. Alpha-nDCG is diagnostic, `alpha=0.5` is fixed, and no weighted overall
+score is created. Alpha-nDCG is omitted, rather than scored as zero, when a
+question has fewer than two distinct evidence units.
 First-hit metrics and chunk-level precision/recall are omitted because they add
 little coverage information or use denominators changed by the chunker. Exact
 definitions, examples, directions, and confidence-interval rules are in
 [metrics.md](metrics.md#chunking-and-embedding).
 
-The four retrieval metrics are reported overall and for mutually exclusive
-`text`, `table`, `formula`, and `mixed` slices. A mixed question requires at least
-two evidence types. Each slice reports its contributing question and document
-counts. Unanswerable questions remain a workload count and do not enter
-retrieval-quality aggregates.
+The four retrieval metric families are reported overall and for mutually
+exclusive `text`, `table`, `formula`, and `mixed` slices. A mixed question
+requires at least two evidence types. Each slice reports its contributing
+question and document counts; alpha-nDCG also reports its smaller eligible
+question and document counts. Unanswerable questions remain a workload count
+and do not enter retrieval-quality aggregates.
 
 ### MLflow result structure
 
@@ -1420,16 +1423,21 @@ Each child is one planned pair. Its run name is the complete pair identifier,
 `<chunker_id>|<embedding_id>`. Parameters contain the resolved chunker and
 embedding contracts, model and tokenizer revisions and checksums, device, dtype,
 prefixes, pooling, normalization, evaluation tokenizer, evidence rule,
-`top_k=5`, `alpha=0.5`, seed, warmups, repetitions, split, and manifest checksum.
+`quality_cutoffs=[3,5]`, `artifact_top_k=20`, `alpha=0.5`, seed, warmups,
+repetitions, split, and manifest checksum.
 The child has no child runs for documents, questions, repetitions, or metrics.
 
 A valid child logs:
 
 ```text
-quality.overall.alpha_ndcg_at_5
-quality.overall.evidence_unit_recall_at_5
-quality.overall.evidence_token_precision_at_5
+quality.overall.ndcg_at_3
 quality.overall.ndcg_at_5
+quality.overall.evidence_unit_recall_at_3
+quality.overall.evidence_unit_recall_at_5
+quality.overall.evidence_token_precision_at_3
+quality.overall.evidence_token_precision_at_5
+quality.overall.alpha_ndcg_at_3       # eligible multi-evidence questions only
+quality.overall.alpha_ndcg_at_5       # eligible multi-evidence questions only
 
 quality.text.<metric>
 quality.table.<metric>
@@ -1461,9 +1469,11 @@ and evidence slices. Eligible uncertainty bounds use the shared `.ci_lower` and
 `.ci_upper` suffixes.
 Validity counters such as expected/processed documents and queries, truncated
 inputs, failed cases, nonfinite/zero-norm vectors, dimension mismatches, and
-determinism mismatches are logged under `validity.*`. The final decision is also
-stored as a `benchmark.valid` tag and a `validation.status` tag whose value is
-`passed` or `failed`. MLflow scalar values do not replace the
+determinism mismatches are logged under `validity.*`. General retrieval
+eligibility and the smaller alpha-nDCG-eligible question/document counts are
+logged per evidence scope. The final decision is also stored as a
+`benchmark.valid` tag and a `validation.status` tag whose value is `passed` or
+`failed`. MLflow scalar values do not replace the
 detailed `validation_report.json` artifact. Stored dtype is a parameter in the
 resolved embedding contract rather than a numeric metric.
 
@@ -1472,8 +1482,8 @@ Each successful child stores:
 | Artifact | Contents and purpose |
 |---|---|
 | `chunk_manifest.parquet` | One row per chunk with source document, exact offsets, strategy metadata, and token counts. |
-| `query_metrics.parquet` | One row per answerable question with the four retrieval-quality values and evidence slice. |
-| `retrievals.parquet` | Ordered top-20 chunk IDs and scores for near-miss diagnosis; only the first five are scored. |
+| `query_metrics.parquet` | One row per answerable question with @3/@5 quality values and evidence slice; ineligible alpha-nDCG fields are absent. |
+| `retrievals.parquet` | Ordered top-20 chunk IDs and scores for near-miss diagnosis; the first three and first five are scored. |
 | `evidence_matches.parquet` | Trace from each question and evidence unit to the chunks that recovered it. |
 | `timings.parquet` | One row per query and measured repetition with warm latency and success state. |
 | `resources.parquet` | Timestamped process-tree RAM and VRAM samples. |
@@ -1493,13 +1503,13 @@ question and document counts.
 
 The engineer approves up to three complete chunker/embedding pairs. No separate
 embedding winner or chunker winner is required. Advancement jointly reviews
-alpha-nDCG@5, Evidence-unit Recall@5, and Evidence-token Precision@5 as the three
-primary quality dimensions. Diagnostic nDCG@5, uncertainty, evidence slices,
-and operational feasibility explain or constrain that judgment; they are not
-steps in an automatic lexicographic ranking. The decision and rationale are
-stored in a versioned engineer-decision file that references the parent/child
-MLflow run IDs and all governing checksums. The benchmark never promotes a
-candidate automatically.
+nDCG, Evidence-unit Recall, and Evidence-token Precision at `@3` and `@5` as the
+three primary quality dimensions. Diagnostic alpha-nDCG, uncertainty, evidence
+slices, and operational feasibility explain or constrain that judgment; they
+are not steps in an automatic lexicographic ranking. The decision and rationale
+are stored in a versioned engineer-decision file that references the
+parent/child MLflow run IDs and all governing checksums. The benchmark never
+promotes a candidate automatically.
 
 ## 5. Retrieval and reranking
 

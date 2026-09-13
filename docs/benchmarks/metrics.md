@@ -2166,9 +2166,9 @@ estimate; it does not describe the range of individual-video F1 values.
 ## Chunking and embedding
 
 The chunking/embedding experiment evaluates one complete
-`chunker|embedding` pair at a time with exact cosine search. Three metrics answer
-different selection questions; nDCG is retained only as a conventional ranking
-diagnostic. None is combined into a weighted score.
+`chunker|embedding` pair at a time with exact cosine search. Three primary metric
+families answer different selection questions; alpha-nDCG is retained as a
+novelty diagnostic. None is combined into a weighted score.
 
 ### Metric summary
 
@@ -2176,12 +2176,14 @@ diagnostic. None is combined into a weighted score.
 
 | Metric | Role | Question answered | Direction |
 |---|---|---|---|
-| alpha-nDCG@5 | Primary | Are different required evidence units placed early instead of being displaced by duplicate chunks? | Higher |
-| Evidence-unit Recall@5 | Primary | How many required evidence units appear anywhere in the first five chunks, regardless of their order? | Higher |
-| Evidence-token Precision@5 | Primary | What share of the tokens returned in the first five chunks is relevant evidence? | Higher |
-| nDCG@5 | Diagnostic | How early do relevant chunks appear when repeated evidence is not penalized? | Higher |
+| nDCG@3/@5 | Primary | Are chunks containing verified evidence ranked near the top? | Higher |
+| Evidence-unit Recall@3/@5 | Primary | How much of the required evidence is present in the retrieved set? | Higher |
+| Evidence-token Precision@3/@5 | Primary | How concentrated is the retrieved text around verified evidence? | Higher |
+| alpha-nDCG@3/@5 | Diagnostic | On multi-evidence questions, is new evidence placed early instead of repeatedly covering evidence already retrieved? | Higher |
 
-`@5` means the first five ranked chunks.
+`@3` and `@5` mean that the same calculation is performed over the first three
+and first five ranked chunks. Both are reported because Final RAG evaluates
+both context counts.
 
 #### Operational performance
 
@@ -2208,36 +2210,38 @@ diagnostic. None is combined into a weighted score.
 
 ### Retrieval quality
 
-#### Alpha-nDCG@5
+#### nDCG@3/@5
 
-**Question:** Are different required evidence units placed early instead of
-being displaced by duplicate chunks?
+**Question:** How early do relevant chunks appear when repeated evidence is not
+penalized?
 
-Alpha-nDCG rewards useful evidence more when it appears near the top and reduces
-the credit for later chunks that repeat the same evidence. With the frozen
-`alpha=0.5` setting, each repetition receives half the remaining novelty credit.
+nDCG gives more credit when chunks containing verified evidence appear earlier.
+A chunk is relevant when it completely covers at least one required evidence
+unit. Covering an evidence unit already found in an earlier chunk does not
+reduce that chunk's relevance credit.
 
-**Example:** If the first two chunks contain the same evidence and the third
-contains different evidence, the second chunk is discounted as a duplicate.
-Moving the different evidence to rank 2 improves the score.
+**Example:** Moving a relevant chunk from rank 4 to rank 2 improves nDCG. Two
+chunks containing the same relevant passage can both receive relevance credit.
 
-This is the primary metric because overlapping strategies can otherwise look
-strong by returning several versions of the same useful passage.
+nDCG is primary because conventional relevance ranking is the direct job of the
+chunker/embedding pair. Evidence-unit Recall separately shows whether repetition
+displaced other required evidence.
 
 **Range and direction:** `[0, 1]`; higher is better. A question for which no
 candidate chunk contains verified evidence receives zero.
 
-#### Evidence-unit Recall@5
+#### Evidence-unit Recall@3/@5
 
-**Question:** How many required evidence units appear anywhere in the first five
-chunks, regardless of their order?
+**Question:** How many required evidence units appear anywhere in the first
+three or first five chunks, regardless of their order?
 
-Each required evidence unit counts once when at least one of the first five
-chunks contains it completely. Repeated copies do not add credit, and partial
+Each required evidence unit counts once when at least one chunk inside the
+cutoff contains it completely. Repeated copies do not add credit, and partial
 fragments do not count as recovered units.
 
-**Example:** If a question needs three evidence units and the first five chunks
-contain two of them, recall is approximately `0.67`.
+**Example:** If the first three chunks recover one of three required units and
+the next two recover another, Recall@3 is approximately `0.33` and Recall@5 is
+approximately `0.67`.
 
 This primary metric catches rankings that look good near the top but still miss
 part of the evidence needed for a complete answer. It also makes a separate Hit
@@ -2245,14 +2249,14 @@ Rate unnecessary.
 
 **Range and direction:** `[0, 1]`; higher is better.
 
-#### Evidence-token Precision@5
+#### Evidence-token Precision@3/@5
 
-**Question:** What share of the tokens returned in the first five chunks is
-relevant evidence?
+**Question:** What share of the tokens returned in the first three or first five
+chunks is relevant evidence?
 
-The metric compares evidence-bearing source tokens with all source tokens in
-the first five chunks. Every candidate uses the same evaluation tokenizer, and
-text repeated through chunk overlap is counted each time it is returned.
+The metric compares evidence-bearing source tokens with all source tokens
+inside the cutoff. Every candidate uses the same evaluation tokenizer, and text
+repeated through chunk overlap is counted each time it is returned.
 
 **Example:** If 160 of 600 retrieved tokens are relevant evidence, precision is
 approximately `0.27`. The remaining tokens are additional context not counted
@@ -2265,62 +2269,69 @@ verified evidence.
 **Range and direction:** `[0, 1]`; higher is better. Empty retrieved text
 receives zero.
 
-#### nDCG@5
+#### Alpha-nDCG@3/@5
 
-**Question:** How early do relevant chunks appear when repeated evidence is not
-penalized?
+**Question:** Are different required evidence units placed early instead of
+being displaced by repeated evidence?
 
-nDCG gives more credit when chunks containing verified evidence appear earlier.
-Unlike alpha-nDCG, it does not reduce the credit for repeated evidence.
+Alpha-nDCG rewards useful evidence more when it appears near the top and reduces
+the credit for later chunks that repeat the same evidence. With the frozen
+`alpha=0.5` setting, each repetition receives half the remaining novelty credit.
 
-**Example:** A ranking can have high nDCG when its first two chunks contain the
-same relevant passage. Alpha-nDCG will be lower because the second chunk adds no
-new evidence.
+**Example:** If the first two chunks contain the same evidence and the third
+contains different evidence, the second chunk is discounted. Moving the
+different evidence to rank 2 improves the score.
 
-nDCG is kept as a familiar diagnostic for conventional ranking quality. It does
-not drive selection because alpha-nDCG already measures early ranking while also
-accounting for repeated evidence.
+Here, repetition is not decided by text similarity. It means that a chunk
+covers an evidence-unit ID already covered by a higher-ranked chunk. Exact
+duplicate chunk IDs are forbidden separately by the retrieval contract.
 
-**Range and direction:** `[0, 1]`; higher is better. A question for which no
-candidate chunk contains verified evidence receives zero.
+This is diagnostic rather than primary because repeated relevant evidence is
+not automatically a retrieval failure. It can still explain why a candidate
+with strong conventional ranking quality covers fewer distinct evidence units.
+The metric is calculated only for questions with at least two distinct gold
+evidence units; it is omitted for other questions, and its eligible question
+and document counts are reported.
+
+**Range and direction:** `[0, 1]`; higher is better. An eligible question for
+which no candidate chunk contains verified evidence receives zero.
 
 ### Why the metrics are not interchangeable
 
 | Metric | What changes it | What it does not answer directly |
 |---|---|---|
-| alpha-nDCG@5 | The order of the chunks and whether early chunks add different evidence | The share of returned tokens that is relevant evidence |
-| Evidence-unit Recall@5 | Whether each required evidence unit appears anywhere in the first five chunks | Whether the units are ordered well or surrounded by extra context |
-| Evidence-token Precision@5 | How much returned text is relevant evidence | Whether all required units were found or placed early |
-| nDCG@5 | How early relevant chunks appear under the conventional ranking view | Whether those chunks repeat evidence already retrieved |
+| nDCG@3/@5 | The ranks of chunks that contain complete evidence | Whether all distinct evidence units were found or how much extra text was returned |
+| Evidence-unit Recall@3/@5 | Whether each required evidence unit appears inside the cutoff | Whether the recovered units were ordered well or surrounded by extra context |
+| Evidence-token Precision@3/@5 | How much returned text is annotated evidence | Whether all required units were found or ranked early |
+| alpha-nDCG@3/@5 | On eligible questions, the order in which different evidence units appear | Whether repetition actually harms the downstream answer |
 
-The first three metrics are complementary. Reordering the same five chunks can
-change alpha-nDCG without changing recall or token precision. Adding
-non-evidence text to those chunks can lower token precision without changing
-which evidence units were recovered. Missing one required unit lowers recall
-even when the remaining relevant chunks are ranked early. nDCG deliberately
-overlaps with alpha-nDCG; it is kept only to show what a conventional ranking
-metric would report when redundancy is ignored.
+The three primary families are complementary. Reordering the same chunks can
+change nDCG without changing recall or token precision. Adding non-evidence text
+can lower token precision without changing relevance order or recovered units.
+Missing one required unit lowers recall even when the remaining relevant chunks
+are ranked early. Alpha-nDCG deliberately overlaps with nDCG, but is kept only
+to diagnose novelty on questions where novelty is measurable.
 
 ### Worked candidate interpretation
 
 Suppose a valid pair reports:
 
 ```text
-alpha-nDCG@5                 = 0.74
 Evidence-unit Recall@5       = 0.82
 Evidence-token Precision@5  = 0.44
 nDCG@5                       = 0.81
+alpha-nDCG@5                 = 0.74
 ```
 
-The nDCG result says that relevant chunks generally appear early. The lower
-alpha-nDCG result says that some of those early chunks repeat evidence instead
-of adding something new. Recall says that 82% of the required evidence units are
-present somewhere in the first five chunks, leaving 18% missing. Token precision
-says that 44% of the returned tokens are relevant evidence and 56% are
-additional context according to the reference annotations. The candidate
-therefore ranks relevant chunks well, but still repeats some evidence, misses
-some required evidence, and returns more additional context than evidence. No
-formula combines these values.
+The nDCG result says that relevant chunks generally appear early. Recall says
+that 82% of the required evidence units are present somewhere in the first five
+chunks, leaving 18% missing. Token precision says that 44% of the returned
+tokens are relevant evidence and 56% are
+additional context according to the reference annotations. On the eligible
+multi-evidence subset, the lower alpha-nDCG result suggests that repeated
+evidence sometimes appears before new evidence. It does not by itself declare
+those repetitions harmful. The same interpretation is performed separately at
+`@3`. No formula combines these values.
 
 ### Operational performance
 
@@ -2348,13 +2359,13 @@ equal quality.
 #### Warm query latency p50 and p95
 
 **Question:** What are normal and slow-tail times for query embedding plus exact
-cosine top-five search?
+cosine top-20 search?
 
 After warmup, execute every query for the configured measured repetitions. Use
 that query's median repetition as its latency observation, then calculate p50
 and p95 across eligible questions. Search timing includes query tokenization,
-query embedding, cosine scoring, deterministic ordering, and top-five
-selection. It excludes corpus build.
+query embedding, cosine scoring, deterministic ordering, and top-20 selection.
+It excludes corpus build.
 
 p99 is not authoritative in this phase because the corpus does not provide
 enough thousands of independent query requests to estimate a stable one-percent
@@ -2399,7 +2410,7 @@ for worse retrieval quality.
 
 | Value | 95% confidence interval? | Rule |
 |---|---:|---|
-| Standard and full alpha-nDCG@5, Evidence-unit Recall@5, Evidence-token Precision@5, and nDCG@5 | Yes | Resample source documents and recalculate each aggregate. |
+| Standard and full nDCG, Evidence-unit Recall, Evidence-token Precision, and eligible alpha-nDCG at @3/@5 | Yes | Resample source documents and recalculate each aggregate. |
 | Text, table, formula, and mixed evidence slices | Yes, when enough documents contribute | Resample only the contributing source documents. |
 | p50/p95 warm query latency | Conditional | Report only when enough independent query observations support the percentile estimate. |
 | Smoke metrics | No authoritative interval | Smoke validates execution and is too small for selection claims. |
@@ -2422,11 +2433,11 @@ reported as artificially precise.
 
 #### Interpretation
 
-An alpha-nDCG@5 of `0.74` with a 95% confidence interval of `[0.70, 0.78]`
-means `0.74` is the observed aggregate, while resampling complete source
-documents estimates its uncertainty. The interval does not describe the range
-of individual-question scores. Candidate-difference claims use the aligned
-paired comparison rather than judging overlap between two separate intervals.
+An nDCG@5 of `0.81` with a 95% confidence interval of `[0.77, 0.85]` means
+`0.81` is the observed aggregate, while resampling complete source documents
+estimates its uncertainty. The interval does not describe the range of
+individual-question scores. Candidate-difference claims use the aligned paired
+comparison rather than judging overlap between two separate intervals.
 
 ## Retrieval and reranking quality
 

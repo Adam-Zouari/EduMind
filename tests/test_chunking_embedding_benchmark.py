@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import SimpleNamespace
 
 import numpy as np
@@ -129,6 +129,88 @@ def test_alpha_ndcg_penalizes_duplicate_evidence_before_novel_evidence() -> None
     duplicate_first = alpha_ndcg_at_k(corpus, corpus, 3)
     novel_first = alpha_ndcg_at_k([{"a"}, {"b"}, {"a"}], corpus, 3)
     assert 0.0 <= duplicate_first < novel_first <= 1.0
+
+
+def test_quality_uses_three_and_five_cutoffs_and_alpha_requires_multiple_units() -> None:
+    question = {
+        "id": "q1",
+        "document_id": "doc",
+        "evidence_type": "text",
+        "evidence": [
+            {
+                "id": "unit-a",
+                "evidence_type": "text",
+                "document_id": "doc",
+                "start": 0,
+                "end": 5,
+            },
+            {
+                "id": "unit-b",
+                "evidence_type": "text",
+                "document_id": "doc",
+                "start": 6,
+                "end": 10,
+            },
+        ],
+    }
+    ranking = [
+        Chunk("a", "doc", "alpha", 0, 5),
+        Chunk("d1", "other", "x", 0, 1),
+        Chunk("d2", "other", "y", 1, 2),
+        Chunk("b", "doc", "beta", 6, 10),
+        Chunk("d3", "other", "z", 2, 3),
+    ]
+
+    score = score_question(question, ranking, ranking, WordTokenizer())
+
+    assert score.metrics["evidence_unit_recall_at_3"] == 0.5
+    assert score.metrics["evidence_unit_recall_at_5"] == 1.0
+    assert score.metrics["evidence_token_precision_at_3"] == pytest.approx(1 / 3)
+    assert score.metrics["evidence_token_precision_at_5"] == pytest.approx(2 / 5)
+    assert set(score.metrics) == {
+        "ndcg_at_3",
+        "ndcg_at_5",
+        "evidence_unit_recall_at_3",
+        "evidence_unit_recall_at_5",
+        "evidence_token_precision_at_3",
+        "evidence_token_precision_at_5",
+        "alpha_ndcg_at_3",
+        "alpha_ndcg_at_5",
+    }
+    assert score.matches[0]["recovered_at_3"] is True
+    assert score.matches[1]["recovered_at_3"] is False
+    assert score.matches[1]["recovered_at_5"] is True
+
+
+def test_single_unit_questions_omit_alpha_ndcg_and_its_metric_contract() -> None:
+    manifest = _manifest()
+    question = next(row for row in manifest.samples if row.get("kind") == "question")
+    chunk = Chunk("a", "doc", "alpha", 0, 5)
+
+    score = score_question(question, [chunk], [chunk], WordTokenizer())
+    directions, _ = benchmark.directions_for(manifest)
+
+    assert not any(name.startswith("alpha_ndcg") for name in score.metrics)
+    assert not any("alpha_ndcg" in name for name in directions)
+
+    rows = list(manifest.samples)
+    rows[-1] = {
+        **rows[-1],
+        "evidence": [
+            *rows[-1]["evidence"],
+            {
+                "id": "q-e2",
+                "evidence_type": "text",
+                "document_id": "doc",
+                "start": 0,
+                "end": 5,
+            },
+        ],
+    }
+    multi_evidence = replace(manifest, samples=tuple(rows))
+    multi_directions, _ = benchmark.directions_for(multi_evidence)
+    assert "quality.overall.alpha_ndcg_at_3" in multi_directions
+    assert "quality.text.alpha_ndcg_at_5" in multi_directions
 
 
 def test_retrieval_metrics_use_complete_units_and_evaluation_tokens() -> None:
@@ -770,11 +852,28 @@ def test_candidate_emits_new_metrics_and_auditable_top_twenty(monkeypatch) -> No
     )
     samples, operational, aggregate, _parameters, intervals, artifacts = result
     assert len(samples) == 1
+    assert aggregate["quality.overall.ndcg_at_3"] == 1.0
     assert aggregate["quality.overall.evidence_unit_recall_at_5"] == 1.0
+    assert "quality.overall.alpha_ndcg_at_3" not in aggregate
+    assert (
+        aggregate[
+            "validity.quality.overall.alpha_ndcg_eligible_question_count"
+        ]
+        == 0.0
+    )
     assert aggregate["workload.embedding_matrix_bytes"] == 25 * 2 * 4
     assert operational["corpus_build_source_tokens_per_second"] == 1.0
     assert _parameters["manifest_checksum"] == "checksum"
     assert _parameters["manifest_fingerprint"]
+    assert _parameters["quality_cutoffs"] == (3, 5)
+    assert set(benchmark.PRIMARY_METRICS) == {
+        "quality.overall.ndcg_at_3",
+        "quality.overall.ndcg_at_5",
+        "quality.overall.evidence_unit_recall_at_3",
+        "quality.overall.evidence_unit_recall_at_5",
+        "quality.overall.evidence_token_precision_at_3",
+        "quality.overall.evidence_token_precision_at_5",
+    }
     assert intervals == {}
     assert len(artifacts["retrievals"]) == 20
     assert len(artifacts["timings"]) == 2

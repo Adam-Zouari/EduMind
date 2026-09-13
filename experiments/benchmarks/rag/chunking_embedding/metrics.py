@@ -15,16 +15,18 @@ from experiments.benchmarks.common.metrics import ndcg_at_k, paired_bootstrap_in
 from experiments.benchmarks.common.contracts import SampleResult
 
 
-TOP_K = 5
+QUALITY_CUTOFFS = (3, 5)
+MAX_QUALITY_K = max(QUALITY_CUTOFFS)
 AUDIT_K = 20
 ALPHA = 0.5
 MIN_LATENCY_CI_DOCUMENTS = 20
-QUALITY_METRICS = (
-    "alpha_ndcg_at_5",
-    "evidence_unit_recall_at_5",
-    "evidence_token_precision_at_5",
-    "ndcg_at_5",
+PRIMARY_QUALITY_METRICS = tuple(
+    f"{name}_at_{k}"
+    for name in ("ndcg", "evidence_unit_recall", "evidence_token_precision")
+    for k in QUALITY_CUTOFFS
 )
+ALPHA_NDCG_METRICS = tuple(f"alpha_ndcg_at_{k}" for k in QUALITY_CUTOFFS)
+QUALITY_METRICS = (*PRIMARY_QUALITY_METRICS, *ALPHA_NDCG_METRICS)
 
 
 class RankedChunk(Protocol):
@@ -51,33 +53,39 @@ def score_question(
     all_chunks: Sequence[RankedChunk],
     tokenizer: EvaluationTokenizer,
 ) -> QuestionScore:
-    """Score one answerable question with the frozen @5/alpha=0.5 contract."""
+    """Score one answerable question at the frozen @3/@5 cutoffs."""
 
     units = evidence_units(question)
     if not units:
         raise ValueError("Retrieval quality requires at least one evidence unit")
     selected_coverage = [_covered_unit_ids(chunk, units) for chunk in selected]
     corpus_coverage = [_covered_unit_ids(chunk, units) for chunk in all_chunks]
-    first = selected_coverage[:TOP_K]
-    recovered = set().union(*first) if first else set()
     binary_grades = [float(bool(covered)) for covered in selected_coverage]
     all_binary_grades = [float(bool(covered)) for covered in corpus_coverage]
-    metrics = {
-        "alpha_ndcg_at_5": alpha_ndcg_at_k(
-            selected_coverage, corpus_coverage, TOP_K, alpha=ALPHA
-        ),
-        "evidence_unit_recall_at_5": len(recovered) / len(units),
-        "evidence_token_precision_at_5": evidence_token_precision_at_k(
-            selected, units, tokenizer, TOP_K
-        ),
-        "ndcg_at_5": ndcg_at_k(binary_grades, TOP_K, all_binary_grades),
-    }
+    recovered_by_k: dict[int, set[str]] = {}
+    metrics: dict[str, float] = {}
+    for k in QUALITY_CUTOFFS:
+        first = selected_coverage[:k]
+        recovered = set().union(*first) if first else set()
+        recovered_by_k[k] = recovered
+        metrics[f"ndcg_at_{k}"] = ndcg_at_k(binary_grades, k, all_binary_grades)
+        metrics[f"evidence_unit_recall_at_{k}"] = len(recovered) / len(units)
+        metrics[f"evidence_token_precision_at_{k}"] = evidence_token_precision_at_k(
+            selected, units, tokenizer, k
+        )
+        if len(units) >= 2:
+            metrics[f"alpha_ndcg_at_{k}"] = alpha_ndcg_at_k(
+                selected_coverage, corpus_coverage, k, alpha=ALPHA
+            )
     matches = tuple(
         {
             "question_id": str(question["id"]),
             "evidence_unit_id": unit.identifier,
             "evidence_type": unit.evidence_type,
-            "recovered_at_5": unit.identifier in recovered,
+            **{
+                f"recovered_at_{k}": unit.identifier in recovered_by_k[k]
+                for k in QUALITY_CUTOFFS
+            },
             "first_rank": next(
                 (
                     rank
@@ -276,6 +284,17 @@ def eligible_counts(samples: Sequence[SampleResult]) -> dict[str, float]:
         result[f"{prefix}.eligible_question_count"] = float(len(selected))
         result[f"{prefix}.eligible_document_count"] = float(
             len({str(sample.metadata["document_id"]) for sample in selected})
+        )
+        alpha_selected = [
+            sample
+            for sample in selected
+            if f"quality.{evidence_type}.{ALPHA_NDCG_METRICS[0]}" in sample.metrics
+        ]
+        result[f"{prefix}.alpha_ndcg_eligible_question_count"] = float(
+            len(alpha_selected)
+        )
+        result[f"{prefix}.alpha_ndcg_eligible_document_count"] = float(
+            len({str(sample.metadata["document_id"]) for sample in alpha_selected})
         )
     return result
 
