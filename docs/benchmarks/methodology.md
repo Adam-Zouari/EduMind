@@ -42,6 +42,12 @@ settings, revisions, data checksum, hardware, aggregate metrics, confidence
 intervals, and per-sample results. The engineer chooses what continues; the
 runner never chooses a winner or changes the application configuration.
 
+When a stage declares paired candidate comparisons, they are analysis artifacts
+rather than new metrics. They are calculated from aligned per-sample results;
+bootstrap comparisons resample the same sample IDs for both candidates instead
+of comparing unrelated aggregate values. The applicable pairs, stored fields,
+and artifact placement are defined in that stage's methodology section.
+
 ### Shared MLflow metric convention
 
 The stage sections below list only each metric's base key. A sample-based
@@ -1246,8 +1252,6 @@ declared embedding model. The result belongs to the complete pair.
 | Octen Embedding 0.6B | Strong 0.6B retrieval challenger. |
 | Qwen3 Embedding 0.6B | Strong directly comparable 0.6B candidate using documented last-token pooling. |
 | Nemotron 3 Embed 1B | Larger nearby-size retrieval candidate. |
-| Octen Embedding 4B | Upper-size challenger. |
-| Qwen3 Embedding 4B | Upper-size quality candidate using the same documented Qwen retrieval recipe. |
 
 Full public evidence and exact revisions are in
 [model-selection.md](model-selection.md).
@@ -1297,7 +1301,7 @@ The fixed tokenizer is a protocol control, not another benchmark candidate. A
 future multilingual protocol may evaluate tokenizer sensitivity separately
 before freezing a replacement.
 
-Every one of the 64 planned pairs must fit the embedding model's native input
+Every one of the 48 planned pairs must fit the embedding model's native input
 contract, including query/document prefixes and required special tokens. The
 preflight records native-token counts for every generated chunk and answerable
 query. It never silently truncates, changes a strategy's size, or splits chunks
@@ -1353,8 +1357,8 @@ declared chunking and embedding paths on tiny committed fixtures
 -> verify compatibility checks, embedding, ranking, scoring, and artifacts
 
 development / standard:
-8 chunkers × 8 embeddings = 64 planned pair records on 100 papers
--> run and account for all 64 pairs
+8 chunkers × 6 embeddings = 48 planned pair records on 100 papers
+-> run and account for all 48 pairs
 -> engineer selects up to three complete finalist pairs
 
 validation / full:
@@ -1405,7 +1409,7 @@ MLflow experiment: EduMind / rag
 ├── parent: rag-chunking-embedding-smoke-<timestamp>
 │   └── one child per smoke-tested pair
 ├── parent: rag-chunking-embedding-standard-development-<timestamp>
-│   └── 64 child records: one per planned chunker|embedding pair
+│   └── 48 child records: one per planned chunker|embedding pair
 └── parent: rag-chunking-embedding-full-validation-<timestamp>
     └── up to three child runs: one per engineer-selected finalist pair
 ```
@@ -1513,69 +1517,350 @@ promotes a candidate automatically.
 
 ## 5. Retrieval and reranking
 
-For the approved chunker/embedding pairs, do exact-term search, rank fusion, or a
-learned reranker improve the ordering enough to justify their cost?
+Which complete first-stage retriever and reranker gives the best evidence
+ordering for the selected chunker/embedding pair, and is any quality improvement
+worth its latency and resource cost?
 
-### Strategies
+### Candidate matrix
 
-| Strategy | What runs | Why it is included |
-|---|---|---|
-| Dense | Cosine ranking from the selected embedding | Semantic baseline. |
-| BM25 | Lexical ranking from word frequency and rarity | Finds names, exact terminology, identifiers, and codes. |
-| RRF | Dense top 20 + BM25 top 20 combined by reciprocal ranks | Combines rankings without mixing incompatible raw scores. |
-| RRF + reranker | RRF top 20 reordered by a query/passage model | Tests deeper relevance scoring before final context packing. |
+The selected chunker/embedding pair, corpus, questions, and evidence annotations
+are frozen before this phase. A candidate is one complete
+`<retriever>|<reranker>` stack. Every first-stage retriever is crossed with every
+reranker option, producing exactly `3 × 5 = 15` peers in the development run.
 
-RRF is tested with these rerankers:
+| First-stage retriever | What it tests |
+|---|---|
+| `dense` | Exact cosine ranking from the selected embedding. |
+| `bm25` | Lexical ranking for exact terminology, names, identifiers, and codes. |
+| `rrf` | Reciprocal-rank fusion of the Dense and BM25 top-20 lists without mixing their raw scores. |
 
-- MiniLM cross-encoder control;
-- Ettin 150M;
-- Ettin 400M;
-- Ettin 1B;
-- Qwen3 Reranker 4B.
+| Reranker | What it tests |
+|---|---|
+| `none` | The first-stage order without learned reranking. |
+| `gte-modernbert` | Weaker long-context GTE ModernBERT cross-encoder control. |
+| `ettin-150m` | Compact learned reranker. |
+| `ettin-400m` | Mid-size learned reranker. |
+| `ettin-1b` | Larger learned reranker. |
 
-Together with Dense, BM25, and RRF, this produces eight retrieval methods for
-each selected chunker/embedding pair.
+The no-reranker rows are full candidates, not administrative baselines. Dense
+and BM25 remain independent when selected directly. RRF reads their ranked
+top-20 source lists, combines them using the frozen fusion settings, and returns
+one deterministic top-20 list.
 
-### Data and execution
+### Frozen candidate pools and execution
 
-The experiment uses the same frozen QASPER-plus-structured corpus and evidence
-offsets as the previous stage.
+The experiment uses the same frozen QASPER-plus-structured manifest, canonical
+chunks, questions, evidence-unit IDs, and source intervals as the preceding
+chunking/embedding decision.
+
+The retrieval/reranking smoke fixture contains 30 frozen canonical chunks. This
+leaves ten chunks outside each top-20 pool, so smoke execution can exercise pool
+selection, exclusion, fusion, and permutation checks. The count is a smoke
+fixture control; authoritative chunking strategies are not forced to produce
+exactly 30 chunks because their natural chunk counts are benchmark outputs.
+
+Quality comparisons use one checksummed top-20 pool per first-stage retriever.
+The three no-reranker candidates own those artifacts:
+
+| Pool owner | Shared by |
+|---|---|
+| `dense|none` | All five Dense candidates. |
+| `bm25|none` | All five BM25 candidates. |
+| `rrf|none` | All five RRF candidates. |
+
+A reranker receives exactly the pool owned by its matching no-reranker child. It
+may only permute those 20 chunk IDs: it cannot add, remove, duplicate, or retrieve
+chunks. The reranker child records the owner's MLflow run ID and the pool
+SHA-256. A mismatch or non-permutation invalidates the child and makes the parent
+comparison incomplete.
 
 ```text
-use an approved chunker/embedding pair
-→ retrieve dense top 20, BM25 top 20, or both
-→ apply RRF when required
-→ rerank the fused top 20 when required
-→ pack results under 2,048 tokens
-→ compare the final ranking with verified evidence
+load the frozen selected chunker/embedding pair and corpus
+→ build Dense and BM25 indexes
+→ create the Dense, BM25, and RRF top-20 pools
+→ checksum each pool under its no-reranker owner
+→ score each no-reranker order at @3 and @5
+→ rerank each matching frozen pool with each of the four learned rerankers
+→ score every resulting order at @3 and @5
 ```
 
-Dense-only does not secretly build BM25. BM25-only does not embed queries unless
-the selected semantic chunker requires its embedding to create boundaries.
+The top-20 pool supports reranking and diagnosis; it is not another quality
+cutoff. No token-budget packing policy is applied in this phase. The first three
+and first five canonical chunk texts are scored exactly as ranked.
+
+Operational measurements do not reuse cached retrieval timings. Every reranked
+candidate executes its first-stage method and reranker together so full-stack
+latency and memory describe the deployable path. The frozen pool is reused only
+to guarantee a fair quality comparison. The no-reranker child measures the same
+live first stage without a learned reranker.
+
+All behavior-changing controls are frozen and logged. These include BM25
+tokenization, variant, `k1`, `b`, and tie breaking; Dense similarity,
+normalization, query formatting, and tie breaking; RRF source depth, fusion
+constant, union/truncation behavior, and tie breaking; and each reranker's model
+ID, revision, cache checksum, input template, native tokenizer, maximum input
+length, batch size, score interpretation, device, dtype, and tie breaking.
+Truncation is forbidden.
+
+The retrieval controls are fixed as follows. They are established, untuned
+baselines rather than claims that one parameter set is optimal for every corpus:
+
+- BM25 uses `BM25Okapi` with `k1=1.5`, `b=0.75`, and `epsilon=0.25`. The
+  moderate `k1` gives repeated query terms diminishing returns, while `b=0.75`
+  substantially normalizes variable chunk lengths without treating every
+  length difference as irrelevant. In the selected implementation, `epsilon`
+  floors negative IDF values for terms present in more than half the corpus.
+  These are the explicit
+  [`rank_bm25` defaults](https://github.com/dorianbrown/rank_bm25/blob/master/rank_bm25.py),
+  so freezing them avoids adding a development-set tuning advantage to the
+  lexical baseline.
+- Dense retrieval uses exact cosine similarity over L2-normalized document and
+  query vectors. Normalization prevents vector magnitude from affecting rank,
+  and exact search isolates semantic retrieval from approximate-index error.
+  Approximate nearest-neighbour behavior is evaluated separately in the vector
+  database phase.
+- RRF reads the Dense and BM25 top-20 lists, gives each source weight `1.0`,
+  uses fusion constant `60`, joins by stable chunk ID, and keeps the highest
+  scoring 20 unique chunks. Equal weights avoid an unvalidated preference for
+  lexical or semantic retrieval, while rank fusion avoids normalizing their
+  incomparable raw scores. The constant `60` is the frozen value used by the
+  [original RRF study](https://cormack.uwaterloo.ca/cormacksigir09-rrf.pdf).
+  A missing source rank contributes zero. Ties resolve by best source rank, then
+  combined source rank with missing ranks treated as `21`, then chunk ID.
+
+Dense and BM25 own their respective searchable states. RRF builds no third
+index: it references both checksummed indexes and creates only the fused ranked
+pool. Its required storage is the unique sum of those dependencies, while its
+incremental fusion-index storage is zero.
+
+The ideal ranking used to normalize nDCG is derived from the complete frozen
+chunk corpus for each question, never from a candidate's retrieved pool. The
+alpha-nDCG ideal is constructed from the same complete corpus using its frozen
+evidence-unit coverage. Consequently, all 15 candidates are compared against
+the same candidate-independent ideal for a given question.
+
+### Profiles and selection
+
+```text
+smoke:
+minimal deterministic fixtures → wiring and artifact checks only
+
+standard development:
+all 15 candidates on the development manifest
+→ engineer records up to three complete-stack finalists
+
+full validation:
+the finalists on the unseen validation manifest
++ each finalist's matching <retriever>|none control when not already selected
+→ engineer records exactly one selected retrieval stack
+
+locked test:
+the selected stack runs only inside the frozen complete-system evaluation
+→ no further retrieval or reranker tuning
+```
+
+A complete stack decision includes the frozen chunker, embedding, first-stage
+retriever, and reranker. The extra no-reranker validation controls make
+the reranker's incremental effect interpretable; they are not automatically
+advanced as finalists. No weighted score or automatic winner rule is used.
 
 ### Metrics and why they are used
 
-This downstream phase deliberately introduces a 2,048-token packing policy and
-therefore retains its own budget-aware, multi-cutoff metric contract. Those
-metrics compare retrieval and reranking methods after the chunker/embedding pair
-has been selected; they do not flow backward into the four-metric
-chunking/embedding decision:
+| Role | Metrics | Why they are needed |
+|---|---|---|
+| Primary quality | **nDCG@3/@5**, **Evidence-unit Recall@3/@5**, **Evidence-token Precision@3/@5** | Separates ranking quality, evidence completeness, and concentration of retrieved text. |
+| Diagnostic quality | alpha-nDCG@3/@5, candidate-pool Evidence-unit Recall@20, ranking agreement | Diagnoses repeated evidence, first-stage pool limits, and nondeterministic ordering without replacing the primary decision. |
+| Evidence slices | Eligible quality metrics repeated for text, table, formula, and mixed questions | Reveals improvements or regressions hidden by the overall average. |
+| Operational | Full-stack warm p50/p95 latency, first-stage warm p50/p95 latency, reranker warm p50/p95 latency when applicable, cold initialization, peak process-tree RAM, peak VRAM, index-build time | Separates retriever cost, incremental reranker cost, startup, memory, and one-time index preparation. |
+| Workload | Corpus/query/chunk/pool counts, retrieved tokens at @3/@5, reranker input tokens when applicable | Explains the amount of work behind quality and operational results. |
+| Storage | Dense/BM25 index bytes, RRF required and incremental index bytes, reranker snapshot bytes | Describes the local searchable state and model storage each candidate requires. |
 
-- **Primary:** nDCG@3/@5, Context Precision@3/@5, Context Recall@3/@5, and
-  Context Recall under 2,048 tokens.
-- **Secondary:** nDCG@10, Hit Rate@5/@10, and MRR.
-- **Diagnostic:** conventional Precision/Recall/Hit Rate at the remaining
-  cutoffs, MAP@3/@5/@10, Context Precision/Recall@1/@10, determinism, and the
-  primary metrics split by evidence type.
-- **Operational:** total retrieval p50/p95 latency, indexing time, retrieved
-  tokens, chunk distribution, storage, RAM, and VRAM.
+The three bold quality families are primary and are reviewed separately at both
+cutoffs. Alpha-nDCG uses `alpha=0.5` and is reported only for questions with at
+least two distinct evidence units. Candidate-pool Recall@20 is recorded once on
+each no-reranker pool owner because all five matching rerankers receive the same
+pool. Reranker-only latency and input-token metrics are omitted, not set to zero,
+for the no-reranker option.
 
-Reranker time is included in total retrieval latency. Binary chunk Recall and MAP
-are not used to compare different chunkers because their denominators change with
-chunk boundaries.
+The evidence-unit definitions, `tiktoken:cl100k_base` evaluation tokenizer,
+answerable-question eligibility, document-macro aggregation, confidence
+intervals, and text/table/formula/mixed slices are the same as in the
+chunking/embedding phase. Exact definitions and comparison rules are in
+[metrics.md](metrics.md#retrieval-and-reranking-quality).
 
-The engineer approves up to three complete retrieval stacks. A stack contains
-the chunker, embedding, retrieval method, and reranker when applicable.
+Hit Rate, MRR, MAP, binary chunk Precision/Recall, and a context-budget metric
+are not reported. They either repeat questions already answered by the primary
+metrics, use a chunk-dependent denominator, or test a packing policy that this
+phase does not have. Failures and truncation are validity conditions rather than
+quality metrics.
+
+### MLflow result structure
+
+Retrieval/reranking uses one parent for each fair comparison. Every planned
+candidate is a direct child; the Standard parent therefore has exactly 15 child
+runs. Pools and paired comparisons do not create intermediate or nested runs.
+
+```text
+MLflow experiment: EduMind / rag
+└── parent: rag-retrieval-reranking-standard-development-<timestamp>
+    ├── dense|none       ─┐
+    ├── dense|gte-modernbert │
+    ├── ...               ├─ 5 Dense children
+    ├── dense|ettin-1b   ─┘
+    ├── bm25|none        ─┐
+    ├── ...               ├─ 5 BM25 children
+    ├── bm25|ettin-1b    ─┘
+    ├── rrf|none         ─┐
+    ├── ...               ├─ 5 RRF children
+    └── rrf|ettin-1b     ─┘
+```
+
+The parent parameters identify the phase, profile, manifest and checksum,
+selected chunker/embedding decision and fingerprint, exact 15-candidate plan,
+metric contract, seed, warmups, repetitions, model lock, Git/dependency
+provenance, and hardware. Its direct metrics are completion counts only. Parent
+artifacts are `plan.json`, `provenance.json`, `metric_contract.json`,
+`pool_index.json`, `leaderboard.parquet`, `retriever_comparisons.parquet`,
+`retriever_comparisons.csv`, `reranker_comparisons.parquet`,
+`reranker_comparisons.csv`, and `summary.json`. Validation additionally stores
+`finalist_comparisons.parquet` and `finalist_comparisons.csv` when explicit
+cross-stack finalist comparisons are requested.
+
+Each child run name is its complete candidate ID. Its parameters contain the
+resolved retrieval and reranking contracts, all model/configuration/checksum
+fields, `requested_pool_size=20`, `quality_cutoffs=[3,5]`, evidence and tokenizer
+rules, device, dtype, seed, warmups, repetitions, split, and manifest checksum.
+A reranker child also stores `pool_owner_run_id` and `pool_checksum`.
+
+A valid child logs the applicable values under these families:
+
+```text
+quality.overall.ndcg_at_3
+quality.overall.ndcg_at_5
+quality.overall.evidence_unit_recall_at_3
+quality.overall.evidence_unit_recall_at_5
+quality.overall.evidence_token_precision_at_3
+quality.overall.evidence_token_precision_at_5
+quality.overall.alpha_ndcg_at_3
+quality.overall.alpha_ndcg_at_5
+quality.<text|table|formula|mixed>.<metric>
+
+diagnostic.pool_evidence_unit_recall_at_20   # pool owners only
+validity.ranking_agreement
+
+operational.full_stack_latency_ms_p50
+operational.full_stack_latency_ms_p95
+operational.first_stage_latency_ms_p50
+operational.first_stage_latency_ms_p95
+operational.reranker_latency_ms_p50          # reranked children only
+operational.reranker_latency_ms_p95          # reranked children only
+operational.cold_initialization_seconds
+operational.peak_process_tree_ram_mb
+operational.peak_vram_mb
+operational.index_build_seconds              # pool owners only
+
+storage.index_bytes                          # Dense and BM25 owners
+storage.required_index_bytes                 # RRF owner: unique Dense + BM25 bytes
+storage.incremental_index_bytes              # RRF owner: zero
+storage.reranker_snapshot_bytes              # reranked children only
+
+workload.corpus_document_count
+workload.answerable_query_count
+workload.chunk_count
+workload.requested_pool_size
+workload.actual_pool_size_mean
+workload.actual_pool_size_min
+workload.short_pool_query_count
+workload.retrieved_tokens_at_3_mean
+workload.retrieved_tokens_at_3_p95
+workload.retrieved_tokens_at_5_mean
+workload.retrieved_tokens_at_5_p95
+workload.reranker_input_tokens_per_query_mean # reranked children only
+workload.reranker_input_tokens_per_query_p95  # reranked children only
+```
+
+Eligibility counts and validity counters are logged under `validity.*`.
+Required checks include expected/processed/failed queries, zero truncation,
+finite scores, pool-checksum agreement, exact pool permutation, and deterministic
+rank agreement. Every child stores `query_metrics.parquet`, `rankings.parquet`,
+`evidence_matches.parquet`, `timings.parquet`, `resources.parquet`,
+`candidate.json`, and `validation_report.json`. Pool-owner children additionally
+store `candidate_pool.parquet` and `index_build.json`. Raw documents and model
+weights are never copied into child artifacts.
+
+### Paired comparisons and advancement
+
+Paired comparisons are analysis rows under the parent, not MLflow runs. They
+are separated by the intervention being studied:
+
+- `reranker_comparisons.parquet` and `reranker_comparisons.csv` contain the 15
+  reranker-effect comparisons, each learned reranker against the matching
+  `<retriever>|none` candidate over the same checksummed pool;
+- `retriever_comparisons.parquet` and `retriever_comparisons.csv` contain Dense
+  versus BM25, Dense versus RRF, and BM25 versus RRF using the three
+  no-reranker candidates; and
+- validation uses `finalist_comparisons.parquet` and
+  `finalist_comparisons.csv` only for explicitly declared cross-stack finalist
+  comparisons.
+
+Parquet is authoritative and typed; CSV is the human-readable mirror. Each pair
+is generated from one in-memory typed table. The writer reads both files back
+with their declared schemas, sorts them by stable row keys, and verifies column
+and cell equality with explicit null and floating-point handling. Matching row
+counts alone is insufficient. Each file has its own SHA-256 and the pair records
+one shared logical-table SHA-256.
+
+The benchmark does not generate all 153 possible candidate pairs. Each stored
+row represents one comparison, metric, evidence slice, and cutoff. It identifies
+the applicable retriever or complete stacks, both run IDs and pool checksums,
+metric direction, both values, raw `candidate - baseline` difference, whether
+the result favors the candidate, eligible question/document counts, and
+paired-bootstrap confidence bounds when supported.
+
+The reranker-comparison schema is:
+
+```text
+comparison_id, retriever,
+baseline_candidate, candidate, baseline_run_id, candidate_run_id,
+shared_pool_checksum, metric_name, evidence_slice, cutoff, direction,
+baseline_value, candidate_value, candidate_minus_baseline, favors_candidate,
+ci_lower, ci_upper, confidence_level, ci_status, eligible_questions,
+eligible_documents, bootstrap_resamples, seed
+```
+
+The retriever-comparison schema replaces `retriever` and
+`shared_pool_checksum` with `baseline_retriever`, `candidate_retriever`,
+`baseline_pool_checksum`, and `candidate_pool_checksum`. Finalist rows identify
+both complete stacks and both pool checksums.
+
+`candidate_minus_baseline` always preserves the raw arithmetic difference.
+`favors_candidate` is populated only when the metric has an unconditional
+direction: positive quality differences and negative operational differences
+favor the candidate. For descriptive workload or storage differences,
+`direction=descriptive` and `favors_candidate` is null.
+
+Quality rows require `cutoff` and an `evidence_slice` such as `overall`, `text`,
+`table`, `formula`, or `mixed`; non-quality rows set both fields to null.
+Confidence bounds, `confidence_level`, bootstrap resamples, and seed are
+populated only when a paired interval is available. Otherwise they are null and
+`ci_status` states why, such as `smoke`, `insufficient_documents`, or
+`not_supported`.
+
+Reranker-effect rows compare all primary quality metrics, eligible alpha-nDCG,
+full-stack latency, cold initialization, RAM, VRAM, and retrieved-token workload.
+They do not pretend that shared pool Recall@20, shared index build, first-stage
+latency, or reranker-only fields are reranker improvements. Retriever-effect rows
+may compare quality, pool Recall@20, full-stack and first-stage latency, cold
+initialization, RAM, VRAM, retrieved tokens, index-build time, and index bytes.
+Validity counters are gates, not winner metrics, and receive no comparison rows.
+
+Quality differences use 10,000 paired bootstrap resamples of aligned source
+documents with seed 42. One-off cold-load and peak-resource observations receive
+point differences but no invented confidence interval. The engineer selects up
+to three complete finalists after jointly reviewing primary quality, uncertainty,
+evidence slices, diagnostics, and operational feasibility, then selects exactly
+one stack after validation. The versioned decision file references the parent
+and child run IDs and all governing checksums.
 
 ## 6. Vector database servers
 
@@ -1655,7 +1940,7 @@ engineer then approves one server profile for Final RAG.
 |---|---|---|
 | Validity checks | Health, cosine behavior, dimension rejection, compound/empty filters, replacement, deletion, persistence, restart, and ANN-index verification | Determines whether results are trustworthy; these are not quality scores. |
 | Primary | ANN Recall@3/@5/@10, Filtered ANN Recall@3/@5/@10, Filter Correctness, Empty-Filter Correctness | Measures preservation of exact neighbours and metadata behavior at application-relevant depths. |
-| Secondary | ANN and Filtered ANN Recall@1, complete RAG nDCG@3/@5 and Context Recall/Precision@3/@5 | Shows rank-one behavior and whether ANN results preserve real evidence retrieval. |
+| Secondary | ANN and Filtered ANN Recall@1; complete-RAG nDCG, Evidence-unit Recall, and Evidence-token Precision at @3/@5 | Shows rank-one behavior and whether ANN results preserve real evidence retrieval. |
 | Diagnostic | Unfiltered/filtered p50 latency, first query after restart | Explains typical and cold-query behavior. |
 | Operational | Unfiltered/filtered p95/p99, throughput and error rate at each concurrency, build time and vectors/second, incremental upsert/delete throughput, restart readiness, peak server RAM, persistent storage | Measures tail latency, load handling, ingestion, restart, memory, and disk cost. |
 
@@ -1753,19 +2038,19 @@ chunk document
 → embed chunks and question
 → store/query dense vectors through the approved server
 → apply BM25/RRF/reranking selected for the stack
-→ pack top 3 or top 5 under 2,048 context tokens
+→ select the ranked top 3 or top 5 chunks
 → number the evidence blocks
 → generate the answer and citations
 ```
 
 For `top_k=3`, retrieval quality is reported at 3. For `top_k=5`, it is reported
-at 3 and 5. Final RAG does not report @10 from a list that contains only three or
-five passages; the dedicated retrieval experiment owns @10 conclusions.
+at 3 and 5.
 
-Final RAG reports nDCG, Context Precision, Context Recall, and token-budget recall
-at the available cutoff; the primary and secondary generation metrics from
-Experiment 8; and retrieval, generation, server-call, and complete end-to-end
-p50/p95 latency. RAM and VRAM remain operational measurements.
+Final RAG reports nDCG, Evidence-unit Recall, and Evidence-token Precision at the
+available cutoff, plus eligible alpha-nDCG as a diagnostic. It also reports the
+primary and secondary generation metrics from Experiment 7 and retrieval,
+generation, server-call, and complete end-to-end p50/p95 latency. RAM and VRAM
+remain operational measurements.
 
 ### Human review
 
@@ -1819,8 +2104,8 @@ component selection after the system has been frozen.
 
 The experiment reports the paired extracted-minus-reference difference for:
 
-- **Retrieval:** nDCG, Context Precision, and Context Recall at the system's
-  actual top-K, plus Context Recall under 2,048 tokens.
+- **Retrieval:** nDCG, Evidence-unit Recall, and Evidence-token Precision at the
+  system's actual top-K, plus eligible alpha-nDCG as a diagnostic.
 - **Generation:** Token F1, answerable-only Citation Precision/Recall/F1,
   Answerability Balanced Accuracy, Unsupported Answer Rate, and Malformed Output
   Rate.

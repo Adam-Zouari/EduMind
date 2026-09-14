@@ -3,8 +3,7 @@ standard:
   - dense
   - bm25
   - rrf
-  - rrf-minilm-reranker
+  - rrf-gte-modernbert-reranker
   - rrf-ettin-150m-reranker
   - rrf-ettin-400m-reranker
   - rrf-ettin-1b-reranker
-  - rrf-qwen3-4b-reranker

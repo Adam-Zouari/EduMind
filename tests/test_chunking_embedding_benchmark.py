@@ -415,10 +415,9 @@ def test_embedding_runtime_rejects_contract_above_prepared_model_limit(
 
 
 def test_octen_profiles_use_saved_query_and_document_prompts() -> None:
-    for name in ("Octen/Octen-Embedding-0.6B", "Octen/Octen-Embedding-4B"):
-        assert embedding_spec(name, revision="rev", local_path="path").interface == (
-            "query-document"
-        )
+    assert embedding_spec(
+        "Octen/Octen-Embedding-0.6B", revision="rev", local_path="path"
+    ).interface == "query-document"
 
 
 def test_all_chunking_strategies_return_exact_nonempty_source_spans() -> None:

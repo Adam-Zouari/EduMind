@@ -81,33 +81,6 @@ EXPERIMENTAL_EMBEDDING_SPECS: dict[str, EmbeddingSpec] = {
         "mean",
         interface="query-document",
     ),
-    "Octen/Octen-Embedding-4B": EmbeddingSpec(
-        "Octen/Octen-Embedding-4B",
-        "from-lock",
-        "Octen/Octen-Embedding-4B",
-        None,
-        "",
-        "",
-        True,
-        2560,
-        "cosine",
-        32768,
-        "last-token",
-        interface="query-document",
-    ),
-    "Qwen/Qwen3-Embedding-4B": EmbeddingSpec(
-        "Qwen/Qwen3-Embedding-4B",
-        "from-lock",
-        "Qwen/Qwen3-Embedding-4B",
-        None,
-        "Instruct: Retrieve relevant educational evidence\nQuery:",
-        "",
-        True,
-        2560,
-        "cosine",
-        32768,
-        "last-token",
-    ),
 }
 
 

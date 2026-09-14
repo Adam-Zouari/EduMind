@@ -26,10 +26,10 @@ marked lower-is-better.
 - Standard, full, and locked runs retain one row per sample before aggregation.
 - p50, p95, and p99 are latency percentiles. Throughput is completed operations
   divided by measured wall-clock time.
-- Eligible standard, full, and locked sample-based aggregates use 10,000 bootstrap resamples
-  with seed 42 and 95% confidence intervals. Paired comparisons resample aligned
-  samples, not unrelated aggregate values. Counts, statuses, fixed identifiers,
-  and single operational observations do not receive intervals.
+- Eligible standard, full, and locked sample-based aggregates use 10,000
+  bootstrap resamples with seed 42 and 95% confidence intervals. Counts,
+  statuses, fixed identifiers, and single operational observations do not
+  receive intervals.
 - Normalized precision, recall, F1, accuracy, coverage, nDCG, and correctness
   values lie in `[0, 1]`. CER and WER are non-negative and can exceed 1 when
   insertions outnumber reference units. Human rubric scores use their stated
@@ -1401,9 +1401,8 @@ seed 42:
 
 Document-group metrics resample only the samples in that group. Conditional
 metrics such as table structure or formula recognition resample only the samples
-eligible for that metric. Paired candidate comparisons resample aligned sample
-IDs together so both candidates are evaluated on the same resampled cases.
-If a pooled detection resample contains neither a reference nor a prediction,
+eligible for that metric. If a pooled detection resample contains neither a
+reference nor a prediction,
 its precision/recall/F1 denominator is undefined and that draw is excluded from
 that metric's percentile calculation rather than converted to zero. The result
 artifact records the number of defined resamples.
@@ -1419,10 +1418,7 @@ Content F1 = 0.91
 
 The benchmark estimates an aggregate Content F1 of `0.91`; variation across the
 sampled documents produces the reported uncertainty interval. A narrower
-interval means the aggregate is estimated more precisely. Overlapping intervals
-do not by themselves prove that candidates are equal, and non-overlapping
-intervals do not replace an aligned paired comparison when a formal difference
-claim is made.
+interval means the aggregate is estimated more precisely.
 
 ## Audio extraction
 
@@ -2424,8 +2420,7 @@ Quality is first calculated for each answerable question. Questions are averaged
 within their source document so a paper with many questions cannot dominate the
 result. Standard and full runs then use 10,000 bootstrap resamples of complete
 documents with seed 42 and take the 2.5th and 97.5th percentiles as the 95%
-confidence bounds. Paired candidate comparisons resample the same aligned
-documents.
+confidence bounds.
 
 If too few documents contribute to a slice or conditional latency interval, the
 point estimate remains available but the interval is omitted rather than
@@ -2436,49 +2431,285 @@ reported as artificially precise.
 An nDCG@5 of `0.81` with a 95% confidence interval of `[0.77, 0.85]` means
 `0.81` is the observed aggregate, while resampling complete source documents
 estimates its uncertainty. The interval does not describe the range of
-individual-question scores. Candidate-difference claims use the aligned paired
-comparison rather than judging overlap between two separate intervals.
+individual-question scores.
 
 ## Retrieval and reranking quality
 
-This is a separate downstream contract. Unlike chunking/embedding selection,
-the retrieval/reranking phase deliberately introduces a 2,048-token packing
-policy and compares dense, lexical, fusion, and reranking methods. Its existing
-budget and multi-cutoff metrics do not flow backward into selection of the
-chunker/embedding pair.
+This phase compares 15 complete `retriever|reranker` candidates: Dense, BM25, and
+RRF, each with no reranker or one of four learned rerankers. Quality uses the
+same frozen evidence representation and evaluation tokenizer as the
+chunking/embedding benchmark. No context-token budget is applied and no metric
+families are combined into a weighted score.
 
-For chunk interval `[c_start, c_end)` and evidence interval
-`[e_start, e_end)`, overlap is:
+### Metric summary
 
-```python
-max(0, min(c_end, e_end) - max(c_start, e_start))
-```
+#### Retrieval quality
 
-Retrieved intervals are merged before coverage is counted, so overlapping
-chunks cannot receive duplicate credit.
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| nDCG@3/@5 | Primary | Does the complete stack place chunks containing verified evidence near the top? | Higher |
+| Evidence-unit Recall@3/@5 | Primary | How much of the required evidence is present in the first three or five chunks? | Higher |
+| Evidence-token Precision@3/@5 | Primary | How concentrated are the first three or five chunks around verified evidence? | Higher |
+| alpha-nDCG@3/@5 | Diagnostic | On eligible multi-evidence questions, does the ranking surface new evidence early instead of repeatedly covering evidence already found? | Higher |
+| Candidate-pool Evidence-unit Recall@20 | Diagnostic | Did the first-stage top-20 pool contain the required evidence before any reranker reordered it? | Higher |
+| Ranking Agreement | Validity diagnostic | Does repeated inference return the same complete ordering? | Higher |
 
-| Metric | Definition | Direction |
+`@3` and `@5` mean that the calculation uses the first three and first five
+ranked chunks. Both cutoffs are primary because the later complete-system
+experiment evaluates both context counts. The top-20 metric diagnoses the
+first-stage ceiling; it is not another selection cutoff.
+
+#### Operational performance
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Full-Stack Warm Latency p50/p95 | Operational | How long does the deployable first-stage-plus-reranker path usually take, and how slow is its warm tail? | Lower |
+| First-Stage Warm Latency p50/p95 | Operational | How much of total query time belongs to Dense, BM25, or RRF retrieval? | Lower |
+| Reranker Warm Latency p50/p95 | Operational | For reranked candidates, what additional query time does learned reranking require? | Lower |
+| Cold Initialization Time | Operational | How long does the complete candidate take to become ready from a fresh worker? | Lower |
+| Peak Process-Tree RAM | Operational | What maximum system memory does the candidate require? | Lower |
+| Peak VRAM | Operational | What maximum GPU memory does the candidate require? | Lower |
+| Index-Build Time | Operational | How long does preparation of the first-stage searchable state take? | Lower |
+| Index Bytes | Storage descriptor | How much stored searchable state does the first-stage retriever require? | Descriptive |
+
+#### Workload descriptors
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Corpus, Query, Chunk, and Pool Counts | Workload descriptor | What fixed data and ranked-list sizes were actually processed? | Descriptive |
+| Mean/p95 Retrieved Tokens@3/@5 | Workload descriptor | How much canonical source text would each cutoff pass downstream? | Descriptive |
+| Mean/p95 Reranker Input Tokens | Workload descriptor | How much native-tokenizer input did a learned reranker process per query? | Descriptive |
+| Reranker Snapshot Bytes | Storage descriptor | How much local model storage does a reranker require? | Descriptive |
+
+Workload and storage values explain latency and resource differences. They do
+not compensate for worse retrieval quality and are not combined with quality
+into a winner score.
+
+### Retrieval quality
+
+#### nDCG@3/@5
+
+**Question:** How early does the complete stack place relevant chunks when
+repeated evidence is not treated as an error?
+
+nDCG gives more credit when chunks containing complete verified evidence appear
+at earlier ranks. A chunk remains relevant when it covers evidence already seen
+in another chunk, so the metric evaluates conventional relevance ordering rather
+than diversity.
+
+For each question, the ideal ranking is derived from the relevance labels of
+every chunk in the complete frozen corpus. It is not derived from Dense, BM25,
+RRF, or any candidate's top-20 pool. All 15 candidates therefore use the same
+ideal denominator for that question; a retriever cannot make its normalization
+easier by failing to retrieve relevant chunks.
+
+**Example:** Moving an evidence-bearing chunk from rank 5 to rank 2 improves
+nDCG. Two high-ranked chunks that contain the same verified passage may both
+receive relevance credit.
+
+This is primary because ordering relevant material is the direct job shared by
+the retriever and reranker. Evidence-unit Recall separately reveals whether
+repetition displaced other required evidence.
+
+**Range and direction:** `[0, 1]`; higher is better. A question with no verified
+evidence in the scored results receives zero.
+
+#### Evidence-unit Recall@3/@5
+
+**Question:** How many distinct required evidence units appear anywhere inside
+the cutoff?
+
+Each gold evidence-unit ID counts once when at least one of the first three or
+five chunks contains that unit completely. Rank does not change the credit,
+repeated coverage does not add credit, and an incomplete fragment does not count
+as a recovered unit.
+
+**Example:** If a question needs three evidence units and the first three chunks
+recover one, Recall@3 is about `0.33`. If ranks 4 and 5 add a second unit,
+Recall@5 is about `0.67`.
+
+This is primary because an early-looking ranking may still omit evidence needed
+for a complete answer. It also makes a separate Hit Rate unnecessary.
+
+**Range and direction:** `[0, 1]`; higher is better.
+
+#### Evidence-token Precision@3/@5
+
+**Question:** What share of the returned token occurrences is annotated as
+verified evidence?
+
+Canonical chunk text is measured with `tiktoken:cl100k_base`. Evidence-bearing
+source intervals contribute relevant tokens; all returned source tokens form
+the denominator. Overlapping text returned in multiple chunks is counted each
+time because it consumes downstream context each time.
+
+**Example:** If the first five chunks contain 600 token occurrences and 240 are
+inside verified evidence intervals, Evidence-token Precision@5 is `0.40`. The
+remaining 60% is additional text, not necessarily incorrect text.
+
+This is primary because nDCG and recall can be high while the selected chunks
+still contain substantial unrelated material.
+
+**Range and direction:** `[0, 1]`; higher is better.
+
+#### alpha-nDCG@3/@5
+
+**Question:** On questions that require multiple distinct evidence units, does
+the ranking introduce new evidence early?
+
+Alpha-nDCG discounts a lower-ranked chunk only when it covers an evidence-unit
+ID already covered higher in the ranking. It does not use text similarity to
+decide that two chunks are duplicates, and it does not declare repeated relevant
+evidence inherently bad.
+
+**Example:** If ranks 1 and 2 contain the same evidence unit and rank 3 contains
+a different required unit, moving the different unit to rank 2 improves
+alpha-nDCG while ordinary nDCG may remain high.
+
+The metric is diagnostic because novelty is useful context information but is
+not the retriever's only responsibility. It uses fixed `alpha=0.5` and is
+calculated only for questions with at least two distinct gold evidence units.
+For other questions it is omitted rather than reported as zero.
+
+Its ideal ordering is built deterministically from the complete frozen corpus,
+choosing chunks that add the most not-yet-covered evidence at each rank. It is
+never constructed from the candidate's retrieved pool.
+
+**Range and direction:** `[0, 1]`; higher is better on its eligible subset.
+
+#### Candidate-pool Evidence-unit Recall@20
+
+**Question:** Did the first-stage retriever give its rerankers an adequate set of
+candidates?
+
+The metric measures distinct required evidence units found anywhere in the
+frozen top-20 pool before learned reranking. A reranker cannot recover evidence
+that is absent from this pool. The value therefore separates a first-stage miss
+from a poor reordering decision.
+
+It is recorded once on each of `dense|none`, `bm25|none`, and `rrf|none`. The
+four reranker children reference the matching pool artifact and checksum instead
+of copying the same value as if they had created it.
+
+**Range and direction:** `[0, 1]`; higher is better as a diagnostic ceiling.
+
+#### Ranking Agreement
+
+**Question:** Does the same candidate produce the same ordered chunk IDs when
+the query is repeated under identical conditions?
+
+The first measured repetition is the designated ordering. Every later measured
+repetition is an agreement only when its complete ordered top-20 chunk-ID list
+is identical at every position. Ranking Agreement is the number of matching
+query/repetition comparisons divided by the number expected. A failed
+repetition counts as a disagreement. It catches unstable tie handling or
+nondeterministic model behavior that could make quality results irreproducible;
+it does not require floating-point scores themselves to be bit-identical.
+
+The required authoritative value is `1.0`. A lower value is a validity failure,
+not a quality trade-off.
+
+### Why the quality metrics are not interchangeable
+
+| Metric | What changes it | What it does not answer directly |
 |---|---|---|
-| Context Recall@K | Unique gold-evidence characters covered by the first K chunks divided by unique gold-evidence characters. | Higher |
-| Context Precision@K | Rank-aware average precision of evidence-bearing chunks in the first K results. | Higher |
-| Context Recall under 2,048 tokens | Evidence coverage after ranked chunks are packed without exceeding the token budget. | Higher |
-| Precision@K | Evidence-bearing results in the first K divided by K. | Higher |
-| Recall@K | Relevant results returned in the first K divided by all relevant results. | Higher |
-| Hit Rate@K | 1 when at least one of the first K results is relevant; otherwise 0. | Higher |
-| MAP@K | Mean of per-query average precision through rank K. | Higher |
-| MRR | Mean reciprocal rank of the first relevant result. | Higher |
+| nDCG@3/@5 | The ranks of evidence-bearing chunks | Whether every distinct unit was recovered or how much extra text was returned |
+| Evidence-unit Recall@3/@5 | Which distinct required units appear within the cutoff | Whether those units appeared early or were surrounded by unrelated text |
+| Evidence-token Precision@3/@5 | The proportion of returned tokens inside verified evidence | Whether all required units were found or ordered early |
+| alpha-nDCG@3/@5 | The order in which distinct evidence-unit IDs first appear | Whether repeated relevant evidence actually harms the downstream answer |
+| Pool Recall@20 | Evidence available to a reranker before reordering | Whether the final top-three or top-five order is good |
 
-Each chunk's graded relevance is its covered gold-evidence length divided by its
-own length, capped at 1. Discounted cumulative gain is:
+Together, the primary metrics answer ordering, completeness, and concentration.
+The diagnostics then explain whether a weakness came from a limited first-stage
+pool, repeated evidence, or unstable execution.
 
-```text
-DCG@K = sum((2^grade_i - 1) / log2(i + 1), i=1..K)
-nDCG@K = observed DCG@K / ideal DCG@K
-```
+### Operational measurements
 
-`nDCG@3` and `nDCG@5` reward putting highly relevant evidence early. Context
-recall measures evidence coverage, while context precision penalizes wasting
-limited context on irrelevant chunks.
+#### Warm latency
+
+After warmup, each query is executed for every configured measured repetition.
+Full-stack latency contains all work needed by the candidate. For a reranked
+candidate it includes live first-stage retrieval, reranker tokenization and
+inference, deterministic score ordering, and top-result selection.
+
+First-stage latency isolates Dense, BM25, or RRF work. Reranker latency isolates
+only learned reranking and is omitted for the no-reranker option. Components are
+measured inside the same live execution; cached quality pools cannot make the
+operational path look faster.
+
+For each latency family, the median repetition for a query is the query-level
+observation. p50 describes a typical warm query and p95 describes the slow tail.
+p99 is reserved for the vector-server load benchmark, where enough controlled
+requests exist to estimate it reliably.
+
+#### Cold initialization and peak resources
+
+Cold initialization uses a fresh worker and ends when the complete candidate is
+ready to accept a query. It includes loading the required retriever state,
+tokenizers, and reranker when applicable; downloads and environment installation
+remain outside the benchmark.
+
+Peak RAM is the largest sampled resident-memory total across the worker and its
+child processes. Peak VRAM uses process-attributed GPU sampling. A confirmed
+CPU-only run may report zero VRAM; missing GPU instrumentation is reported as
+unavailable, not converted to zero.
+
+#### Index build and storage
+
+Index-build time begins after required models are loaded and ends when the
+first-stage searchable state is ready. Index bytes are measured from that state.
+The Dense and BM25 no-reranker owners record their own build time and index
+bytes; their four reranker children reference those artifacts instead of copying
+the values. RRF references both checksummed indexes and builds no third search
+index. Its required bytes are the unique sum of the Dense and BM25 indexes, and
+its incremental fusion-index bytes are zero.
+
+### Workload descriptors
+
+Corpus, question, chunk, and pool counts verify what the run processed. Mean and
+p95 retrieved tokens at @3 and @5 use canonical source text and the fixed
+evaluation tokenizer. They describe how much text each final ranking would pass
+downstream without imposing a token budget.
+
+Reranker input-token summaries use that reranker's native tokenizer over all 20
+query-passage inputs. For each query, the token counts of its individual pairs
+are summed first; mean and p95 are then calculated across those per-query totals.
+The individual pairs are not treated as independent workload observations.
+
+For example, queries requiring `2,000`, `2,400`, and `4,000` reranker input
+tokens have a mean workload of `2,800` tokens per query. Averaging the lengths
+of all individual pairs would instead describe the average pair and could hide
+the expensive `4,000`-token request. Reranker input-token summaries are omitted
+for no-reranker candidates. Snapshot bytes describe local model storage and are
+recorded from the immutable model cache.
+
+### Validity gates and eligibility
+
+An authoritative child is valid only when every expected query is processed,
+all ranking scores are finite, input truncation is zero, repeated rankings agree,
+and each reranker output is an exact permutation of the referenced checksummed
+pool. A failed query, pool mismatch, duplicate/missing chunk ID, nonfinite score,
+or truncated input makes the child failed and the parent comparison incomplete.
+There is no average failure-rate metric that can hide these errors.
+
+Quality metrics include answerable questions only. Every overall result and
+text, table, formula, or mixed slice records eligible question and document
+counts. Alpha-nDCG separately records its smaller multi-evidence eligibility
+counts. Inapplicable fields are absent rather than filled with zero.
+
+### Aggregation and confidence intervals
+
+Quality is calculated per eligible question, averaged within each source
+document, and macro-averaged across documents. This prevents a paper with many
+questions from dominating the result. Standard and full runs use 10,000
+bootstrap resamples of complete documents with seed 42; the 2.5th and 97.5th
+percentiles form the 95% confidence interval. Evidence slices repeat the same
+calculation over contributing documents.
+
+Smoke values receive no authoritative interval. One-off cold initialization,
+index build, index bytes, peak resources, and workload descriptors receive point
+observations but no invented interval. Warm latency intervals are reported only
+when enough independent query observations support them.
 
 ## Vector-server correctness and performance
 

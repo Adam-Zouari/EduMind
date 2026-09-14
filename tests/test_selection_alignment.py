@@ -38,8 +38,8 @@ def test_selection_history_counts_and_keys_are_preserved() -> None:
     assert len(rows) == 66
     assert len({(row["component"], row["candidate"]) for row in rows}) == 66
     assert Counter(row["decision"] for row in rows) == {
-        "include": 29,
-        "exclude": 37,
+        "include": 26,
+        "exclude": 40,
     }
     gte = next(
         row
@@ -72,7 +72,7 @@ def test_executable_model_registries_match_approved_selection() -> None:
         ROOT / "experiments/benchmarks/rag/chunking_embedding/candidates.yaml",
         "standard",
     )
-    assert len(chunk_pairs) == 64
+    assert len(chunk_pairs) == 48
     assert len({pair.split("|", 1)[0] for pair in chunk_pairs}) == 8
     assert {pair.split("|", 1)[1] for pair in chunk_pairs} == approved_embeddings
 
@@ -135,11 +135,10 @@ def test_reranker_audio_and_document_registries_are_exact() -> None:
         "dense",
         "bm25",
         "rrf",
-        "rrf-minilm-reranker",
+        "rrf-gte-modernbert-reranker",
         "rrf-ettin-150m-reranker",
         "rrf-ettin-400m-reranker",
         "rrf-ettin-1b-reranker",
-        "rrf-qwen3-4b-reranker",
     }
     approved_asr = {
         "whisper-small-en-control",

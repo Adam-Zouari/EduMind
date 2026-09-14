@@ -1,7 +1,7 @@
 smoke:
   - token-256-32|Alibaba-NLP/gte-modernbert-base
 
-# The standard run is intentionally the complete 8 x 8 matrix. Screening an
+# The standard run is intentionally the complete 8 x 6 matrix. Screening an
 # embedding with only one chunker can hide chunker/model interactions.
 standard:
   matrix:
@@ -21,5 +21,3 @@ standard:
       - Octen/Octen-Embedding-0.6B
       - Qwen/Qwen3-Embedding-0.6B
       - nvidia/Nemotron-3-Embed-1B-BF16
-      - Octen/Octen-Embedding-4B
-      - Qwen/Qwen3-Embedding-4B

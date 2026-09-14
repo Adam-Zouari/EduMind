@@ -529,11 +529,10 @@ def reranker_for(
     method: str, model_lock: Mapping[str, Mapping[str, object]]
 ) -> Reranker | None:
     model = {
-        "rrf-minilm-reranker": "cross-encoder/ms-marco-MiniLM-L6-v2",
+        "rrf-gte-modernbert-reranker": "Alibaba-NLP/gte-reranker-modernbert-base",
         "rrf-ettin-150m-reranker": "cross-encoder/ettin-reranker-150m-v1",
         "rrf-ettin-400m-reranker": "cross-encoder/ettin-reranker-400m-v1",
         "rrf-ettin-1b-reranker": "cross-encoder/ettin-reranker-1b-v1",
-        "rrf-qwen3-4b-reranker": "Qwen/Qwen3-Reranker-4B",
     }.get(method)
     if model is None:
         return None

@@ -243,6 +243,26 @@ python experiments/benchmarks/rag/retrieval/run.py --profile full `
   --shortlist RETRIEVAL_DECISION
 ```
 
+The Standard plan must contain exactly 15 direct candidate children: Dense,
+BM25, and RRF, each crossed with no reranker, GTE ModernBERT, Ettin 150M, Ettin
+400M, and Ettin 1B. The three `retriever|none` children own the checksummed
+top-20 quality pools; reranker children reference the matching owner. Pools and
+paired comparisons are artifacts under the same parent, not intermediate MLflow
+runs. Retriever effects are written to authoritative
+`retriever_comparisons.parquet` and its human-readable
+`retriever_comparisons.csv` mirror. Reranker effects use
+`reranker_comparisons.parquet` and `reranker_comparisons.csv`. Validation writes
+the optional `finalist_comparisons.parquet` and `finalist_comparisons.csv` only
+when cross-stack finalist comparisons are explicitly requested.
+
+The retrieval/reranking smoke fixture must contain exactly 30 frozen canonical
+chunks. It validates selection into a 20-chunk pool without imposing a fixed
+chunk count on authoritative chunking candidates.
+
+Full validation runs the engineer-selected finalists plus any matching
+`retriever|none` controls needed to measure their incremental effect. Do not use
+a legacy eight-method or RRF-only plan as authoritative evidence.
+
 Exact NumPy dense search and local BM25 are experiment controls here; they do
 not become production indexes.
 

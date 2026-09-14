@@ -116,7 +116,7 @@ python experiments/benchmarks/prepare.py extraction-models
 python experiments/benchmarks/prepare.py all-models
 ```
 
-`embedding-models` prepares only the eight candidates used by the
+`embedding-models` prepares only the six candidates used by the
 chunking--embedding matrix. `rag-models` is the aggregate RAG target and also
 prepares the selected rerankers, generators, and evaluator.
 Embedding preparation excludes alternate ONNX, OpenVINO, GGUF, TensorFlow,
@@ -130,8 +130,8 @@ Downloads are resumable through Hugging Face and are placed in deterministic pro
 
 The RAG download contains these exact approved identities:
 
-- Embeddings: [GTE ModernBERT base](https://huggingface.co/Alibaba-NLP/gte-modernbert-base/tree/e7f32e3c00f91d699e8c43b53106206bcc72bb22), [Snowflake Arctic Embed M v2](https://huggingface.co/Snowflake/snowflake-arctic-embed-m-v2.0), [F2LLM v2 0.6B](https://huggingface.co/codefuse-ai/F2LLM-v2-0.6B), [Octen 0.6B](https://huggingface.co/Octen/Octen-Embedding-0.6B), [Qwen3 Embedding 0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B), [Nemotron Embed 1B](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16), [Octen 4B](https://huggingface.co/Octen/Octen-Embedding-4B), and [Qwen3 Embedding 4B](https://huggingface.co/Qwen/Qwen3-Embedding-4B).
-- Rerankers: [MiniLM control](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2), [Ettin 150M](https://huggingface.co/cross-encoder/ettin-reranker-150m-v1), [Ettin 400M](https://huggingface.co/cross-encoder/ettin-reranker-400m-v1), [Ettin 1B](https://huggingface.co/cross-encoder/ettin-reranker-1b-v1), and [Qwen3 Reranker 4B](https://huggingface.co/Qwen/Qwen3-Reranker-4B).
+- Embeddings: [GTE ModernBERT base](https://huggingface.co/Alibaba-NLP/gte-modernbert-base/tree/e7f32e3c00f91d699e8c43b53106206bcc72bb22), [Snowflake Arctic Embed M v2](https://huggingface.co/Snowflake/snowflake-arctic-embed-m-v2.0), [F2LLM v2 0.6B](https://huggingface.co/codefuse-ai/F2LLM-v2-0.6B), [Octen 0.6B](https://huggingface.co/Octen/Octen-Embedding-0.6B), [Qwen3 Embedding 0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B), and [Nemotron Embed 1B](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16).
+- Rerankers: [GTE ModernBERT control](https://huggingface.co/Alibaba-NLP/gte-reranker-modernbert-base), [Ettin 150M](https://huggingface.co/cross-encoder/ettin-reranker-150m-v1), [Ettin 400M](https://huggingface.co/cross-encoder/ettin-reranker-400m-v1), and [Ettin 1B](https://huggingface.co/cross-encoder/ettin-reranker-1b-v1).
 - Generators: [Qwen3 1.7B control](https://huggingface.co/Qwen/Qwen3-1.7B), [MiniCPM5 1B](https://huggingface.co/openbmb/MiniCPM5-1B), [G9v3 3B](https://huggingface.co/ai9stars/G9v3-3B), and [Qwen3.5 4B](https://huggingface.co/Qwen/Qwen3.5-4B).
 - Diagnostic evaluator: [HHEM](https://huggingface.co/vectara/hallucination_evaluation_model).
 

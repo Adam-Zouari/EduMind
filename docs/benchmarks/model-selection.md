@@ -17,10 +17,11 @@ Candidate selection follows the same practical sequence for each component:
 1. **Define the job.** Retrieval models are screened on retrieval quality, rerankers on reranking quality, ASR models on English transcription plus timestamps, and generators on their suitability for grounded answering.
 2. **Inspect relevant public evidence.** Prefer a common task-specific benchmark such as MTEB Retrieval, a common reranker comparison, OmniDocBench, or the Open ASR Leaderboard. General-capability evidence is used only when no current task-specific comparison covers the candidate set.
 3. **Apply basic eligibility checks.** A candidate must be downloadable, self-hostable, usable for the intended EduMind deployment, and expose the capability required by the experiment.
-4. **Keep different resource scales.** After reviewing the available models, they are organized into approximate parameter-size groups so the local benchmark compares compact, middle, and higher-quality options. These groups describe the reviewed shortlist; they were not fixed before the search.
-5. **Prefer comparable evidence.** When candidates were tested under the same public protocol, the strongest eligible representatives are kept. When promising models use incompatible protocols, both may be kept and compared locally instead of comparing unlike public scores.
-6. **Keep a control.** The current or established baseline is always included so the experiment can measure whether changing the component is worthwhile.
-7. **Decide locally.** Public evidence creates the shortlist. An engineer reviews EduMind's frozen-dataset quality, latency, and resource measurements to make the final decision.
+4. **Enforce the target-hardware envelope.** Embedding and reranking candidates must run in their common native benchmark precision on the laptop's RTX 3050 4 GiB GPU without CPU offload, automatic device splitting, candidate-specific quantization, or silent fallback. The complete measured operation must retain enough VRAM for activations and inputs; fitting weight files on disk is not sufficient. Models that fail this gate remain recorded as exclusions rather than receiving a different execution protocol.
+5. **Keep different feasible resource scales.** After eligibility screening, the remaining models are organized into approximate parameter-size groups so the local benchmark compares compact, middle, and higher-quality options that can actually be deployed on the target hardware. A size range may remain empty when no reviewed model passes the hardware gate. These groups describe the reviewed shortlist; they were not fixed before the search.
+6. **Prefer comparable evidence.** When candidates were tested under the same public protocol, the strongest eligible representatives are kept. When promising models use incompatible protocols, both may be kept and compared locally instead of comparing unlike public scores.
+7. **Keep a control.** The current or established baseline is always included so the experiment can measure whether changing the component is worthwhile.
+8. **Decide locally.** Public evidence creates the shortlist. An engineer reviews EduMind's frozen-dataset quality, latency, and resource measurements to make the final decision.
 
 Scores from different benchmarks are never combined or compared numerically. An MTEB Retrieval score, an RTEB score, an Artificial Analysis score, and WER answer different questions.
 
@@ -85,7 +86,7 @@ Candidate-specific links appear in the relevant table row. A benchmark shared by
 |---|---|---|
 | Chunking | Token 256/32 | Current fixed-window chunking. |
 | Embedding | [`Alibaba-NLP/gte-modernbert-base`](https://huggingface.co/Alibaba-NLP/gte-modernbert-base/tree/e7f32e3c00f91d699e8c43b53106206bcc72bb22) at `e7f32e3c00f91d699e8c43b53106206bcc72bb22` | Provisional 149M lightweight control with an 8,192-token input limit, 768-dimensional CLS-pooled normalized embeddings, and an Apache 2.0 license. Its official card reports 55.33 average nDCG@10 on 15 BEIR retrieval datasets. |
-| Reranking | `cross-encoder/ms-marco-MiniLM-L6-v2` at `233902d25c440f23af6f7d6e94d2946bac0bee0a` | Established cross-encoder baseline. |
+| Reranking | [`Alibaba-NLP/gte-reranker-modernbert-base`](https://huggingface.co/Alibaba-NLP/gte-reranker-modernbert-base/tree/f7481e6055501a30fb19d090657df9ec1f79ab2c) at `f7481e6055501a30fb19d090657df9ec1f79ab2c` | English 149M long-context control with an 8,192-token input limit and Apache 2.0 license. Its `0.5843` result in the shared public comparison is below all three selected learned rerankers. |
 | Generation | [`Qwen/Qwen3-1.7B`](https://huggingface.co/Qwen/Qwen3-1.7B/tree/b9352fbb8ce704292730cf54b3b1dceb2a808738), thinking disabled | Small direct-checkpoint control executed through the same Hugging Face runtime as the candidates. |
 | Document extraction | Docling Standard baseline configuration | Current unified-parser reference. |
 | ASR | `openai/whisper-small.en` at `e8727524f962ee844a7319d92be39ac1bd25655a` | Established English ASR reference. |
@@ -104,14 +105,12 @@ Approximate size groups observed in the reviewed shortlist:
 - **≤350M**
 - **>350M–800M**
 - **>800M–1.5B**
-- **>1.5B–4.5B**
 
 | Approximate size | Included candidates | Why they are included | Evidence |
 |---|---|---|---|
 | ≤350M | `Alibaba-NLP/gte-modernbert-base` control; `Snowflake/snowflake-arctic-embed-m-v2.0` candidate | GTE is the lightweight long-context production control and reports **55.33 BEIR-15 average nDCG@10**. Snowflake is the strongest commercially usable model in the separate frozen English MTEB-v2 screening table (**58.4 Retrieval**). These public protocols are not used to rank the two models against each other. | [pinned GTE model card](https://huggingface.co/Alibaba-NLP/gte-modernbert-base/blob/e7f32e3c00f91d699e8c43b53106206bcc72bb22/README.md); [Snowflake MTEB record](https://leaderboard.mteb.org/models/Snowflake/snowflake-arctic-embed-m-v2.0); [pinned comparison](https://github.com/ibm-granite/granite-embedding-models/tree/250b8522ad2a7ea0c1e26f089d3de212390f614b); [pinned Snowflake model card](https://huggingface.co/Snowflake/snowflake-arctic-embed-m-v2.0/blob/95c2741480856aa9666782eb4afe11959938017f/README.md) |
 | >350M–800M | `Qwen/Qwen3-Embedding-0.6B`; `Octen/Octen-Embedding-0.6B`; `codefuse-ai/F2LLM-v2-0.6B` | Qwen leads the directly comparable MTEB screen (**61.83 Retrieval**). Octen has strong RTEB evidence and F2LLM has official MTEB task results, but their available aggregates are not directly comparable to Qwen's frozen result. | [Qwen MTEB](https://leaderboard.mteb.org/models/Qwen/Qwen3-Embedding-0.6B); [Octen/RTEB](https://leaderboard.mteb.org/benchmark/RTEB%28beta%29); [F2LLM MTEB](https://leaderboard.mteb.org/models/codefuse-ai/F2LLM-v2-0.6B) |
 | >800M–1.5B | `nvidia/Nemotron-3-Embed-1B-BF16` | NVIDIA's common RTEB-16 table reports **72.38 average nDCG@10**, above the reviewed nearby-size models in that table. | [MTEB record](https://leaderboard.mteb.org/models/nvidia/Nemotron-3-Embed-1B-BF16); [pinned RTEB table](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16/blame/c932836c54f75b7df5da0b0f519ea4cfd276a8e4/README.md) |
-| >1.5B–4.5B | `Qwen/Qwen3-Embedding-4B`; `Octen/Octen-Embedding-4B` | Qwen reports **68.46 MTEB English-v2 Retrieval** and Octen reports **0.7747 RTEB public mean**. The protocols differ, so both proceed to the same local benchmark. | [Qwen MTEB](https://leaderboard.mteb.org/models/Qwen/Qwen3-Embedding-4B); [Octen/RTEB](https://leaderboard.mteb.org/benchmark/RTEB%28beta%29) |
 
 The GTE ModernBERT control is evaluated with every chunker. Public evidence sources and exact candidate revisions are recorded in `selection_evidence.csv`.
 
@@ -141,12 +140,25 @@ Semantic chunking is intentionally evaluated as a **chunker–embedding pair** b
 
 ### Retrieval candidates
 
-| Strategy | What it tests |
+| First-stage retriever | What it tests |
 |---|---|
-| Dense | Pure semantic retrieval using the tested embedding/chunker pair. |
+| Dense | Pure semantic retrieval using the selected embedding/chunker pair. |
 | BM25 | Lexical retrieval for exact terminology, names, and identifiers. |
-| RRF | Fusion of dense and BM25 ranks. |
-| RRF + reranker | Whether re-scoring the fused candidates improves evidence ordering enough to justify the extra cost. |
+| RRF | Equal-weight reciprocal-rank fusion of the Dense and BM25 top-20 lists using fusion constant `60`. |
+
+These are frozen, untuned protocol controls. Dense uses exact cosine over
+L2-normalized vectors so approximate-index behavior cannot affect this phase.
+BM25 uses the selected implementation's explicit `BM25Okapi` defaults:
+`k1=1.5`, `b=0.75`, and `epsilon=0.25`. RRF uses equal source weights because
+Dense cosine and BM25 scores are not directly comparable and no development-set
+evidence justifies favoring either source. It reuses the checksummed Dense and
+BM25 indexes and does not build a third search index.
+
+Each first-stage retriever is evaluated with five reranker options: `none` and
+each of the four learned rerankers below. This full crossing produces 15 complete
+`retriever|reranker` candidates. Reranking is therefore not limited to RRF, and
+the Dense, BM25, and RRF no-reranker candidates remain the direct controls for
+measuring each reranker's incremental effect.
 
 ### Reranker candidates
 
@@ -159,8 +171,7 @@ The public screen uses a 23-model comparison published by the Ettin authors. “
 | ≤200M | [`cross-encoder/ettin-reranker-150m-v1`](https://huggingface.co/cross-encoder/ettin-reranker-150m-v1/tree/3b3282e9bca7a60211a8b99e2936479703151a4f) | **0.5994** mean nDCG@10 | Highest value in this approximate size group in the common table. |
 | >200M–700M | [`cross-encoder/ettin-reranker-400m-v1`](https://huggingface.co/cross-encoder/ettin-reranker-400m-v1/tree/5dca36282a5d85f368d2544002513a29159b4c9e) | **0.6091** | Highest value in this approximate size group. |
 | >700M–1.5B | [`cross-encoder/ettin-reranker-1b-v1`](https://huggingface.co/cross-encoder/ettin-reranker-1b-v1/tree/7d20e9baad17016fdf5549c08f69a2d7ca3e60c3) | **0.6114** | Highest value in this approximate size group. |
-| >1.5B–4.5B | [`Qwen/Qwen3-Reranker-4B`](https://huggingface.co/Qwen/Qwen3-Reranker-4B/tree/22e683669bc0f0bd69640a1354a6d0aebcfeede5) | **0.6367** | Highest value overall in the common table. |
-| Control | [`cross-encoder/ms-marco-MiniLM-L6-v2`](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2/tree/233902d25c440f23af6f7d6e94d2946bac0bee0a) | **0.5082** | Established low-cost baseline. |
+| Control | [`Alibaba-NLP/gte-reranker-modernbert-base`](https://huggingface.co/Alibaba-NLP/gte-reranker-modernbert-base/tree/f7481e6055501a30fb19d090657df9ec1f79ab2c) | **0.5843** | Weaker than every selected reranker in the same public comparison while providing an 8,192-token input limit compatible with the benchmark's chunking contract. |
 
 Shared evidence: [published comparison](https://huggingface.co/blog/ettin-reranker), [pinned comparison source](https://github.com/huggingface/blog/blob/8dc6a4f4bcdd9fe5ac2a107895b0515377691a17/ettin-reranker.md), and [MTEB English-v2 Retrieval](https://leaderboard.mteb.org/benchmark/MTEB%28eng%2C%20v2%29).
 

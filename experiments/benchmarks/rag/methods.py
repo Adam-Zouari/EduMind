@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-import re
 import os
 import pickle
+import re
 from collections.abc import Sequence
 
 RERANKER_MAX_LENGTH = {
-    "cross-encoder/ms-marco-MiniLM-L6-v2": 512,
+    "Alibaba-NLP/gte-reranker-modernbert-base": 8192,
     "cross-encoder/ettin-reranker-150m-v1": 7999,
     "cross-encoder/ettin-reranker-400m-v1": 7999,
     "cross-encoder/ettin-reranker-1b-v1": 7999,
-    "Qwen/Qwen3-Reranker-4B": 8192,
 }
 
 
@@ -50,84 +49,17 @@ class Reranker:
 
     def rank(self, query: str, documents: Sequence[str]) -> list[int]:
         if self.model is None:
-            if self.model_name.startswith("Qwen/"):
-                self.model = _QwenReranker(
-                    self.model_name, self.revision, self.model_path
-                )
-            else:
-                from sentence_transformers import CrossEncoder
+            from sentence_transformers import CrossEncoder
 
-                self.model = CrossEncoder(
-                    self.model_path,
-                    device=os.environ.get("EDUMIND_BENCHMARK_RERANKER_DEVICE", "cpu"),
-                    local_files_only=True,
-                    trust_remote_code=False,
-                    max_length=RERANKER_MAX_LENGTH[self.model_name],
-                )
-        scores = (
-            self.model.predict(query, documents)
-            if isinstance(self.model, _QwenReranker)
-            else self.model.predict([(query, document) for document in documents])
-        )
-        return sorted(range(len(documents)), key=lambda index: (-float(scores[index]), index))
-
-
-class _QwenReranker:
-    """Generative yes/no relevance scoring required by Qwen3-Reranker."""
-
-    def __init__(self, model_name: str, revision: str, model_path: str) -> None:
-        import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-
-        self.torch = torch
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            model_path,
-            local_files_only=True,
-            trust_remote_code=True,
-            padding_side="left",
-        )
-        if self.tokenizer.pad_token_id is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.device = os.environ.get("EDUMIND_BENCHMARK_RERANKER_DEVICE", "cpu")
-        dtype = torch.bfloat16 if self.device.startswith("cuda") else torch.float32
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_path,
-            local_files_only=True,
-            trust_remote_code=True,
-            torch_dtype=dtype,
-        ).to(self.device)
-        self.model.eval()
-        self.yes_id = self.tokenizer.encode("yes", add_special_tokens=False)[0]
-        self.no_id = self.tokenizer.encode("no", add_special_tokens=False)[0]
-
-    def predict(self, query: str, documents: Sequence[str]) -> list[float]:
-        instruction = (
-            "Given an educational question, determine whether the document contains "
-            "evidence that helps answer it."
-        )
-        prompts = [
-            "<|im_start|>system\nJudge whether the Document meets the requirements "
-            "based on the Query and the Instruct. Output only yes or no."
-            "<|im_end|>\n<|im_start|>user\n"
-            f"<Instruct>: {instruction}\n<Query>: {query}\n<Document>: {document}"
-            "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
-            for document in documents
-        ]
-        scores: list[float] = []
-        for start in range(0, len(prompts), 4):
-            encoded = self.tokenizer(
-                prompts[start : start + 4],
-                padding=True,
-                truncation=True,
-                max_length=RERANKER_MAX_LENGTH["Qwen/Qwen3-Reranker-4B"],
-                return_tensors="pt",
+            self.model = CrossEncoder(
+                self.model_path,
+                device=os.environ.get("EDUMIND_BENCHMARK_RERANKER_DEVICE", "cpu"),
+                local_files_only=True,
+                trust_remote_code=False,
+                max_length=RERANKER_MAX_LENGTH[self.model_name],
             )
-            encoded = {key: value.to(self.device) for key, value in encoded.items()}
-            with self.torch.no_grad():
-                logits = self.model(**encoded).logits[:, -1, [self.no_id, self.yes_id]]
-                probabilities = self.torch.softmax(logits, dim=-1)[:, 1]
-            scores.extend(float(value) for value in probabilities.cpu().tolist())
-        return scores
+        scores = self.model.predict([(query, document) for document in documents])
+        return sorted(range(len(documents)), key=lambda index: (-float(scores[index]), index))
 
 
 def _tokens(text: str) -> list[str]:
