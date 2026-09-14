@@ -4,9 +4,9 @@
 [Installation guide](../setup/installation.md) ·
 [Benchmark methodology](methodology.md)
 
-This guide defines the public source pools for the document, audio, and video
-benchmarks, how to download them, and how to turn them into EduMind's frozen
-manifests. Sources and links were reviewed on **2026-09-02**.
+This guide defines the public source pools for the document, audio, video, and
+RAG benchmarks, how to download them, and how to turn them into EduMind's frozen
+manifests. Sources and links were reviewed on **2026-09-14**.
 
 Downloading a public release does not make it a runnable EduMind dataset. A
 public release is a **source pool**. An authoritative run uses a smaller,
@@ -104,6 +104,21 @@ reviewer must watch every selected interval and correct its transcript, visible
 text, appearance timestamps, duplicates, and visual-change boundaries. The
 same verification rules apply to SlideSpeech, AVLectures, and owned recordings.
 
+### Chunking, embedding, retrieval, and generation
+
+| Source | Development | Validation | Locked test | What it contributes |
+|---|---:|---:|---:|---|
+| [QASPER](https://huggingface.co/datasets/allenai/qasper/tree/3065362e337ded696bbb0171b073c73e513c9410) | 100 papers | 40 papers | 40 papers | Scientific documents, answerable and unanswerable questions, accepted answers, and text evidence. |
+| EduMind verified structured supplement | Reviewed separately | Reviewed separately | Reviewed separately | Table, formula, and mixed-evidence questions with exact canonical-text intervals. |
+
+QASPER supplies the paper-level split foundation. The preparation step samples
+whole papers with seed `42`, so one paper and its questions never cross splits.
+The structured supplement is not a model-generated augmentation: a reviewer
+must verify every document, question, answerability label, accepted answer,
+evidence type, evidence-unit ID, and half-open source interval. Each split must
+contain at least ten answerable questions with verified evidence for each of
+`table`, `formula`, and `mixed` before it can be combined with QASPER.
+
 ## 2. Prerequisites and storage layout
 
 Activate the project virtual environment and install the benchmark dependencies
@@ -154,9 +169,48 @@ New-Item -ItemType Directory -Force `
 Rerunning `hf download` or `curl.exe -C -` resumes completed or partial files.
 Stopping either command does not discard already downloaded bytes.
 
-## 3. Install the document datasets
+## 3. Install the RAG datasets
 
-### 3.1 OmniDocBench v1.6
+Prepare the pinned QASPER revision and deterministic paper-isolated splits:
+
+```powershell
+python experiments/benchmarks/prepare.py qasper
+```
+
+This creates `qasper-dev.json`, `qasper-validation.json`, and
+`qasper-locked-test.json` under `data/benchmarks/rag/`, containing 100, 40, and
+40 complete papers respectively. The source revision is
+`3065362e337ded696bbb0171b073c73e513c9410`, the split seed is `42`, and the
+generated manifests record their selected paper IDs and content checksums.
+
+Create one reviewed structured manifest per matching split, then combine it with
+QASPER only after all evidence offsets and evidence-type counts pass validation:
+
+```powershell
+python experiments/benchmarks/prepare.py rag-selection `
+  --qasper-manifest data/benchmarks/rag/qasper-dev.json `
+  --structured-manifest data/benchmarks/rag/structured-dev.json `
+  --output data/benchmarks/rag/rag-selection-dev.json
+
+python experiments/benchmarks/prepare.py rag-selection `
+  --qasper-manifest data/benchmarks/rag/qasper-validation.json `
+  --structured-manifest data/benchmarks/rag/structured-validation.json `
+  --output data/benchmarks/rag/rag-selection-validation.json
+
+python experiments/benchmarks/prepare.py rag-selection `
+  --qasper-manifest data/benchmarks/rag/qasper-locked-test.json `
+  --structured-manifest data/benchmarks/rag/structured-locked-test.json `
+  --output data/benchmarks/rag/rag-selection-locked-test.json
+```
+
+The QASPER and structured manifests being combined must use the same split and
+split seed. IDs must be globally unique, source-document families must remain
+isolated, and the locked-test manifest must not be inspected during component
+selection.
+
+## 4. Install the document datasets
+
+### 4.1 OmniDocBench v1.6
 
 Official evidence:
 
@@ -185,7 +239,7 @@ Use English pages only for the current English-first release. Select pages by
 document family, not randomly by image, so pages from one source document never
 cross development, validation, and locked-test boundaries.
 
-### 3.2 OHR-Bench v2
+### 4.2 OHR-Bench v2
 
 Official evidence:
 
@@ -215,7 +269,7 @@ Expand-Archive `
 Do not use OHR-Bench's synthetic OCR-error variants as extractor references.
 EduMind evaluates real extractor output against the human-verified ground truth.
 
-### 3.3 PureDocBench v1.0
+### 4.3 PureDocBench v1.0
 
 Official evidence:
 
@@ -249,7 +303,7 @@ Keep all three variants of one page in the same split. They may be compared as a
 matched robustness group, but they must never become independent samples split
 across development, validation, and locked test.
 
-### 3.4 DocPTBench photographed documents
+### 4.4 DocPTBench photographed documents
 
 Official evidence:
 
@@ -282,7 +336,7 @@ increase the corpus size. Check the dataset card and the source record of every
 selected item before redistribution rather than assuming the repository's code
 license applies to every underlying document.
 
-### 3.5 Build the native-DOCX set
+### 4.5 Build the native-DOCX set
 
 There is no established public benchmark that simultaneously provides native
 DOCX files and EduMind's required verified text, hierarchy, list, table, formula,
@@ -314,9 +368,9 @@ lists, captions with embedded images, native tables, native equations, headers
 and footers, and mixed-content reports. Do not convert PDFs into DOCX to fill the
 set.
 
-## 4. Install the audio datasets
+## 5. Install the audio datasets
 
-### 4.1 LibriSpeech controls
+### 5.1 LibriSpeech controls
 
 [OpenSLR SLR12](https://www.openslr.org/12/) publishes both archives under CC BY
 4.0.
@@ -349,7 +403,7 @@ timed segments in a representative clip, concatenate two to four consecutive
 utterances from the same reader and chapter, retain every utterance boundary,
 and keep the resulting clip at or below 30 seconds.
 
-### 4.2 M³AV academic lectures
+### 5.2 M³AV academic lectures
 
 Official evidence:
 
@@ -392,7 +446,7 @@ the selected transcript and boundaries against the exact audio. Treat the source
 lecture and speaker as the split family, and cut only complete reference segments
 into clips no longer than 30 seconds.
 
-### 4.3 EdAcc accent diversity
+### 5.3 EdAcc accent diversity
 
 [EdAcc v1.0](https://datashare.ed.ac.uk/items/355c07b4-500d-4e80-8f12-225e646293c9/full)
 contains almost 40 hours of dyadic remote conversations from speakers covering
@@ -429,7 +483,7 @@ Manually verify the selected 30-second-or-shorter segments and their timestamps;
 self-reported accent metadata describes coverage but is not itself a quality
 label.
 
-### 4.4 AMI Meeting Corpus
+### 5.4 AMI Meeting Corpus
 
 AMI provides about 100 hours of multimodal meeting recordings, manual
 orthographic transcripts, and timed word annotations under CC BY 4.0. Use the
@@ -467,7 +521,7 @@ Group the manual timed words into meaningful utterance segments. Select clips no
 longer than 30 seconds and preserve overlapping speech when labeling a sample
 `multi_speaker`.
 
-### 4.5 MUSAN and deterministic silence
+### 5.5 MUSAN and deterministic silence
 
 MUSAN is CC BY 4.0 and is used only for the nonspeech false-transcription test.
 
@@ -497,9 +551,9 @@ The authoritative reliability manifest must contain silence, music without
 lyrics, background noise, and environmental sound in every split. Give each
 selected source file an empty spoken reference and one `nonspeech_kind` label.
 
-## 5. Install the video datasets
+## 6. Install the video datasets
 
-### 5.1 Preferred SlideSpeech archives
+### 6.1 Preferred SlideSpeech archives
 
 Official sources:
 
@@ -552,7 +606,7 @@ At the review date, the official archive host was intermittent and its dev-video
 link could return 404. Do not replace it with an unknown mirror. Use the official
 project-linked downloader below if an archive is unavailable.
 
-### 5.2 Official YouTube-download fallback
+### 6.2 Official YouTube-download fallback
 
 Run this section in Git Bash. YouTube availability changes, so the final
 benchmark must freeze only successfully downloaded video IDs and checksums.
@@ -577,7 +631,7 @@ bash data/test/process.sh
 Record the downloader Git commit with `git rev-parse HEAD`. Some source videos
 may have been removed or changed; unavailable videos are not silently replaced.
 
-### 5.3 AVLectures
+### 6.3 AVLectures
 
 The [official AVLectures repository](https://github.com/Darshansingh11/AVLectures)
 describes 2,350 lectures across 86 courses in mathematics, physics, electrical
@@ -606,7 +660,7 @@ the selected intervals have been manually checked. If an official course archive
 is unavailable, record that fact and replace it with an owned recording of the
 same presentation mode; do not use an unverified mirror.
 
-### 5.4 EduMind-owned screen recordings
+### 6.4 EduMind-owned screen recordings
 
 Create nine short English educational recordings that EduMind is allowed to keep
 and evaluate. The set should include:
@@ -630,7 +684,7 @@ Record the creator, recording date, license/permission, source resolution, frame
 rate, and checksum. Do not create the reference by running one of the candidate
 extractors; transcribe and time the visible and spoken content manually.
 
-### 5.5 Build verified video references
+### 6.5 Build verified video references
 
 The SlideSpeech license applies to its released metadata, while its underlying
 videos retain their original owners' rights and terms. AVLectures course assets
@@ -658,7 +712,7 @@ keyframe configurations to run repeatedly. This is a selection recommendation,
 not a hidden evaluator cutoff; the exact interval and duration are stored in
 the manifest.
 
-## 6. Build the frozen EduMind manifests
+## 7. Build the frozen EduMind manifests
 
 Create these files under `data/benchmarks/extraction`:
 
@@ -675,7 +729,21 @@ video-validation.json
 video-locked-test.json
 ```
 
-Every sample requires:
+Create these files under `data/benchmarks/rag`:
+
+```text
+qasper-dev.json
+qasper-validation.json
+qasper-locked-test.json
+structured-dev.json
+structured-validation.json
+structured-locked-test.json
+rag-selection-dev.json
+rag-selection-validation.json
+rag-selection-locked-test.json
+```
+
+Every extraction sample requires:
 
 - a stable `id`, `source_path`, and SHA-256 of the exact local asset;
 - source dataset, source sample ID, source URL, exact revision/release, and
@@ -710,6 +778,14 @@ reappearance. Each authoritative video manifest has a separate reviewed
 The transcript is retained for the frozen-ASR diagnostic, but spoken and visible
 tokens are not merged into a combined quality score.
 
+RAG document rows contain canonical text and a stable source-document family.
+Question rows contain answerability, accepted answers, one mutually exclusive
+evidence type, and verified evidence units with stable IDs and exact half-open
+intervals into that canonical text. Table units include the headers needed to
+interpret selected cells; formula units include the complete expression; mixed
+questions contain evidence from at least two types. Unanswerable questions have
+no gold evidence units.
+
 The generated `FrozenASRArtifact` is a separate checksummed JSON artifact. It
 records its run ID; manifest, protocol, and model-decision fingerprints; selected
 model path, revisions, cache-manifest hash, and submodels; runtime parameters;
@@ -732,12 +808,12 @@ that were not public during candidate development. If only public sources are
 available, the run remains useful but must be described as public-corpus
 confirmation rather than proof of unseen real-world generalization.
 
-The tiny committed smoke assets remain the only extraction data stored in Git.
-Smoke verifies code paths only and does not replace any public or manually
-verified dataset above. Use the [benchmark runbook](running.md) for all execution
-commands.
+The tiny committed extraction assets and RAG fixture remain the only benchmark
+data stored in Git. Smoke verifies code paths only and does not replace any
+public or manually verified dataset above. Use the
+[benchmark runbook](running.md) for all execution commands.
 
-## 7. Sources deliberately not required
+## 8. Sources deliberately not required
 
 - [olmOCR-Bench](https://huggingface.co/datasets/allenai/olmOCR-bench) is a
   useful document-parser unit-test suite, but its property/unit-test protocol

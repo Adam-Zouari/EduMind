@@ -58,6 +58,23 @@ the authoritative dataset manifests and methodology, then remove the item.
 - Publish one complete video-manifest row after the source interval, visible-text
   timestamps, transcript, license, and checksum have been verified.
 
+## Chunking, embedding, retrieval, and generation
+
+- Inspect the pinned QASPER splits and verify that the prepared 100/40/40 paper
+  allocation preserves source-paper isolation and useful answerable/unanswerable
+  coverage.
+- Build and review the structured supplement independently for development,
+  validation, and locked test. Confirm at least ten answerable questions with
+  verified evidence for each of `table`, `formula`, and `mixed` in every split.
+- Verify every canonical document, accepted answer, answerability label,
+  evidence-unit ID, evidence type, and half-open source interval before combining
+  a structured manifest with QASPER.
+- Inspect the resulting question and document counts by evidence type before
+  deciding which slice confidence intervals are sufficiently supported.
+- Publish one complete authoritative RAG document row and answerable,
+  unanswerable, table, formula, and mixed question examples after the real
+  manifests and checksums exist.
+
 ## Resolution rule
 
 For each item, record the inspected corpus revision, observed counts, the chosen
