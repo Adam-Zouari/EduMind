@@ -47,13 +47,13 @@ silently reselected.
 ## Evidence rules
 
 - `smoke` proves only that a small path executes.
-- `standard` compares the stage's registered candidates on development data.
-- `full` runs explicit engineer-selected finalists on validation data.
+- `development` compares the stage's registered candidates on development data.
+- `validation` runs explicit engineer-selected finalists on validation data.
 - `locked` runs exactly one frozen selection on locked-test data and is never
   used for tuning.
 - Every planned candidate and required metric must complete for a comparison to
   be usable.
-- Standard, full, and locked runs retain per-sample rows and report 95% confidence intervals for
+- Development, validation, and locked runs retain per-sample rows and report 95% confidence intervals for
   eligible sample-based aggregates. Counts, statuses, fixed identifiers, and
   one-off operational observations do not receive artificial intervals.
 - Decisions that require inspecting downloaded corpora are tracked in the

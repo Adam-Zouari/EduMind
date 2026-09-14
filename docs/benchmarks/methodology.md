@@ -30,14 +30,42 @@ a document parser and ASR. Retrieval waits for chunking/embedding. Real server
 retrieval waits for a retrieval stack. Final RAG waits for one selected server,
 retrieval stack, and generator.
 
-`smoke` checks that a small real path works and cannot support a selection.
-`standard` compares every candidate declared for the stage on development data.
-`full` compares only engineer-selected finalists on validation data. `locked`
-runs exactly one frozen selection on the locked-test data. Standard, full, and
-locked runs use seed 42, retain per-sample results, and report 95% confidence
-intervals for eligible sample-based aggregates. A stage's locked split is used
-once for its one engineer-selected final profile; it is never used to choose or
-tune candidates.
+### Benchmark execution profiles
+
+An execution profile controls **which candidates may run, which dataset split
+they may see, and what decisions the result may support**. It is not a model
+architecture, quality level, or hardware preset. Candidate/runtime profiles,
+such as a Docling parser configuration or an ASR decoding configuration, are a
+different concept and always run inside one of these execution profiles.
+
+The four execution profiles form a one-way evaluation process:
+
+```text
+smoke -> development -> validation -> locked
+```
+
+| Execution profile | Data | Candidates | Purpose | Result may be used for |
+|---|---|---|---|---|
+| `smoke` | Tiny committed fixtures | Runnable candidate paths needed by the smoke check | Catch loading, wiring, schema, scoring, and artifact errors cheaply. | Debugging only; never ranking, tuning, or selection. |
+| `development` | Development manifest | Every candidate declared for that stage | Compare alternatives, inspect failures, and make all tuning or shortlist decisions. | An engineer-reviewed finalist decision for validation. |
+| `validation` | Unseen validation manifest | Only finalists recorded from a completed development run, plus explicitly documented controls | Test whether the development conclusion holds on unseen data without reopening the search. | An engineer-reviewed final component or complete-system decision. |
+| `locked` | Untouched locked-test manifest | Exactly one fully frozen selection | Produce the final unbiased estimate after every model, setting, and policy decision is fixed. | Reporting only; never further tuning or reselection. |
+
+The profiles answer different questions, so a later profile does not merely mean
+"a bigger run." `development` asks what should advance; `validation` asks
+whether that choice generalizes; `locked` estimates the performance of the one
+system that will be reported. If validation exposes a problem, the work returns
+to development and starts a new benchmark version; a newly held-out validation
+set is required before another validation claim. The observed validation result
+must not be used to quietly tune and rerun the same evaluation. Any post-lock
+change to data, models, settings, metrics, or protocol requires a new benchmark
+version and a new untouched locked-test set.
+
+Development, validation, and locked runs use seed 42, retain per-sample results,
+and report 95% confidence intervals for eligible sample-based aggregates. A
+stage's locked split is used once for its one engineer-selected final profile.
+Decision files are written after engineer review; runners validate those files
+but never promote candidates automatically.
 
 Every comparison gives its candidates the same samples. MLflow stores the exact
 settings, revisions, data checksum, hardware, aggregate metrics, confidence
@@ -52,7 +80,7 @@ setting. A later protocol revision may increase a component's common batch size
 only after every candidate in that comparison passes the same recorded hardware
 gate.
 
-Authoritative Standard, Full, and locked comparisons for ASR, embedding,
+Authoritative development, validation, and locked comparisons for ASR, embedding,
 learned reranking, and generation use the laptop's RTX 3050 through CUDA. Each
 stage freezes one supported 16-bit dtype, keeps the whole active model on that
 GPU, and forbids CPU fallback, CPU/GPU offload, automatic device splitting, and
@@ -438,14 +466,14 @@ give visual parsers artificial DOCX support.
 smoke:
 one small real profile → verify loading, extraction, scoring, artifacts, and MLflow
 
-development / standard:
+development:
 Docling configuration screen → document-group breakdowns
 → engineer selects one PDF configuration and one image configuration
 → selected Standard configurations + Granite Docling + PaddleOCR-VL
   are compared on the same development split
 → engineer records architecture finalists
 
-validation / full:
+validation:
 only the engineer-selected architecture finalists
 on unseen image/PDF inputs; native Docling on DOCX
 → engineer selects the complete parser profiles without adding candidates
@@ -454,7 +482,7 @@ future locked test, after the runtime routing policy is defined:
 run the one frozen extraction policy once
 ```
 
-Within a standard/full comparison, every profile receives the same
+Within a development or validation comparison, every candidate profile receives the same
 deterministically shuffled eligible samples, one cold measurement, warmups, and
 three measured repetitions. Smoke uses one measured repetition because it is
 only a wiring check.
@@ -515,7 +543,8 @@ only the recorded finalists for that source.
 
 The parent run stores:
 
-- profile (`smoke`, `standard`, or `full`), stage, dataset name and checksum;
+- execution profile (`smoke`, `development`, or `validation`), stage, dataset
+  name and checksum;
 - seed, required metric contract, run fingerprint, Git state, hardware, model
   revisions, dependency locks, and any engineer-decision file;
 - `plan.json`, `provenance.json`, and the final `summary.json` artifacts;
@@ -670,7 +699,7 @@ Operational latency is additionally aggregated by document group, for example
 and temporary disk describe the complete profile execution and remain top-level
 operational metrics rather than being misleadingly attributed to one slice.
 
-Each standard, full, or locked sample-based quality or reliability base key follows the
+Each development, validation, or locked sample-based quality or reliability base key follows the
 shared suffix convention. This applies equally to a total such as
 `tables.teds` and a document-group result such as
 `tables.pdf_scanned.teds`. Its `sample_count` makes clear when, for
@@ -853,11 +882,11 @@ smoke:
 all runnable ASR paths on tiny committed speech and nonspeech fixtures
 → verify loading, transcription, timestamps, scoring, artifacts, and cleanup
 
-development / standard:
+development:
 all four ASR profiles on 54 speech clips and development reliability controls
 → engineer reviews MLflow and records finalists
 
-validation / full:
+validation:
 engineer-selected finalists on 18 unseen speech clips and validation controls
 → engineer records exactly one selected ASR profile
 
@@ -956,7 +985,7 @@ peak_vram_mb
 
 The recognition, timestamp, reliability, and operational labels remain useful
 documentation categories, but they are not repeated as MLflow prefixes.
-Applicable standard, full, and locked uncertainty bounds use the shared MLflow suffix
+Applicable development, validation, and locked uncertainty bounds use the shared MLflow suffix
 convention defined at the beginning of this document.
 
 Corpus WER/CER and their components, timestamp metrics, reliability rates,
@@ -988,7 +1017,7 @@ Raw audio and candidate predictions are not uploaded to MLflow. The frozen
 speech manifest is uploaded and contains the verified reference transcripts,
 source identifiers, and checksums needed to reproduce scoring.
 
-Every successful standard, full, or locked child must contain all 16 aggregate
+Every successful development, validation, or locked child must contain all 16 aggregate
 metric fields. Timestamp Boundary MAE is the sole nullable field, under the rule
 above. A CPU profile may report zero VRAM only when execution confirms that no
 GPU process was used; unavailable instrumentation is not converted to zero.
@@ -1049,7 +1078,7 @@ truth.
 
 ### Execution
 
-The dedicated runner supports smoke, standard, full, and locked phases. Every
+The dedicated runner supports smoke, development, validation, and locked profiles. Every
 execution requires a versioned `VideoProtocolLock` bound to the exact manifest
 checksum. The lock freezes an ASR window length no greater than 30 seconds,
 overlap, deterministic normalized suffix/prefix stitching, visible-text
@@ -1185,7 +1214,7 @@ shared upstream audio work and are not copied into every visual child. Each
 visual child stores per-video
 quality and timing rows in `samples.parquet`, per-repetition timings in
 `timings.parquet`, and the complete aggregate result in `candidate.json`.
-In standard, full, and locked runs, Visual Content Precision/Recall/F1, Timed
+In development, validation, and locked runs, Visual Content Precision/Recall/F1, Timed
 Visual Occurrence Coverage, Duplicate Visual Text Rate, Visual Real-Time Factor,
 and Mean Selected Frames per Video receive video-bootstrap intervals. Mean
 Visual First-Detection Delay receives an interval over videos with covered timed
@@ -1280,8 +1309,8 @@ structured-evidence set. The counts below describe QASPER papers only:
 
 | Split | QASPER papers | Used for |
 |---|---:|---|
-| Development | 100 | Standard component comparison |
-| Validation | 40 | Full finalist comparison |
+| Development | 100 | Development candidate comparison |
+| Validation | 40 | Validation finalist comparison |
 | Locked test | 40 | One final complete system only |
 
 Each question stores answerability, accepted answers, evidence type, and exact
@@ -1331,7 +1360,7 @@ One child run executes one planned pair in a fresh operating-system process.
 The requested device, dtype, model and tokenizer revisions, query/document
 prefixes, pooling, normalization, seed, warmups, and repetitions are fixed and
 recorded. Silent device fallback or unrecorded truncation invalidates the child.
-Authoritative Standard and Full comparisons use the target RTX 3050 through
+Authoritative development and validation comparisons use the target RTX 3050 through
 CUDA with `float16` and embedding batch size `1`. Peak process VRAM must remain
 at or below 3,584 MiB, leaving a 512 MiB safety reserve on the 4,096 MiB device.
 The same settings apply to every pair; a candidate cannot receive a smaller
@@ -1378,12 +1407,12 @@ smoke:
 declared chunking and embedding paths on tiny committed fixtures
 -> verify compatibility checks, embedding, ranking, scoring, and artifacts
 
-development / standard:
+development:
 8 chunkers × 6 embeddings = 48 planned pair records on 100 papers
 -> run and account for all 48 pairs
 -> engineer selects up to three complete finalist pairs
 
-validation / full:
+validation:
 selected finalists on 40 unseen papers
 -> engineer records exactly one selected chunker/embedding pair
 
@@ -1430,9 +1459,9 @@ Chunking/embedding uses the RAG experiment and one parent per fair comparison:
 MLflow experiment: EduMind / rag
 ├── parent: rag-chunking-embedding-smoke-<timestamp>
 │   └── one child per smoke-tested pair
-├── parent: rag-chunking-embedding-standard-development-<timestamp>
+├── parent: rag-chunking-embedding-development-<timestamp>
 │   └── 48 child records: one per planned chunker|embedding pair
-└── parent: rag-chunking-embedding-full-validation-<timestamp>
+└── parent: rag-chunking-embedding-validation-<timestamp>
     └── up to three child runs: one per engineer-selected finalist pair
 ```
 
@@ -1669,17 +1698,17 @@ alpha-nDCG ideal is constructed from the same complete corpus using its frozen
 evidence-unit coverage. Consequently, all 15 candidates are compared against
 the same candidate-independent ideal for a given question.
 
-### Profiles and selection
+### Execution profiles and selection
 
 ```text
 smoke:
 minimal deterministic fixtures → wiring and artifact checks only
 
-standard development:
+development:
 all 15 candidates on the development manifest
 → engineer records up to three complete-stack finalists
 
-full validation:
+validation:
 the finalists on the unseen validation manifest
 + each finalist's matching <retriever>|none control when not already selected
 → engineer approves up to three retrieval stacks for complete-system testing
@@ -1731,12 +1760,12 @@ quality metrics.
 ### MLflow result structure
 
 Retrieval/reranking uses one parent for each fair comparison. Every planned
-candidate is a direct child; the Standard parent therefore has exactly 15 child
+candidate is a direct child; the development parent therefore has exactly 15 child
 runs. Pools and paired comparisons do not create intermediate or nested runs.
 
 ```text
 MLflow experiment: EduMind / rag
-└── parent: rag-retrieval-reranking-standard-development-<timestamp>
+└── parent: rag-retrieval-reranking-development-<timestamp>
     ├── dense|none       ─┐
     ├── dense|gte-modernbert │
     ├── ...               ├─ 5 Dense children
@@ -1918,16 +1947,16 @@ embeddings internally.
 
 ### Data and configurations
 
-| Profile | Workload |
+| Execution profile | Workload |
 |---|---|
 | Smoke | 1,000 vectors at dimension 384; 50 queries; concurrency 1 |
-| Standard | 100,000 vectors at dimensions 384 and 1,024; 500 queries; concurrency 1/8/32 |
-| Full | Selected real embeddings plus 1,000,000 clustered vectors; up to 1,000 queries; concurrency 1/8/32/64 |
+| Development | 100,000 vectors at dimensions 384 and 1,024; 500 queries; concurrency 1/8/32 |
+| Validation | Selected real embeddings plus 1,000,000 clustered vectors; up to 1,000 queries; concurrency 1/8/32/64 |
 
 Synthetic vectors contain clusters and 5% near-duplicates. Metadata creates
-filters matching approximately 50%, 10%, 1%, and in full 0.1% of records.
+filters matching approximately 50%, 10%, 1%, and in validation 0.1% of records.
 
-Standard/full test supported HNSW combinations of:
+Development and validation test supported HNSW combinations of:
 
 ```text
 m:                     16 or 32
@@ -2004,9 +2033,9 @@ the shortlist; this experiment makes them directly comparable.
 
 ### Data
 
-Smoke uses committed wiring fixtures. Standard uses 24 development questions
+Smoke uses committed wiring fixtures. Development uses 24 development questions
 balanced across answerability, answer type, and evidence type as an initial
-screen. Full evaluates only engineer-selected generator finalists on the
+screen. Validation evaluates only engineer-selected generator finalists on the
 complete frozen validation question set; it is not limited to 24 questions.
 The selected generator is exercised on locked-test questions only as part of the
 one frozen complete-system run.
@@ -2023,24 +2052,24 @@ retriever.
 
 Every generator uses its exact pinned local snapshot, official chat template,
 reasoning mode, temperature 0, seed 42, an 8,192-token context limit, and at
-most 256 generated tokens. Authoritative Standard and Full runs use the same
+most 256 generated tokens. Authoritative development and validation runs use the same
 CUDA device, `float16`, and batch size `1`: one complete question-and-evidence
 prompt is generated at a time, and repetitions run sequentially. No model
 receives hidden quantization, CPU/GPU offload, automatic device splitting, or a
 candidate-specific batch size.
 
-### Profiles and selection
+### Execution profiles and selection
 
 ```text
 smoke:
 all runnable generators on tiny committed fixtures
 -> verify loading, output parsing, scoring, artifacts, and cleanup
 
-standard development:
+development:
 all four generator profiles on the 24-question development screen
 -> engineer records up to three generator finalists
 
-full validation:
+validation:
 only the recorded finalists on the complete unseen validation question set
 -> engineer records the generator profiles approved for complete-system testing
 
@@ -2082,9 +2111,9 @@ faithfulness happens only after retrieval and generation are combined.
 Which complete retrieval-and-generation system gives the best evidence-backed
 answers when every component runs together?
 
-### Profiles and systems tested
+### Execution profiles and systems tested
 
-Standard crosses the approved component finalists on development data:
+Development crosses the approved component finalists on development data:
 
 ```text
 1 approved vector-server profile
@@ -2094,15 +2123,15 @@ Standard crosses the approved component finalists on development data:
 = at most 18 complete systems
 ```
 
-The engineer records exactly three successful complete-system finalists. Full
+The engineer records exactly three successful complete-system finalists. Validation
 runs only those three systems on unseen validation data and supplies their
 answers for blinded review. After review, the engineer records exactly one
-complete system. Locked runs only that frozen system on the locked-test data.
+complete system. The locked profile runs only that frozen system on the locked-test data.
 
 ### Data and execution
 
-Standard Final RAG uses the development manifest, Full uses the validation
-manifest, and locked uses the locked-test manifest. For every question, the
+The development Final RAG profile uses the development manifest, validation uses
+the validation manifest, and locked uses the locked-test manifest. For every question, the
 complete path runs:
 
 ```text
@@ -2126,7 +2155,7 @@ remain operational measurements.
 
 ### Human review
 
-Full evaluates the three successful complete systems selected after Standard.
+Validation evaluates the three successful complete systems selected after development.
 The exporter selects 20 common validation questions and creates:
 
 ```text

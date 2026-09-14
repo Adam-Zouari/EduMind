@@ -36,8 +36,8 @@ nvidia-smi
 ```
 
 `eng` must appear in the Tesseract language list. CUDA is optional for the
-provisional CPU application and for smoke/debug checks. Authoritative Standard,
-Full, and locked ASR, embedding, learned-reranking, and generation runs use the
+provisional CPU application and for smoke/debug checks. Authoritative development,
+validation, and locked ASR, embedding, learned-reranking, and generation runs use the
 RTX 3050, batch size `1`, a stage-frozen supported 16-bit dtype, and one whole
 model on the GPU. They permit no fallback, offload, automatic device splitting,
 or quantization, and peak process VRAM must not exceed `3,584 MiB`.
@@ -270,7 +270,7 @@ ports, and benchmark data remains separate from application data.
 
 ## 6. Next steps
 
-Software, models, and source datasets are now prepared. Standard/full extraction
+Software, models, and source datasets are now prepared. Development/validation extraction
 benchmarks remain unavailable until the downloaded samples have been reviewed,
 annotated, checksummed, and frozen into the manifests required by the
 [dataset guide](../benchmarks/datasets.md) and
@@ -290,7 +290,7 @@ Before using a run as comparative evidence:
 
 - `prepare.py --list` names only included models, the HHEM diagnostic, and documented Docling subcomponents.
 - `selected.json` exists and every recorded directory exists.
-- Standard, Full, and locked manifests pass checksum, provenance,
+- Development, validation, and locked manifests pass checksum, provenance,
   evidence-offset, and split-leakage validation.
 - all candidate runs retain per-sample results and exact revisions.
 - generation candidates share the same explicit device.

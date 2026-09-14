@@ -67,7 +67,7 @@ cap. The chunking/embedding and retrieval/reranking benchmarks impose no context
 token budget and do not use this value for candidate selection.
 
 The benchmark program is used to challenge every one of these choices. A result
-becomes a recommendation only after the relevant standard/full experiment and
+becomes a recommendation only after the relevant development/validation experiment and
 review process are complete.
 
 ## Start here

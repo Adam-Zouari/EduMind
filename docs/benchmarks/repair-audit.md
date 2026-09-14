@@ -60,7 +60,7 @@ population were not part of this repair.
 - The executable grid is fixed 5/10/20 seconds, scene 0.30/0.40/0.50, and hybrid
   selected-threshold plus 5/10/20-second maximum gaps. Every selector includes
   frame zero and uses FFmpeg variable-frame-rate output.
-- Smoke, standard, full, and locked profiles enforce their phase/selection
+- Smoke, development, validation, and locked profiles enforce their phase/selection
   contracts. Locked execution requires exactly one validated configuration.
 - A versioned `VideoProtocolLock` binds the manifest, ASR windows, overlap,
   deterministic stitching, visible-text units, occurrence thresholds,

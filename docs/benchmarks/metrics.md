@@ -5,7 +5,7 @@
 
 This page defines EduMind's approved benchmark metric contracts. The
 [methodology](methodology.md) says **where** each metric is used and why; this
-page says **what the value means and how it is calculated**. A standard or full
+page says **what the value means and how it is calculated**. A development or validation
 result is authoritative only when its runner implements the applicable contract
 exactly and records every required value. Higher is better unless a metric is
 marked lower-is-better.
@@ -23,10 +23,10 @@ marked lower-is-better.
 - Source and evidence spans are half-open intervals: `[start, end)`.
 - Empty denominators use the explicit behavior stated below; they never produce
   fabricated zero-quality observations.
-- Standard, full, and locked runs retain one row per sample before aggregation.
+- Development, validation, and locked runs retain one row per sample before aggregation.
 - p50, p95, and p99 are latency percentiles. Throughput is completed operations
   divided by measured wall-clock time.
-- Eligible standard, full, and locked sample-based aggregates use 10,000
+- Eligible development, validation, and locked sample-based aggregates use 10,000
   bootstrap resamples with seed 42 and 95% confidence intervals. Counts,
   statuses, fixed identifiers, and single operational observations do not
   receive intervals.
@@ -1374,9 +1374,9 @@ the value is reported.
 
 | Value | 95% confidence interval? | Rule |
 |---|---:|---|
-| Standard, full, and locked text, page, layout, table, and formula aggregates | Yes | Calculated from the contributing independent samples. |
-| Standard, full, and locked reliability rates | Yes | Calculated across scheduled independent samples. |
-| Standard, full, and locked p50/p95 latency | Conditional | Reported when enough independent document or page observations support the percentile estimate. |
+| Development, validation, and locked text, page, layout, table, and formula aggregates | Yes | Calculated from the contributing independent samples. |
+| Development, validation, and locked reliability rates | Yes | Calculated across scheduled independent samples. |
+| Development, validation, and locked p50/p95 latency | Conditional | Reported when enough independent document or page observations support the percentile estimate. |
 | Smoke metrics | No authoritative interval | Smoke validates execution and is too small for selection claims. |
 | Statuses, revisions, checksums, configuration values | No | These are states or fixed facts rather than sampled estimates. |
 | One first-item or cold-load measurement | No | One observation cannot estimate uncertainty. |
@@ -1391,7 +1391,7 @@ EduMind does not invent a zero-width interval.
 
 #### Calculation
 
-Eligible standard, full, and locked sample-based metrics use 10,000 bootstrap resamples with
+Eligible development, validation, and locked sample-based metrics use 10,000 bootstrap resamples with
 seed 42:
 
 1. Treat each source document as the independent resampling unit.
@@ -1797,21 +1797,21 @@ WER is relatively low. No weighted overall score combines these values.
 
 | Value | 95% confidence interval? | Rule |
 |---|---:|---|
-| Standard, full, and locked WER, CER, and substitution/deletion/insertion rates | Yes | Resample complete speech clips and recalculate the pooled counts. |
-| Standard, full, and locked Timestamp Alignment Coverage | Yes | Resample complete timed speech clips. |
-| Standard, full, and locked Timestamp Boundary MAE | Yes, when defined | Use resampled clips containing valid aligned boundaries. |
-| Standard, full, and locked Empty Transcript Rate | Yes | Resample speech clips. |
-| Standard, full, and locked Nonspeech False-Transcription Rate | Yes | Resample the separate nonspeech controls. |
-| Standard, full, and locked Repeat Transcript Agreement Rate | Yes | Resample complete speech clips with their already-computed agreement flags. |
-| Standard, full, and locked Real-Time Factor | Yes | Resample complete speech clips with their measured processing time and duration. |
-| Standard, full, and locked p50/p95 warm latency | Conditional | Report only when enough independent clips support the percentile estimate. |
+| Development, validation, and locked WER, CER, and substitution/deletion/insertion rates | Yes | Resample complete speech clips and recalculate the pooled counts. |
+| Development, validation, and locked Timestamp Alignment Coverage | Yes | Resample complete timed speech clips. |
+| Development, validation, and locked Timestamp Boundary MAE | Yes, when defined | Use resampled clips containing valid aligned boundaries. |
+| Development, validation, and locked Empty Transcript Rate | Yes | Resample speech clips. |
+| Development, validation, and locked Nonspeech False-Transcription Rate | Yes | Resample the separate nonspeech controls. |
+| Development, validation, and locked Repeat Transcript Agreement Rate | Yes | Resample complete speech clips with their already-computed agreement flags. |
+| Development, validation, and locked Real-Time Factor | Yes | Resample complete speech clips with their measured processing time and duration. |
+| Development, validation, and locked p50/p95 warm latency | Conditional | Report only when enough independent clips support the percentile estimate. |
 | Smoke metrics | No authoritative interval | Smoke validates execution and is too small for selection claims. |
 | One cold-load measurement | No | One observation cannot estimate uncertainty. |
 | One observed peak RAM or VRAM value | No | Report the observed peak without invented bounds. |
 
 #### Calculation
 
-Standard, full, and locked runs use 10,000 bootstrap resamples with seed 42:
+Development, validation, and locked runs use 10,000 bootstrap resamples with seed 42:
 
 1. Treat each complete clip as the independent unit.
 2. Resample speech clips with replacement; resample nonspeech controls
@@ -2130,20 +2130,20 @@ this quality. No weighted overall score combines these values.
 
 | Value | 95% confidence interval? | Rule |
 |---|---:|---|
-| Standard, full, and locked Visual Content Precision/Recall/F1 | Yes | Resample complete videos and recalculate each aggregate. |
-| Standard, full, and locked Timed Visual Occurrence Coverage | Yes | Resample complete videos with their timed visible references. |
-| Standard, full, and locked Mean Visual First-Detection Delay | Yes, when defined | Use resampled videos containing covered timed occurrences. |
-| Standard, full, and locked Duplicate Visual Text Rate | Yes | Resample complete videos with their duplicate counts. |
-| Standard, full, and locked Frozen-ASR Transcript WER | Yes | Resample the shared per-video ASR outputs; report the result on the frozen-ASR child run. |
-| Standard, full, and locked Visual Real-Time Factor and Mean Selected Frames per Video | Yes | Resample complete videos with their duration, visual-processing time, and frame counts. |
-| Standard, full, and locked p50/p95 warm latency | Conditional | Report only when enough independent videos support the percentile estimate. |
+| Development, validation, and locked Visual Content Precision/Recall/F1 | Yes | Resample complete videos and recalculate each aggregate. |
+| Development, validation, and locked Timed Visual Occurrence Coverage | Yes | Resample complete videos with their timed visible references. |
+| Development, validation, and locked Mean Visual First-Detection Delay | Yes, when defined | Use resampled videos containing covered timed occurrences. |
+| Development, validation, and locked Duplicate Visual Text Rate | Yes | Resample complete videos with their duplicate counts. |
+| Development, validation, and locked Frozen-ASR Transcript WER | Yes | Resample the shared per-video ASR outputs; report the result on the frozen-ASR child run. |
+| Development, validation, and locked Visual Real-Time Factor and Mean Selected Frames per Video | Yes | Resample complete videos with their duration, visual-processing time, and frame counts. |
+| Development, validation, and locked p50/p95 warm latency | Conditional | Report only when enough independent videos support the percentile estimate. |
 | Smoke metrics | No authoritative interval | Smoke validates execution and is too small for selection claims. |
 | One cold-load measurement | No | One observation cannot estimate uncertainty. |
 | One observed peak RAM or VRAM value | No | Report the observed peak without invented bounds. |
 
 #### Calculation
 
-Standard, full, and locked runs use 10,000 bootstrap resamples with seed 42:
+Development, validation, and locked runs use 10,000 bootstrap resamples with seed 42:
 
 1. Treat each complete video as the independent unit.
 2. Resample videos with replacement.
@@ -2409,7 +2409,7 @@ for worse retrieval quality.
 
 | Value | 95% confidence interval? | Rule |
 |---|---:|---|
-| Standard and full nDCG, Evidence-unit Recall, Evidence-token Precision, and eligible alpha-nDCG at @3/@5 | Yes | Resample source documents and recalculate each aggregate. |
+| Development and validation nDCG, Evidence-unit Recall, Evidence-token Precision, and eligible alpha-nDCG at @3/@5 | Yes | Resample source documents and recalculate each aggregate. |
 | Text, table, formula, and mixed evidence slices | Yes, when enough documents contribute | Resample only the contributing source documents. |
 | p50/p95 warm query latency | Conditional | Report only when enough independent query observations support the percentile estimate. |
 | Smoke metrics | No authoritative interval | Smoke validates execution and is too small for selection claims. |
@@ -2421,7 +2421,7 @@ for worse retrieval quality.
 
 Quality is first calculated for each answerable question. Questions are averaged
 within their source document so a paper with many questions cannot dominate the
-result. Standard and full runs then use 10,000 bootstrap resamples of complete
+result. Development and validation runs then use 10,000 bootstrap resamples of complete
 documents with seed 42 and take the 2.5th and 97.5th percentiles as the 95%
 confidence bounds.
 
@@ -2704,7 +2704,7 @@ counts. Inapplicable fields are absent rather than filled with zero.
 
 Quality is calculated per eligible question, averaged within each source
 document, and macro-averaged across documents. This prevents a paper with many
-questions from dominating the result. Standard and full runs use 10,000
+questions from dominating the result. Development and validation runs use 10,000
 bootstrap resamples of complete documents with seed 42; the 2.5th and 97.5th
 percentiles form the 95% confidence interval. Evidence slices repeat the same
 calculation over contributing documents.
@@ -2857,7 +2857,7 @@ measurements are labeled separately and are never added to server peaks.
 Search-quality metrics are calculated once per frozen query and then averaged
 within each workload cell. Filtered results are also averaged independently per
 selectivity band. Query identities and conditions remain aligned across servers.
-Standard and Full quality intervals use 10,000 bootstrap resamples of complete
+Development and validation quality intervals use 10,000 bootstrap resamples of complete
 query IDs with seed 42. A resampled query carries all of its compared server
 results and filter conditions.
 
@@ -3023,7 +3023,7 @@ claim.
 
 Automated values are first calculated per question, averaged within each source
 document, and macro-averaged across documents. This prevents a paper with many
-questions from dominating. Standard and Full runs use 10,000 bootstrap
+questions from dominating. Development and validation runs use 10,000 bootstrap
 resamples of complete documents with seed 42. Answerable-only, unanswerable-only,
 substantive-answer-only, and evidence-type results always report their eligible
 question and document counts.
@@ -3036,7 +3036,7 @@ sample, artifact, or metric is a failed child, not a null score.
 
 ## Aggregation and interpretation
 
-Aggregate metrics never replace sample rows. Eligible standard, full, and locked sample-based
+Aggregate metrics never replace sample rows. Eligible development, validation, and locked sample-based
 metrics report the mean (or named percentile), a 95% interval, the number of
 contributing samples, and failures. Conditional metrics such as table structure
 or timestamps also report their sample count. Smoke values, counts, statuses,

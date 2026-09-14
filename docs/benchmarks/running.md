@@ -30,15 +30,19 @@ and one child per candidate. Document `--source all` deliberately launches three
 comparisons and therefore creates separate PDF, image, and DOCX parents.
 Failures remain visible rather than being silently skipped.
 
-## 3. Understand profiles and decision files
+## 3. Understand execution profiles and decision files
 
-- `smoke` uses tiny fixtures and checks only that the path executes.
-- `standard` runs the candidate registry for the stage.
-- `full` runs only candidates explicitly selected by an engineer. Most stages use
+- `smoke` uses tiny fixtures and checks only that the path executes. Its results
+  are never selection evidence.
+- `development` runs the candidate registry for the stage on development data;
+  this is where comparison, tuning, and finalist selection happen.
+- `validation` runs only candidates explicitly selected by an engineer on unseen
+  validation data. Most stages use
   `--shortlist`; document extraction uses separate `--pdf-selection` and
   `--image-selection` decisions because their valid configuration sets differ.
 - `locked` runs exactly one frozen selection on the locked-test split after
-  validation and any required human review. It is never used for tuning.
+  validation and any required human review. It reports the final estimate and is
+  never used for tuning.
 - `--manifest PATH` overrides a stage's default dataset manifest.
 
 A decision JSON names candidates selected after inspecting a completed upstream
@@ -53,7 +57,7 @@ winner. The runner validates that the referenced candidate exists.
   "selected_candidates": ["<exact child-run candidate name>"],
   "selected_by": "<engineer name>",
   "selected_date": "YYYY-MM-DD",
-  "reason": "<why this profile advances>"
+  "reason": "<why these candidates advance>"
 }
 ```
 
@@ -61,7 +65,7 @@ Resolve `source_summary` relative to the decision file. Create separate PDF and
 image decisions because they refer to different parent summaries.
 
 The methodology assigns development, validation, and locked data according to
-the experiment phase. A parser architecture must be compared on development
+the execution profile. A parser architecture must be compared on development
 before it can be named a validation finalist.
 
 ## 4. Run extraction experiments
@@ -82,7 +86,7 @@ Document extraction first screens the Docling configuration matrix on
 development:
 
 ```powershell
-python experiments/benchmarks/extraction/document/run.py --profile standard `
+python experiments/benchmarks/extraction/document/run.py --profile development `
   --manifest data/benchmarks/extraction/document-development.json
 
 ```
@@ -94,12 +98,12 @@ configuration executes 12 unique full-page profiles, and DOCX executes native
 Docling once. After those configuration decisions are recorded, the selected
 Standard profiles, Granite Docling, and PaddleOCR-VL must be compared on the
 development split. Only the architecture finalists recorded from that comparison
-may run with `--profile full` on the validation manifest.
+may run with `--profile validation` on the validation manifest.
 
 Run the development architecture comparison with the configuration decisions:
 
 ```powershell
-python experiments/benchmarks/extraction/document/run.py --profile standard `
+python experiments/benchmarks/extraction/document/run.py --profile development `
   --comparison architecture `
   --manifest data/benchmarks/extraction/document-development.json `
   --pdf-selection PDF_CONFIGURATION_DECISION.json `
@@ -109,25 +113,25 @@ python experiments/benchmarks/extraction/document/run.py --profile standard `
 After reviewing that comparison, run only its recorded finalists on validation:
 
 ```powershell
-python experiments/benchmarks/extraction/document/run.py --profile full `
+python experiments/benchmarks/extraction/document/run.py --profile validation `
   --comparison architecture `
   --manifest data/benchmarks/extraction/document-validation.json `
   --pdf-selection PDF_ARCHITECTURE_FINALISTS.json `
   --image-selection IMAGE_ARCHITECTURE_FINALISTS.json
 ```
 
-For `standard`, each selection file must choose one profile from the matching
-completed configuration parent. For `full`, each file must choose one or more
+For `development`, each selection file must choose one candidate profile from the matching
+completed configuration parent. For `validation`, each file must choose one or more
 finalists from the matching completed development architecture parent. The
 runner rejects using configuration decisions directly on validation.
 
 Run audio independently:
 
 ```powershell
-python experiments/benchmarks/extraction/audio/run.py --profile standard `
+python experiments/benchmarks/extraction/audio/run.py --profile development `
   --manifest data/benchmarks/extraction/audio-development.json `
   --device cuda
-python experiments/benchmarks/extraction/audio/run.py --profile full `
+python experiments/benchmarks/extraction/audio/run.py --profile validation `
   --manifest data/benchmarks/extraction/audio-validation.json `
   --shortlist AUDIO_DECISION `
   --device cuda
@@ -151,7 +155,7 @@ Video is a two-step benchmark. First, decode and transcribe the phase's audio
 once with the selected ASR and the manifest-bound `VideoProtocolLock`:
 
 ```powershell
-python experiments/benchmarks/extraction/video/run.py --profile standard --phase frozen-asr `
+python experiments/benchmarks/extraction/video/run.py --profile development --phase frozen-asr `
   --manifest data/benchmarks/extraction/video-development.json `
   --protocol-lock VIDEO_PROTOCOL_LOCK.json `
   --audio-selection AUDIO_DECISION `
@@ -163,21 +167,21 @@ Then run visual-only comparisons. Every child validates and references the same
 frozen artifact and never invokes ASR:
 
 ```powershell
-python experiments/benchmarks/extraction/video/run.py --profile standard --phase fixed `
+python experiments/benchmarks/extraction/video/run.py --profile development --phase fixed `
   --manifest data/benchmarks/extraction/video-development.json `
   --protocol-lock VIDEO_PROTOCOL_LOCK.json `
   --frozen-asr artifacts/video-development-asr.json `
   --document-selection DOCUMENT_DECISION `
   --device cuda
 
-python experiments/benchmarks/extraction/video/run.py --profile standard --phase scene `
+python experiments/benchmarks/extraction/video/run.py --profile development --phase scene `
   --manifest data/benchmarks/extraction/video-development.json `
   --protocol-lock VIDEO_PROTOCOL_LOCK.json `
   --frozen-asr artifacts/video-development-asr.json `
   --document-selection DOCUMENT_DECISION `
   --device cuda
 
-python experiments/benchmarks/extraction/video/run.py --profile standard --phase hybrid `
+python experiments/benchmarks/extraction/video/run.py --profile development --phase hybrid `
   --manifest data/benchmarks/extraction/video-development.json `
   --protocol-lock VIDEO_PROTOCOL_LOCK.json `
   --frozen-asr artifacts/video-development-asr.json `
@@ -188,7 +192,7 @@ python experiments/benchmarks/extraction/video/run.py --profile standard --phase
 
 After recording the scene choice, `--phase all` may rerun the resulting fixed,
 scene, and selected-threshold hybrid configurations in one nine-child
-development parent. The `full` finalist decision must reference that completed
+development parent. The `validation` finalist decision must reference that completed
 `video-development` parent; the locked decision must reference the completed
 `video-validation` parent.
 
@@ -203,7 +207,7 @@ Every configuration includes the first frame. The three comparisons remain in
 the same `EduMind / extraction` MLflow experiment, where their nine child runs
 can be filtered and compared together. Validation runs only the
 engineer-selected finalists; locked test runs one selected configuration once.
-`--profile full` requires a shortlist of at most three development finalists;
+`--profile validation` requires a shortlist of at most three development finalists;
 `--profile locked` requires a decision containing exactly one validation
 winner. Authoritative runs reject a smoke-scoped lock, a missing lock, and any
 manifest-checksum mismatch.
@@ -212,14 +216,14 @@ Run the validation finalists with a validation-bound protocol lock and frozen
 ASR artifact:
 
 ```powershell
-python experiments/benchmarks/extraction/video/run.py --profile full --phase frozen-asr `
+python experiments/benchmarks/extraction/video/run.py --profile validation --phase frozen-asr `
   --manifest data/benchmarks/extraction/video-validation.json `
   --protocol-lock VIDEO_VALIDATION_PROTOCOL_LOCK.json `
   --audio-selection SELECTED_ASR_DECISION.json `
   --frozen-asr artifacts/video-validation-asr.json `
   --device cuda
 
-python experiments/benchmarks/extraction/video/run.py --profile full --phase all `
+python experiments/benchmarks/extraction/video/run.py --profile validation --phase all `
   --manifest data/benchmarks/extraction/video-validation.json `
   --protocol-lock VIDEO_VALIDATION_PROTOCOL_LOCK.json `
   --frozen-asr artifacts/video-validation-asr.json `
@@ -271,10 +275,10 @@ representation rules described in the methodology.
 Run the chunker–embedding matrix first:
 
 ```powershell
-python experiments/benchmarks/rag/chunking_embedding/run.py --profile standard `
+python experiments/benchmarks/rag/chunking_embedding/run.py --profile development `
   --device cuda `
   --dtype float16
-python experiments/benchmarks/rag/chunking_embedding/run.py --profile full `
+python experiments/benchmarks/rag/chunking_embedding/run.py --profile validation `
   --shortlist EMBEDDING_DECISION `
   --device cuda `
   --dtype float16
@@ -289,15 +293,15 @@ Then give the retrieval experiment an engineer-selected chunker–embedding
 decision:
 
 ```powershell
-python experiments/benchmarks/rag/retrieval/run.py --profile standard `
+python experiments/benchmarks/rag/retrieval/run.py --profile development `
   --embedding-selection EMBEDDING_DECISION
 
-python experiments/benchmarks/rag/retrieval/run.py --profile full `
+python experiments/benchmarks/rag/retrieval/run.py --profile validation `
   --embedding-selection EMBEDDING_DECISION `
   --shortlist RETRIEVAL_DECISION
 ```
 
-The Standard plan must contain exactly 15 direct candidate children: Dense,
+The development plan must contain exactly 15 direct candidate children: Dense,
 BM25, and RRF, each crossed with no reranker, GTE ModernBERT, Ettin 150M, Ettin
 400M, and Ettin 1B. The three `retriever|none` children own the checksummed
 top-20 quality pools; reranker children reference the matching owner. Pools and
@@ -313,7 +317,7 @@ The retrieval/reranking smoke fixture must contain exactly 30 frozen canonical
 chunks. It validates selection into a 20-chunk pool without imposing a fixed
 chunk count on authoritative chunking candidates.
 
-Full validation runs the engineer-selected finalists plus any matching
+The validation profile runs the engineer-selected finalists plus any matching
 `retriever|none` controls needed to measure their incremental effect. Do not use
 a legacy eight-method or RRF-only plan as authoritative evidence.
 
@@ -333,8 +337,8 @@ Run dense ANN and conformance measurements:
 
 ```powershell
 python experiments/benchmarks/vectordb/run.py --profile smoke
-python experiments/benchmarks/vectordb/run.py --profile standard
-python experiments/benchmarks/vectordb/run.py --profile full `
+python experiments/benchmarks/vectordb/run.py --profile development
+python experiments/benchmarks/vectordb/run.py --profile validation `
   --shortlist DATABASE_DECISION `
   --embedding-selection EMBEDDING_DECISION
 ```
@@ -343,7 +347,7 @@ Then measure complete retrieval through a selected server:
 
 ```powershell
 python experiments/benchmarks/vectordb/retrieval_run.py `
-  --profile standard `
+  --profile development `
   --database-selection DATABASE_DECISION `
   --embedding-selection EMBEDDING_DECISION `
   --retrieval-selection RETRIEVAL_DECISION
@@ -364,14 +368,14 @@ Generation uses frozen evidence contexts so generator quality is not confused
 with retrieval quality:
 
 ```powershell
-python experiments/benchmarks/rag/generation/run.py --profile standard --device cuda
-python experiments/benchmarks/rag/generation/run.py --profile full `
+python experiments/benchmarks/rag/generation/run.py --profile development --device cuda
+python experiments/benchmarks/rag/generation/run.py --profile validation `
   --device cuda `
   --shortlist GENERATION_DECISION
 ```
 
-Standard runs the Falcon-H1-Tiny-R-90M control plus the Qwen3-0.6B,
-Qwen3.5-0.8B, and MiniCPM5-1B candidates. Full runs only the finalists named by
+Development runs the Falcon-H1-Tiny-R-90M control plus the Qwen3-0.6B,
+Qwen3.5-0.8B, and MiniCPM5-1B candidates. Validation runs only the finalists named by
 `GENERATION_DECISION`. Every executed profile uses reasoning mode, the same
 whole-model CUDA device, `float16`, and batch size `1`; prompts and repetitions
 are processed sequentially.
@@ -382,18 +386,18 @@ Run the complete-system candidate grid on development data from explicit
 retrieval and generation decisions:
 
 ```powershell
-python experiments/benchmarks/rag/final/run.py --profile standard `
+python experiments/benchmarks/rag/final/run.py --profile development `
   --manifest data/benchmarks/rag/rag-selection-dev.json `
   --retrieval-selection RETRIEVAL_DECISION `
   --generation-selection GENERATION_DECISION `
   --device cuda
 ```
 
-After inspecting Standard, record exactly three complete-system finalists and
+After inspecting development, record exactly three complete-system finalists and
 run them on validation:
 
 ```powershell
-python experiments/benchmarks/rag/final/run.py --profile full `
+python experiments/benchmarks/rag/final/run.py --profile validation `
   --manifest data/benchmarks/rag/rag-selection-validation.json `
   --shortlist FINAL_RAG_FINALISTS_DECISION `
   --device cuda
@@ -451,8 +455,9 @@ Parquet artifacts. Local artifacts are also written atomically under the
 configured artifact root.
 
 A run is usable only when every planned candidate and required metric completed.
-Smoke runs prove wiring only. Standard and Full results support engineer
-selection; the one locked result is the frozen final estimate. The code does
+Smoke runs prove wiring only. Development results support finalist selection,
+validation results support the final selection, and the one locked result is the
+frozen final estimate. The code does
 not calculate a universal winner or edit production configuration.
 
 If a run fails, inspect the failed MLflow child and its error artifact, correct
