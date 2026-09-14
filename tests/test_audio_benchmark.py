@@ -17,7 +17,6 @@ from experiments.benchmarks.common.datasets import assert_no_split_leakage
 from experiments.benchmarks.common.resources import ResourceMonitor
 from experiments.benchmarks.extraction.audio.adapters import (
     ASR_PROFILES,
-    QwenRuntime,
     Transcript,
     WhisperRuntime,
 )
@@ -523,7 +522,6 @@ def test_audio_registry_and_duration_limit_are_frozen() -> None:
         "canary-180m",
         "parakeet-tdt-0.6b-v2",
         "moss-transcribe-diarize",
-        "qwen3-asr-1.7b-aligned",
     }
     assert len(METRIC_DIRECTIONS) == 16
     speech = [
@@ -855,87 +853,6 @@ def test_authoritative_audio_split_requires_all_condition_groups() -> None:
     _validate_manifest_rows(speech, controls, "standard")
 
     assert {"accented", "multi_speaker"} <= REQUIRED_SPEECH_CONDITIONS
-
-
-def test_qwen_forced_aligner_uses_official_result_items(monkeypatch) -> None:
-    import torch
-
-    class Inputs(dict):
-        def to(self, *_args):
-            return self
-
-    class ASRProcessor:
-        def apply_transcription_request(self, **_kwargs):
-            return Inputs(input_ids=torch.tensor([[1, 2]]))
-
-        def decode(self, _tokens, *, return_format):
-            assert return_format == "parsed"
-            return [{"language": "English", "transcription": "hello world"}]
-
-    class ASRModel:
-        device = torch.device("cpu")
-        dtype = torch.float32
-
-        def generate(self, **_kwargs):
-            assert _kwargs["max_new_tokens"] == 256
-            assert _kwargs["do_sample"] is False
-            return torch.tensor([[1, 2, 3]])
-
-    class AlignerInputs(dict):
-        def to(self, *_args):
-            return self
-
-    class AlignerProcessor:
-        def prepare_forced_aligner_inputs(self, **_kwargs):
-            return AlignerInputs(input_ids=torch.tensor([[1, 2]])), [["hello", "world"]]
-
-        def decode_forced_alignment(self, **_kwargs):
-            return [[
-                SimpleNamespace(text="hello", start_time=0.0, end_time=0.4),
-                SimpleNamespace(text="world", start_time=0.5, end_time=1.0),
-            ]]
-
-    class AlignerModel:
-        device = torch.device("cpu")
-        dtype = torch.float32
-        config = SimpleNamespace(timestamp_token_id=1)
-
-        def __call__(self, **_kwargs):
-            return SimpleNamespace(logits=torch.tensor([0.0]))
-
-    profile = ASR_PROFILES["qwen3-asr-1.7b-aligned"]
-    runtime = QwenRuntime(profile, Path("asr"), "cpu", Path("aligner"))
-    runtime._runtime = (ASRModel(), ASRProcessor())
-    monkeypatch.setattr(
-        runtime,
-        "_load_aligner",
-        lambda: (AlignerModel(), AlignerProcessor()),
-    )
-
-    transcript = runtime.transcribe(Path("audio.wav"))
-
-    assert transcript.text == "hello world"
-    assert transcript.segments == (
-        {"text": "hello", "start": 0.0, "end": 0.4},
-        {"text": "world", "start": 0.5, "end": 1.0},
-    )
-    parameters = runtime.parameters()
-    assert parameters["max_new_tokens"] == 256
-    assert parameters["aligner_model_class"] == "AutoModelForTokenClassification"
-
-
-def test_qwen_snapshot_uses_the_transformers_compatible_hf_aligner() -> None:
-    from experiments.benchmarks.common.selection import selection_entries
-    from experiments.benchmarks.preparation.models import snapshot_specs
-
-    entry = next(
-        item for item in selection_entries() if item.candidate == "Qwen/Qwen3-ASR-1.7B-hf"
-    )
-    assert snapshot_specs(entry)[1] == (
-        "Qwen/Qwen3-ForcedAligner-0.6B-hf",
-        "c07281df297b9905d24a508279258cccf987a064",
-        "forced-aligner",
-    )
 
 
 def test_required_cuda_monitoring_cannot_report_fabricated_zero() -> None:

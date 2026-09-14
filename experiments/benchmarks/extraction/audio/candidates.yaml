@@ -3,10 +3,8 @@ smoke:
   - canary-180m
   - parakeet-tdt-0.6b-v2
   - moss-transcribe-diarize
-  - qwen3-asr-1.7b-aligned
 standard:
   - whisper-small-en-control
   - canary-180m
   - parakeet-tdt-0.6b-v2
   - moss-transcribe-diarize
-  - qwen3-asr-1.7b-aligned

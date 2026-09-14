@@ -303,14 +303,6 @@ def model_revisions(lock: Mapping[str, Mapping[str, object]]) -> dict[str, str]:
 
 
 def snapshot_specs(entry: SelectionEntry) -> tuple[tuple[str, str, str], ...]:
-    if entry.candidate == "Qwen/Qwen3-ASR-1.7B-hf":
-        asr_revision, aligner_revision = (
-            item.split("@", 1)[1] for item in entry.revision.split("; ")
-        )
-        return (
-            (entry.candidate, asr_revision, "asr"),
-            ("Qwen/Qwen3-ForcedAligner-0.6B-hf", aligner_revision, "forced-aligner"),
-        )
     revision = entry.revision
     if entry.candidate == "PaddlePaddle/PaddleOCR-VL-1.6":
         revision = next(

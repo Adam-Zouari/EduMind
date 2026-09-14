@@ -195,22 +195,6 @@ def run(
                 "speech_manifest_checksum": speech_manifest.fingerprint,
                 "reliability_manifest_checksum": reliability_manifest.fingerprint,
             }
-            if candidate == "qwen3-asr-1.7b-aligned":
-                aligner = next(
-                    item
-                    for item in lock_entry.get("submodels", [])
-                    if item.get("role") == "forced-aligner"
-                )
-                parameters.update(
-                    {
-                        "aligner_revision": str(aligner.get("revision", "")),
-                        "aligner_model_path": str(aligner.get("model_path", "")),
-                        "aligner_repository": str(aligner.get("repository", "")),
-                        "aligner_cache_manifest_sha256": str(
-                            aligner.get("cache_manifest_sha256", "")
-                        ),
-                    }
-                )
             operational = {
                 name: float(metrics.pop(name))
                 for name in (

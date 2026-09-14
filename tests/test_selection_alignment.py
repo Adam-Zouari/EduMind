@@ -145,7 +145,6 @@ def test_reranker_audio_and_document_registries_are_exact() -> None:
         "canary-180m",
         "parakeet-tdt-0.6b-v2",
         "moss-transcribe-diarize",
-        "qwen3-asr-1.7b-aligned",
     }
     audio_registry = ROOT / "experiments/benchmarks/extraction/audio/candidates.yaml"
     assert set(load_candidates(audio_registry, "smoke")) == approved_asr

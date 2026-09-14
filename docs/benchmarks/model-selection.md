@@ -8,7 +8,7 @@ Status: **public-evidence shortlist; EduMind's local benchmarks inform the engin
 
 Selection package: **benchmark-candidates**
 
-Evidence reviewed: **2026-08-25**
+Evidence reviewed: **2026-09-14**
 
 ## How candidates are chosen
 
@@ -17,10 +17,13 @@ Candidate selection follows the same practical sequence for each component:
 1. **Define the job.** Retrieval models are screened on retrieval quality, rerankers on reranking quality, ASR models on English transcription plus timestamps, and generators on their suitability for grounded answering.
 2. **Inspect relevant public evidence.** Prefer a common task-specific benchmark such as MTEB Retrieval, a common reranker comparison, OmniDocBench, or the Open ASR Leaderboard. General-capability evidence is used only when no current task-specific comparison covers the candidate set.
 3. **Apply basic eligibility checks.** A candidate must be downloadable, self-hostable, usable for the intended EduMind deployment, and expose the capability required by the experiment.
-4. **Enforce the target-hardware envelope.** Embedding and reranking candidates must run in their common native benchmark precision on the laptop's RTX 3050 4 GiB GPU without CPU offload, automatic device splitting, candidate-specific quantization, or silent fallback. The complete measured operation must retain enough VRAM for activations and inputs; fitting weight files on disk is not sufficient. Models that fail this gate remain recorded as exclusions rather than receiving a different execution protocol.
+4. **Enforce the target-hardware envelope.** Authoritative ASR, embedding, reranking, and generation candidates must run on the laptop's RTX 3050 4 GiB GPU in the stage's frozen supported 16-bit dtype without CPU offload, automatic device splitting, quantization, or silent fallback. Until hardware qualification is complete, every model processes one inference input at a time; runtimes with a batch setting use batch size `1`. NVML-measured peak process VRAM must not exceed 3,584 MiB, preserving at least 512 MiB of the physical 4,096 MiB device for driver/runtime variation. The check uses the longest applicable development input and frozen output limit and is repeated during the real Standard run. CPU or CUDA may be used for smoke and debugging, but those runs cannot support selection. Models that fail the authoritative gate remain recorded as exclusions rather than receiving a different execution protocol.
 5. **Keep different feasible resource scales.** After eligibility screening, the remaining models are organized into approximate parameter-size groups so the local benchmark compares compact, middle, and higher-quality options that can actually be deployed on the target hardware. A size range may remain empty when no reviewed model passes the hardware gate. These groups describe the reviewed shortlist; they were not fixed before the search.
 6. **Prefer comparable evidence.** When candidates were tested under the same public protocol, the strongest eligible representatives are kept. When promising models use incompatible protocols, both may be kept and compared locally instead of comparing unlike public scores.
-7. **Keep a control.** The current or established baseline is always included so the experiment can measure whether changing the component is worthwhile.
+7. **Keep an independent control.** Use the current baseline when it is eligible;
+   otherwise use a deliberately lightweight lower bound that is not another mode
+   of a candidate checkpoint. This shows whether candidate complexity earns a
+   meaningful improvement.
 8. **Decide locally.** Public evidence creates the shortlist. An engineer reviews EduMind's frozen-dataset quality, latency, and resource measurements to make the final decision.
 
 Scores from different benchmarks are never combined or compared numerically. An MTEB Retrieval score, an RTEB score, an Artificial Analysis score, and WER answer different questions.
@@ -84,15 +87,56 @@ Candidate-specific links appear in the relevant table row. A benchmark shared by
 
 | Component | Control | Purpose |
 |---|---|---|
+| Document extraction | Docling Standard baseline configuration | Current unified-parser reference. |
+| ASR | `openai/whisper-small.en` at `e8727524f962ee844a7319d92be39ac1bd25655a` | Established English ASR reference. |
 | Chunking | Token 256/32 | Current fixed-window chunking. |
 | Embedding | [`Alibaba-NLP/gte-modernbert-base`](https://huggingface.co/Alibaba-NLP/gte-modernbert-base/tree/e7f32e3c00f91d699e8c43b53106206bcc72bb22) at `e7f32e3c00f91d699e8c43b53106206bcc72bb22` | Provisional 149M lightweight control with an 8,192-token input limit, 768-dimensional CLS-pooled normalized embeddings, and an Apache 2.0 license. Its official card reports 55.33 average nDCG@10 on 15 BEIR retrieval datasets. |
 | Reranking | [`Alibaba-NLP/gte-reranker-modernbert-base`](https://huggingface.co/Alibaba-NLP/gte-reranker-modernbert-base/tree/f7481e6055501a30fb19d090657df9ec1f79ab2c) at `f7481e6055501a30fb19d090657df9ec1f79ab2c` | English 149M long-context control with an 8,192-token input limit and Apache 2.0 license. Its `0.5843` result in the shared public comparison is below all three selected learned rerankers. |
-| Generation | [`Qwen/Qwen3-1.7B`](https://huggingface.co/Qwen/Qwen3-1.7B/tree/b9352fbb8ce704292730cf54b3b1dceb2a808738), thinking disabled | Small direct-checkpoint control executed through the same Hugging Face runtime as the candidates. |
-| Document extraction | Docling Standard baseline configuration | Current unified-parser reference. |
-| ASR | `openai/whisper-small.en` at `e8727524f962ee844a7319d92be39ac1bd25655a` | Established English ASR reference. |
 | Vector database | Chroma server | Current server baseline. |
+| Generation | [`tiiuae/Falcon-H1-Tiny-R-90M`](https://huggingface.co/tiiuae/Falcon-H1-Tiny-R-90M/tree/7385612bf04c64405a51b29b6229d6d2ab0e72fd), reasoning | Deliberately weak 91M reasoning control executed through the same Hugging Face runtime and resource protocol as the candidates. |
 
 Controls are run alongside the candidates; being a control does not make a component the final choice.
+
+## Document extraction
+
+The benchmark includes three complete parser architectures. The selected
+Docling Standard profile comes from the development configuration screen defined
+in [methodology.md](methodology.md); configuration values and experiment design
+are intentionally documented there rather than repeated in this candidate
+selection record.
+
+| Candidate | Configuration | Why it is included | Evidence |
+|---|---|---|---|
+| Docling Standard finalist | Best measured Standard configuration from the 24-combination screen | Conventional layout/OCR/table pipeline with optional targeted formula enrichment. | [Pinned Docling release](https://github.com/docling-project/docling/releases/tag/v2.117.0); [pipeline options](https://github.com/docling-project/docling/blob/f2683c0b5aa14a53b74373b0640260891cdbc1b0/docling/datamodel/pipeline_options.py) |
+| Docling VLM | `VlmPipeline` with [`ibm-granite/granite-docling-258M`](https://huggingface.co/ibm-granite/granite-docling-258M/tree/982fe3b40f2fa73c365bdb1bcacf6c81b7184bfe) | Tests Docling's full-page visual parsing architecture rather than only changing Standard-pipeline options. | [Docling VLM documentation](https://docling-project.github.io/docling/usage/vision_models/); [model catalog](https://docling-project.github.io/docling/usage/model_catalog/) |
+| PaddleOCR-VL-1.6 | [`PaddlePaddle/PaddleOCR-VL-1.6`](https://github.com/PaddlePaddle/PaddleOCR/blob/2661c7c0ef5c613e8f93c6e93b2e052399f0f854/docs/version3.x/algorithm/PaddleOCR-VL/PaddleOCR-VL-1.6.en.md), weights `c5630abae1d940eafe0697512a0325494b02ab42` | Adds an independent 0.9B document-parser architecture instead of comparing only two configurations from the Docling project; it is also the strongest compact numerical row in the pinned OmniDocBench v1.6 table. | [Pinned OmniDocBench table](https://github.com/opendatalab/OmniDocBench/blob/193627ae9e97d89188468ed1ee3b7a856ff76044/README.md) |
+
+Every architecture is normalized into the same extracted-document contract and evaluated on the same text, reading-order, page-attribution, table, formula, latency, RAM, and VRAM metrics.
+
+## Audio extraction
+
+The public screen uses **`avg` WER (%)** from the pinned Open ASR English short-form results; lower is better. Because EduMind needs cited timestamps, a model also needs a verified timestamp path. The size groups below summarize the reviewed candidates and preserve different resource scales.
+
+| Approximate size | Candidate | Public `avg` WER (%) | Timestamp path and reason |
+|---|---|---:|---|
+| ≤200M | [`nvidia/canary-180m-flash`](https://huggingface.co/nvidia/canary-180m-flash/tree/b12ab418510d093e83890178fd0e8b0d0f7918a6) | **5.6914** | Compact candidate with documented word and segment timestamps. |
+| >200M–800M | [`nvidia/parakeet-tdt-0.6b-v2`](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2/blob/dcb0e1db8b2220830fecb8f60df74a88a34cb128/README.md) | **4.8186** | Best reviewed WER in this approximate group among models with documented timestamp output. |
+| >800M–1.5B | [`OpenMOSS-Team/MOSS-Transcribe-Diarize`](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize/blob/0844c4adb24300bc7c6cd91e379bc790f939f2d6/README.md) | **4.7429** | Segment timestamps and diarization are part of the documented output. |
+| Control | [`openai/whisper-small.en`](https://huggingface.co/openai/whisper-small.en/tree/e8727524f962ee844a7319d92be39ac1bd25655a) | Local control | Established reference implementation with timestamp output. |
+
+Shared quality source: [Open ASR methodology](https://github.com/huggingface/open_asr_leaderboard) and the [revision-pinned English short-form result file](https://huggingface.co/datasets/hf-audio/open-asr-leaderboard-results/blob/a0c08d3ac1ef99ea7148666061839b853cbfa89a/english_short_latest.csv).
+
+Short-form public WER only creates the shortlist. Final ASR evaluation follows
+the frozen educational-audio procedure in [methodology.md](methodology.md) and
+the metric contract in [metrics.md](metrics.md).
+
+## Video extraction
+
+Video extraction introduces no additional model candidate. It freezes the
+selected ASR and document parser, then compares the fixed-interval, scene, and
+hybrid keyframe-selection configurations defined in
+[methodology.md](methodology.md). This prevents model changes from being
+mistaken for improvements in frame selection.
 
 ## Chunking and embeddings
 
@@ -175,59 +219,6 @@ The public screen uses a 23-model comparison published by the Ettin authors. “
 
 Shared evidence: [published comparison](https://huggingface.co/blog/ettin-reranker), [pinned comparison source](https://github.com/huggingface/blog/blob/8dc6a4f4bcdd9fe5ac2a107895b0515377691a17/ettin-reranker.md), and [MTEB English-v2 Retrieval](https://leaderboard.mteb.org/benchmark/MTEB%28eng%2C%20v2%29).
 
-## Generation and faithfulness
-
-No public benchmark currently compares the selected compact models under one protocol for all of EduMind's target behavior: grounded correctness, faithfulness, citations, answerability, completeness, refusal, and local latency. [ALCE](https://github.com/princeton-nlp/ALCE), [FaithJudge](https://github.com/vectara/FaithJudge), [ChatRAG-Bench](https://huggingface.co/datasets/nvidia/ChatRAG-Bench), and [FACTS Grounding](https://www.kaggle.com/benchmarks/google/facts-grounding) are relevant, but do not publish a common result for these current checkpoints.
-
-Artificial Analysis is therefore used only to choose plausible compact quality points. Its estimated Intelligence scores do not select the final generator.
-
-| Approximate profile | Candidate and mode | Public screening evidence | Why it is included |
-|---|---|---:|---|
-| ~1B | [`openbmb/MiniCPM5-1B`](https://huggingface.co/openbmb/MiniCPM5-1B/tree/87179e5c1f455ef22e6223592d2d61351b525bfc), reasoning | [Estimated AA score **12**](https://artificialanalysis.ai/models/minicpm5-1b) | Compact reasoning candidate; its quality, generated-token cost, and latency are measured locally. |
-| ~3B | [`ai9stars/G9v3-3B`](https://huggingface.co/ai9stars/G9v3-3B/tree/d9553445ff92dbce667381954c9699fbcbc924f9), reasoning | [Estimated AA score **16**](https://artificialanalysis.ai/models/g9v3-3b) | Middle-size quality point and strongest scored model in the reviewed ≤4B set. |
-| ~5B | [`Qwen/Qwen3.5-4B`](https://huggingface.co/Qwen/Qwen3.5-4B/tree/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a), reasoning | [Estimated AA score **20**](https://artificialanalysis.ai/models/qwen3-5-4b) | Upper compact quality point at approximately 4.7B total parameters. |
-| Control | [`Qwen/Qwen3-1.7B`](https://huggingface.co/Qwen/Qwen3-1.7B/tree/b9352fbb8ce704292730cf54b3b1dceb2a808738), thinking disabled | Direct Hugging Face control | Smallest generator profile and common-runtime baseline. |
-
-### Automated faithfulness diagnostic
-
-[`vectara/hallucination_evaluation_model`](https://huggingface.co/vectara/hallucination_evaluation_model/blob/d3924deeff88f76f9203ae18d11432c400c07f41/README.md) is included as an automated diagnostic. Its model card reports **74.28% balanced accuracy** and **60.00% F1** on RAGTruth-QA. It does not replace blinded human faithfulness evaluation.
-
-## Document extraction
-
-The benchmark includes three complete parser architectures. The selected
-Docling Standard profile comes from the development configuration screen defined
-in [methodology.md](methodology.md); configuration values and experiment design
-are intentionally documented there rather than repeated in this candidate
-selection record.
-
-| Candidate | Configuration | Why it is included | Evidence |
-|---|---|---|---|
-| Docling Standard finalist | Best measured Standard configuration from the 24-combination screen | Conventional layout/OCR/table pipeline with optional targeted formula enrichment. | [Pinned Docling release](https://github.com/docling-project/docling/releases/tag/v2.117.0); [pipeline options](https://github.com/docling-project/docling/blob/f2683c0b5aa14a53b74373b0640260891cdbc1b0/docling/datamodel/pipeline_options.py) |
-| Docling VLM | `VlmPipeline` with [`ibm-granite/granite-docling-258M`](https://huggingface.co/ibm-granite/granite-docling-258M/tree/982fe3b40f2fa73c365bdb1bcacf6c81b7184bfe) | Tests Docling's full-page visual parsing architecture rather than only changing Standard-pipeline options. | [Docling VLM documentation](https://docling-project.github.io/docling/usage/vision_models/); [model catalog](https://docling-project.github.io/docling/usage/model_catalog/) |
-| PaddleOCR-VL-1.6 | [`PaddlePaddle/PaddleOCR-VL-1.6`](https://github.com/PaddlePaddle/PaddleOCR/blob/2661c7c0ef5c613e8f93c6e93b2e052399f0f854/docs/version3.x/algorithm/PaddleOCR-VL/PaddleOCR-VL-1.6.en.md), weights `c5630abae1d940eafe0697512a0325494b02ab42` | Adds an independent 0.9B document-parser architecture instead of comparing only two configurations from the Docling project; it is also the strongest compact numerical row in the pinned OmniDocBench v1.6 table. | [Pinned OmniDocBench table](https://github.com/opendatalab/OmniDocBench/blob/193627ae9e97d89188468ed1ee3b7a856ff76044/README.md) |
-
-Every architecture is normalized into the same extracted-document contract and evaluated on the same text, reading-order, page-attribution, table, formula, latency, RAM, and VRAM metrics.
-
-## Audio extraction
-
-The public screen uses **`avg` WER (%)** from the pinned Open ASR English short-form results; lower is better. Because EduMind needs cited timestamps, a model also needs a verified timestamp path. The size groups below summarize the reviewed candidates and preserve different resource scales.
-
-| Approximate size | Candidate | Public `avg` WER (%) | Timestamp path and reason |
-|---|---|---:|---|
-| ≤200M | [`nvidia/canary-180m-flash`](https://huggingface.co/nvidia/canary-180m-flash/tree/b12ab418510d093e83890178fd0e8b0d0f7918a6) | **5.6914** | Compact candidate with documented word and segment timestamps. |
-| >200M–800M | [`nvidia/parakeet-tdt-0.6b-v2`](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2/blob/dcb0e1db8b2220830fecb8f60df74a88a34cb128/README.md) | **4.8186** | Best reviewed WER in this approximate group among models with documented timestamp output. |
-| >800M–1.5B | [`OpenMOSS-Team/MOSS-Transcribe-Diarize`](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize/blob/0844c4adb24300bc7c6cd91e379bc790f939f2d6/README.md) | **4.7429** | Segment timestamps and diarization are part of the documented output. |
-| >1.5B–3B | [`Qwen/Qwen3-ASR-1.7B-hf`](https://huggingface.co/Qwen/Qwen3-ASR-1.7B-hf/tree/bcd2b5b7f32b480ab5790554cfa8347f246a14f3) plus [`Qwen/Qwen3-ForcedAligner-0.6B-hf`](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B-hf/tree/c07281df297b9905d24a508279258cccf987a064) | **4.4257** for the ASR model | Lowest reviewed WER in this group; the official Transformers-compatible token-classification aligner supplies timestamps. |
-| Control | [`openai/whisper-small.en`](https://huggingface.co/openai/whisper-small.en/tree/e8727524f962ee844a7319d92be39ac1bd25655a) | Local control | Established reference implementation with timestamp output. |
-
-Shared quality source: [Open ASR methodology](https://github.com/huggingface/open_asr_leaderboard) and the [revision-pinned English short-form result file](https://huggingface.co/datasets/hf-audio/open-asr-leaderboard-results/blob/a0c08d3ac1ef99ea7148666061839b853cbfa89a/english_short_latest.csv).
-
-The Qwen profile contains a 2.04B ASR model and a 0.6B forced aligner, or 2.64B parameters across both components. They run sequentially: transcription completes and the ASR is unloaded before alignment starts. The benchmark still measures the complete transcription-plus-alignment latency and peak resources.
-
-Short-form public WER only creates the shortlist. Final ASR evaluation follows
-the frozen educational-audio procedure in [methodology.md](methodology.md) and
-the metric contract in [metrics.md](metrics.md).
-
 ## Vector database servers
 
 The benchmark compares self-hosted network servers with the same vectors, metadata, filters, schema, query order, and client-visible latency. Vendor benchmark numbers are not used to rank them because those numbers do not hold EduMind's workload and environment constant.
@@ -238,3 +229,29 @@ The benchmark compares self-hosted network servers with the same vectors, metada
 | Qdrant | `qdrant/qdrant:v1.17.0`; client `1.18.0` | Purpose-built HNSW server with payload indexes and filtered search. | [Installation](https://qdrant.tech/documentation/installation/); [filtering](https://qdrant.tech/documentation/guides/) |
 | Weaviate | `cr.weaviate.io/semitechnologies/weaviate:1.38.2`; client `4.22.0` | Independent purpose-built HNSW server with structured filtering. | [Docker deployment](https://docs.weaviate.io/deploy/installation-guides/docker-installation) |
 | PostgreSQL + pgvector | `pgvector/pgvector:0.8.2-pg17-bookworm`; Psycopg `3.3.4` | Relational and transactional design point with SQL metadata and HNSW cosine search. | [pgvector documentation](https://github.com/pgvector/pgvector/tree/v0.8.2) |
+
+## Generation and faithfulness
+
+No public benchmark currently compares the selected compact models under one protocol for all of EduMind's target behavior: grounded correctness, faithfulness, citations, answerability, completeness, refusal, and local latency. [ALCE](https://github.com/princeton-nlp/ALCE), [FaithJudge](https://github.com/vectara/FaithJudge), [ChatRAG-Bench](https://huggingface.co/datasets/nvidia/ChatRAG-Bench), and [FACTS Grounding](https://www.kaggle.com/benchmarks/google/facts-grounding) are relevant, but do not publish a common result for these current checkpoints.
+
+Artificial Analysis is therefore used only to choose plausible compact quality
+points. Its current Intelligence Index gives the three candidates one common
+screening reference, but it does not evaluate the control and does not select
+the final generator. The control instead has a direct same-protocol comparison
+with Qwen3-0.6B in the Falcon-H1-Tiny technical report.
+
+| Approximate profile | Candidate and mode | Public screening evidence | Why it is included |
+|---|---|---:|---|
+| ~0.6B | [`Qwen/Qwen3-0.6B`](https://huggingface.co/Qwen/Qwen3-0.6B/tree/c1899de289a04d12100db370d81485cdf75e47ca), reasoning | [AA score **5**](https://artificialanalysis.ai/models/qwen3-0.6b-instruct-reasoning) | Small established reasoning candidate and first candidate scale above the control. |
+| ~0.8B | [`Qwen/Qwen3.5-0.8B`](https://huggingface.co/Qwen/Qwen3.5-0.8B/tree/2fc06364715b967f1860aea9cf38778875588b17), reasoning | [AA score **6**](https://artificialanalysis.ai/models/qwen3-5-0-8b) | Newer intermediate reasoning candidate that tests whether its modest quality increase is worth its latency and token cost. |
+| ~1B | [`openbmb/MiniCPM5-1B`](https://huggingface.co/openbmb/MiniCPM5-1B/tree/87179e5c1f455ef22e6223592d2d61351b525bfc), reasoning | [AA score **9**](https://artificialanalysis.ai/models/minicpm5-1b) | Strongest candidate in the reviewed hardware-feasible range on the common public screen. |
+| Control | [`tiiuae/Falcon-H1-Tiny-R-90M`](https://huggingface.co/tiiuae/Falcon-H1-Tiny-R-90M/tree/7385612bf04c64405a51b29b6229d6d2ab0e72fd), reasoning | [Direct reasoning comparison](https://tiiuae-tiny-h1-blogpost.hf.space/) | Independent 91M lower-bound control. The report evaluates it and Qwen3-0.6B on the same AIME24, AIME25, LiveCodeBench v6, and MATH-500 protocol and reports the control below Qwen on all four. |
+
+All four profiles generate with reasoning enabled. The control is not a second
+mode of a candidate checkpoint, so candidate gains represent model changes
+rather than a relabeled decoding configuration. Public scores are screening
+evidence only; the frozen EduMind evaluation determines grounded-RAG quality.
+
+### Automated faithfulness diagnostic
+
+[`vectara/hallucination_evaluation_model`](https://huggingface.co/vectara/hallucination_evaluation_model/blob/d3924deeff88f76f9203ae18d11432c400c07f41/README.md) is included as an automated diagnostic. Its model card reports **74.28% balanced accuracy** and **60.00% F1** on RAGTruth-QA. It does not replace blinded human faithfulness evaluation.
