@@ -1424,7 +1424,7 @@ interval means the aggregate is estimated more precisely.
 
 The ASR benchmark evaluates the complete ordered transcript, its timestamps,
 catastrophic output behavior, and the cost of the recorded runtime profile. It
-does not use Content F1 or Transcript Order Accuracy: unlike a two-dimensional
+does not use Content F1 or Reading Order Accuracy: unlike a two-dimensional
 page, audio already defines one chronological sequence.
 
 ### Metric summary
@@ -1718,7 +1718,7 @@ duration?
 
 ```text
 Complete-Pipeline Real-Time Factor =
-total transcription-and-alignment time
+total transcription-and-timestamp processing time
 --------------------------------------
           total audio duration
 ```
@@ -1726,9 +1726,7 @@ total transcription-and-alignment time
 **Example:** Processing 60 minutes of audio in 15 minutes produces RTF `15 / 60
 = 0.25`.
 
-An RTF below `1` means processing is faster than audio playback. Qwen's complete
-time includes transcription, unloading, loading the forced aligner, and
-alignment.
+An RTF below `1` means processing is faster than audio playback.
 
 **Range and direction:** RTF is non-negative and lower is better.
 
@@ -1750,10 +1748,10 @@ observations are at or below 5.2 seconds.
 
 **Question:** How long does a fresh worker need to make the ASR model ready?
 
-Measure from the start of model construction until loading completes, before
-warmups or transcription. Qwen reports the complete required loading policy;
-its forced-aligner reload remains part of complete-pipeline latency rather than
-being hidden in this first load value.
+Measure from the start of model construction until the complete ASR profile is
+ready, before warmups or transcription. Any component needed before the first
+request belongs to cold load; work performed later belongs to the measured
+complete-pipeline latency and cannot be hidden from both measurements.
 
 **Range and direction:** Non-negative seconds; lower is better.
 
@@ -1887,7 +1885,12 @@ combined into one score because the much longer transcript would dominate it.
 | Cold Visual-Pipeline Load Time | Operational | How long does initial loading of the keyframe and document-parser path take? | Lower |
 | Peak Visual Process-Tree RAM | Operational | How much system memory does the visual path require? | Lower |
 | Peak Visual VRAM | Operational | How much GPU memory does the visual path require? | Lower |
-| Mean Selected Frames per Video | Cost diagnostic | How many frames does the configuration send to the document parser on average? | Lower only when quality is preserved |
+
+#### Workload descriptor
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Mean Selected Frames per Video | Workload descriptor | How many frames does the configuration send to the document parser on average? | Descriptive |
 
 ### Visual-content quality
 
@@ -2452,7 +2455,7 @@ families are combined into a weighted score.
 | Evidence-token Precision@3/@5 | Primary | How concentrated are the first three or five chunks around verified evidence? | Higher |
 | alpha-nDCG@3/@5 | Diagnostic | On eligible multi-evidence questions, does the ranking surface new evidence early instead of repeatedly covering evidence already found? | Higher |
 | Candidate-pool Evidence-unit Recall@20 | Diagnostic | Did the first-stage top-20 pool contain the required evidence before any reranker reordered it? | Higher |
-| Ranking Agreement | Validity diagnostic | Does repeated inference return the same complete ordering? | Higher |
+| Ranking Agreement | Validity gate | Does repeated inference return the same complete ordering? | Must equal 1.0 |
 
 `@3` and `@5` mean that the calculation uses the first three and first five
 ranked chunks. Both cutoffs are primary because the later complete-system
@@ -2713,47 +2716,323 @@ when enough independent query observations support them.
 
 ## Vector-server correctness and performance
 
-The NumPy exact-neighbor result is the oracle for ANN metrics; it is not a
-production candidate.
+The NumPy exact cosine search result is the oracle for ANN quality; it is not a
+production candidate. Results are reported separately by `K`, filter
+selectivity, concurrency, vector dimension, and workload profile rather than
+pooling unlike conditions into one score.
 
-| Metric | Definition | Direction |
-|---|---|---|
-| ANN Recall@K | Size of the intersection between approximate and exact top-K IDs divided by the number of exact IDs available through K. | Higher |
-| Filtered ANN Recall@K | The same calculation after applying the identical metadata predicate to the exact oracle and server query. | Higher |
-| Filter Correctness | Per query, 1 only when every returned row satisfies every tested predicate; aggregate output is the fraction of queries passing completely. | Higher |
-| Empty-Filter Correctness | 1 when a predicate with no matching records returns no records; otherwise 0. | Higher |
-| Replacement/Deletion/Persistence Correctness | Binary checks that replacement removes stale chunks, deletion removes all target records, and records survive a server restart. | Higher |
-| Error Rate | Failed requests divided by submitted requests. | Lower |
-| Throughput | Successful requests or ingested vectors divided by wall-clock seconds. | Higher |
+### Metric summary
 
-Latency includes client serialization and loopback transport because both are
-part of the user-visible server path. Resource results identify client and
-server measurements separately.
+#### Search and filter quality
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| ANN Recall@3/@5/@10 | Primary | How many exact nearest neighbours does the approximate server preserve at application-relevant depths? | Higher |
+| Filtered ANN Recall@3/@5/@10 | Primary | Does the server preserve exact neighbours after applying the required metadata filter? | Higher |
+| Filter Correctness | Validity gate | Do all returned records satisfy every requested predicate? | Must equal 1.0 |
+| Empty-Filter Correctness | Validity gate | Does a filter with no valid match return an empty result? | Must equal 1.0 |
+| ANN and Filtered ANN Recall@1 | Secondary | Does the server preserve the single nearest result? | Higher |
+| Replacement, Deletion, Persistence, and ANN-Index Correctness | Validity gate | Does the server preserve required state semantics and actually use the configured ANN index? | Must pass |
+
+#### Performance and resource measurements
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Unfiltered/Filtered Latency p50 | Diagnostic | What does a typical successful request take? | Lower |
+| Unfiltered/Filtered Latency p95/p99 | Operational | How slow is the warm request tail under each concurrency? | Lower |
+| Query Throughput | Operational | How many requests complete successfully per wall-clock second? | Higher |
+| Request Error Rate | Operational | What share of submitted requests fail? | Lower |
+| Build Time and Build Throughput | Operational | How long does initial indexing take and how many vectors are indexed per second? | Lower / Higher |
+| Incremental Upsert/Delete Throughput | Operational | How quickly can the ready server apply each mutation workload? | Higher |
+| Restart Readiness | Operational | How long until persisted state is queryable after restart? | Lower |
+| First-Query Latency after Restart | Diagnostic | How slow is the first successful query after readiness? | Lower |
+| Peak Server RAM and Persistent Storage | Operational | What memory and disk footprint does the prepared server require? | Lower at equal correctness and quality |
+
+### Search and filter quality
+
+#### ANN Recall@K
+
+**Question:** How faithfully does approximate search preserve exact nearest
+neighbours?
+
+For each query, NumPy ranks the complete frozen vector corpus by exact cosine
+similarity. ANN Recall compares the server's returned IDs with the first `K`
+oracle IDs. Order inside the returned set does not change this metric; the
+question is whether the exact neighbours remain available. If the corpus has
+fewer than `K` eligible records, the denominator is the number the oracle can
+actually return. Duplicate returned IDs invalidate the request rather than
+earning repeated credit.
+
+A failed server request is recorded with zero recall and also increments Request
+Error Rate, so failures cannot disappear through eligibility filtering. Recall
+is reported independently at `K=1`, `3`, `5`, and `10`; the `@1` value is
+secondary and the other three are primary.
+
+**Range and direction:** `[0, 1]`; higher is better.
+
+#### Filtered ANN Recall@K
+
+**Question:** Does approximate search remain faithful after metadata filtering?
+
+The evaluator applies exactly the same frozen predicate to the oracle corpus and
+the server request, then compares their IDs as above. Results remain separated
+by filter-selectivity band. A query whose exact filtered result is empty is not
+eligible for Filtered ANN Recall; it is evaluated by Empty-Filter Correctness.
+A failed non-empty filtered request receives zero recall and increments Request
+Error Rate.
+
+**Range and direction:** `[0, 1]`; higher is better.
+
+#### Filter Correctness
+
+**Question:** Does every returned record obey the full requested predicate?
+
+A filtered request receives `1` only when every returned record satisfies every
+part of the predicate, including conjunctions. It receives `0` when any returned
+record violates a predicate or the request fails. Returning too few otherwise
+valid records does not reduce this metric because Filtered ANN Recall already
+measures missing neighbours.
+
+The aggregate is the mean of the request-level pass values, reported separately
+for each filter-selectivity band.
+
+**Range and direction:** `[0, 1]`; higher is better and `1.0` is required for a
+conformant server.
+
+#### Empty-Filter Correctness
+
+**Question:** Does the server correctly return nothing when no record matches?
+
+Each verified-empty predicate receives `1` only when the request succeeds and
+returns no records. A non-empty response or request failure receives `0`. The
+aggregate is the mean over verified-empty requests.
+
+**Range and direction:** `[0, 1]`; `1.0` is required.
+
+### Conformance validity gates
+
+Replacement checks require an upserted ID to expose only its new vector and
+metadata. Deletion checks require removed IDs and complete removed documents to
+be absent from later search and filtering. Persistence checks require committed
+records and the configured ANN index to remain available after restart. Health,
+cosine behavior, wrong-dimension rejection, compound filters, and real ANN-index
+use are binary gates under the same rule: every required check must pass.
+
+A failed gate makes the server profile non-conformant. Performance measurements
+may remain available for diagnosis, but the profile cannot be selected by
+trading a correctness failure against speed.
+
+### Performance and resources
+
+Warm latency starts before client serialization and ends after the complete
+loopback response is decoded. Only successful requests have a latency value;
+failures remain visible through Request Error Rate. p50 describes the typical
+request, while p95 and p99 describe the tail. p99 is reported only for workload
+cells with enough submitted requests to estimate it; otherwise it is null with
+an `insufficient_requests` status.
+
+Query Throughput counts successful responses over the complete measured wall
+time at each concurrency. Request Error Rate uses every submitted request as its
+denominator. These two values are always read together: failed traffic cannot
+make throughput look successful.
+
+Build Time starts when a ready empty server receives the first vector and ends
+when all submitted vectors are queryable. Build Throughput uses successfully
+indexed vectors over that same elapsed time. Incremental upsert and delete
+throughput are measured separately on a ready populated index and include the
+time until each mutation is visible to queries.
+
+Restart Readiness starts when restart is requested and ends when health checks
+pass and the persisted ANN index answers its verification query. First-Query
+Latency times the first successful query after readiness and is not mixed into
+warm latency percentiles.
+
+Peak server RAM is the largest sampled resident-memory total for server
+processes or containers during the measured phase. Persistent Storage is the
+on-disk server state after synchronization and before teardown. Client resource
+measurements are labeled separately and are never added to server peaks.
+
+### Eligibility, aggregation, and confidence intervals
+
+Search-quality metrics are calculated once per frozen query and then averaged
+within each workload cell. Filtered results are also averaged independently per
+selectivity band. Query identities and conditions remain aligned across servers.
+Standard and Full quality intervals use 10,000 bootstrap resamples of complete
+query IDs with seed 42. A resampled query carries all of its compared server
+results and filter conditions.
+
+Latency percentiles and their intervals use successful request observations
+within one fixed workload cell. Build, mutation, restart, resource, and storage
+values are observed phase-level measurements and receive no fabricated
+confidence interval. Every table reports submitted, successful, failed, and
+eligible request counts. Null means a defined eligibility condition was not met;
+it never means zero.
 
 ## Generation and final-answer quality
 
-Human reviewers score Faithfulness, Answer Correctness, Completeness, and
-Citation Accuracy from 0 to 2 using the blinded review rubric. These judgments
-are authoritative; automated text scores are diagnostics.
+This section covers generation on frozen evidence and the same automated metrics
+when generation is embedded in Final RAG. Blinded human judgments remain the
+authority for claim-level faithfulness and answer quality; automated metrics
+answer narrower, reproducible questions.
 
-| Metric | Definition | Direction |
-|---|---|---|
-| Citation Precision | Distinct supported citations divided by distinct citations produced. | Higher |
-| Citation Recall | Distinct supported evidence items cited divided by supported evidence items available. When no support exists, recall is 1 only if no citation is produced. | Higher |
-| Citation F1 | Harmonic mean of citation precision and recall. | Higher |
-| Answerability Balanced Accuracy | Mean recall across the answerable and unanswerable classes that occur in the evaluated set. | Higher |
-| Exact Match | 1 when normalized answer tokens exactly equal an accepted answer; otherwise 0. | Higher |
-| Token F1 | Multiset token overlap F1 between prediction and accepted answer. The best score over accepted references is used. | Higher |
-| ROUGE-L | F1 derived from the longest common token subsequence. The best score over accepted references is used. | Higher |
-| Refusal Precision/Recall/F1 | Classification metrics for refusing unanswerable questions. | Higher |
-| Unsupported Answer Rate | Fraction of answers asserting content that is unsupported by the supplied evidence. | Lower |
-| Malformed Output Rate | Fraction that violates the required answer/citation format. | Lower |
-| NLI/HHEM Faithfulness | Pinned local factual-consistency model score used only as an automated diagnostic. | Higher |
+### Metric summary
 
-Operational generation metrics are time to first generated token, total
-response latency, prompt-evaluation time, generated tokens per second, token
-counts, cold load time, and peak RAM/VRAM. End-to-end Final RAG latency includes
-retrieval, reranking, context packing, prompting, and generation.
+#### Automated quality and validity
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Citation Precision/Recall/F1 | Primary | On answerable questions, are citations correct and do they cover the required evidence? | Higher |
+| Answerability Balanced Accuracy | Primary | Does the model distinguish answerable from unanswerable questions without the majority class dominating? | Higher |
+| Unsupported Answer Rate | Primary | How often does the model give a substantive answer to an unanswerable question? | Lower |
+| Malformed Output Rate | Primary | How often does a completed response violate the required answer/citation schema? | Lower |
+| Token F1 | Secondary | How much accepted answer content is recovered even when wording differs? | Higher |
+| Exact Match and ROUGE-L | Diagnostic | How often is wording exact, and how similar is its sequence to an accepted answer? | Higher |
+| Refusal Precision/Recall/F1 | Diagnostic | Are refusals reserved for unanswerable questions, and are those questions actually refused? | Higher |
+| HHEM Faithfulness | Diagnostic | Does a pinned local model judge a substantive answer supported by the supplied evidence? | Higher |
+| Repeat Output Agreement | Diagnostic | Does deterministic generation return the same visible answer and citations? | Higher |
+
+#### Operational measurements and descriptors
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Time to First Token | Operational | How long does a warm request wait before generation begins? | Lower |
+| Prompt-Evaluation Time | Operational | How long is spent processing the prompt before decoding? | Lower |
+| Generation Time and Generated Tokens/Second | Operational | How long does decoding take and at what observed rate? | Lower / Higher |
+| Total Response Latency p50/p95 | Operational | How long does the complete warm generation request usually take, and how slow is its tail? | Lower |
+| Cold Model-Load Time | Operational | How long does a fresh worker need to make the generator ready? | Lower |
+| Peak Process-Tree RAM and Peak VRAM | Operational | What host and device memory does the profile require? | Lower at equal quality |
+| Prompt, Visible-Answer, Reasoning, and Generated Token Counts | Workload descriptor | How much native-tokenizer input and output produced the quality and latency results? | Descriptive |
+
+### Citation quality
+
+Citation Precision, Recall, and F1 are calculated only for answerable questions,
+which always have one or more verified gold evidence units. Unanswerable
+questions are handled by answerability and refusal metrics rather than receiving
+artificially perfect citation scores.
+
+A citation is automatically supported only when it is a valid identifier for a
+supplied numbered evidence block and that block completely covers at least one
+required gold evidence unit. Text similarity alone does not make a citation
+correct. Repeated references to the same block count once. An unknown citation
+ID counts as produced but unsupported and also makes the response malformed.
+
+- **Citation Precision** asks what share of the distinct citations produced are
+  supported. An answerable response with no citations receives zero.
+- **Citation Recall** asks what share of the distinct required gold evidence
+  units are covered by at least one supported citation. A cited block can cover
+  more than one unit when its frozen intervals genuinely contain them.
+- **Citation F1** balances those two results. It is zero when either no required
+  evidence is cited or no produced citation is supported.
+
+All three lie in `[0, 1]`; higher is better. A malformed answerable response
+receives zero for all three so protocol failures are not removed from the
+quality denominator.
+
+### Answerability, refusal, and output validity
+
+A response is a **refusal** only when it uses the frozen refusal representation
+and contains no substantive answer. Every other completed response is a
+substantive answer. Answerability Balanced Accuracy averages the recall of the
+answerable class and the unanswerable class; both classes must occur in an
+authoritative split. It therefore cannot be inflated by always choosing the
+larger class.
+
+Unsupported Answer Rate is the share of unanswerable questions that receive a
+substantive answer. It does not claim to measure whether every statement in an
+answerable response is faithful; that broader question belongs to blinded human
+review, with HHEM retained only as a diagnostic.
+
+Refusal Precision asks what share of refusals were issued for unanswerable
+questions. Refusal Recall asks what share of unanswerable questions were
+refused. Refusal F1 balances them. A profile that never refuses receives zero
+precision, recall, and F1 when the split contains unanswerable questions.
+
+Malformed Output Rate includes responses that cannot be parsed into the required
+answer/citation schema, use unknown citation IDs, mix the refusal marker with a
+substantive answer, or omit required fields. A completed but malformed response
+is still a scored sample. An inference crash is instead a validity failure: the
+child fails and the parent comparison is incomplete rather than averaging only
+the surviving questions.
+
+### Accepted-answer similarity
+
+Exact Match, Token F1, and ROUGE-L apply to answerable questions. A refusal or
+malformed response to an answerable question receives zero. When several
+accepted answers exist, the highest score across those references is used.
+
+- **Exact Match** requires the normalized predicted answer to equal an accepted
+  answer exactly.
+- **Token F1** uses repeated normalized token occurrences, so it rewards partial
+  recovery without treating repeated words as a set.
+- **ROUGE-L** rewards an in-order common token sequence and can distinguish two
+  answers with similar words but different ordering.
+
+Unanswerable questions are ineligible for these three metrics because they have
+no accepted substantive answer. Exact Match and ROUGE-L are diagnostic; Token
+F1 is the secondary automated answer-correctness measure.
+
+### Automated faithfulness and repeatability
+
+HHEM scores every parsable substantive answer against exactly the supplied
+evidence blocks. It is omitted when a candidate produces no eligible
+substantive answers. The pinned HHEM checkpoint, revision, prompt construction,
+and score direction are recorded. Its result never replaces human Faithfulness.
+
+For Repeat Output Agreement, the first measured response is designated and each
+later repetition agrees only when its normalized visible answer and ordered
+distinct citation IDs are identical. Hidden reasoning text does not affect the
+agreement value but its token count remains a workload descriptor. A failed
+repetition is a disagreement and also fails the candidate's completeness gate.
+Smoke with one measured response has no meaningful agreement value.
+
+### Operational measurement
+
+Time to First Token starts immediately before the warm generation call and ends
+when the first generated token is available. Prompt-Evaluation Time uses the
+runtime's measured prefill interval when exposed; otherwise it is null with an
+`unsupported_by_runtime` status rather than inferred by subtraction.
+Generation Time runs from the first generated token through completion, and
+Generated Tokens/Second uses all generated native-tokenizer tokens over that
+interval. Both are null if no token is generated.
+
+Total Response Latency covers prompt preparation, tokenization, model prefill,
+reasoning and visible-answer decoding, output parsing, and citation validation.
+For Final RAG, separate server-call, retrieval/reranking, context-packing, and
+generation timings are also reported; end-to-end latency contains all of them.
+The median repetition is the per-question warm observation used for p50 and p95.
+
+Cold Model-Load Time is measured once in a fresh worker before warmup. Peak RAM
+includes the worker process tree; Peak VRAM uses process-attributed device
+measurement and must be non-zero for an authoritative CUDA child. Prompt,
+reasoning, visible-answer, and total generated token counts use each generator's
+native tokenizer and are reported per question before mean and p95 summaries.
+Unavailable separate reasoning counts remain null rather than being estimated.
+
+### Human review metrics
+
+For Final RAG, one blinded reviewer scores Faithfulness, Answer Correctness,
+Completeness, and Citation Accuracy on the frozen `0` to `2` rubric, plus
+Answerability Correctness on `0` or `1`. A score of `0` means the requirement is
+not met, `1` means partly met, and `2` means fully met. The reviewer sees the
+same question, accepted answer, and supplied evidence for each anonymous system.
+These values are reported separately; they are never averaged into a universal
+quality score. A single reviewer does not support an inter-reviewer agreement
+claim.
+
+### Eligibility, aggregation, and confidence intervals
+
+Automated values are first calculated per question, averaged within each source
+document, and macro-averaged across documents. This prevents a paper with many
+questions from dominating. Standard and Full runs use 10,000 bootstrap
+resamples of complete documents with seed 42. Answerable-only, unanswerable-only,
+substantive-answer-only, and evidence-type results always report their eligible
+question and document counts.
+
+Warm latency and token-workload summaries use the same fixed question set and
+report their observation counts. Cold load and observed RAM/VRAM peaks are
+single-run measurements and receive no fabricated interval. Null is reserved
+for explicitly ineligible or runtime-unsupported values. A missing required
+sample, artifact, or metric is a failed child, not a null score.
 
 ## Aggregation and interpretation
 

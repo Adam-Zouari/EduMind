@@ -25,6 +25,10 @@ question -> query embedding -> ranked hits -> token-budget context -> answer
 | Context packing | Ranked evidence capped at 2,048 tokens |
 | Generator | Pinned Hugging Face Qwen3 1.7B, CPU, thinking disabled |
 
+The `2,048`-token context cap describes the provisional application only. The
+chunking/embedding and retrieval/reranking benchmarks do not apply a context
+budget when comparing candidates.
+
 Numbered contexts are passed to a citation-constrained prompt. The generator uses
 the checkpoint chat template, native checkpoint dtype, one whole-model device,
 temperature 0, seed 42, and a fixed output limit. It never falls back to a hosted

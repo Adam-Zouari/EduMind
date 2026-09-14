@@ -51,6 +51,10 @@ dense candidates -> 2,048-token context pack -> numbered evidence
 pinned Hugging Face Qwen3 1.7B -> cited answer
 ```
 
+The `2,048`-token pack is the provisional application boundary, not a benchmark
+cutoff. Chunking/embedding and retrieval/reranking comparisons use their frozen
+rank cutoffs without a context-token budget.
+
 `EduMindPipeline` is the in-process boundary joining these stages. The Streamlit
 controller handles UI concerns such as temporary uploads, duplicate prevention,
 progress, and safe errors; it does not duplicate extraction or RAG logic.

@@ -18,8 +18,8 @@ combine the approved retrieval and generation profiles and review their answers.
 
 7. Generation on fixed evidence (independent of retrieval)
 
-selected server + selected retrieval + selected generator
---> 8. Final RAG on validation + blinded human review
+approved server + retrieval finalists + generator finalists
+--> 8. Final RAG systems on development, finalists on validation + blinded review
 --> 9. Extraction-to-RAG confirmation on separate non-locked data
 --> 10. Exactly one locked-test run
 ```
@@ -31,16 +31,35 @@ retrieval waits for a retrieval stack. Final RAG waits for one selected server,
 retrieval stack, and generator.
 
 `smoke` checks that a small real path works and cannot support a selection.
-`standard` compares every candidate on development data. `full` compares only
-engineer-selected finalists on validation data. Standard, full, and locked runs
-use seed 42, retain per-sample results, and report 95% confidence intervals for
-eligible sample-based aggregates. A stage's locked split is used once for its one
-engineer-selected final profile; it is never used to choose or tune candidates.
+`standard` compares every candidate declared for the stage on development data.
+`full` compares only engineer-selected finalists on validation data. `locked`
+runs exactly one frozen selection on the locked-test data. Standard, full, and
+locked runs use seed 42, retain per-sample results, and report 95% confidence
+intervals for eligible sample-based aggregates. A stage's locked split is used
+once for its one engineer-selected final profile; it is never used to choose or
+tune candidates.
 
 Every comparison gives its candidates the same samples. MLflow stores the exact
 settings, revisions, data checksum, hardware, aggregate metrics, confidence
 intervals, and per-sample results. The engineer chooses what continues; the
 runner never chooses a winner or changes the application configuration.
+
+Until hardware qualification is complete, every model-backed benchmark
+processes one inference input at a time. Runtimes that expose a batch setting
+use batch size `1`; the remaining document and video paths execute samples
+sequentially. Non-model storage or transport batching is not an inference
+setting. A later protocol revision may increase a component's common batch size
+only after every candidate in that comparison passes the same recorded hardware
+gate.
+
+Authoritative Standard, Full, and locked comparisons for ASR, embedding,
+learned reranking, and generation use the laptop's RTX 3050 through CUDA. Each
+stage freezes one supported 16-bit dtype, keeps the whole active model on that
+GPU, and forbids CPU fallback, CPU/GPU offload, automatic device splitting, and
+quantization. Peak process VRAM must not exceed `3,584 MiB`. CPU or CUDA may be
+used for smoke and debugging, but those results are never selection evidence.
+Document and video parser backends follow their separately recorded lifecycle
+and device contracts because not every parser runtime exposes the same backend.
 
 When a stage declares paired candidate comparisons, they are analysis artifacts
 rather than new metrics. They are calculated from aligned per-sample results;
@@ -76,11 +95,15 @@ was calculated; it never means zero. Statuses, configuration values, checksums,
 and one-off measurements such as a cold load or observed resource peak do not
 receive these suffixes.
 
-Metrics are labeled **primary**, **secondary**, **diagnostic**, or
-**operational**. Primary metrics answer the experiment's central question.
-Secondary metrics explain or qualify a primary result. Diagnostic metrics expose
-specific failure modes. Operational metrics measure latency, throughput, and
-resources. These four role names are used consistently throughout this document.
+Every automated benchmark value has one of six roles. **Primary** metrics answer
+the experiment's central question. **Secondary** metrics explain or qualify a
+primary result. **Diagnostic** metrics expose a specific behavior or failure
+mode without deciding the winner. **Operational** metrics measure latency,
+throughput, and resources. A **validity gate** must pass before a run may be used
+as evidence; it is not a trade-off metric. A **descriptor** records workload or
+storage needed to interpret other results but has no better direction. Evidence
+types and document groups are reporting slices, not additional metric roles.
+Blinded rubric scores are labeled separately as human judgments.
 
 ## 1. Document extraction
 
@@ -220,10 +243,9 @@ group even though it uses matched document elements.
 
 Table metrics can apply to images, every PDF family, and DOCX. Detection
 precision, recall, and F1 use table-presence annotations, including verified
-negative cases needed to expose false detections. Table Content F1 and Table
-Structure Score apply only to reference tables that the parser is expected to
-recover. A document with no reference table does not receive a zero structure
-score.
+negative cases needed to expose false detections. Table Content F1, TEDS, and
+TEDS-S apply only to reference tables that the parser is expected to recover. A
+document with no reference table does not receive a zero table-structure score.
 
 #### Formulas
 
@@ -702,8 +724,7 @@ Each speech clip produces:
 
 Audio already defines chronological order, so the benchmark evaluates the final
 ordered transcript with WER. It does not split recognition into Content F1 and
-Transcript Order Accuracy as document extraction does for two-dimensional
-pages.
+Reading Order Accuracy as document extraction does for two-dimensional pages.
 
 The independent quality sample is one audio clip. Three latency repetitions of
 the same clip improve timing measurement but do not become three independent
@@ -717,11 +738,6 @@ quality samples.
 | Canary 180M | Compact timestamp-capable challenger. |
 | Parakeet TDT 0.6B v2 | Mid-size profile with word, segment, and character timestamps. |
 | MOSS Transcribe-Diarize | Larger timestamp-capable transcription challenger. Diarization is not scored because speaker identification is not currently an EduMind requirement. |
-| Qwen3 ASR 1.7B-hf + ForcedAligner 0.6B-hf | Strong transcription candidate whose Transformers token-classification aligner provides timestamps. |
-
-For Qwen, transcription runs first. Its ASR model is unloaded before the forced
-aligner runs. The benchmark still measures transcription plus alignment as one
-complete candidate.
 
 ### Data
 
@@ -811,22 +827,22 @@ load the exact pinned model
 
 The quality result for a clip comes from one designated measured output.
 Repeated executions preserve raw timing measurements but are not averaged into
-additional quality samples and do not constitute a determinism metric. Qwen's
-complete execution includes both transcription and forced alignment.
+additional quality samples. Their exact transcript agreement is summarized
+separately by the diagnostic Repeat Transcript Agreement Rate.
 
-Every profile uses the same explicitly requested CPU or CUDA device within one
-comparison. Device, dtype, decoder, timestamp path, and runtime versions are
-recorded. Silent CPU fallback invalidates the profile. If one selected profile
-cannot complete on the requested device, that parent comparison is incomplete;
-the engineer fixes the runtime plan and reruns it instead of comparing partial
-results.
+Authoritative comparisons use the frozen CUDA hardware profile defined above:
+batch size `1`, the stage's supported 16-bit dtype, one whole model on the GPU,
+and no fallback, offload, device splitting, or quantization. Device, dtype,
+decoder, timestamp path, and runtime versions are recorded. Smoke and debugging
+may explicitly request CPU or CUDA but cannot support candidate selection. If
+one selected profile cannot complete under the authoritative profile, that
+parent comparison is incomplete; the engineer fixes the candidate plan and
+reruns it instead of comparing partial results.
 
-Behavior-changing settings are part of each child artifact: Whisper word
-timestamps and deterministic generation; Canary beam size one, punctuation and
-capitalization, timestamps, and batch size one; Parakeet greedy-batch decoding
-and timestamp level; MOSS `max_new_tokens=2048` with `do_sample=false`; and Qwen
-forced English, `max_new_tokens=256`, deterministic generation, sequential
-ASR unload/alignment load, and token-classification aligner settings. Runtime
+Behavior-changing settings are part of each child artifact: batch size one;
+Whisper word timestamps and deterministic generation; Canary beam size one,
+punctuation, capitalization, and timestamps; Parakeet greedy-batch decoding and
+timestamp level; and MOSS `max_new_tokens=2048` with `do_sample=false`. Runtime
 versions, model paths, revisions, cache-manifest checksums, dtype, and device are
 recorded with them.
 
@@ -838,7 +854,7 @@ all runnable ASR paths on tiny committed speech and nonspeech fixtures
 → verify loading, transcription, timestamps, scoring, artifacts, and cleanup
 
 development / standard:
-all five ASR profiles on 54 speech clips and development reliability controls
+all four ASR profiles on 54 speech clips and development reliability controls
 → engineer reviews MLflow and records finalists
 
 validation / full:
@@ -863,10 +879,10 @@ changes application configuration.
 | Recognition | **Corpus WER** (primary), Corpus CER | WER measures the complete ordered word transcript; CER exposes character-level spelling, name, and number errors. |
 | WER diagnostics | Word Substitution Rate, Word Deletion Rate, Word Insertion Rate | Shows whether WER comes mainly from confused, omitted, or unsupported words. These explain WER but do not replace it. |
 | Timestamps | **Timestamp Boundary MAE**, **Timestamp Alignment Coverage** | MAE measures the accuracy of aligned start/end boundaries; coverage prevents a candidate from looking accurate after aligning only easy segments. |
-| Reliability | Empty Transcript Rate, Nonspeech False-Transcription Rate | Measures complete empty output on speech and invented lexical output on verified nonspeech controls. |
-| Operational | **Complete-Pipeline Real-Time Factor**, p50/p95 warm clip latency, cold model-load time, peak process-tree RAM, peak VRAM | Measures the complete transcription and alignment cost of the recorded CPU or GPU profile. |
+| Reliability | Empty Transcript Rate, Nonspeech False-Transcription Rate, Repeat Transcript Agreement Rate | Measures complete empty output on speech, invented lexical output on verified nonspeech controls, and transcript stability across repeated runs. |
+| Operational | **Complete-Pipeline Real-Time Factor**, p50/p95 warm clip latency, cold model-load time, peak process-tree RAM, peak VRAM | Measures the complete transcription and alignment cost of the frozen CUDA profile. |
 
-Content F1 and Transcript Order Accuracy are not ASR metrics in this benchmark.
+Content F1 and Reading Order Accuracy are not ASR metrics in this benchmark.
 Audio already supplies chronological order, so Corpus WER evaluates the required
 ordered transcript. Technical-Term Accuracy is also excluded because EduMind is
 not restricted to a stable subject vocabulary. Diarization is not scored unless
@@ -891,8 +907,7 @@ MLflow experiment: EduMind / extraction
 │   ├── child: whisper-small-en-control
 │   ├── child: canary-180m
 │   ├── child: parakeet-tdt-0.6b-v2
-│   ├── child: moss-transcribe-diarize
-│   └── child: qwen3-asr-1.7b-aligned
+│   └── child: moss-transcribe-diarize
 ├── parent: extraction-audio-validation-<timestamp>
 │   └── one child per engineer-selected finalist
 └── parent: extraction-audio-locked-test-<timestamp>
@@ -945,10 +960,11 @@ Applicable standard, full, and locked uncertainty bounds use the shared MLflow s
 convention defined at the beginning of this document.
 
 Corpus WER/CER and their components, timestamp metrics, reliability rates,
-Repeat Transcript Agreement Rate, RTF, and sufficiently supported warm latency estimates receive clip-bootstrap
-intervals. One cold-load observation and observed peak RAM/VRAM do not receive
-fabricated intervals. Every bootstrap draw contributes to every metric that is
-defined for that draw. A draw with no aligned timestamp segment still
+Repeat Transcript Agreement Rate, RTF, and sufficiently supported warm latency
+estimates receive clip-bootstrap intervals. One cold-load observation and
+observed peak RAM/VRAM do not receive fabricated intervals. Every bootstrap
+draw contributes to every metric that is defined for that draw. A draw with no
+aligned timestamp segment still
 contributes zero Alignment Coverage and contributes normally to recognition,
 reliability, and latency intervals; only its undefined Boundary MAE is omitted.
 If the complete candidate has no valid timestamp alignment,
@@ -1065,7 +1081,7 @@ The selected ASR therefore receives deterministic windows no longer than 30
 seconds. Window-local timestamps are shifted back onto the video timeline and
 overlapping text is stitched once. The exact overlap and stitching rule are
 frozen before the video comparison. This qualifies the serving policy of the
-already selected ASR; it does not reopen the five-model ASR comparison.
+already selected ASR; it does not reopen the four-profile ASR comparison.
 
 Development proceeds in this order:
 
@@ -1097,7 +1113,8 @@ for the recorded educational-video corpus.
 | Secondary | Visual Content Precision/Recall | Explains whether a low F1 came from unsupported extracted text or missed visible text. |
 | Diagnostic | Duplicate Visual Text Rate | Shows whether repeatedly selected unchanged frames duplicate the same content. |
 | Diagnostic | Frozen-ASR Transcript WER, recorded once for the shared ASR output | Confirms the audio input to every policy; it is not used to compare keyframe policies because it is constant. |
-| Operational | Visual Real-Time Factor, p50/p95 warm visual latency, cold visual-pipeline load time, peak visual process-tree RAM, peak visual VRAM, mean selected frames per video | Measures the keyframe and visual-parser cost that differs between configurations. |
+| Operational | Visual Real-Time Factor, p50/p95 warm visual latency, cold visual-pipeline load time, peak visual process-tree RAM, peak visual VRAM | Measures the keyframe and visual-parser cost that differs between configurations. |
+| Workload descriptor | Mean selected frames per video | Records how much visual input each policy sends to the parser without treating fewer frames as inherently better. |
 
 Spoken and visible tokens remain separate. A video's transcript usually
 contains far more words than its frames, so one combined recall value would be
@@ -1258,10 +1275,10 @@ Full public evidence and exact revisions are in
 
 ### Data
 
-The RAG corpus uses pinned QASPER papers plus EduMind's verified structured
-evidence set:
+The RAG corpus uses pinned QASPER papers plus EduMind's additional verified
+structured-evidence set. The counts below describe QASPER papers only:
 
-| Split | Papers | Used for |
+| Split | QASPER papers | Used for |
 |---|---:|---|
 | Development | 100 | Standard component comparison |
 | Validation | 40 | Full finalist comparison |
@@ -1314,6 +1331,11 @@ One child run executes one planned pair in a fresh operating-system process.
 The requested device, dtype, model and tokenizer revisions, query/document
 prefixes, pooling, normalization, seed, warmups, and repetitions are fixed and
 recorded. Silent device fallback or unrecorded truncation invalidates the child.
+Authoritative Standard and Full comparisons use the target RTX 3050 through
+CUDA with `float16` and embedding batch size `1`. Peak process VRAM must remain
+at or below 3,584 MiB, leaving a 512 MiB safety reserve on the 4,096 MiB device.
+The same settings apply to every pair; a candidate cannot receive a smaller
+batch or a different precision to avoid an out-of-memory result.
 
 An eligible pair performs:
 
@@ -1467,10 +1489,10 @@ workload.embedding_dimension
 workload.embedding_matrix_bytes
 ```
 
-Primary, diagnostic, operational, and workload are documentation roles; they are
-not repeated as MLflow prefixes. The prefixes above describe metric families
-and evidence slices. Eligible uncertainty bounds use the shared `.ci_lower` and
-`.ci_upper` suffixes.
+Primary, diagnostic, operational, and descriptor labels are documentation
+roles; they are not repeated as MLflow prefixes. The prefixes above describe
+metric families and evidence slices. Eligible uncertainty bounds use the shared
+`.ci_lower` and `.ci_upper` suffixes.
 Validity counters such as expected/processed documents and queries, truncated
 inputs, failed cases, nonfinite/zero-norm vectors, dimension mismatches, and
 determinism mismatches are logged under `validity.*`. General retrieval
@@ -1602,6 +1624,14 @@ ID, revision, cache checksum, input template, native tokenizer, maximum input
 length, batch size, score interpretation, device, dtype, and tie breaking.
 Truncation is forbidden.
 
+The target-hardware profile uses CUDA `float16`. Learned rerankers score the
+20 query-passage pairs sequentially with batch size `1`; the selected query
+embedder follows its frozen embedding batch contract. Qualification includes
+both components under the planned lifecycle and requires NVML-measured peak
+process VRAM at or below 3,584 MiB, preserving a 512 MiB reserve on the 4 GiB
+GPU. Per-candidate quantization, offload, fallback, or batch reduction is not an
+allowed way to pass the gate.
+
 The retrieval controls are fixed as follows. They are established, untuned
 baselines rather than claims that one parameter set is optimal for every corpus:
 
@@ -1652,7 +1682,7 @@ all 15 candidates on the development manifest
 full validation:
 the finalists on the unseen validation manifest
 + each finalist's matching <retriever>|none control when not already selected
-→ engineer records exactly one selected retrieval stack
+→ engineer approves up to three retrieval stacks for complete-system testing
 
 locked test:
 the selected stack runs only inside the frozen complete-system evaluation
@@ -1668,19 +1698,23 @@ advanced as finalists. No weighted score or automatic winner rule is used.
 
 | Role | Metrics | Why they are needed |
 |---|---|---|
-| Primary quality | **nDCG@3/@5**, **Evidence-unit Recall@3/@5**, **Evidence-token Precision@3/@5** | Separates ranking quality, evidence completeness, and concentration of retrieved text. |
-| Diagnostic quality | alpha-nDCG@3/@5, candidate-pool Evidence-unit Recall@20, ranking agreement | Diagnoses repeated evidence, first-stage pool limits, and nondeterministic ordering without replacing the primary decision. |
-| Evidence slices | Eligible quality metrics repeated for text, table, formula, and mixed questions | Reveals improvements or regressions hidden by the overall average. |
+| Primary | **nDCG@3/@5**, **Evidence-unit Recall@3/@5**, **Evidence-token Precision@3/@5** | Separates ranking quality, evidence completeness, and concentration of retrieved text. |
+| Diagnostic | alpha-nDCG@3/@5, candidate-pool Evidence-unit Recall@20 | Diagnoses repeated evidence and first-stage pool limits without replacing the primary decision. |
+| Validity gate | Ranking Agreement | Requires repeated inference to return the same complete ordering before the run may be used as evidence. |
 | Operational | Full-stack warm p50/p95 latency, first-stage warm p50/p95 latency, reranker warm p50/p95 latency when applicable, cold initialization, peak process-tree RAM, peak VRAM, index-build time | Separates retriever cost, incremental reranker cost, startup, memory, and one-time index preparation. |
-| Workload | Corpus/query/chunk/pool counts, retrieved tokens at @3/@5, reranker input tokens when applicable | Explains the amount of work behind quality and operational results. |
-| Storage | Dense/BM25 index bytes, RRF required and incremental index bytes, reranker snapshot bytes | Describes the local searchable state and model storage each candidate requires. |
+| Workload descriptor | Corpus/query/chunk/pool counts, retrieved tokens at @3/@5, reranker input tokens when applicable | Explains the amount of work behind quality and operational results. |
+| Storage descriptor | Dense/BM25 index bytes, RRF required and incremental index bytes, reranker snapshot bytes | Describes the local searchable state and model storage each candidate requires. |
 
 The three bold quality families are primary and are reviewed separately at both
 cutoffs. Alpha-nDCG uses `alpha=0.5` and is reported only for questions with at
 least two distinct evidence units. Candidate-pool Recall@20 is recorded once on
-each no-reranker pool owner because all five matching rerankers receive the same
-pool. Reranker-only latency and input-token metrics are omitted, not set to zero,
+each no-reranker pool owner because its four learned-reranker children receive
+the same pool. Reranker-only latency and input-token metrics are omitted, not set to zero,
 for the no-reranker option.
+
+Eligible quality metrics are also reported separately for text, table, formula,
+and mixed questions. These evidence types are reporting slices, not additional
+metric roles.
 
 The evidence-unit definitions, `tiktoken:cl100k_base` evaluation tokenizer,
 answerable-question eligibility, document-macro aggregation, confidence
@@ -1793,7 +1827,7 @@ weights are never copied into child artifacts.
 Paired comparisons are analysis rows under the parent, not MLflow runs. They
 are separated by the intervention being studied:
 
-- `reranker_comparisons.parquet` and `reranker_comparisons.csv` contain the 15
+- `reranker_comparisons.parquet` and `reranker_comparisons.csv` contain the 12
   reranker-effect comparisons, each learned reranker against the matching
   `<retriever>|none` candidate over the same checksummed pool;
 - `retriever_comparisons.parquet` and `retriever_comparisons.csv` contain Dense
@@ -1810,7 +1844,7 @@ and cell equality with explicit null and floating-point handling. Matching row
 counts alone is insufficient. Each file has its own SHA-256 and the pair records
 one shared logical-table SHA-256.
 
-The benchmark does not generate all 153 possible candidate pairs. Each stored
+The benchmark does not generate all 105 possible candidate pairs. Each stored
 row represents one comparison, metric, evidence slice, and cutoff. It identifies
 the applicable retriever or complete stacks, both run IDs and pool checksums,
 metric direction, both values, raw `candidate - baseline` difference, whether
@@ -1858,9 +1892,11 @@ Quality differences use 10,000 paired bootstrap resamples of aligned source
 documents with seed 42. One-off cold-load and peak-resource observations receive
 point differences but no invented confidence interval. The engineer selects up
 to three complete finalists after jointly reviewing primary quality, uncertainty,
-evidence slices, diagnostics, and operational feasibility, then selects exactly
-one stack after validation. The versioned decision file references the parent
-and child run IDs and all governing checksums.
+evidence slices, diagnostics, and operational feasibility, then approves up to
+three validation-qualified stacks for complete-system testing. Final RAG, not
+this component benchmark, selects the one deployed retrieval stack. The
+versioned decision file references the parent and child run IDs and all
+governing checksums.
 
 ## 6. Vector database servers
 
@@ -1938,8 +1974,8 @@ engineer then approves one server profile for Final RAG.
 
 | Role | Metrics | Why they are needed |
 |---|---|---|
-| Validity checks | Health, cosine behavior, dimension rejection, compound/empty filters, replacement, deletion, persistence, restart, and ANN-index verification | Determines whether results are trustworthy; these are not quality scores. |
-| Primary | ANN Recall@3/@5/@10, Filtered ANN Recall@3/@5/@10, Filter Correctness, Empty-Filter Correctness | Measures preservation of exact neighbours and metadata behavior at application-relevant depths. |
+| Validity gate | Health, cosine behavior, dimension rejection, Filter Correctness, Empty-Filter Correctness, replacement, deletion, persistence, restart, and ANN-index verification | Determines whether results are trustworthy; these are not quality scores. |
+| Primary | ANN Recall@3/@5/@10, Filtered ANN Recall@3/@5/@10 | Measures preservation of exact neighbours at application-relevant depths, with and without metadata filters. |
 | Secondary | ANN and Filtered ANN Recall@1; complete-RAG nDCG, Evidence-unit Recall, and Evidence-token Precision at @3/@5 | Shows rank-one behavior and whether ANN results preserve real evidence retrieval. |
 | Diagnostic | Unfiltered/filtered p50 latency, first query after restart | Explains typical and cold-query behavior. |
 | Operational | Unfiltered/filtered p95/p99, throughput and error rate at each concurrency, build time and vectors/second, incremental upsert/delete throughput, restart readiness, peak server RAM, persistent storage | Measures tail latency, load handling, ingestion, restart, memory, and disk cost. |
@@ -1957,10 +1993,10 @@ every model receives exactly the same verified evidence?
 
 | Model/profile | Why it is included |
 |---|---|
-| Qwen3 1.7B, thinking disabled | Small production control. |
-| MiniCPM5 1B, reasoning enabled | Compact reasoning candidate. |
-| G9v3 3B, reasoning enabled | Middle-size general-capability candidate. |
-| Qwen3.5 4B, reasoning enabled | Upper compact quality candidate. |
+| Falcon-H1-Tiny-R-90M, reasoning | Independent weak control that establishes a low-resource quality floor. |
+| Qwen3 0.6B, reasoning enabled | Small established reasoning candidate. |
+| Qwen3.5 0.8B, reasoning enabled | Newer intermediate candidate. |
+| MiniCPM5 1B, reasoning enabled | Strongest candidate in the common public hardware-feasible screen. |
 
 No trustworthy public benchmark compares all four under EduMind's grounded QA,
 citation, refusal, faithfulness, and local-latency protocol. Public evidence made
@@ -1968,10 +2004,12 @@ the shortlist; this experiment makes them directly comparable.
 
 ### Data
 
-Standard uses 24 development questions balanced across answerability, answer
-type, and evidence type as an initial screen. Full evaluates only
-engineer-selected generator finalists on the complete frozen validation question
-set; it is not limited to 24 questions.
+Smoke uses committed wiring fixtures. Standard uses 24 development questions
+balanced across answerability, answer type, and evidence type as an initial
+screen. Full evaluates only engineer-selected generator finalists on the
+complete frozen validation question set; it is not limited to 24 questions.
+The selected generator is exercised on locked-test questions only as part of the
+one frozen complete-system run.
 
 - Answerable questions receive their verified numbered evidence blocks.
 - Unanswerable questions receive text from their document that does not answer
@@ -1984,9 +2022,34 @@ retriever.
 ### Execution
 
 Every generator uses its exact pinned local snapshot, official chat template,
-the same CPU or CUDA device, native checkpoint dtype, temperature 0, seed 42,
-8,192 context tokens, and at most 256 generated tokens. No model receives hidden
-quantization or CPU/GPU offload.
+reasoning mode, temperature 0, seed 42, an 8,192-token context limit, and at
+most 256 generated tokens. Authoritative Standard and Full runs use the same
+CUDA device, `float16`, and batch size `1`: one complete question-and-evidence
+prompt is generated at a time, and repetitions run sequentially. No model
+receives hidden quantization, CPU/GPU offload, automatic device splitting, or a
+candidate-specific batch size.
+
+### Profiles and selection
+
+```text
+smoke:
+all runnable generators on tiny committed fixtures
+-> verify loading, output parsing, scoring, artifacts, and cleanup
+
+standard development:
+all four generator profiles on the 24-question development screen
+-> engineer records up to three generator finalists
+
+full validation:
+only the recorded finalists on the complete unseen validation question set
+-> engineer records the generator profiles approved for complete-system testing
+
+locked test:
+the one selected generator runs only inside the frozen Final RAG system
+-> no further generator tuning
+```
+
+### Per-candidate workflow
 
 ```text
 unload previous generator
@@ -2002,23 +2065,26 @@ unload previous generator
 
 | Role | Metrics | Why they are needed |
 |---|---|---|
-| Primary | Citation Precision/Recall/F1 on answerable questions, Answerability Balanced Accuracy, Unsupported Answer Rate, Malformed Output Rate | Measures evidence use, answer/refusal decisions, unsupported answers, and protocol failures without penalizing correct refusals for having no citations. |
+| Primary | Citation Precision/Recall/F1 on answerable questions, Answerability Balanced Accuracy, Unsupported Answer Rate, Malformed Output Rate | Measures evidence use, answer/refusal decisions, substantive answers to unanswerable questions, and protocol failures without penalizing correct refusals for having no citations. |
 | Secondary | Token F1 | Provides partial answer-correctness evidence before human review. |
-| Diagnostic | Exact Match, ROUGE-L, Refusal Precision/Recall/F1, HHEM on substantive non-refusal answers, determinism, prompt/answer/reasoning token counts | Explains lexical similarity, refusal errors, automated support estimates, stability, and verbosity. HHEM never replaces human Faithfulness. |
+| Diagnostic | Exact Match, ROUGE-L, Refusal Precision/Recall/F1, HHEM on substantive non-refusal answers, Repeat Output Agreement | Explains lexical similarity, refusal errors, automated support estimates, and stability. HHEM never replaces human Faithfulness. |
 | Operational | Cold load, Time to First Token, generation time, total p50/p95 latency, tokens/second, peak RAM, peak VRAM | Separates startup, responsiveness, decoding speed, total latency, and memory. |
+| Workload descriptor | Prompt, visible-answer, reasoning, and total generated token counts | Records how much native-tokenizer input and output produced the observed quality and latency. |
 
 The engineer approves up to three generator profiles after inspecting automatic
-quality, citation/refusal behavior, latency, and resources. Human review happens
-only after retrieval and generation are combined.
+quality, citation/refusal behavior, latency, and resources. An automatically
+supported citation must identify a supplied evidence block that completely
+covers at least one required gold evidence unit. Human review of broader claim
+faithfulness happens only after retrieval and generation are combined.
 
 ## 8. Final RAG and human review
 
 Which complete retrieval-and-generation system gives the best evidence-backed
 answers when every component runs together?
 
-### Systems tested
+### Profiles and systems tested
 
-Standard crosses only approved finalists:
+Standard crosses the approved component finalists on development data:
 
 ```text
 1 approved vector-server profile
@@ -2028,10 +2094,16 @@ Standard crosses only approved finalists:
 = at most 18 complete systems
 ```
 
+The engineer records exactly three successful complete-system finalists. Full
+runs only those three systems on unseen validation data and supplies their
+answers for blinded review. After review, the engineer records exactly one
+complete system. Locked runs only that frozen system on the locked-test data.
+
 ### Data and execution
 
-Final RAG uses the validation manifest. For every question, the complete path
-runs:
+Standard Final RAG uses the development manifest, Full uses the validation
+manifest, and locked uses the locked-test manifest. For every question, the
+complete path runs:
 
 ```text
 chunk document
@@ -2054,8 +2126,8 @@ remain operational measurements.
 
 ### Human review
 
-The engineer chooses exactly three successful complete systems. The exporter
-selects 20 common questions and creates:
+Full evaluates the three successful complete systems selected after Standard.
+The exporter selects 20 common validation questions and creates:
 
 ```text
 20 questions × 3 anonymous systems = 60 anonymous answer items

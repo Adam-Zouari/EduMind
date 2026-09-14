@@ -62,6 +62,10 @@ controls**. They are baselines, not claims that these components are already the
 | Vector server | Chroma over HTTP at `127.0.0.1:8001` |
 | Generation | Pinned Hugging Face `Qwen/Qwen3-1.7B`, CPU, thinking disabled |
 
+The `2,048`-token value is only the provisional application's current serving
+cap. The chunking/embedding and retrieval/reranking benchmarks impose no context
+token budget and do not use this value for candidate selection.
+
 The benchmark program is used to challenge every one of these choices. A result
 becomes a recommendation only after the relevant standard/full experiment and
 review process are complete.

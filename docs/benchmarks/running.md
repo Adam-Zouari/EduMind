@@ -37,6 +37,8 @@ Failures remain visible rather than being silently skipped.
 - `full` runs only candidates explicitly selected by an engineer. Most stages use
   `--shortlist`; document extraction uses separate `--pdf-selection` and
   `--image-selection` decisions because their valid configuration sets differ.
+- `locked` runs exactly one frozen selection on the locked-test split after
+  validation and any required human review. It is never used for tuning.
 - `--manifest PATH` overrides a stage's default dataset manifest.
 
 A decision JSON names candidates selected after inspecting a completed upstream
@@ -204,7 +206,49 @@ engineer-selected finalists; locked test runs one selected configuration once.
 `--profile full` requires a shortlist of at most three development finalists;
 `--profile locked` requires a decision containing exactly one validation
 winner. Authoritative runs reject a smoke-scoped lock, a missing lock, and any
-manifest-checksum mismatch. The committed smoke lock is only for fixture wiring:
+manifest-checksum mismatch.
+
+Run the validation finalists with a validation-bound protocol lock and frozen
+ASR artifact:
+
+```powershell
+python experiments/benchmarks/extraction/video/run.py --profile full --phase frozen-asr `
+  --manifest data/benchmarks/extraction/video-validation.json `
+  --protocol-lock VIDEO_VALIDATION_PROTOCOL_LOCK.json `
+  --audio-selection SELECTED_ASR_DECISION.json `
+  --frozen-asr artifacts/video-validation-asr.json `
+  --device cuda
+
+python experiments/benchmarks/extraction/video/run.py --profile full --phase all `
+  --manifest data/benchmarks/extraction/video-validation.json `
+  --protocol-lock VIDEO_VALIDATION_PROTOCOL_LOCK.json `
+  --frozen-asr artifacts/video-validation-asr.json `
+  --document-selection DOCUMENT_DECISION.json `
+  --shortlist VIDEO_FINALISTS_DECISION.json `
+  --device cuda
+```
+
+After validation records one winner, run the locked phase once with a
+locked-manifest protocol lock:
+
+```powershell
+python experiments/benchmarks/extraction/video/run.py --profile locked --phase frozen-asr `
+  --manifest data/benchmarks/extraction/video-locked-test.json `
+  --protocol-lock VIDEO_LOCKED_PROTOCOL_LOCK.json `
+  --audio-selection SELECTED_ASR_DECISION.json `
+  --frozen-asr artifacts/video-locked-asr.json `
+  --device cuda
+
+python experiments/benchmarks/extraction/video/run.py --profile locked --phase all `
+  --manifest data/benchmarks/extraction/video-locked-test.json `
+  --protocol-lock VIDEO_LOCKED_PROTOCOL_LOCK.json `
+  --frozen-asr artifacts/video-locked-asr.json `
+  --document-selection DOCUMENT_DECISION.json `
+  --shortlist SELECTED_VIDEO_DECISION.json `
+  --device cuda
+```
+
+The committed smoke lock is only for fixture wiring:
 
 ```powershell
 python experiments/benchmarks/extraction/video/run.py --profile smoke --phase frozen-asr `
@@ -227,9 +271,19 @@ representation rules described in the methodology.
 Run the chunker–embedding matrix first:
 
 ```powershell
-python experiments/benchmarks/rag/chunking_embedding/run.py --profile standard
-python experiments/benchmarks/rag/chunking_embedding/run.py --profile full --shortlist EMBEDDING_DECISION
+python experiments/benchmarks/rag/chunking_embedding/run.py --profile standard `
+  --device cuda `
+  --dtype float16
+python experiments/benchmarks/rag/chunking_embedding/run.py --profile full `
+  --shortlist EMBEDDING_DECISION `
+  --device cuda `
+  --dtype float16
 ```
+
+These authoritative commands use embedding batch size `1` and require peak
+process VRAM no greater than 3,584 MiB on the 4,096 MiB RTX 3050. Reject a
+candidate during engineer review if its recorded peak exceeds that gate. A CUDA
+run fails if execution falls back to CPU or VRAM cannot be measured.
 
 Then give the retrieval experiment an engineer-selected chunker–embedding
 decision:
@@ -316,23 +370,39 @@ python experiments/benchmarks/rag/generation/run.py --profile full `
   --shortlist GENERATION_DECISION
 ```
 
-All candidates in one invocation use the same requested whole-model device.
+Standard runs the Falcon-H1-Tiny-R-90M control plus the Qwen3-0.6B,
+Qwen3.5-0.8B, and MiniCPM5-1B candidates. Full runs only the finalists named by
+`GENERATION_DECISION`. Every executed profile uses reasoning mode, the same
+whole-model CUDA device, `float16`, and batch size `1`; prompts and repetitions
+are processed sequentially.
 
 ## 8. Run Final RAG and blinded review
 
-Run validation systems from explicit retrieval and generation decisions:
+Run the complete-system candidate grid on development data from explicit
+retrieval and generation decisions:
 
 ```powershell
 python experiments/benchmarks/rag/final/run.py --profile standard `
+  --manifest data/benchmarks/rag/rag-selection-dev.json `
   --retrieval-selection RETRIEVAL_DECISION `
   --generation-selection GENERATION_DECISION `
+  --device cuda
+```
+
+After inspecting Standard, record exactly three complete-system finalists and
+run them on validation:
+
+```powershell
+python experiments/benchmarks/rag/final/run.py --profile full `
+  --manifest data/benchmarks/rag/rag-selection-validation.json `
+  --shortlist FINAL_RAG_FINALISTS_DECISION `
   --device cuda
 ```
 
 Export anonymous answers, enter judgments in the CSV, then import them:
 
 ```powershell
-python experiments/benchmarks/review.py export FINAL_SELECTION REVIEW.csv
+python experiments/benchmarks/review.py export FINAL_RAG_VALIDATION REVIEW.csv
 python experiments/benchmarks/review.py import REVIEW.csv
 ```
 
@@ -343,7 +413,8 @@ available through `python experiments/benchmarks/review.py --help`.
 The one locked-test run requires reviewed judgments and explicit confirmation:
 
 ```powershell
-python experiments/benchmarks/rag/final/run.py --profile full `
+python experiments/benchmarks/rag/final/run.py --profile locked `
+  --manifest data/benchmarks/rag/rag-selection-locked-test.json `
   --shortlist LOCKED_FINAL_DECISION `
   --review-results REVIEW.results.json `
   --confirm-locked-test `
@@ -380,9 +451,9 @@ Parquet artifacts. Local artifacts are also written atomically under the
 configured artifact root.
 
 A run is usable only when every planned candidate and required metric completed.
-Smoke runs prove wiring only. Standard/full results remain evidence for an
-engineer; the code does not calculate a universal winner or edit production
-configuration.
+Smoke runs prove wiring only. Standard and Full results support engineer
+selection; the one locked result is the frozen final estimate. The code does
+not calculate a universal winner or edit production configuration.
 
 If a run fails, inspect the failed MLflow child and its error artifact, correct
 the missing model/data/server problem, and rerun. Do not reuse partial results as

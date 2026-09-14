@@ -1,11 +1,15 @@
 # Document, ASR, and video benchmark repair audit
 
-Audit date: 2026-09-11
+This file preserves dated verification evidence. A result applies to the
+repository state named by its section and must not be read as a rolling claim
+about the current candidate set.
 
-Target-scope status: complete. The document, ASR, and video benchmark code now
-implements the frozen methodology and metric contracts. The independent second
-pass found no unresolved correctness or methodology mismatch in those three
-systems.
+## Historical audit snapshot — 2026-09-11
+
+At the close of this audit, the target-scope status was complete. The document,
+ASR, and video benchmark code implemented the then-frozen methodology and metric
+contracts. The independent second pass found no unresolved correctness or
+methodology mismatch in those three systems.
 
 Application behavior, the end-to-end RAG pipeline, and authoritative dataset
 population were not part of this repair.
@@ -33,7 +37,8 @@ population were not part of this repair.
 
 ### ASR
 
-- The Qwen profile uses `Qwen/Qwen3-ASR-1.7B-hf` at
+- At audit time, the now-retired Qwen profile used
+  `Qwen/Qwen3-ASR-1.7B-hf` at
   `bcd2b5b7f32b480ab5790554cfa8347f246a14f3` and the token-classification
   `Qwen/Qwen3-ForcedAligner-0.6B-hf` at
   `c07281df297b9905d24a508279258cccf987a064`.
@@ -46,7 +51,7 @@ population were not part of this repair.
   documented total-similarity, match-count, and earliest-span order.
 - Every model's decoder, generation, timestamp, language, batch, device, dtype,
   revision, path, package version, and cache checksum settings are frozen and
-  persisted. Qwen ASR and alignment load sequentially.
+  persisted.
 
 ### Video
 
@@ -90,7 +95,7 @@ the legacy complete-content recall, per-visual-candidate transcript WER, and
 visual-text-prefixed metric names are absent, the old generic video execution
 path is absent, and no stale non-`-hf` Qwen checkpoint identifier remains.
 
-## Verification results
+## Historical verification results — 2026-09-11
 
 | Check | Result |
 |---|---|
@@ -99,14 +104,14 @@ path is absent, and no stale non-`-hf` Qwen checkpoint identifier remains.
 | Python bytecode compilation | Passed |
 | `pip check` | No broken requirements |
 | `git diff --check` | Passed; line-ending notices only |
-| Generated selected-model lock | All 8 requested entries and all cache/component checksums verified |
+| Generated selected-model lock | All 8 entries requested by the 2026-09-11 candidate set and all cache/component checksums verified |
 | Pinned OmniDocBench Docker identity preflight | TEDS, TEDS-S, and CDM passed |
 
 A repository-wide Ruff run reports three unrelated existing findings in RAG
 generation and vector-database code. They are outside this audit's requested
 scope and do not occur in the repaired benchmark systems.
 
-## Real-model smoke evidence
+## Historical real-model smoke evidence — 2026-09-11
 
 The smoke inputs are wiring fixtures, so their quality numbers are not model
 selection evidence.
@@ -117,7 +122,7 @@ selection evidence.
 | ASR | Canary 180M | CUDA | Success; WER 0.0 | `20260911-005508-759626bc` |
 | ASR | Parakeet TDT 0.6B v2 | CUDA | Success; WER 0.0 | `20260911-005545-a190a095` |
 | ASR | MOSS Transcribe-Diarize | CUDA | Success; WER 0.0 | `20260911-005626-b12dd683` |
-| ASR | Qwen3 ASR plus exact forced aligner | CUDA | Success; WER 0.0 and timestamp coverage 1.0 | `20260911-005723-891fafba` |
+| ASR (retired) | Qwen3 ASR plus exact forced aligner | CUDA | Historical success; WER 0.0 and timestamp coverage 1.0 | `20260911-005723-891fafba` |
 | Document | Docling Standard | CUDA | Success | `20260911-005859-529d84ee` |
 | Document | Granite Docling 258M | CUDA | Success | `20260911-005949-8a22cef7` |
 | Document | PaddleOCR-VL 1.6 | CPU | Success, including native table conversion | `20260911-002347-8e9d35e3` |
@@ -127,6 +132,26 @@ selection evidence.
 The Paddle table smoke additionally produced three canonical rows, nine cells,
 plain cell text, original HTML, page 1, and no conversion warnings in
 `artifacts/benchmarks/real-smoke/paddle-table.json` (a local ignored artifact).
+
+## Post-audit selection change — 2026-09-14
+
+Qwen3-ASR was removed from the runnable shortlist because its BF16 weights
+exceed the target GPU memory gate before activations. Its runtime code and local
+snapshots were removed. The active ASR benchmark now contains four profiles:
+Whisper `small.en`, Canary 180M, Parakeet TDT 0.6B v2, and MOSS
+Transcribe-Diarize.
+
+The retired Qwen contract and smoke row above remain solely as evidence of what
+was tested on 2026-09-11. The “8 entries” model-lock result also belongs only to
+that historical snapshot. Candidate documentation and selection records were
+rechecked after removal, but the complete 2026-09-11 real-model smoke suite was
+not rerun as part of this selection change.
+
+Documentation-only verification on 2026-09-15 confirmed that active benchmark
+documents list the four-profile ASR set, contain no active Qwen3-ASR or forced-
+aligner references, and resolve all local Markdown file links. This check does
+not supersede or restate the historical code, model-lock, or real-inference
+results above.
 
 ## Residual limitations outside benchmark code
 
