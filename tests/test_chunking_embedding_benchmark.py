@@ -620,7 +620,7 @@ def test_build_index_rejects_model_inputs_before_embedding(monkeypatch) -> None:
     import experiments.benchmarks.rag.evaluation as evaluation
 
     class Embedder:
-        batch_size = 32
+        batch_size = 1
 
         def prepare(self):
             pass
@@ -682,7 +682,7 @@ def test_cl100k_boundaries_send_canonical_text_not_token_ids_to_embedder(
     embedded_inputs: list[tuple[str, ...]] = []
 
     class NativeEmbedder:
-        batch_size = 32
+        batch_size = 1
 
         @staticmethod
         def prepare() -> None:

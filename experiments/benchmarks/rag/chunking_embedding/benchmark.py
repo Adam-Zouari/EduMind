@@ -576,9 +576,9 @@ def _parameters(
         "embedding": embedding_name,
         "embedding_contract": embedding_contract,
         "embedding_batch_size": (
-            getattr(index.embedder, "batch_size", 32)
+            getattr(index.embedder, "batch_size", 1)
             if index is not None and index.embedder is not None
-            else 32
+            else 1
         ),
         "model_revision": entry.get("revision"),
         "model_path": entry.get("model_path"),

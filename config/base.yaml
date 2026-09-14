@@ -17,7 +17,7 @@ embedding:
   normalize: true
   similarity: cosine
   maximum_length: 8192
-  batch_size: 32
+  batch_size: 1
 
 chunking:
   strategy: token

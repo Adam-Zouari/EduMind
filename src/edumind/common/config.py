@@ -41,7 +41,7 @@ class EmbeddingSettings:
     normalize: bool = True
     similarity: str = "cosine"
     maximum_length: int = 8192
-    batch_size: int = 32
+    batch_size: int = 1
 
 
 @dataclass(frozen=True)
@@ -287,7 +287,7 @@ def _build(raw: Mapping[str, object]) -> Settings:
             normalize=bool(embedding.get("normalize", True)),
             similarity=similarity,
             maximum_length=_integer(embedding, "maximum_length", 8192),
-            batch_size=_integer(embedding, "batch_size", 32),
+            batch_size=_integer(embedding, "batch_size", 1),
         ),
         chunking=ChunkingSettings(
             strategy=chunking_strategy,

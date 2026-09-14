@@ -16,7 +16,7 @@ class Embedder:
     def __init__(
         self,
         spec: EmbeddingSpec,
-        batch_size: int = 32,
+        batch_size: int = 1,
         *,
         dtype: str | None = None,
         enforce_device: bool = False,
