@@ -100,23 +100,9 @@ def run_benchmark(
         raise ValueError("A benchmark plan must contain at least one candidate")
     if len(set(plan.candidates)) != len(plan.candidates):
         raise ValueError("A benchmark plan cannot contain duplicate candidates")
-    primary_metrics = (
-        (primary_metric,) if isinstance(primary_metric, str) else tuple(primary_metric)
+    primary_metrics, required, paired, metric_contract = _prepare_metric_contract(
+        directions, primary_metric, required_metrics, paired_metrics, nullable_metrics
     )
-    _validate_metric_contract(directions, primary_metrics)
-    required = tuple(required_metrics) if required_metrics is not None else tuple(directions)
-    paired = tuple(paired_metrics) if paired_metrics is not None else tuple(directions)
-    unknown_required = sorted(set(required) - set(directions))
-    if unknown_required:
-        raise ValueError("Required metrics have no declared direction: " + ", ".join(unknown_required))
-    unknown_paired = sorted(set(paired) - set(directions))
-    if unknown_paired:
-        raise ValueError("Paired metrics have no declared direction: " + ", ".join(unknown_paired))
-    unknown_nullable = sorted(set(nullable_metrics) - set(required))
-    if unknown_nullable:
-        raise ValueError(
-            "Nullable metrics are not required metrics: " + ", ".join(unknown_nullable)
-        )
     run_name = (
         f"{run_name_prefix or f'{plan.suite}-{plan.stage}'}-"
         f"{time.strftime('%Y%m%d-%H%M%S')}"
@@ -167,12 +153,6 @@ def run_benchmark(
     }
     plan_path = directory / "plan.json"
     provenance_path = directory / "provenance.json"
-    metric_contract = {
-        "primary_metrics": list(primary_metrics),
-        "directions": dict(directions),
-        "required_metrics": list(required),
-        "paired_metrics": list(paired),
-    }
     plan_payload = {**asdict(plan), "metric_contract": metric_contract}
     atomic_write_json(plan_path, plan_payload)
     atomic_write_json(provenance_path, provenance)
@@ -260,7 +240,6 @@ def run_benchmark(
             )
 
         successful = [result for result in results if result.status == "success"]
-        failed = [result for result in results if result.status == "failed"]
         problems = _completion_problems(results)
         complete = not problems
         paired_comparisons_payload = (
@@ -289,87 +268,107 @@ def run_benchmark(
                 complete = False
         for path in custom_parent_artifacts:
             tracking.artifact(path)
-        summary = {
-            "run_id": run_id,
-            "fingerprint": run_fingerprint,
-            "mlflow_run_id": mlflow_run_id,
-            "plan": asdict(plan),
-            "metric_contract": metric_contract,
-            "provenance": provenance,
-            "candidates": [_payload(result, include_samples=False) for result in results],
-            "paired_comparisons": paired_comparisons_payload,
-            "parent_artifacts": [
-                {"name": path.name, "sha256": sha256_file(path)}
-                for path in custom_parent_artifacts
-            ],
-            "protocols": {
-                name: protocol.artifact_payload()
-                for name, protocol in protocol_values.items()
-            },
-            "complete": complete,
-            "completion": {
-                "planned_candidates": len(plan.candidates),
-                "successful_candidates": len(successful),
-                "failed_candidates": len(failed),
-                "sample_count": len(successful[0].samples) if successful else 0,
-                "problems": problems,
-            },
-            "selection": {
-                "made_by_runner": False,
-                "instruction": (
-                    "Review the MLflow child runs and artifacts. After a complete non-smoke "
-                    "run, record any advancement in a separate engineer-decision JSON file."
-                ),
-            },
+        result = BenchmarkResult(
+            run_id, plan, provenance, tuple(results), complete, tuple(problems), directory
+        )
+        _finalize_parent_run(
+            result,
+            tracking,
+            run_fingerprint,
+            mlflow_run_id,
+            metric_contract,
+            paired_comparisons_payload,
+            custom_parent_artifacts,
+            protocol_values,
+            operational_prefix,
+            paired_comparisons,
+        )
+    return result
+
+
+def _finalize_parent_run(
+    result: BenchmarkResult,
+    tracking,
+    fingerprint: str,
+    mlflow_run_id: str,
+    metric_contract: Mapping[str, object],
+    comparisons: Sequence[Mapping[str, object]],
+    parent_artifacts: Sequence[Path],
+    protocols: Mapping[str, ProtocolMetadata],
+    operational_prefix: str,
+    write_comparisons: bool,
+) -> None:
+    successful = [candidate for candidate in result.candidates if candidate.status == "success"]
+    failed_count = sum(candidate.status == "failed" for candidate in result.candidates)
+    summary = {
+        "run_id": result.run_id,
+        "fingerprint": fingerprint,
+        "mlflow_run_id": mlflow_run_id,
+        "plan": asdict(result.plan),
+        "metric_contract": metric_contract,
+        "provenance": result.provenance,
+        "candidates": [_payload(candidate, include_samples=False) for candidate in result.candidates],
+        "paired_comparisons": comparisons,
+        "parent_artifacts": [
+            {"name": path.name, "sha256": sha256_file(path)} for path in parent_artifacts
+        ],
+        "protocols": {name: protocol.artifact_payload() for name, protocol in protocols.items()},
+        "complete": result.complete,
+        "completion": {
+            "planned_candidates": len(result.plan.candidates),
+            "successful_candidates": len(successful),
+            "failed_candidates": failed_count,
+            "sample_count": len(successful[0].samples) if successful else 0,
+            "problems": list(result.completion_problems),
+        },
+        "selection": {
+            "made_by_runner": False,
+            "instruction": (
+                "Review the MLflow child runs and artifacts. After a complete non-smoke "
+                "run, record any advancement in a separate engineer-decision JSON file."
+            ),
+        },
+    }
+    directory = result.artifact_directory
+    summary_path = directory / "summary.json"
+    leaderboard_path = directory / "leaderboard.parquet"
+    pd.DataFrame(
+        [
+            {
+                "candidate": candidate.candidate,
+                **candidate.metrics,
+                **{
+                    f"{operational_prefix}{name}": value
+                    for name, value in candidate.operational.items()
+                },
+            }
+            for candidate in successful
+        ]
+    ).to_parquet(leaderboard_path, index=False)
+    atomic_write_json(summary_path, summary)
+    paths = [leaderboard_path, summary_path]
+    if write_comparisons:
+        paired_path = directory / "paired_comparisons.json"
+        atomic_write_json(paired_path, comparisons)
+        paths.insert(1, paired_path)
+    for path in paths:
+        tracking.artifact(path)
+    tracking.metrics(
+        {
+            "benchmark_complete": float(result.complete),
+            "planned_candidates": float(len(result.plan.candidates)),
+            "successful_candidates": float(len(successful)),
+            "failed_candidates": float(failed_count),
         }
-        summary_path = directory / "summary.json"
-        leaderboard_path = directory / "leaderboard.parquet"
-        pd.DataFrame(
-            [
-                {
-                    "candidate": candidate.candidate,
-                    **candidate.metrics,
-                    **{
-                        f"{operational_prefix}{name}": value
-                        for name, value in candidate.operational.items()
-                    },
-                }
-                for candidate in successful
-            ]
-        ).to_parquet(leaderboard_path, index=False)
-        atomic_write_json(summary_path, summary)
-        parent_paths = [leaderboard_path, summary_path]
-        if paired_comparisons:
-            paired_path = directory / "paired_comparisons.json"
-            atomic_write_json(paired_path, paired_comparisons_payload)
-            parent_paths.insert(1, paired_path)
-        for path in parent_paths:
-            tracking.artifact(path)
-        tracking.metrics(
-            {
-                "benchmark_complete": float(complete),
-                "planned_candidates": float(len(plan.candidates)),
-                "successful_candidates": float(len(successful)),
-                "failed_candidates": float(len(failed)),
-            }
-        )
-        tracking.tags(
-            {
-                "benchmark.valid": str(complete).lower(),
-                "validation.status": "passed" if complete else "failed",
-            }
-        )
-        if not complete:
-            tracking.mark_failed()
-    return BenchmarkResult(
-        run_id,
-        plan,
-        provenance,
-        tuple(results),
-        complete,
-        tuple(problems),
-        directory,
     )
+    tracking.tags(
+        {
+            "benchmark.valid": str(result.complete).lower(),
+            "validation.status": "passed" if result.complete else "failed",
+        }
+    )
+    if not result.complete:
+        tracking.mark_failed()
 
 
 def _run_candidate(
@@ -401,6 +400,7 @@ def _run_candidate(
     resource_parameters: dict[str, object] = {}
     artifact_names: list[str] = []
     sample_artifact_path: Path | None = None
+    temporary_directory: Path | None = None
     resource_rows: list[dict[str, object]] = []
     fingerprint = stable_hash({"run": run_fingerprint, "candidate": candidate})
     protocol_parameters = (
@@ -417,6 +417,13 @@ def _run_candidate(
     )
     candidate_parameters.update(protocol_parameters)
     with tracking.run(candidate, nested=True) as child_run_id:
+        def evaluate():
+            return (
+                evaluator(candidate, {"mlflow_run_id": child_run_id})
+                if evaluator_receives_context
+                else evaluator(candidate)
+            )
+
         try:
             tracking.parameters(
                 {
@@ -449,11 +456,7 @@ def _run_candidate(
                 evaluation_failed = False
                 try:
                     with _temporary_environment(temporary_directory), resources:
-                        evaluated = (
-                            evaluator(candidate, {"mlflow_run_id": child_run_id})
-                            if evaluator_receives_context
-                            else evaluator(candidate)
-                        )
+                        evaluated = evaluate()
                 except BaseException:
                     evaluation_failed = True
                     raise
@@ -469,11 +472,7 @@ def _run_candidate(
                             raise
             else:
                 with _temporary_environment(temporary_directory):
-                    evaluated = (
-                        evaluator(candidate, {"mlflow_run_id": child_run_id})
-                        if evaluator_receives_context
-                        else evaluator(candidate)
-                    )
+                    evaluated = evaluate()
             samples = list(evaluated[0])
             operational = {**dict(evaluated[1]), **operational}
             candidate_metrics = dict(evaluated[2]) if len(evaluated) >= 3 else {}
@@ -537,21 +536,7 @@ def _run_candidate(
                 mlflow_run_id=child_run_id,
                 parameters=candidate_parameters,
             )
-            tracking.metrics(
-                {
-                    key: value
-                    for key, value in {
-                    **metrics,
-                    **{
-                        f"{name}.ci_{bound}": values[bound]
-                        for name, values in intervals.items()
-                        for bound in ("lower", "upper")
-                    },
-                    **{f"{operational_prefix}{key}": value for key, value in operational.items()},
-                    }.items()
-                    if _finite_number(value)
-                }
-            )
+            tracking.metrics(_reported_metrics(metrics, operational, operational_prefix, intervals))
             tracking.parameters({"candidate_status": "success"})
             tracking.tags(
                 {"benchmark.valid": "true", "validation.status": "passed"}
@@ -566,8 +551,6 @@ def _run_candidate(
             tracking.artifact(candidate_path)
             return result
         except CandidateExecutionError as exc:
-            if "temporary_directory" in locals():
-                shutil.rmtree(temporary_directory, ignore_errors=True)
             samples = list(exc.samples)
             metrics = dict(exc.metrics)
             intervals = dict(exc.intervals)
@@ -577,107 +560,54 @@ def _run_candidate(
                 **resource_parameters,
                 **protocol_parameters,
             }
-            tracking.parameters(
-                {
-                    **candidate_parameters,
-                    "candidate_status": "failed",
-                    "candidate_error": str(exc),
-                }
-            )
             artifact_payloads = dict(exc.artifacts)
             if resource_artifact_name and resource_rows:
                 artifact_payloads.setdefault(resource_artifact_name, resource_rows)
             if samples and sample_artifact_name not in artifact_payloads:
                 artifact_payloads[sample_artifact_name] = _sample_rows(samples)
+            error = str(exc)
+            structured_failure = True
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            structured_failure = False
+
+        if temporary_directory is not None:
+            shutil.rmtree(temporary_directory, ignore_errors=True)
+        if structured_failure:
             written = _persist_candidate_artifacts(
                 directory, candidate, artifact_payloads, tracking
             )
             artifact_names.extend(path.name for path in written.values())
-            result = CandidateResult(
-                candidate,
-                "failed",
-                fingerprint,
-                metrics,
-                intervals,
-                tuple(samples),
-                operational,
-                str(exc),
-                child_run_id,
-                candidate_parameters,
+            tracking.parameters(
+                {**candidate_parameters, "candidate_status": "failed", "candidate_error": error}
             )
-            partial_metrics = {
-                **metrics,
-                **{
-                    f"{operational_prefix}{key}": value
-                    for key, value in operational.items()
-                },
-            }
-            tracking.metrics(
-                {
-                    key: float(value)
-                    for key, value in partial_metrics.items()
-                    if _finite_number(value)
-                }
-            )
-            candidate_path = _write_candidate_result(
-                directory,
-                candidate,
-                candidate_artifact_name,
-                result,
-                artifact_names,
-            )
-            tracking.artifact(candidate_path)
-            tracking.tags(
-                {"benchmark.valid": "false", "validation.status": "failed"},
-            )
-            tracking.mark_failed()
-            return result
-        except Exception as exc:
-            if "temporary_directory" in locals():
-                shutil.rmtree(temporary_directory, ignore_errors=True)
-            error = f"{type(exc).__name__}: {exc}"
-            result = CandidateResult(
-                candidate,
-                "failed",
-                fingerprint,
-                metrics,
-                intervals,
-                tuple(samples),
-                operational,
-                error,
-                child_run_id,
-                candidate_parameters,
-            )
+        else:
             tracking.parameters({"candidate_status": "failed", "candidate_error": error})
-            tracking.tags(
-                {"benchmark.valid": "false", "validation.status": "failed"}
-            )
-            partial_metrics = {
-                **metrics,
-                **{f"{operational_prefix}{key}": value for key, value in operational.items()},
-            }
-            tracking.metrics(
-                {
-                    key: float(value)
-                    for key, value in partial_metrics.items()
-                    if _finite_number(value)
-                }
-            )
             if samples:
                 if sample_artifact_path is None:
                     sample_artifact_path = _write_samples(directory, candidate, samples)
                     artifact_names.append(sample_artifact_path.name)
                 tracking.artifact(sample_artifact_path)
-            candidate_path = _write_candidate_result(
-                directory,
-                candidate,
-                candidate_artifact_name,
-                result,
-                artifact_names,
-            )
-            tracking.artifact(candidate_path)
-            tracking.mark_failed()
-            return result
+        result = CandidateResult(
+            candidate,
+            "failed",
+            fingerprint,
+            metrics,
+            intervals,
+            tuple(samples),
+            operational,
+            error,
+            child_run_id,
+            candidate_parameters,
+        )
+        tracking.metrics(_reported_metrics(metrics, operational, operational_prefix))
+        tracking.tags({"benchmark.valid": "false", "validation.status": "failed"})
+        candidate_path = _write_candidate_result(
+            directory, candidate, candidate_artifact_name, result, artifact_names
+        )
+        tracking.artifact(candidate_path)
+        tracking.mark_failed()
+        return result
 
 
 def _sample_rows(samples: list[SampleResult]) -> list[dict[str, object]]:
@@ -811,6 +741,37 @@ def _validate_metric_contract(
         )
 
 
+def _prepare_metric_contract(
+    directions: Mapping[str, str],
+    primary_metric: str | Sequence[str],
+    required_metrics: Sequence[str] | None,
+    paired_metrics: Sequence[str] | None,
+    nullable_metrics: Sequence[str],
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], dict[str, object]]:
+    primary = (primary_metric,) if isinstance(primary_metric, str) else tuple(primary_metric)
+    _validate_metric_contract(directions, primary)
+    required = tuple(required_metrics) if required_metrics is not None else tuple(directions)
+    paired = tuple(paired_metrics) if paired_metrics is not None else tuple(directions)
+    unknown_required = sorted(set(required) - set(directions))
+    if unknown_required:
+        raise ValueError("Required metrics have no declared direction: " + ", ".join(unknown_required))
+    unknown_paired = sorted(set(paired) - set(directions))
+    if unknown_paired:
+        raise ValueError("Paired metrics have no declared direction: " + ", ".join(unknown_paired))
+    unknown_nullable = sorted(set(nullable_metrics) - set(required))
+    if unknown_nullable:
+        raise ValueError(
+            "Nullable metrics are not required metrics: " + ", ".join(unknown_nullable)
+        )
+    contract = {
+        "primary_metrics": list(primary),
+        "directions": dict(directions),
+        "required_metrics": list(required),
+        "paired_metrics": list(paired),
+    }
+    return primary, required, paired, contract
+
+
 def _validate_operational_maximums(
     operational: Mapping[str, float], maximums: Mapping[str, float]
 ) -> None:
@@ -886,6 +847,24 @@ def _validate_required_metrics(
 
 def _finite_number(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _reported_metrics(
+    metrics: Mapping[str, float | None],
+    operational: Mapping[str, float],
+    prefix: str,
+    intervals: Mapping[str, Mapping[str, float]] | None = None,
+) -> dict[str, float]:
+    values = {
+        **metrics,
+        **{
+            f"{name}.ci_{bound}": bounds[bound]
+            for name, bounds in (intervals or {}).items()
+            for bound in ("lower", "upper")
+        },
+        **{f"{prefix}{name}": value for name, value in operational.items()},
+    }
+    return {name: float(value) for name, value in values.items() if _finite_number(value)}
 
 
 def _completion_problems(results: list[CandidateResult]) -> list[str]:
