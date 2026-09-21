@@ -5,7 +5,7 @@
 - Reworked the documentation hierarchy around project purpose, architecture,
   setup, experiment methodology, exact metrics, and one benchmark runbook;
   removed duplicate stage pages and command copies.
-- Aligned production with Docling Standard, Whisper `small.en`, MiniLM, Chroma HTTP,
+- Aligned production with Docling Standard, Whisper `small.en`, GTE ModernBERT, Chroma HTTP,
   and direct pinned Hugging Face Qwen3 1.7B controls.
 - Kept experiment implementation, candidates, metrics, and MLflow logging under
   `experiments/benchmarks`, with all reader documentation centralized in `docs/`.
@@ -15,6 +15,7 @@
 - Split application and benchmark dependencies into separate lock files.
 - Added direct document and audio extraction benchmarks, RAG benchmarks, and a
   four-server vector-database benchmark with per-sample artifacts and confidence
-  intervals; the authoritative video strategy sequence remains pending.
+  intervals. The video strategy code is implemented; authoritative data and
+  selection runs remain pending.
 - Made the approved selection evidence authoritative for model preparation and removed
   retired candidate registries, model locks, and serving-specific generation code.
