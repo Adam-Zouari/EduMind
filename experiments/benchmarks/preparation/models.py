@@ -24,7 +24,7 @@ MODEL_COMPONENTS = frozenset(
 RAG_COMPONENTS = frozenset({"embedding", "reranker", "generator", "evaluator"})
 EMBEDDING_COMPONENTS = frozenset({"embedding"})
 EXTRACTION_COMPONENTS = frozenset({"asr", "document_extraction"})
-EMBEDDING_SNAPSHOT_IGNORE_PATTERNS = (
+INFERENCE_SNAPSHOT_IGNORE_PATTERNS = (
     "onnx/**",
     "openvino/**",
     "*.gguf",
@@ -94,11 +94,7 @@ def prepare_selected_models(
     for candidate in selected:
         entry = entries[candidate]
         snapshots = snapshot_specs(entry)
-        ignore_patterns = (
-            EMBEDDING_SNAPSHOT_IGNORE_PATTERNS
-            if entry.component == "embedding"
-            else ()
-        )
+        ignore_patterns = snapshot_ignore_patterns(entry.component)
         downloaded: list[dict[str, str]] = []
         for repository, revision, role in snapshots:
             local_directory = cache_directory / repository.replace("/", "--")
@@ -149,6 +145,14 @@ def prepare_selected_models(
 def selected_model_names(components: frozenset[str]) -> tuple[str, ...]:
     return tuple(
         entry.candidate for entry in selection_entries() if entry.component in components
+    )
+
+
+def snapshot_ignore_patterns(component: str) -> tuple[str, ...]:
+    return (
+        INFERENCE_SNAPSHOT_IGNORE_PATTERNS
+        if component in {"embedding", "reranker"}
+        else ()
     )
 
 

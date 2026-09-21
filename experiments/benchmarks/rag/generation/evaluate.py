@@ -113,7 +113,14 @@ def evaluate_candidate(
         str(model_lock["vectara/hallucination_evaluation_model"]["model_path"])
     )
     retrieval_reranker = (
-        reranker_for(retrieval_method, model_lock) if final_index is not None else None
+        reranker_for(
+            retrieval_method,
+            model_lock,
+            device=device,
+            dtype="float16" if device == "cuda" else "float32",
+        )
+        if final_index is not None
+        else None
     )
     context_cache: dict[str, tuple[list[RetrievalHit], str, float]] = {}
     context_questions = questions[:1] if final_index is not None else questions
@@ -342,40 +349,24 @@ def _retrieved_hits(question, index, method, top_k, reranker) -> tuple[list[Retr
     started = time.perf_counter()
     positions = rank(index, str(question["question"]), method, reranker)
     hits = []
-    used_tokens = 0
-    for position in positions:
-        if len(hits) >= top_k or used_tokens >= 2048:
-            break
+    for position in positions[:top_k]:
         chunk = index.chunks[position]
-        remaining = 2048 - used_tokens
-        text = chunk.text
-        end = chunk.end
-        tokens = chunk.tokens
-        if tokens > remaining:
-            spans = index.tokenizer.spans(text)
-            if not spans or remaining <= 0:
-                break
-            end_offset = spans[min(remaining, len(spans)) - 1][1]
-            text = text[:end_offset]
-            end = chunk.start + end_offset
-            tokens = min(remaining, len(spans))
         hits.append(
             RetrievalHit(
                 chunk.identifier,
-                text,
+                chunk.text,
                 {
                     "source": chunk.document_id,
                     "document_id": chunk.document_id,
                     "start": chunk.start,
-                    "end": end,
+                    "end": chunk.end,
                 },
                 1.0,
                 len(hits) + 1,
                 method,
-                tokens,
+                chunk.tokens,
             )
         )
-        used_tokens += tokens
     return hits, "\n\n".join(hit.document for hit in hits), time.perf_counter() - started
 
 

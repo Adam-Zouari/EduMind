@@ -12,6 +12,7 @@ from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
+from experiments.benchmarks.rag.chunking_embedding.profiles import split_candidate
 from experiments.benchmarks.rag.evaluation import RETRIEVAL_QUALITY_DIRECTIONS, build_index
 from experiments.benchmarks.rag.generation.evaluate import GENERATION_DIRECTIONS, evaluate_candidate
 
@@ -61,18 +62,28 @@ candidates = resolved_candidates(
 if arguments.shortlist is None and (arguments.retrieval_selection or arguments.generation_selection):
     if not arguments.retrieval_selection or not arguments.generation_selection:
         raise ValueError("Provide both --retrieval-selection and --generation-selection")
-    retrievals = load_engineer_decision(
+    retrieval_decision = load_engineer_decision(
         arguments.retrieval_selection,
         maximum=3,
-        expected_source=("rag", "retrieval", "full"),
-    ).selected_candidates
+        expected_source=("rag", "retrieval-reranking", "validation"),
+    )
+    retrievals = retrieval_decision.selected_candidates
+    retrieval_summary = json.loads(
+        retrieval_decision.source_summary.read_text(encoding="utf-8")
+    )
+    selected_pair = str(
+        retrieval_summary.get("plan", {})
+        .get("settings", {})
+        .get("chunker_embedding", "")
+    )
+    split_candidate(selected_pair)
     generators = load_engineer_decision(
         arguments.generation_selection,
         maximum=3,
         expected_source=("rag", "generation", "full"),
     ).selected_candidates
     candidates = tuple(
-        f"{retrieval}@@{generator}@@top_k={top_k}"
+        f"{selected_pair.replace('|', '@@', 1)}@@{retrieval}@@{generator}@@top_k={top_k}"
         for retrieval in retrievals
         for generator in generators
         for top_k in (3, 5)

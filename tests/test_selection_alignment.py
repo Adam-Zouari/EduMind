@@ -14,13 +14,14 @@ from experiments.benchmarks.preparation.models import (
     APP_CANDIDATES,
     DOCLING_BENCHMARK_COMPONENTS,
     EMBEDDING_COMPONENTS,
-    EMBEDDING_SNAPSHOT_IGNORE_PATTERNS,
+    INFERENCE_SNAPSHOT_IGNORE_PATTERNS,
     EXTRACTION_COMPONENTS,
     MODEL_COMPONENTS,
     RAG_COMPONENTS,
     preparation_plan,
     load_selected_model_lock,
     selected_model_names,
+    snapshot_ignore_patterns,
     snapshot_specs,
 )
 from experiments.benchmarks.rag.chunking_embedding.profiles import (
@@ -35,11 +36,11 @@ def test_selection_history_counts_and_keys_are_preserved() -> None:
         encoding="utf-8", newline=""
     ) as handle:
         rows = list(csv.DictReader(handle))
-    assert len(rows) == 66
-    assert len({(row["component"], row["candidate"]) for row in rows}) == 66
+    assert len(rows) == 68
+    assert len({(row["component"], row["candidate"]) for row in rows}) == 68
     assert Counter(row["decision"] for row in rows) == {
-        "include": 26,
-        "exclude": 40,
+        "include": 25,
+        "exclude": 43,
     }
     gte = next(
         row
@@ -126,20 +127,21 @@ def test_embedding_documentation_matches_executable_registry() -> None:
 
 
 def test_reranker_audio_and_document_registries_are_exact() -> None:
-    retrieval = set(
-        load_candidates(
-            ROOT / "experiments/benchmarks/rag/retrieval/candidates.yaml", "standard"
+    expected_retrieval = {
+        f"{retriever}|{reranker}"
+        for retriever in ("dense", "bm25", "rrf")
+        for reranker in (
+            "none",
+            "gte-modernbert",
+            "ettin-150m",
+            "ettin-400m",
+            "ettin-1b",
         )
-    )
-    assert retrieval == {
-        "dense",
-        "bm25",
-        "rrf",
-        "rrf-gte-modernbert-reranker",
-        "rrf-ettin-150m-reranker",
-        "rrf-ettin-400m-reranker",
-        "rrf-ettin-1b-reranker",
     }
+    registry = ROOT / "experiments/benchmarks/rag/retrieval/candidates.yaml"
+    assert set(load_candidates(registry, "smoke")) == expected_retrieval
+    assert set(load_candidates(registry, "development")) == expected_retrieval
+    assert len(expected_retrieval) == 15
     approved_asr = {
         "whisper-small-en-control",
         "canary-180m",
@@ -178,10 +180,13 @@ def test_preparation_plan_contains_only_approved_models_and_docling() -> None:
     assert {str(item["candidate"]) for item in plan} == approved | {"docling-standard"}
 
 
-def test_embedding_preparation_excludes_unused_export_formats() -> None:
-    assert "onnx/**" in EMBEDDING_SNAPSHOT_IGNORE_PATTERNS
-    assert "openvino/**" in EMBEDDING_SNAPSHOT_IGNORE_PATTERNS
-    assert "*.gguf" in EMBEDDING_SNAPSHOT_IGNORE_PATTERNS
+def test_embedding_and_reranker_preparation_excludes_unused_exports() -> None:
+    assert "onnx/**" in INFERENCE_SNAPSHOT_IGNORE_PATTERNS
+    assert "openvino/**" in INFERENCE_SNAPSHOT_IGNORE_PATTERNS
+    assert "*.gguf" in INFERENCE_SNAPSHOT_IGNORE_PATTERNS
+    assert snapshot_ignore_patterns("embedding") == INFERENCE_SNAPSHOT_IGNORE_PATTERNS
+    assert snapshot_ignore_patterns("reranker") == INFERENCE_SNAPSHOT_IGNORE_PATTERNS
+    assert snapshot_ignore_patterns("generator") == ()
 
 
 def test_stage_model_lock_ignores_unrequested_missing_models(tmp_path) -> None:

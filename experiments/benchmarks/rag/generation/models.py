@@ -10,10 +10,10 @@ from edumind.rag.contracts import GenerationProfile
 from edumind.rag.llm_generator import HuggingFaceGenerator
 
 GENERATOR_PROFILES = {
-    "qwen3-1.7b-control": ("Qwen/Qwen3-1.7B", False),
+    "falcon-h1-tiny-r-90m-control": ("tiiuae/Falcon-H1-Tiny-R-90M", True),
+    "qwen3-0.6b-reasoning": ("Qwen/Qwen3-0.6B", True),
+    "qwen3.5-0.8b-reasoning": ("Qwen/Qwen3.5-0.8B", True),
     "minicpm5-1b-reasoning": ("openbmb/MiniCPM5-1B", True),
-    "g9v3-3b-reasoning": ("ai9stars/G9v3-3B", True),
-    "qwen3.5-4b-reasoning": ("Qwen/Qwen3.5-4B", True),
 }
 
 
@@ -21,7 +21,7 @@ class BenchmarkGenerator(HuggingFaceGenerator):
     """Use candidate-specific architecture loaders only inside the experiment."""
 
     def _load_components(self, path: Path) -> tuple[Any, Any, Any, Any | None]:
-        if self.model_name != "Qwen/Qwen3.5-4B":
+        if self.model_name != "Qwen/Qwen3.5-0.8B":
             return super()._load_components(path)
         import torch
         from transformers import AutoModelForMultimodalLM, AutoProcessor
@@ -54,5 +54,8 @@ def generator_for(
         context_tokens=8192,
         maximum_answer_tokens=256,
     )
-    return BenchmarkGenerator(profile) if model == "Qwen/Qwen3.5-4B" else HuggingFaceGenerator(profile)
-
+    return (
+        BenchmarkGenerator(profile)
+        if model == "Qwen/Qwen3.5-0.8B"
+        else HuggingFaceGenerator(profile)
+    )

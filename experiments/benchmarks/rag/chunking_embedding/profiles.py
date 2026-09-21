@@ -84,6 +84,13 @@ EXPERIMENTAL_EMBEDDING_SPECS: dict[str, EmbeddingSpec] = {
 }
 
 
+def split_candidate(candidate: str) -> tuple[str, str]:
+    parts = candidate.split("|", 1)
+    if len(parts) != 2 or not all(parts):
+        raise ValueError(f"Malformed chunker/embedding pair: {candidate}")
+    return parts[0], parts[1]
+
+
 def embedding_spec(
     name: str,
     *,

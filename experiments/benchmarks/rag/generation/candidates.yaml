@@ -1,6 +1,6 @@
-smoke: [qwen3-1.7b-control]
+smoke: [falcon-h1-tiny-r-90m-control]
 standard:
-  - qwen3-1.7b-control
+  - falcon-h1-tiny-r-90m-control
+  - qwen3-0.6b-reasoning
+  - qwen3.5-0.8b-reasoning
   - minicpm5-1b-reasoning
-  - g9v3-3b-reasoning
-  - qwen3.5-4b-reasoning
