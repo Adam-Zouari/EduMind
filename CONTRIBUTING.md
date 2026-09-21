@@ -10,7 +10,7 @@
 1. Create a feature branch from `main`.
 2. Install the app and benchmark lock files in a fresh virtual environment.
 3. Install the source once with `python -m pip install -e . --no-deps`.
-4. Run the focused validity checks and the smoke script for the area you changed.
+4. Run the focused validity checks and the relevant benchmark's `--profile smoke` command.
 5. Keep generated outputs in `artifacts/`, not in Git.
 
 The repository intentionally has no Ruff, MyPy, coverage, or wheel-build gate.
