@@ -14,15 +14,10 @@ extraction:
     maximum_hybrid_gap_seconds: 10
 
 embedding:
+  # Pooling, dimension, similarity, prefixes, and native limit come from EmbeddingSpec.
   model_name: Alibaba-NLP/gte-modernbert-base
-  dimension: 768
   indexing_device: cpu
   query_device: cpu
-  query_prefix: ""
-  document_prefix: ""
-  normalize: true
-  similarity: cosine
-  maximum_length: 8192
   batch_size: 1
 
 chunking:

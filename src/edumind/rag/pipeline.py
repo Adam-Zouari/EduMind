@@ -48,22 +48,10 @@ class RAGPipeline:
             revision=embedding_snapshot.revision,
             local_path=str(embedding_snapshot.path),
         )
-        configured_contract = {
-            "dimension": self.settings.embedding.dimension,
-            "query_prefix": self.settings.embedding.query_prefix,
-            "document_prefix": self.settings.embedding.document_prefix,
-            "normalize": self.settings.embedding.normalize,
-            "similarity": self.settings.embedding.similarity,
-            "maximum_length": self.settings.embedding.maximum_length,
-        }
-        expected_contract = {key: getattr(self.embedding_spec, key) for key in configured_contract}
-        if configured_contract != expected_contract:
-            mismatches = [
-                key for key, value in configured_contract.items() if value != expected_contract[key]
-            ]
+        if self.settings.vector.distance_metric != self.embedding_spec.similarity:
             raise RAGConfigurationError(
-                "Embedding configuration violates the audited model contract for "
-                f"{self.embedding_spec.model_name}: {', '.join(mismatches)}"
+                "Vector distance metric does not match the embedding contract for "
+                f"{self.embedding_spec.model_name}: {self.embedding_spec.similarity}"
             )
         self.tokenizer = tokenizer or TiktokenOffsetTokenizer(
             self.settings.chunking.tokenizer

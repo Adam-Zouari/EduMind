@@ -96,8 +96,6 @@ def test_gte_production_contract_and_fixed_chunking_tokenizer() -> None:
 
     settings = load_settings(ROOT / "config/base.yaml")
     assert settings.embedding.model_name == PRODUCTION_EMBEDDING_MODEL
-    assert settings.embedding.dimension == spec.dimension
-    assert settings.embedding.maximum_length == spec.maximum_length
     assert settings.chunking.tokenizer == "cl100k_base"
     assert PRODUCTION_EMBEDDING_MODEL in APP_CANDIDATES
 

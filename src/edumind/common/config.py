@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -20,86 +21,80 @@ class ConfigurationError(ValueError):
 
 @dataclass(frozen=True)
 class VideoSettings:
-    keyframe_strategy: str = "hybrid"
-    fixed_interval_seconds: float = 10.0
-    scene_threshold: float = 0.35
-    maximum_hybrid_gap_seconds: float = 10.0
+    keyframe_strategy: str
+    fixed_interval_seconds: float
+    scene_threshold: float
+    maximum_hybrid_gap_seconds: float
 
 
 @dataclass(frozen=True)
 class ExtractionSettings:
-    cache_enabled: bool = True
-    cache_directory: Path = Path("artifacts/extraction/cache")
-    maximum_upload_bytes: int = 100 * 1024 * 1024
-    video: VideoSettings = field(default_factory=VideoSettings)
+    cache_enabled: bool
+    cache_directory: Path
+    maximum_upload_bytes: int
+    video: VideoSettings
 
 
 @dataclass(frozen=True)
 class ModelSettings:
-    lock_path: Path = Path("data/benchmarks/models/selected.json")
+    lock_path: Path
 
 
 @dataclass(frozen=True)
 class EmbeddingSettings:
-    model_name: str = "Alibaba-NLP/gte-modernbert-base"
-    dimension: int = 768
-    indexing_device: str = "cpu"
-    query_device: str = "cpu"
-    query_prefix: str = ""
-    document_prefix: str = ""
-    normalize: bool = True
-    similarity: str = "cosine"
-    maximum_length: int = 8192
-    batch_size: int = 1
+    model_name: str
+    indexing_device: str
+    query_device: str
+    batch_size: int
 
 
 @dataclass(frozen=True)
 class ChunkingSettings:
-    strategy: str = "token"
-    chunk_size: int = 256
-    chunk_overlap: int = 32
-    tokenizer: str = "cl100k_base"
+    strategy: str
+    chunk_size: int
+    chunk_overlap: int
+    tokenizer: str
 
 
 @dataclass(frozen=True)
 class VectorSettings:
-    backend: str = "chroma-server"
-    endpoint: str = "http://127.0.0.1:8001"
-    collection_name: str = "edumind"
-    distance_metric: str = "cosine"
+    backend: str
+    endpoint: str
+    collection_name: str
+    distance_metric: str
 
 
 @dataclass(frozen=True)
 class RetrievalSettings:
-    strategy: str = "dense"
-    top_k: int = 5
-    candidate_k: int = 20
-    context_token_budget: int = 2048
+    strategy: str
+    top_k: int
+    candidate_k: int
+    context_token_budget: int
 
 
 @dataclass(frozen=True)
 class GenerationSettings:
-    model_name: str = "Qwen/Qwen3-1.7B"
-    device: str = "cpu"
-    dtype: str = "auto"
-    reasoning: bool = False
-    temperature: float = 0.0
-    do_sample: bool = False
-    seed: int = 42
-    context_tokens: int = 8192
-    maximum_answer_tokens: int = 256
-    streamer_timeout_seconds: float = 600.0
+    model_name: str
+    device: str
+    dtype: str
+    reasoning: bool
+    temperature: float
+    do_sample: bool
+    seed: int
+    context_tokens: int
+    maximum_answer_tokens: int
+    streamer_timeout_seconds: float
 
 
 @dataclass(frozen=True)
 class Settings:
-    models: ModelSettings = field(default_factory=ModelSettings)
-    extraction: ExtractionSettings = field(default_factory=ExtractionSettings)
-    embedding: EmbeddingSettings = field(default_factory=EmbeddingSettings)
-    chunking: ChunkingSettings = field(default_factory=ChunkingSettings)
-    vector: VectorSettings = field(default_factory=VectorSettings)
-    retrieval: RetrievalSettings = field(default_factory=RetrievalSettings)
-    generation: GenerationSettings = field(default_factory=GenerationSettings)
+    models: ModelSettings
+    extraction: ExtractionSettings
+    embedding: EmbeddingSettings
+    chunking: ChunkingSettings
+    vector: VectorSettings
+    retrieval: RetrievalSettings
+    generation: GenerationSettings
 
 
 def default_config_path() -> Path:
@@ -155,207 +150,183 @@ def _apply_environment(raw: dict[str, Any]) -> None:
             raw.setdefault(section, {})[key] = value
 
 
-def _section(raw: Mapping[str, object], name: str) -> Mapping[str, object]:
-    value = raw.get(name, {})
+def _section(
+    raw: Mapping[str, object], name: str, fields: set[str]
+) -> Mapping[str, object]:
+    value = raw.get(name)
     if not isinstance(value, Mapping):
         raise ConfigurationError(f"'{name}' must be a mapping")
+    missing = fields - value.keys()
+    unknown = value.keys() - fields
+    if missing or unknown:
+        raise ConfigurationError(
+            f"Invalid '{name}' settings: missing {sorted(missing)}, "
+            f"unknown {sorted(unknown, key=str)}"
+        )
     return value
 
 
-def _integer(section: Mapping[str, object], key: str, default: int, minimum: int = 1) -> int:
-    value = section.get(key, default)
-    if isinstance(value, bool):
+def _integer(section: Mapping[str, object], key: str, minimum: int = 1) -> int:
+    value = section[key]
+    if type(value) is not int:
         raise ConfigurationError(f"'{key}' must be an integer")
-    try:
-        result = int(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError) as exc:
-        raise ConfigurationError(f"'{key}' must be an integer") from exc
-    if result < minimum:
+    if value < minimum:
         raise ConfigurationError(f"'{key}' must be >= {minimum}")
-    return result
+    return value
 
 
-def _path(value: object, default: Path) -> Path:
-    path = Path(value if isinstance(value, (str, Path)) else default).expanduser()
+def _path(value: object) -> Path:
+    if not isinstance(value, (str, Path)) or not str(value).strip():
+        raise ConfigurationError("Configured path must be a non-empty string")
+    path = Path(value).expanduser()
     return path if path.is_absolute() else (Path.cwd() / path).resolve()
 
 
 def _number(
-    section: Mapping[str, object], key: str, default: float, *, minimum: float = 0.0
+    section: Mapping[str, object], key: str, *, minimum: float = 0.0
 ) -> float:
-    value = section.get(key, default)
-    if isinstance(value, bool):
+    value = section[key]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ConfigurationError(f"'{key}' must be numeric")
     try:
-        result = float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError) as exc:
-        raise ConfigurationError(f"'{key}' must be numeric") from exc
-    if result < minimum:
+        result = float(value)
+    except OverflowError as exc:
+        raise ConfigurationError(f"'{key}' must be finite") from exc
+    if not math.isfinite(result) or result < minimum:
         raise ConfigurationError(f"'{key}' must be >= {minimum}")
     return result
 
 
-def _build(raw: Mapping[str, object]) -> Settings:
-    models = _section(raw, "models")
-    extraction = _section(raw, "extraction")
-    video = _section(extraction, "video")
-    embedding = _section(raw, "embedding")
-    chunking = _section(raw, "chunking")
-    vector = _section(raw, "vector")
-    retrieval = _section(raw, "retrieval")
-    generation = _section(raw, "generation")
+def _boolean(section: Mapping[str, object], key: str) -> bool:
+    value = section[key]
+    if not isinstance(value, bool):
+        raise ConfigurationError(f"'{key}' must be a boolean")
+    return value
 
-    unknown_models = sorted(set(models) - {"lock_path"})
-    if unknown_models:
-        raise ConfigurationError("Unknown model settings: " + ", ".join(unknown_models))
-    if "model_lock_path" in extraction:
+
+def _string(section: Mapping[str, object], key: str) -> str:
+    value = section[key]
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigurationError(f"'{key}' must be a non-empty string")
+    return value
+
+
+def _build(raw: Mapping[str, object]) -> Settings:
+    sections = {
+        "models", "extraction", "embedding", "chunking", "vector", "retrieval",
+        "generation",
+    }
+    missing = sections - raw.keys()
+    unknown = raw.keys() - sections
+    if missing or unknown:
         raise ConfigurationError(
-            "extraction.model_lock_path was replaced by models.lock_path"
+            f"Invalid configuration sections: missing {sorted(missing)}, "
+            f"unknown {sorted(unknown, key=str)}"
         )
-    unknown_extraction = sorted(
-        set(extraction)
-        - {"cache_enabled", "cache_directory", "maximum_upload_bytes", "video"}
+    models = _section(raw, "models", {"lock_path"})
+    extraction = _section(
+        raw, "extraction",
+        {"cache_enabled", "cache_directory", "maximum_upload_bytes", "video"},
     )
-    if unknown_extraction:
-        raise ConfigurationError(
-            "Unknown extraction settings: " + ", ".join(unknown_extraction)
-        )
-    unknown_video = sorted(
-        set(video)
-        - {
-            "keyframe_strategy",
-            "fixed_interval_seconds",
-            "scene_threshold",
-            "maximum_hybrid_gap_seconds",
-        }
+    video = _section(
+        extraction, "video",
+        {"keyframe_strategy", "fixed_interval_seconds", "scene_threshold", "maximum_hybrid_gap_seconds"},
     )
-    if unknown_video:
-        raise ConfigurationError(
-            "Unknown extraction.video settings: " + ", ".join(unknown_video)
-        )
-    video_strategy = str(video.get("keyframe_strategy", "hybrid"))
+    embedding = _section(
+        raw, "embedding", {"model_name", "indexing_device", "query_device", "batch_size"},
+    )
+    chunking = _section(
+        raw, "chunking", {"strategy", "chunk_size", "chunk_overlap", "tokenizer"},
+    )
+    vector = _section(
+        raw, "vector", {"backend", "endpoint", "collection_name", "distance_metric"},
+    )
+    retrieval = _section(
+        raw, "retrieval", {"strategy", "top_k", "candidate_k", "context_token_budget"},
+    )
+    generation = _section(
+        raw, "generation",
+        {
+            "model_name", "device", "dtype", "reasoning", "temperature", "do_sample",
+            "seed", "context_tokens", "maximum_answer_tokens", "streamer_timeout_seconds",
+        },
+    )
+
+    video_strategy = _string(video, "keyframe_strategy")
     if video_strategy not in {"fixed", "scene", "hybrid"}:
         raise ConfigurationError(
             "extraction.video.keyframe_strategy must be fixed, scene, or hybrid"
         )
-    scene_threshold = _number(video, "scene_threshold", 0.35)
+    scene_threshold = _number(video, "scene_threshold")
     if scene_threshold > 1:
         raise ConfigurationError("extraction.video.scene_threshold must be <= 1")
-    obsolete_embedding = sorted({"revision", "model_path"} & embedding.keys())
-    if obsolete_embedding:
-        raise ConfigurationError(
-            "Embedding snapshots are resolved through models.lock_path; remove: "
-            + ", ".join(obsolete_embedding)
-        )
 
-    allowed_generation_keys = {
-        "model_name",
-        "device",
-        "dtype",
-        "reasoning",
-        "temperature",
-        "do_sample",
-        "seed",
-        "context_tokens",
-        "maximum_answer_tokens",
-        "streamer_timeout_seconds",
-    }
-    unknown_generation = sorted(set(generation) - allowed_generation_keys)
-    if unknown_generation:
-        raise ConfigurationError(
-            "Unknown direct Hugging Face generation settings: "
-            + ", ".join(unknown_generation)
-        )
-
-    obsolete_vector_keys = {
-        "persist_directory",
-        "persistence_path",
-        "deployment_mode",
-        "embedded",
-        "local_path",
-    }
-    found_obsolete = sorted(obsolete_vector_keys & vector.keys())
-    if found_obsolete:
-        raise ConfigurationError(
-            "Embedded vector configuration was removed. Delete these keys and configure the "
-            f"Chroma HTTP endpoint instead: {', '.join(found_obsolete)}"
-        )
-
-    chunk_size = _integer(chunking, "chunk_size", 256)
-    chunk_overlap = _integer(chunking, "chunk_overlap", 32, 0)
+    chunk_size = _integer(chunking, "chunk_size")
+    chunk_overlap = _integer(chunking, "chunk_overlap", minimum=0)
     if chunk_overlap >= chunk_size:
         raise ConfigurationError("chunk_overlap must be smaller than chunk_size")
-    chunking_strategy = str(chunking.get("strategy", "token"))
+    chunking_strategy = _string(chunking, "strategy")
     if chunking_strategy != "token":
         raise ConfigurationError("The provisional application supports only token chunking")
-    chunking_tokenizer = str(chunking.get("tokenizer", "cl100k_base"))
+    chunking_tokenizer = _string(chunking, "tokenizer")
     if chunking_tokenizer != "cl100k_base":
         raise ConfigurationError(
             "The provisional application supports only the frozen 'cl100k_base' "
             "chunking tokenizer"
         )
-    top_k = _integer(retrieval, "top_k", 5)
-    candidate_k = _integer(retrieval, "candidate_k", 20)
+    top_k = _integer(retrieval, "top_k")
+    candidate_k = _integer(retrieval, "candidate_k")
     if candidate_k < top_k:
         raise ConfigurationError("candidate_k must be >= top_k")
 
-    backend = str(vector.get("backend", "chroma-server"))
+    backend = _string(vector, "backend")
     if backend != "chroma-server":
         raise ConfigurationError("The provisional application supports only 'chroma-server'")
-    endpoint = str(vector.get("endpoint", "http://127.0.0.1:8001"))
-    parsed = urlparse(endpoint)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname or not parsed.port:
+    endpoint = _string(vector, "endpoint")
+    try:
+        parsed = urlparse(endpoint)
+        valid_port = parsed.port is not None
+    except ValueError as exc:
+        raise ConfigurationError("vector.endpoint is not a valid HTTP URL") from exc
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or not valid_port:
         raise ConfigurationError("vector.endpoint must be an HTTP URL with an explicit port")
-    strategy = str(retrieval.get("strategy", "dense"))
+    strategy = _string(retrieval, "strategy")
     if strategy != "dense":
         raise ConfigurationError("The provisional application supports only dense retrieval")
-    similarity = str(embedding.get("similarity", "cosine"))
-    distance = str(vector.get("distance_metric", "cosine"))
-    if similarity != distance or similarity not in {"cosine", "dot"}:
-        raise ConfigurationError("Embedding similarity and vector distance must match")
-    generation_device = str(generation.get("device", "cpu"))
+    distance = _string(vector, "distance_metric")
+    if distance not in {"cosine", "dot"}:
+        raise ConfigurationError("Unsupported vector distance metric")
+    generation_device = _string(generation, "device")
     if generation_device not in {"cpu", "cuda"}:
         raise ConfigurationError("generation.device must be 'cpu' or 'cuda'")
-    generation_dtype = str(generation.get("dtype", "auto"))
+    generation_dtype = _string(generation, "dtype")
     if generation_dtype != "auto":
         raise ConfigurationError("generation.dtype must be 'auto' for native checkpoints")
 
     return Settings(
         models=ModelSettings(
-            lock_path=_path(
-                models.get("lock_path"), Path("data/benchmarks/models/selected.json")
-            )
+            lock_path=_path(models["lock_path"])
         ),
         extraction=ExtractionSettings(
-            cache_enabled=bool(extraction.get("cache_enabled", True)),
-            cache_directory=_path(
-                extraction.get("cache_directory"), Path("artifacts/extraction/cache")
-            ),
-            maximum_upload_bytes=_integer(
-                extraction, "maximum_upload_bytes", 100 * 1024 * 1024
-            ),
+            cache_enabled=_boolean(extraction, "cache_enabled"),
+            cache_directory=_path(extraction["cache_directory"]),
+            maximum_upload_bytes=_integer(extraction, "maximum_upload_bytes"),
             video=VideoSettings(
                 keyframe_strategy=video_strategy,
                 fixed_interval_seconds=_number(
-                    video, "fixed_interval_seconds", 10.0, minimum=1e-9
+                    video, "fixed_interval_seconds", minimum=1e-9
                 ),
                 scene_threshold=scene_threshold,
                 maximum_hybrid_gap_seconds=_number(
-                    video, "maximum_hybrid_gap_seconds", 10.0, minimum=1e-9
+                    video, "maximum_hybrid_gap_seconds", minimum=1e-9
                 ),
             ),
         ),
         embedding=EmbeddingSettings(
-            model_name=str(embedding.get("model_name", EmbeddingSettings.model_name)),
-            dimension=_integer(embedding, "dimension", 768),
-            indexing_device=str(embedding.get("indexing_device", "cpu")),
-            query_device=str(embedding.get("query_device", "cpu")),
-            query_prefix=str(embedding.get("query_prefix", "")),
-            document_prefix=str(embedding.get("document_prefix", "")),
-            normalize=bool(embedding.get("normalize", True)),
-            similarity=similarity,
-            maximum_length=_integer(embedding, "maximum_length", 8192),
-            batch_size=_integer(embedding, "batch_size", 1),
+            model_name=_string(embedding, "model_name"),
+            indexing_device=_string(embedding, "indexing_device"),
+            query_device=_string(embedding, "query_device"),
+            batch_size=_integer(embedding, "batch_size"),
         ),
         chunking=ChunkingSettings(
             strategy=chunking_strategy,
@@ -366,29 +337,28 @@ def _build(raw: Mapping[str, object]) -> Settings:
         vector=VectorSettings(
             backend=backend,
             endpoint=endpoint,
-            collection_name=str(vector.get("collection_name", "edumind")),
+            collection_name=_string(vector, "collection_name"),
             distance_metric=distance,
         ),
         retrieval=RetrievalSettings(
             strategy=strategy,
             top_k=top_k,
             candidate_k=candidate_k,
-            context_token_budget=_integer(retrieval, "context_token_budget", 2048),
+            context_token_budget=_integer(retrieval, "context_token_budget"),
         ),
         generation=GenerationSettings(
-            model_name=str(generation.get("model_name", GenerationSettings.model_name)),
+            model_name=_string(generation, "model_name"),
             device=generation_device,
             dtype=generation_dtype,
-            reasoning=bool(generation.get("reasoning", False)),
-            temperature=float(generation.get("temperature", 0.0)),
-            do_sample=bool(generation.get("do_sample", False)),
-            seed=_integer(generation, "seed", 42, 0),
-            context_tokens=_integer(generation, "context_tokens", 8192),
-            maximum_answer_tokens=_integer(generation, "maximum_answer_tokens", 256),
+            reasoning=_boolean(generation, "reasoning"),
+            temperature=_number(generation, "temperature"),
+            do_sample=_boolean(generation, "do_sample"),
+            seed=_integer(generation, "seed", minimum=0),
+            context_tokens=_integer(generation, "context_tokens"),
+            maximum_answer_tokens=_integer(generation, "maximum_answer_tokens"),
             streamer_timeout_seconds=_number(
                 generation,
                 "streamer_timeout_seconds",
-                600.0,
                 minimum=1e-9,
             ),
         ),
