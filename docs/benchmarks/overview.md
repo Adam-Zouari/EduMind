@@ -68,7 +68,8 @@ silently reselected.
 Every independently executable benchmark has one strict, versioned
 `protocol.yaml` beside its runner. The protocol is the only editable source for
 settings that can change output, eligibility, timing, memory, or failure status.
-Candidate registries contain identities and execution-profile membership;
+Candidate rosters are defined in the protocol where configurable or generated
+from the supported adapters in code; no separate candidate registry is used.
 `data/benchmarks/models/selected.json` contains immutable model revisions, local
 snapshot paths, and checksums; manifests contain data and data provenance; and
 `config/base.yaml` contains provisional application settings. Benchmark runners

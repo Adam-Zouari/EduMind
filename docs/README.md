@@ -48,7 +48,8 @@ inputs:
 - `config/base.yaml` defines provisional production settings.
 - `experiments/benchmarks/selection_evidence.csv` defines included model
   identities and immutable revisions.
-- Each experiment's `candidates.yaml` defines its runtime matrix.
+- Each benchmark's `protocol.yaml` defines its settings and, where needed, its
+  candidate roster; fixed adapter support is defined in code.
 - Frozen dataset manifests define samples, splits, checksums, and provenance.
 - `data/benchmarks/models/selected.json` records prepared local model paths.
 - MLflow and run artifacts record what an experiment actually executed.

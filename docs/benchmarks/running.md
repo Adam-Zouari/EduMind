@@ -34,7 +34,8 @@ Failures remain visible rather than being silently skipped.
 
 - `smoke` uses tiny fixtures and checks only that the path executes. Its results
   are never selection evidence.
-- `development` runs the candidate registry for the stage on development data;
+- `development` runs the stage's protocol-defined or code-generated candidate
+  roster on development data;
   this is where comparison, tuning, and finalist selection happen.
 - `validation` runs only candidates explicitly selected by an engineer on unseen
   validation data. Most stages use

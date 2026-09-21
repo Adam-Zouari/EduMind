@@ -135,9 +135,9 @@ in the model lock.
 Downloads are resumable through Hugging Face and are placed in deterministic project directories. Preparation never substitutes a newer repository head when the pinned revision is unavailable.
 
 Benchmark `protocol.yaml` files do not download models and do not replace the
-model lock. Protocols define executable behavior; preparation resolves the
-model identities from candidate registries and writes immutable revisions,
-local snapshot paths, and checksums to
+model lock. Protocols define executable behavior and candidate rosters where
+needed. Preparation uses included entries in `selection_evidence.csv` and writes
+immutable revisions, local snapshot paths, and checksums to
 `data/benchmarks/models/selected.json`.
 
 ### RAG models

@@ -98,8 +98,9 @@ decision provenance, protocol settings, and MLflow artifacts use one vocabulary.
 
 Configuration files have separate responsibilities:
 
-- `candidates.yaml` stores aliases, model/backend identities where applicable,
-  and profile membership, but no search ranges or decoding parameters.
+- benchmark `protocol.yaml` files own executable settings and any candidate
+  roster that is genuinely configurable; code defines supported adapters and
+  generated candidate combinations. There are no separate candidate registries.
 - `data/benchmarks/models/selected.json` stores pinned revisions, snapshot
   locations, and checksums.
 - dataset manifests store samples, splits, annotations, and data provenance.

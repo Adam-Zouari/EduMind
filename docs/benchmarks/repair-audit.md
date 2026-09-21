@@ -184,8 +184,9 @@ Every independently executable benchmark now owns a strict, versioned
 `protocol.yaml`: document, ASR, video, chunking–embedding,
 retrieval–reranking, generation, Final RAG, and vector database. Resolved
 protocol checksums participate in run fingerprints and provenance; parent and
-child runs persist the exact settings they execute. Candidate registries retain
-identities and phase membership, while immutable model revisions and snapshot
+child runs persist the exact settings they execute. Candidate rosters now come
+from those protocols or fixed adapter support in code; the former separate
+candidate registries were removed. Immutable model revisions and snapshot
 checksums remain in the selected-model lock.
 
 The independent post-migration audit found and fixed these execution drifts:
