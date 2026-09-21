@@ -13,8 +13,8 @@ import pandas as pd
 
 from edumind.common.artifacts import atomic_write_json, stable_hash
 
-from .decisions import load_engineer_decision
-from .tracking import DEFAULT_TRACKING_URI
+from experiments.benchmarks.common.decisions import load_engineer_decision
+from experiments.benchmarks.common.tracking import DEFAULT_TRACKING_URI
 
 RUBRIC_FIELDS = (
     "human_faithfulness",

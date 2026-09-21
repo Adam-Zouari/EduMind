@@ -5,11 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-
-from experiments.benchmarks.common.review import export_review, import_review
+from experiments.benchmarks.rag.final.review import export_review, import_review
 from experiments.benchmarks.rag.final.protocol import (
     DEFAULT_PROTOCOL_PATH,
     load_protocol,
