@@ -1645,7 +1645,16 @@ latency and memory describe the deployable path. The frozen pool is reused only
 to guarantee a fair quality comparison. The no-reranker child measures the same
 live first stage without a learned reranker.
 
-All behavior-changing controls are frozen and logged. These include BM25
+The versioned `experiments/benchmarks/rag/retrieval/protocol.yaml` file is the
+single source of truth for benchmark hyperparameters. Its strict schema rejects
+missing or unknown fields. Algorithm definitions and deterministic tie-breaking
+remain tested code invariants rather than configurable alternatives. The runner
+checks the resolved protocol against the plan, records its checksum in every
+child, logs the source file as an input, and writes `retrieval_protocol.json`
+under the parent so a run can be reproduced without reconstructing settings
+from code defaults.
+
+The frozen controls include BM25
 tokenization, variant, `k1`, `b`, and tie breaking; Dense similarity,
 normalization, query formatting, and tie breaking; RRF source depth, fusion
 constant, union/truncation behavior, and tie breaking; and each reranker's model
@@ -1653,9 +1662,9 @@ ID, revision, cache checksum, input template, native tokenizer, maximum input
 length, batch size, score interpretation, device, dtype, and tie breaking.
 Truncation is forbidden.
 
-The target-hardware profile uses CUDA `float16`. Learned rerankers score the
-20 query-passage pairs sequentially with batch size `1`; the selected query
-embedder follows its frozen embedding batch contract. Qualification includes
+The target-hardware profile uses CUDA `float16`. The protocol fixes both
+embedding and reranker inference to batch size `1`; learned rerankers therefore
+score the 20 query-passage pairs sequentially. Qualification includes
 both components under the planned lifecycle and requires NVML-measured peak
 process VRAM at or below 3,584 MiB, preserving a 512 MiB reserve on the 4 GiB
 GPU. Per-candidate quantization, offload, fallback, or batch reduction is not an
@@ -1780,10 +1789,12 @@ MLflow experiment: EduMind / rag
 
 The parent parameters identify the phase, profile, manifest and checksum,
 selected chunker/embedding decision and fingerprint, exact 15-candidate plan,
-metric contract, seed, warmups, repetitions, model lock, Git/dependency
+metric contract, protocol version and checksum, seed, warmups, repetitions,
+model lock, Git/dependency
 provenance, and hardware. Its direct metrics are completion counts only. Parent
 artifacts are `plan.json`, `provenance.json`, `metric_contract.json`,
-`pool_index.json`, `leaderboard.parquet`, `retriever_comparisons.parquet`,
+`retrieval_protocol.json`, `pool_index.json`, `leaderboard.parquet`,
+`retriever_comparisons.parquet`,
 `retriever_comparisons.csv`, `reranker_comparisons.parquet`,
 `reranker_comparisons.csv`, and `summary.json`. Validation additionally stores
 `finalist_comparisons.parquet` and `finalist_comparisons.csv` when explicit

@@ -301,6 +301,16 @@ python experiments/benchmarks/rag/retrieval/run.py --profile validation `
   --shortlist RETRIEVAL_DECISION
 ```
 
+Both commands load
+`experiments/benchmarks/rag/retrieval/protocol.yaml` by default. Use
+`--protocol PATH` only for another reviewed protocol revision. The file owns
+pool depth, BM25/Dense/RRF settings, embedding and reranker batch sizes,
+reranker input limits, quality cutoffs, confidence settings, finalist limit,
+execution counts, hardware requirements, and the VRAM gate. Unknown or missing
+fields are fatal.
+The source file is logged as an input, and the resolved values plus checksum are
+stored as `retrieval_protocol.json` under the parent run.
+
 The development plan must contain exactly 15 direct candidate children: Dense,
 BM25, and RRF, each crossed with no reranker, GTE ModernBERT, Ettin 150M, Ettin
 400M, and Ettin 1B. The three `retriever|none` children own the checksummed
