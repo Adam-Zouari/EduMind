@@ -1,4 +1,4 @@
-"""Complete retrieval comparison for dense-benchmark finalists plus Chroma."""
+"""Compare complete retrieval across selected vector-database finalists."""
 
 from __future__ import annotations
 

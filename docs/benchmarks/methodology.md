@@ -1820,7 +1820,7 @@ The evidence-unit definitions, `tiktoken:cl100k_base` evaluation tokenizer,
 answerable-question eligibility, document-macro aggregation, confidence
 intervals, and text/table/formula/mixed slices are the same as in the
 chunking/embedding phase. Exact definitions and comparison rules are in
-[metrics.md](metrics.md#retrieval-and-reranking-quality).
+[metrics.md](metrics.md#retrieval-and-reranking).
 
 Hit Rate, MRR, MAP, binary chunk Precision/Recall, and a context-budget metric
 are not reported. They either repeat questions already answered by the primary

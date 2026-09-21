@@ -2436,7 +2436,7 @@ An nDCG@5 of `0.81` with a 95% confidence interval of `[0.77, 0.85]` means
 estimates its uncertainty. The interval does not describe the range of
 individual-question scores.
 
-## Retrieval and reranking quality
+## Retrieval and reranking
 
 This phase compares 15 complete `retriever|reranker` candidates: Dense, BM25, and
 RRF, each with no reranker or one of four learned rerankers. Quality uses the
