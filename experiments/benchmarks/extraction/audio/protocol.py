@@ -53,7 +53,6 @@ class AudioProtocol:
     confidence_level: float
     maximum_finalists: int
     authoritative_peak_vram_mb: float
-    resource_policy: Mapping[str, bool]
 
     def profile(self, name: str):
         return self.meta.profile(name)
@@ -172,7 +171,7 @@ def protocol_from_mapping(
     return AudioProtocol(
         metadata("audio", source_path, root, profiles=profiles), audio, decoding, candidates,
         alignment_threshold, speech_counts, conditions, exclusive_groups, reliability,
-        smoke_reliability, confidence, maximum_finalists, peak, policy,
+        smoke_reliability, confidence, maximum_finalists, peak,
     )
 
 

@@ -180,12 +180,12 @@ def main(argv: list[str] | None = None) -> int:
         arguments.profile,
         manifest.name,
         candidates,
-        seed=protocol.seed,
+        seed=protocol.meta.seed,
         repetitions=execution.repetitions,
         bootstrap_resamples=execution.bootstrap_resamples,
         warmups=execution.warmups,
         settings={
-            "retrieval_protocol": protocol.metadata(arguments.protocol).worker_payload(),
+            "retrieval_protocol": protocol.meta.worker_payload(),
             "chunking_embedding_protocol": chunking_protocol.meta.worker_payload(),
             "chunker_embedding": selected_pair,
             "chunker_embedding_decision_fingerprint": (
@@ -254,7 +254,7 @@ def main(argv: list[str] | None = None) -> int:
             "model_lock": model_lock_path,
         },
         protocols={
-            "retrieval": protocol.metadata(arguments.protocol),
+            "retrieval": protocol.meta,
             "chunking_embedding": chunking_protocol.meta,
         },
         no_mlflow=arguments.no_mlflow,

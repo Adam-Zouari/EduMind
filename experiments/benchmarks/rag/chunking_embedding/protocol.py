@@ -50,7 +50,6 @@ class ChunkingEmbeddingProtocol:
     smoke_pair: str
     embedding_batch_size: int
     similarity: str
-    normalize_vectors: bool
     stored_vector_dtype: str
     reject_truncation: bool
     quality_cutoffs: tuple[int, ...]
@@ -148,7 +147,7 @@ def protocol_from_mapping(
         )
     return ChunkingEmbeddingProtocol(
         metadata("chunking_embedding", source_path, root, profiles=profiles), tokenizer,
-        strategies, models, smoke_pair, batch_size, similarity, normalized, vector_dtype,
+        strategies, models, smoke_pair, batch_size, similarity, vector_dtype,
         reject_truncation, cutoffs, audit_depth, alpha, minimum_documents,
         confidence, maximum_finalists, peak,
     )

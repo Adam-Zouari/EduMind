@@ -155,17 +155,6 @@ def parent_artifact_builder(
             },
         )
         written.append(pool_index_path)
-        protocol_path = directory / "retrieval_protocol.json"
-        atomic_write_json(
-            protocol_path,
-            {
-                "schema_version": 1,
-                "protocol_version": protocol.version,
-                "checksum": protocol.checksum,
-                "resolved": protocol.resolved,
-            },
-        )
-        written.append(protocol_path)
         return written
 
     return build

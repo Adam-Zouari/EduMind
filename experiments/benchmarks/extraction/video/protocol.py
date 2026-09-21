@@ -40,7 +40,6 @@ class VideoProtocol:
     window_length_seconds: float
     overlap_seconds: float
     stitching: Mapping[str, object]
-    visible_text_unitization: str
     occurrence_matching: Mapping[str, object]
     video_counts: Mapping[str, int]
     manifest_duration_tolerance_seconds: float
@@ -119,7 +118,7 @@ def protocol_from_mapping(
         root["visual_text"], "visual_text",
         {"unitization", "occurrence_content_f1_threshold", "frame_timestamp_tolerance_seconds"},
     )
-    unitization = choice(visual["unitization"], "visual_text.unitization", {"normalized_lines_distinct_v1"})
+    choice(visual["unitization"], "visual_text.unitization", {"normalized_lines_distinct_v1"})
     occurrence = {
         "content_f1_threshold": number(visual["occurrence_content_f1_threshold"], "visual_text.occurrence_content_f1_threshold", minimum=0, maximum=1),
         "frame_timestamp_tolerance_seconds": number(visual["frame_timestamp_tolerance_seconds"], "visual_text.frame_timestamp_tolerance_seconds", minimum=0),
@@ -140,7 +139,7 @@ def protocol_from_mapping(
     return VideoProtocol(
         metadata("video", source_path, root, profiles=profiles), fixed, scenes,
         gaps, include_zero, frame_sync, smoke_threshold, selected, source_run,
-        window, overlap, stitching, unitization, occurrence, video_counts,
+        window, overlap, stitching, occurrence, video_counts,
         duration_tolerance, confidence, maximum_finalists,
     )
 

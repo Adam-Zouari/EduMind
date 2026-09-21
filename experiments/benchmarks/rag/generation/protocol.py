@@ -40,11 +40,9 @@ class GenerationProtocol:
     maximum_answer_tokens: int
     streamer_timeout_seconds: float
     question_count: int
-    question_selection: str
     context_packing_tokens: int
     context_tokenizer: str
     faithfulness_model: str
-    faithfulness_behavior: str
     faithfulness_trust_remote_code: bool
     confidence_level: float
     maximum_finalists: int
@@ -94,7 +92,7 @@ def load_protocol(path: Path = DEFAULT_PROTOCOL_PATH) -> GenerationProtocol:
     )
     screen = strict_object(root["development_screen"], "development_screen", {"question_count", "selection"})
     question_count = integer(screen["question_count"], "development_screen.question_count", minimum=1)
-    selection = choice(screen["selection"], "development_screen.selection", {"deterministic-stratified-v1"})
+    choice(screen["selection"], "development_screen.selection", {"deterministic-stratified-v1"})
     context = strict_object(root["context"], "context", {"frozen_packing_limit_tokens", "tokenizer"})
     packing = integer(context["frozen_packing_limit_tokens"], "context.frozen_packing_limit_tokens", minimum=1)
     if packing >= context_tokens:
@@ -102,7 +100,7 @@ def load_protocol(path: Path = DEFAULT_PROTOCOL_PATH) -> GenerationProtocol:
     tokenizer = choice(context["tokenizer"], "context.tokenizer", {"tiktoken:cl100k_base"})
     faithfulness = strict_object(root["faithfulness"], "faithfulness", {"model_id", "behavior", "trust_remote_code"})
     model = string(faithfulness["model_id"], "faithfulness.model_id")
-    behavior = choice(faithfulness["behavior"], "faithfulness.behavior", {"local-sequence-classification-predict-v1"})
+    choice(faithfulness["behavior"], "faithfulness.behavior", {"local-sequence-classification-predict-v1"})
     trust = boolean(faithfulness["trust_remote_code"], "faithfulness.trust_remote_code")
     statistics = strict_object(root["statistics"], "statistics", {"confidence_level"})
     confidence = number(statistics["confidence_level"], "statistics.confidence_level", minimum=0, maximum=1, minimum_exclusive=True, maximum_exclusive=True)
@@ -116,6 +114,5 @@ def load_protocol(path: Path = DEFAULT_PROTOCOL_PATH) -> GenerationProtocol:
     return GenerationProtocol(
         metadata("generation", path, root, profiles=profiles), models, temperature,
         do_sample, context_tokens, answer_tokens, streamer_timeout,
-        question_count, selection,
-        packing, tokenizer, model, behavior, trust, confidence, maximum_finalists, peak,
+        question_count, packing, tokenizer, model, trust, confidence, maximum_finalists, peak,
     )

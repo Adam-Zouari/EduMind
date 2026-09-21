@@ -295,7 +295,7 @@ def main() -> int:
         },
         protocols={
             "vector_database": vector_protocol.meta,
-            "retrieval": retrieval_protocol.metadata(arguments.retrieval_protocol),
+            "retrieval": retrieval_protocol.meta,
             "chunking_embedding": chunking_protocol.meta,
         },
         no_mlflow=arguments.no_mlflow,

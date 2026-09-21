@@ -101,6 +101,29 @@ def test_benchmark_entrypoint_runs_as_module(module: str) -> None:
 @pytest.mark.parametrize(
     "module",
     (
+        "experiments.benchmarks.rag.chunking_embedding.run",
+        "experiments.benchmarks.rag.generation.run",
+        "experiments.benchmarks.rag.final.run",
+    ),
+)
+def test_rag_entrypoint_import_does_not_parse_arguments(module: str) -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import importlib, sys; sys.argv = ['test', '--unexpected']; "
+            f"importlib.import_module({module!r})",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+@pytest.mark.parametrize(
+    "module",
+    (
         "experiments.benchmarks.rag.chunking_embedding.worker",
         "experiments.benchmarks.rag.retrieval.worker",
     ),

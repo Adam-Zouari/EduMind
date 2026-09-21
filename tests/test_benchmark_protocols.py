@@ -93,10 +93,6 @@ PROTOCOL_CASES = (
 )
 
 
-def _metadata(protocol, source: Path):
-    return protocol.metadata(source) if hasattr(protocol, "metadata") else protocol.meta
-
-
 def _write_protocol(tmp_path: Path, name: str, payload: dict[str, object]) -> Path:
     path = tmp_path / f"{name}.yaml"
     path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
@@ -116,9 +112,10 @@ def test_every_protocol_has_stable_identity_and_rejects_worker_drift(
 ) -> None:
     first = loader(source)
     second = loader(source)
-    first_meta = _metadata(first, source)
-    second_meta = _metadata(second, source)
+    first_meta = first.meta
+    second_meta = second.meta
     assert first_meta.name == name
+    assert first_meta.source_path == source.resolve()
     assert first_meta.schema_version == 1
     assert first_meta.version
     assert first_meta.checksum == second_meta.checksum
@@ -213,12 +210,12 @@ def test_rag_and_vector_behavior_comes_from_protocol(tmp_path) -> None:
     assert chunking.audit_depth == 7
     assert len(chunks) > 1 and chunks[0][2] <= 8
 
-    retrieval_root = deepcopy(load_retrieval_protocol().resolved)
+    retrieval_root = deepcopy(load_retrieval_protocol().meta.resolved)
     retrieval_root["retrieval"]["pool_size"] = 12
     retrieval_root["retrieval"]["rrf"]["source_depth"] = 12
-    retrieval = load_retrieval_protocol(
-        _write_protocol(tmp_path, "retrieval-behavior", retrieval_root)
-    )
+    retrieval_path = _write_protocol(tmp_path, "retrieval-behavior", retrieval_root)
+    retrieval = load_retrieval_protocol(retrieval_path)
+    assert retrieval.meta.source_path == retrieval_path.resolve()
     assert retrieval.pool_size == retrieval.rrf_source_depth == 12
 
     generation_root = deepcopy(load_generation_protocol().meta.resolved)
@@ -257,9 +254,8 @@ def test_rag_and_vector_behavior_comes_from_protocol(tmp_path) -> None:
     assert vector.upsert_batch_sizes["chroma"] == 17
     assert vector.qdrant_indexing_threshold == 2
     assert vector.confidence_level == 0.9
-    assert (
-        vector.tie_breaking
-        == "latency-then-m-then-ef-search-then-ef-construction"
+    assert vector.meta.resolved["hnsw"]["tie_breaking"] == (
+        "latency-then-m-then-ef-search-then-ef-construction"
     )
     assert _protocol_confidence_level({"vector_database": vector.meta}) == 0.9
 
@@ -321,7 +317,7 @@ def test_candidate_rosters_live_in_protocols_or_supported_adapters(tmp_path: Pat
     assert len(chunking.development_candidates) == 48
     assert chunking.smoke_pair == "token-256-32|Alibaba-NLP/gte-modernbert-base"
     assert chunking.smoke_pair in chunking.development_candidates
-    assert "chunking_embedding_candidate" not in load_retrieval_protocol().resolved["smoke_fixture"]
+    assert "chunking_embedding_candidate" not in load_retrieval_protocol().meta.resolved["smoke_fixture"]
     bad_chunking = deepcopy(chunking.meta.resolved)
     bad_chunking["smoke_pair"] = "missing|model"
     with pytest.raises(ValueError, match="smoke_pair"):

@@ -62,7 +62,7 @@ def _settings(
     bootstrap_resamples: int | None = None,
     **overrides: object,
 ) -> dict[str, object]:
-    payload = deepcopy(default_protocol().resolved)
+    payload = deepcopy(default_protocol().meta.resolved)
     execution = payload["profiles"][profile]
     if warmups is not None:
         execution["warmups"] = warmups
@@ -84,7 +84,7 @@ def _settings(
     )
     chunking_protocol = chunking_protocol_from_mapping(chunking_payload)
     return {
-        "retrieval_protocol": protocol.metadata().worker_payload(),
+        "retrieval_protocol": protocol.meta.worker_payload(),
         "chunking_embedding_protocol": chunking_protocol.meta.worker_payload(),
         **overrides,
     }
@@ -158,11 +158,11 @@ def test_reranker_input_limits_match_frozen_model_contracts() -> None:
 
 def test_protocol_is_strict_and_plan_checksum_is_verified() -> None:
     protocol = default_protocol()
-    malformed = deepcopy(protocol.resolved)
+    malformed = deepcopy(protocol.meta.resolved)
     malformed["unexpected"] = True
     with pytest.raises(ValueError, match="unknown unexpected"):
         protocol_from_mapping(malformed)
-    nonfinite = deepcopy(protocol.resolved)
+    nonfinite = deepcopy(protocol.meta.resolved)
     nonfinite["retrieval"]["bm25"]["k1"] = float("nan")
     with pytest.raises(ValueError, match="must be finite"):
         protocol_from_mapping(nonfinite)
@@ -170,7 +170,7 @@ def test_protocol_is_strict_and_plan_checksum_is_verified() -> None:
         protocol_from_settings(
             {
                 "retrieval_protocol": {
-                    **protocol.metadata().worker_payload(),
+                    **protocol.meta.worker_payload(),
                     "checksum": "wrong",
                 },
             }
@@ -254,7 +254,7 @@ def test_metric_contract_excludes_obsolete_retrieval_metrics() -> None:
 
 
 def test_protocol_drives_cutoff_and_pool_metric_names() -> None:
-    payload = deepcopy(default_protocol().resolved)
+    payload = deepcopy(default_protocol().meta.resolved)
     payload["retrieval"]["pool_size"] = 4
     payload["retrieval"]["rrf"]["source_depth"] = 4
     payload["quality"]["cutoffs"] = [2]
@@ -410,7 +410,7 @@ def test_owner_pool_is_reused_by_every_reranker_child(monkeypatch: pytest.Monkey
         "smoke",
         manifest.name,
         ("bm25|none", "bm25|ettin-150m"),
-        seed=default_protocol().seed,
+        seed=default_protocol().meta.seed,
         repetitions=2,
         bootstrap_resamples=0,
         warmups=0,
@@ -495,7 +495,7 @@ def test_measured_failure_keeps_every_timing_row(monkeypatch: pytest.MonkeyPatch
         "smoke",
         manifest.name,
         ("bm25|none",),
-        seed=default_protocol().seed,
+        seed=default_protocol().meta.seed,
         repetitions=3,
         bootstrap_resamples=0,
         warmups=0,
@@ -605,7 +605,7 @@ def test_parent_comparisons_are_separated_and_csv_matches_parquet(
         "validation",
         "fixture",
         RETRIEVAL_CANDIDATES,
-        seed=default_protocol().seed,
+        seed=default_protocol().meta.seed,
         repetitions=1,
         bootstrap_resamples=100,
         warmups=default_protocol().profile("validation").warmups,
@@ -630,7 +630,6 @@ def test_parent_comparisons_are_separated_and_csv_matches_parquet(
         "finalist_comparisons.parquet",
         "finalist_comparisons.csv",
         "pool_index.json",
-        "retrieval_protocol.json",
     }
     reranker = pd.read_parquet(tmp_path / "reranker_comparisons.parquet")
     retriever = pd.read_parquet(tmp_path / "retriever_comparisons.parquet")
@@ -661,10 +660,4 @@ def test_parent_comparisons_are_separated_and_csv_matches_parquet(
     assert pool_index["comparison_artifacts"]["reranker_comparisons"][
         "logical_table_sha256"
     ]
-    protocol_artifact = json.loads(
-        (tmp_path / "retrieval_protocol.json").read_text()
-    )
-    assert protocol_artifact["checksum"] == protocol_from_settings(
-        plan.settings
-    ).checksum
-    assert protocol_artifact["resolved"]["retrieval"]["pool_size"] == 20
+    assert not (tmp_path / "retrieval_protocol.json").exists()

@@ -47,7 +47,6 @@ class VectorDatabaseProtocol:
     validation_corpus_limit: int
     validation_query_limit: int
     target_recall_at_10: float
-    tie_breaking: str
     cutoffs: tuple[int, ...]
     incremental_mutation_count: int
     development_filters: tuple[str, ...]
@@ -134,7 +133,7 @@ def load_protocol(path: Path = DEFAULT_PROTOCOL_PATH) -> VectorDatabaseProtocol:
     corpus_limit = integer(hnsw["validation_corpus_limit"], "hnsw.validation_corpus_limit", minimum=1)
     query_limit = integer(hnsw["validation_query_limit"], "hnsw.validation_query_limit", minimum=1)
     target = number(hnsw["target_recall_at_10"], "hnsw.target_recall_at_10", minimum=0, maximum=1)
-    tie = choice(
+    choice(
         hnsw["tie_breaking"],
         "hnsw.tie_breaking",
         {"latency-then-m-then-ef-search-then-ef-construction"},
@@ -241,7 +240,7 @@ def load_protocol(path: Path = DEFAULT_PROTOCOL_PATH) -> VectorDatabaseProtocol:
         raise ValueError("Vector-database execution profiles must use batch size one")
     return VectorDatabaseProtocol(
         metadata("vector_database", path, root, profiles=profiles), workloads,
-        synthetic, smoke_hnsw, grid, corpus_limit, query_limit, target, tie,
+        synthetic, smoke_hnsw, grid, corpus_limit, query_limit, target,
         cutoffs, mutations, development_filters, validation_filters, shortlist,
         conformance,
         batch_sizes, verification_limit, full_scan_threshold, indexing_threshold,

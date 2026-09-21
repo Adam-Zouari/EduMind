@@ -152,7 +152,7 @@ def main() -> int:
         },
         protocols={
             "chunking_embedding": chunking_protocol.meta,
-            "retrieval": retrieval_protocol.metadata(arguments.retrieval_protocol),
+            "retrieval": retrieval_protocol.meta,
             "generation": generation_protocol.meta,
             "final_rag": final_protocol.meta,
         },
