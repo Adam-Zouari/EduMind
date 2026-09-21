@@ -1,0 +1,66 @@
+schema_version: 1
+protocol_version: retrieval-reranking-v1
+seed: 42
+
+retrieval:
+  pool_size: 20
+  evaluation_tokenizer: tiktoken:cl100k_base
+  evidence_coverage_rule: single-chunk-complete-unit-v1
+  bm25:
+    variant: rank_bm25.BM25Okapi
+    tokenizer: unicode-word-casefold-v1
+    k1: 1.5
+    b: 0.75
+    epsilon: 0.25
+  dense:
+    similarity: exact-cosine
+    normalized: true
+    embedding_batch_size: 1
+  rrf:
+    source_depth: 20
+    constant: 60
+    weights: [1.0, 1.0]
+
+reranking:
+  batch_size: 1
+  reject_truncation: true
+  input_template: tokenizer(query, passage)
+  maximum_input_tokens:
+    gte-modernbert: 8192
+    ettin-150m: 7999
+    ettin-400m: 7999
+    ettin-1b: 7999
+
+quality:
+  cutoffs: [3, 5]
+  alpha_ndcg_alpha: 0.5
+
+statistics:
+  minimum_latency_ci_documents: 20
+  confidence_level: 0.95
+
+selection:
+  maximum_finalists: 3
+
+profiles:
+  smoke:
+    warmups: 1
+    repetitions: 1
+    bootstrap_resamples: 0
+    default_device: cpu
+    default_dtype: float32
+  development:
+    warmups: 2
+    repetitions: 3
+    bootstrap_resamples: 10000
+    required_device: cuda
+    required_dtype: float16
+  validation:
+    warmups: 2
+    repetitions: 3
+    bootstrap_resamples: 10000
+    required_device: cuda
+    required_dtype: float16
+
+resources:
+  authoritative_peak_vram_mb: 3584

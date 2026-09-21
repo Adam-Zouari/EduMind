@@ -1,9 +1,9 @@
-smoke: [dense, bm25, rrf]
-standard:
-  - dense
-  - bm25
-  - rrf
-  - rrf-gte-modernbert-reranker
-  - rrf-ettin-150m-reranker
-  - rrf-ettin-400m-reranker
-  - rrf-ettin-1b-reranker
+smoke:
+  matrix:
+    retriever: [dense, bm25, rrf]
+    reranker: [none, gte-modernbert, ettin-150m, ettin-400m, ettin-1b]
+
+development:
+  matrix:
+    retriever: [dense, bm25, rrf]
+    reranker: [none, gte-modernbert, ettin-150m, ettin-400m, ettin-1b]

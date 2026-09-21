@@ -25,7 +25,8 @@ from experiments.benchmarks.rag.evaluation import (
     reranker_for,
     retrieval_metrics,
 )
-from experiments.benchmarks.rag.methods import BM25, reciprocal_rank_fusion
+from experiments.benchmarks.rag.methods import reciprocal_rank_fusion
+from experiments.benchmarks.rag.retrieval.protocol import default_protocol
 from experiments.benchmarks.vectordb.adapters import Config, Record, create
 from experiments.benchmarks.vectordb.conformance import _finish_index
 from experiments.benchmarks.vectordb.docker_metrics import image_lock, verify_image
@@ -49,7 +50,9 @@ def main() -> int:
     embedding = _single_selection(
         arguments.embedding_selection, "chunking-embedding"
     )
-    retrieval = _single_selection(arguments.retrieval_selection, "retrieval")
+    retrieval = _single_selection(
+        arguments.retrieval_selection, "retrieval-reranking"
+    )
     candidates = database_decision.selected_candidates
     chunker_name, embedding_name = embedding.split("|", 1)
     manifest = load_manifest(PROJECT_ROOT / "data/benchmarks/rag/rag-selection-validation.json")
@@ -58,8 +61,18 @@ def main() -> int:
     )
     revisions = model_revisions(model_lock)
     vector_revisions = image_lock()
-    index = build_index(manifest, chunker_name, embedding_name, model_lock, with_bm25=True)
-    bm25 = BM25([chunk.text for chunk in index.chunks])
+    protocol = default_protocol()
+    index = build_index(
+        manifest,
+        chunker_name,
+        embedding_name,
+        model_lock,
+        with_bm25=True,
+        retrieval_protocol=protocol,
+    )
+    if index.bm25 is None:
+        raise RuntimeError("Complete retrieval requires the BM25 index")
+    bm25 = index.bm25
     by_id = {chunk.identifier: position for position, chunk in enumerate(index.chunks)}
     plan = BenchmarkPlan(
         "vectordb-server-v4",
@@ -73,7 +86,9 @@ def main() -> int:
 
     def evaluate(candidate):
         verify_image(candidate, vector_revisions[f"image:{candidate}"])
-        reranker = reranker_for(retrieval, model_lock)
+        reranker = reranker_for(
+            retrieval, model_lock, retrieval_protocol=protocol
+        )
         config = _config(database_payload, candidate, index.vectors.shape[1])
         adapter = create(candidate, config)
         try:
@@ -110,17 +125,37 @@ def main() -> int:
                 query = str(question["question"])
                 started = time.perf_counter()
                 query_vector = index.embedder.embed_query(query)
-                dense = [by_id[hit.identifier] for hit in adapter.search(query_vector, 20)]
-                lexical = [position for position, _ in bm25.rank(query, 20)]
-                if retrieval == "dense":
+                dense = [
+                    by_id[hit.identifier]
+                    for hit in adapter.search(query_vector, protocol.pool_size)
+                ]
+                lexical = [
+                    position
+                    for position, _ in bm25.rank(query, protocol.pool_size)
+                ]
+                first_stage = retrieval.split("|", 1)[0]
+                if first_stage == "dense":
                     order = dense
-                elif retrieval == "bm25":
+                elif first_stage == "bm25":
                     order = lexical
+                elif first_stage == "rrf":
+                    order = reciprocal_rank_fusion(
+                        [dense, lexical],
+                        protocol.pool_size,
+                        protocol.rrf_constant,
+                        weights=protocol.rrf_weights,
+                        tie_keys={
+                            position: chunk.identifier
+                            for position, chunk in enumerate(index.chunks)
+                        },
+                    )
                 else:
-                    order = reciprocal_rank_fusion([dense, lexical], 20)
-                    if reranker is not None:
-                        local = reranker.rank(query, [index.chunks[position].text for position in order])
-                        order = [order[position] for position in local]
+                    raise ValueError(f"Unsupported retrieval stack: {retrieval}")
+                if reranker is not None:
+                    local = reranker.rank(
+                        query, [index.chunks[position].text for position in order]
+                    )
+                    order = [order[position] for position in local]
                 return order, time.perf_counter() - started
 
             for question in questions[:2]:
@@ -207,7 +242,7 @@ def _single_selection(path: Path, stage: str) -> str:
     return load_engineer_decision(
         path,
         exact=1,
-        expected_source=("rag", stage, "full"),
+        expected_source=("rag", stage, "validation"),
     ).selected_candidates[0]
 
 

@@ -1,5 +1,5 @@
 {
-  "checksum": "0f581e14d7b8b543ae7b27657e911a21f25ac3862a84ddd22033d94b83c8c24c",
+  "checksum": "677f38388d23a632a5b157bfca8668f2cd7d859d5fb05940620c8033df383203",
   "license": "CC0-1.0",
   "name": "edumind-smoke-rag",
   "preprocessing_version": "evidence-units-v2",
@@ -52,6 +52,138 @@
       "kind": "document",
       "source": "paper-08.txt",
       "text": "Plate tectonics explains the motion of Earth's lithospheric plates. Divergent boundaries create new crust as plates separate. Convergent boundaries can produce subduction when plates collide."
+    },
+    {
+      "id": "pool-decoy-01",
+      "kind": "document",
+      "source": "pool-decoy-01.txt",
+      "text": "A smoke-test decoy describes ceramic glaze colors and kiln shelves without answering any benchmark question."
+    },
+    {
+      "id": "pool-decoy-02",
+      "kind": "document",
+      "source": "pool-decoy-02.txt",
+      "text": "A smoke-test decoy describes violin bow maintenance and rosin storage without answering any benchmark question."
+    },
+    {
+      "id": "pool-decoy-03",
+      "kind": "document",
+      "source": "pool-decoy-03.txt",
+      "text": "A smoke-test decoy describes lighthouse paint schedules and coastal fog without answering any benchmark question."
+    },
+    {
+      "id": "pool-decoy-04",
+      "kind": "document",
+      "source": "pool-decoy-04.txt",
+      "text": "A smoke-test decoy describes museum ticket printing and gallery maps without answering any benchmark question."
+    },
+    {
+      "id": "pool-decoy-05",
+      "kind": "document",
+      "source": "pool-decoy-05.txt",
+      "text": "A smoke-test decoy describes orchard ladders and apple crate labels without answering any benchmark question."
+    },
+    {
+      "id": "pool-decoy-06",
+      "kind": "document",
+      "source": "pool-decoy-06.txt",
+      "text": "A smoke-test decoy describes bicycle bell designs and reflective tape without answering any benchmark question."
+    },
+    {
+      "id": "pool-decoy-07",
+      "kind": "document",
+      "source": "pool-decoy-07.txt",
+      "text": "A smoke-test decoy describes bakery display cases and bread baskets without answering any benchmark question."
+    },
+    {
+      "id": "pool-decoy-08",
+      "kind": "document",
+      "source": "pool-decoy-08.txt",
+      "text": "A smoke-test decoy describes hiking trail markers and campsite signs without answering any benchmark question."
+    },
+    {
+      "id": "pool-decoy-09",
+      "kind": "document",
+      "source": "pool-decoy-09.txt",
+      "text": "A smoke-test decoy describes theater curtains and stage-light cables without answering any benchmark question."
+    },
+    {
+      "id": "pool-decoy-10",
+      "kind": "document",
+      "source": "pool-decoy-10.txt",
+      "text": "A smoke-test decoy describes garden fountains and stone pathways without answering any benchmark question."
+    },
+    {
+      "id": "pool-decoy-11",
+      "kind": "document",
+      "source": "pool-decoy-11.txt",
+      "text": "A smoke-test decoy describes train station clocks and platform benches without answering any benchmark question."
+    },
+    {
+      "id": "pool-decoy-12",
+      "kind": "document",
+      "source": "pool-decoy-12.txt",
+      "text": "A smoke-test decoy describes telescope covers and observatory doors without answering any benchmark question."
+    },
+    {
+      "id": "pool-decoy-13",
+      "kind": "document",
+      "source": "pool-decoy-13.txt",
+      "text": "A smoke-test decoy describes harbor ropes and wooden dock posts without answering any benchmark question."
+    },
+    {
+      "id": "pool-decoy-14",
+      "kind": "document",
+      "source": "pool-decoy-14.txt",
+      "text": "A smoke-test decoy describes library return carts and shelf labels without answering any benchmark question."
+    },
+    {
+      "id": "pool-decoy-15",
+      "kind": "document",
+      "source": "pool-decoy-15.txt",
+      "text": "A smoke-test decoy describes pottery wheels and studio aprons without answering any benchmark question."
+    },
+    {
+      "id": "pool-decoy-16",
+      "kind": "document",
+      "source": "pool-decoy-16.txt",
+      "text": "A smoke-test decoy describes greenhouse vents and seed trays without answering any benchmark question."
+    },
+    {
+      "id": "pool-decoy-17",
+      "kind": "document",
+      "source": "pool-decoy-17.txt",
+      "text": "A smoke-test decoy describes sailing knots and canvas covers without answering any benchmark question."
+    },
+    {
+      "id": "pool-decoy-18",
+      "kind": "document",
+      "source": "pool-decoy-18.txt",
+      "text": "A smoke-test decoy describes concert posters and entrance wristbands without answering any benchmark question."
+    },
+    {
+      "id": "pool-decoy-19",
+      "kind": "document",
+      "source": "pool-decoy-19.txt",
+      "text": "A smoke-test decoy describes woodworking clamps and cabinet handles without answering any benchmark question."
+    },
+    {
+      "id": "pool-decoy-20",
+      "kind": "document",
+      "source": "pool-decoy-20.txt",
+      "text": "A smoke-test decoy describes aquarium gravel and filter housings without answering any benchmark question."
+    },
+    {
+      "id": "pool-decoy-21",
+      "kind": "document",
+      "source": "pool-decoy-21.txt",
+      "text": "A smoke-test decoy describes airport luggage tags and gate displays without answering any benchmark question."
+    },
+    {
+      "id": "pool-decoy-22",
+      "kind": "document",
+      "source": "pool-decoy-22.txt",
+      "text": "A smoke-test decoy describes fountain pens and archival ink bottles without answering any benchmark question."
     },
     {
       "answer": "chemical energy",

@@ -18,9 +18,16 @@ from experiments.benchmarks.common.contracts import (
     DatasetManifest,
     SampleResult,
 )
-from experiments.benchmarks.common.datasets import evidence_units
+from experiments.benchmarks.common.datasets import answerable_questions, evidence_units
 from experiments.benchmarks.common.provenance import package_versions
-from experiments.benchmarks.common.process import run_json_worker
+from experiments.benchmarks.common.process import (
+    benchmark_objects_from_payload,
+    candidate_execution_payload,
+    decode_worker_result,
+    run_json_worker,
+    seed_deterministically,
+    successful_execution_payload,
+)
 from experiments.benchmarks.rag.evaluation import (
     InputCompatibilityError,
     build_index,
@@ -41,7 +48,7 @@ from .metrics import (
     prefixed_quality,
     score_question,
 )
-from .profiles import embedding_spec
+from .profiles import embedding_spec, split_candidate
 
 
 QUALITY_DIRECTIONS = {
@@ -70,7 +77,7 @@ WORKER = Path(__file__).with_name("worker.py")
 def directions_for(manifest: DatasetManifest) -> tuple[dict[str, str], tuple[str, ...]]:
     """Declare only the evidence slices present in this frozen manifest."""
 
-    questions = _answerable_questions(manifest)
+    questions = answerable_questions(manifest)
     scopes = {"overall", *(str(question["evidence_type"]) for question in questions)}
     alpha_questions = [
         question for question in questions if len(evidence_units(question)) >= 2
@@ -103,10 +110,10 @@ def evaluate_candidate(
 ):
     """Evaluate one eligible pair; the caller supplies process isolation."""
 
-    _seed_everything(plan.seed)
+    seed_deterministically(plan.seed)
     os.environ["EDUMIND_BENCHMARK_EMBEDDING_DEVICE"] = device
     os.environ["EDUMIND_BENCHMARK_EMBEDDING_DTYPE"] = dtype
-    chunker_name, embedding_name = _split_candidate(candidate)
+    chunker_name, embedding_name = split_candidate(candidate)
     entry = model_lock[embedding_name]
     index = build_index(
         manifest,
@@ -116,7 +123,7 @@ def evaluate_candidate(
         with_dense=True,
         with_bm25=False,
     )
-    questions = _answerable_questions(manifest)
+    questions = answerable_questions(manifest)
     random.Random(plan.seed).shuffle(questions)
     if not questions:
         raise RuntimeError("Chunking/embedding requires answerable questions")
@@ -386,62 +393,20 @@ def run_in_fresh_process(
         prefix="edumind-chunking-embedding-",
         error_label=f"chunking/embedding worker {candidate}",
     )
-    status = str(result.get("status", ""))
-    samples = tuple(_sample_from_payload(row) for row in result.get("samples", []))
-    if status == "failed":
-        raise CandidateExecutionError(
-            str(result["error"]),
-            parameters=_mapping(result.get("parameters")),
-            artifacts=_mapping(result.get("artifacts")),
-            samples=samples,
-            metrics=_numeric_mapping(result.get("metrics")),
-            intervals=_mapping(result.get("intervals")),
-            operational=_numeric_mapping(result.get("operational")),
-        )
-    if status != "success":
-        raise RuntimeError(f"Worker returned unsupported status {status!r}")
-    return (
-        list(samples),
-        _numeric_mapping(result.get("operational")),
-        _numeric_mapping(result.get("metrics")),
-        _mapping(result.get("parameters")),
-        _mapping(result.get("intervals")),
-        _mapping(result.get("artifacts")),
-    )
+    return decode_worker_result(result)
 
 
 def execute_payload(payload: dict[str, object]) -> dict[str, object]:
     """JSON worker entry point."""
 
-    candidate = str(payload["candidate"])
-    manifest_payload = _mapping(payload["manifest"])
-    manifest = DatasetManifest(
-        **{
-            **manifest_payload,
-            "samples": tuple(
-                dict(row) for row in manifest_payload.get("samples", [])
-            ),
-        }
-    )
-    plan_payload = _mapping(payload["plan"])
-    plan = BenchmarkPlan(
-        **{
-            **plan_payload,
-            "candidates": tuple(plan_payload.get("candidates", [])),
-        }
-    )
-    model_lock = {
-        str(name): dict(value)
-        for name, value in _mapping(payload["model_lock"]).items()
-        if isinstance(value, Mapping)
-    }
+    candidate, manifest, model_lock, plan = benchmark_objects_from_payload(payload)
     device, dtype = str(payload["device"]), str(payload["dtype"])
     try:
         evaluated = evaluate_candidate(
             candidate, manifest, model_lock, plan, device=device, dtype=dtype
         )
     except InputCompatibilityError as exc:
-        chunker_name, embedding_name = _split_candidate(candidate)
+        chunker_name, embedding_name = split_candidate(candidate)
         parameters = _parameters(
             candidate,
             chunker_name,
@@ -472,18 +437,9 @@ def execute_payload(payload: dict[str, object]) -> dict[str, object]:
             "artifacts": {"validation_report": report},
         }
     except CandidateExecutionError as exc:
-        return {
-            "status": "failed",
-            "error": str(exc),
-            "samples": [asdict(sample) for sample in exc.samples],
-            "operational": exc.operational,
-            "metrics": exc.metrics,
-            "intervals": exc.intervals,
-            "parameters": exc.parameters,
-            "artifacts": exc.artifacts,
-        }
+        return candidate_execution_payload(exc)
     except Exception as exc:
-        chunker_name, embedding_name = _split_candidate(candidate)
+        chunker_name, embedding_name = split_candidate(candidate)
         error = f"{type(exc).__name__}: {exc}"
         parameters = _parameters(
             candidate,
@@ -513,15 +469,7 @@ def execute_payload(payload: dict[str, object]) -> dict[str, object]:
                 }
             },
         }
-    return {
-        "status": "success",
-        "samples": [asdict(sample) for sample in evaluated[0]],
-        "operational": evaluated[1],
-        "metrics": evaluated[2],
-        "parameters": evaluated[3],
-        "intervals": evaluated[4],
-        "artifacts": evaluated[5],
-    }
+    return successful_execution_payload(evaluated)
 
 
 def _parameters(
@@ -625,54 +573,3 @@ def _parameters(
             ("numpy", "sentence-transformers", "tiktoken", "torch", "transformers")
         ),
     }
-
-
-def _answerable_questions(manifest: DatasetManifest) -> list[Mapping[str, object]]:
-    return [
-        row
-        for row in manifest.samples
-        if row.get("kind") == "question" and row.get("answerable")
-    ]
-
-
-def _split_candidate(candidate: str) -> tuple[str, str]:
-    values = candidate.split("|", 1)
-    if len(values) != 2 or not all(values):
-        raise ValueError(f"Malformed chunker/embedding candidate: {candidate}")
-    return values[0], values[1]
-
-
-def _sample_from_payload(payload: object) -> SampleResult:
-    row = _mapping(payload)
-    return SampleResult(
-        str(row["sample_id"]),
-        _numeric_mapping(row["metrics"]),
-        float(row["latency_seconds"]),
-        _mapping(row.get("metadata")),
-    )
-
-
-def _mapping(value: object) -> dict[str, object]:
-    return dict(value) if isinstance(value, Mapping) else {}
-
-
-def _numeric_mapping(value: object) -> dict[str, float]:
-    return {
-        str(name): float(number)
-        for name, number in _mapping(value).items()
-        if isinstance(number, (int, float)) and not isinstance(number, bool)
-    }
-
-
-def _seed_everything(seed: int) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-    try:
-        import torch
-
-        torch.manual_seed(seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(seed)
-        torch.use_deterministic_algorithms(True, warn_only=True)
-    except ModuleNotFoundError:
-        pass

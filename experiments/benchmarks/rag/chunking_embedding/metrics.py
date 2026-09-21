@@ -52,19 +52,25 @@ def score_question(
     selected: Sequence[RankedChunk],
     all_chunks: Sequence[RankedChunk],
     tokenizer: EvaluationTokenizer,
+    *,
+    cutoffs: Sequence[int] = QUALITY_CUTOFFS,
+    alpha: float = ALPHA,
 ) -> QuestionScore:
-    """Score one answerable question at the frozen @3/@5 cutoffs."""
+    """Score one answerable question at the requested frozen cutoffs."""
 
+    cutoffs = tuple(cutoffs)
+    if not cutoffs or any(k <= 0 for k in cutoffs):
+        raise ValueError("Quality cutoffs must be positive")
     units = evidence_units(question)
     if not units:
         raise ValueError("Retrieval quality requires at least one evidence unit")
-    selected_coverage = [_covered_unit_ids(chunk, units) for chunk in selected]
-    corpus_coverage = [_covered_unit_ids(chunk, units) for chunk in all_chunks]
+    selected_coverage = [covered_unit_ids(chunk, units) for chunk in selected]
+    corpus_coverage = [covered_unit_ids(chunk, units) for chunk in all_chunks]
     binary_grades = [float(bool(covered)) for covered in selected_coverage]
     all_binary_grades = [float(bool(covered)) for covered in corpus_coverage]
     recovered_by_k: dict[int, set[str]] = {}
     metrics: dict[str, float] = {}
-    for k in QUALITY_CUTOFFS:
+    for k in cutoffs:
         first = selected_coverage[:k]
         recovered = set().union(*first) if first else set()
         recovered_by_k[k] = recovered
@@ -75,7 +81,7 @@ def score_question(
         )
         if len(units) >= 2:
             metrics[f"alpha_ndcg_at_{k}"] = alpha_ndcg_at_k(
-                selected_coverage, corpus_coverage, k, alpha=ALPHA
+                selected_coverage, corpus_coverage, k, alpha=alpha
             )
     matches = tuple(
         {
@@ -84,7 +90,7 @@ def score_question(
             "evidence_type": unit.evidence_type,
             **{
                 f"recovered_at_{k}": unit.identifier in recovered_by_k[k]
-                for k in QUALITY_CUTOFFS
+                for k in cutoffs
             },
             "first_rank": next(
                 (
@@ -179,6 +185,7 @@ def aggregate_quality(
     *,
     resamples: int,
     seed: int,
+    confidence: float = 0.95,
 ) -> tuple[dict[str, float], dict[str, dict[str, float]]]:
     """Macro-average questions within documents, then documents within the corpus."""
 
@@ -201,7 +208,10 @@ def aggregate_quality(
         aggregates[f"{name}.sample_count"] = float(len(document_values))
         if resamples and len(document_values) >= 2:
             interval = paired_bootstrap_interval(
-                document_values, resamples=resamples, seed=seed
+                document_values,
+                resamples=resamples,
+                seed=seed,
+                confidence=confidence,
             )
             intervals[name] = {
                 "estimate": interval.estimate,
@@ -218,6 +228,7 @@ def latency_intervals(
     resamples: int,
     seed: int,
     minimum_documents: int = MIN_LATENCY_CI_DOCUMENTS,
+    confidence: float = 0.95,
 ) -> dict[str, dict[str, float]]:
     """Cluster-bootstrap warm-query percentiles over source documents."""
 
@@ -243,12 +254,13 @@ def latency_intervals(
         for quantile in draws:
             draws[quantile].append(float(np.quantile(values, quantile)))
     all_values = [sample.latency_seconds * 1000.0 for sample in samples]
+    alpha = (1.0 - confidence) / 2.0
     return {
         f"operational.query_latency_ms_p{int(quantile * 100)}": {
             "estimate": float(np.quantile(all_values, quantile)),
-            "lower": float(np.quantile(values, 0.025)),
-            "upper": float(np.quantile(values, 0.975)),
-            "confidence": 0.95,
+            "lower": float(np.quantile(values, alpha)),
+            "upper": float(np.quantile(values, 1.0 - alpha)),
+            "confidence": confidence,
         }
         for quantile, values in draws.items()
     }
@@ -265,7 +277,11 @@ def prefixed_quality(
     }
 
 
-def eligible_counts(samples: Sequence[SampleResult]) -> dict[str, float]:
+def eligible_counts(
+    samples: Sequence[SampleResult],
+    *,
+    alpha_metrics: Sequence[str] = ALPHA_NDCG_METRICS,
+) -> dict[str, float]:
     """Expose question/document denominators for overall quality and every slice."""
 
     result: dict[str, float] = {}
@@ -288,7 +304,8 @@ def eligible_counts(samples: Sequence[SampleResult]) -> dict[str, float]:
         alpha_selected = [
             sample
             for sample in selected
-            if f"quality.{evidence_type}.{ALPHA_NDCG_METRICS[0]}" in sample.metrics
+            if alpha_metrics
+            and f"quality.{evidence_type}.{alpha_metrics[0]}" in sample.metrics
         ]
         result[f"{prefix}.alpha_ndcg_eligible_question_count"] = float(
             len(alpha_selected)
@@ -299,7 +316,7 @@ def eligible_counts(samples: Sequence[SampleResult]) -> dict[str, float]:
     return result
 
 
-def _covered_unit_ids(chunk: RankedChunk, units: Sequence[EvidenceUnit]) -> set[str]:
+def covered_unit_ids(chunk: RankedChunk, units: Sequence[EvidenceUnit]) -> set[str]:
     return {
         unit.identifier
         for unit in units

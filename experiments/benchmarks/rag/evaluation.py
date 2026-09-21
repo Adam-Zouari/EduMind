@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import random
 import time
 import os
 from collections.abc import Mapping, Sequence
@@ -15,7 +14,6 @@ from edumind.rag.embedder import Embedder
 from edumind.rag.contracts import EmbeddingSpec
 from edumind.rag.tokenizers import OffsetTokenizer, TiktokenOffsetTokenizer
 
-from experiments.benchmarks.common.contracts import DatasetManifest, SampleResult
 from experiments.benchmarks.common.datasets import EvidenceInterval, evidence_units
 from experiments.benchmarks.common.metrics import (
     average_precision_at_k,
@@ -31,6 +29,10 @@ from experiments.benchmarks.common.metrics import (
 from experiments.benchmarks.rag.chunking_embedding.profiles import embedding_spec
 from experiments.benchmarks.rag.chunking_embedding.strategies import build_chunking_strategy
 from experiments.benchmarks.rag.methods import BM25, Reranker, reciprocal_rank_fusion
+from experiments.benchmarks.rag.retrieval.protocol import (
+    RetrievalProtocol,
+    default_protocol,
+)
 
 
 @dataclass(frozen=True)
@@ -64,93 +66,6 @@ class InputCompatibilityError(RuntimeError):
         self.report = dict(report)
 
 
-def evaluate(
-    manifest: DatasetManifest,
-    chunker_name: str,
-    embedding_name: str,
-    retrieval_name: str,
-    model_lock: Mapping[str, Mapping[str, object]],
-    repetitions: int = 1,
-) -> tuple[list[SampleResult], Mapping[str, float]]:
-    needs_dense = retrieval_name != "bm25"
-    needs_bm25 = retrieval_name != "dense"
-    index = build_index(
-        manifest,
-        chunker_name,
-        embedding_name,
-        model_lock,
-        with_dense=needs_dense,
-        with_bm25=needs_bm25,
-    )
-    indexing_seconds = index.corpus_build_seconds
-    reranker = reranker_for(retrieval_name, model_lock)
-    questions = [
-        row
-        for row in manifest.samples
-        if row.get("kind") == "question" and row.get("answerable") and row.get("evidence")
-    ]
-    random.Random(42).shuffle(questions)
-    samples: list[SampleResult] = []
-    latencies: list[float] = []
-    for question in questions:
-        orders: list[list[int]] = []
-        item_latencies: list[float] = []
-        for _ in range(repetitions):
-            started = time.perf_counter()
-            orders.append(rank(index, str(question["question"]), retrieval_name, reranker))
-            item_latencies.append(time.perf_counter() - started)
-        order = orders[0]
-        # Keep all 20 retrieved candidates for the fixed-token-budget metric.
-        # Cutoff metrics below still use only their first 1/3/5/10 entries.
-        selected = [index.chunks[position] for position in order[:20]]
-        latency = float(np.median(item_latencies))
-        latencies.extend(item_latencies)
-        metrics, retrieved_tokens = retrieval_metrics(question, selected, index.chunks, index.tokenizer)
-        evidence_type = str(question.get("evidence_type", "text"))
-        metrics.update(
-            {
-                f"stratum.{evidence_type}.{name}": value
-                for name, value in metrics.items()
-                if name
-                in {
-                    "ndcg_at_3",
-                    "ndcg_at_5",
-                    "context_recall_at_3",
-                    "context_recall_at_5",
-                    "context_precision_at_3",
-                    "context_precision_at_5",
-                    "context_recall_at_2048_tokens",
-                }
-            }
-        )
-        metrics["determinism"] = float(all(candidate == order for candidate in orders))
-        samples.append(
-            SampleResult(
-                str(question["id"]),
-                metrics,
-                latency,
-                {
-                    "retrieved_tokens": retrieved_tokens,
-                    "measured_repetitions": repetitions,
-                    "evidence_type": evidence_type,
-                },
-            )
-        )
-    token_counts = np.asarray([chunk.tokens for chunk in index.chunks], dtype=float)
-    return samples, {
-        "indexing_seconds": indexing_seconds,
-        "chunk_count": float(len(index.chunks)),
-        "mean_chunk_tokens": float(token_counts.mean()),
-        "p95_chunk_tokens": float(np.quantile(token_counts, 0.95)),
-        "p50_latency_seconds": float(np.median(latencies)),
-        "p95_latency_seconds": float(np.quantile(latencies, 0.95)),
-        "storage_bytes": float(
-            (index.vectors.nbytes if index.vectors is not None else 0)
-            + (index.bm25.storage_bytes if index.bm25 is not None else 0)
-        ),
-    }
-
-
 def build_index(
     manifest,
     chunker_name,
@@ -158,7 +73,9 @@ def build_index(
     model_lock,
     with_bm25=True,
     with_dense=True,
+    retrieval_protocol: RetrievalProtocol | None = None,
 ) -> ExactIndex:
+    protocol = retrieval_protocol or default_protocol()
     entry = model_lock[embedding_name]
     revision = str(entry["revision"])
     local_path = str(entry["model_path"])
@@ -172,7 +89,12 @@ def build_index(
     )
     dtype = os.environ.get("EDUMIND_BENCHMARK_EMBEDDING_DTYPE", "float32")
     embedder = (
-        Embedder(spec, dtype=dtype, enforce_device=True)
+        Embedder(
+            spec,
+            dtype=dtype,
+            batch_size=protocol.embedding_batch_size,
+            enforce_device=True,
+        )
         if with_dense or chunker_name == "semantic"
         else None
     )
@@ -361,7 +283,16 @@ def build_index(
         _validate_vectors(vectors, len(chunks), spec.dimension, "document")
         vectors = vectors.astype(np.float32, copy=False)
         vectors = vectors / np.linalg.norm(vectors, axis=1, keepdims=True)
-    bm25 = BM25([chunk.text for chunk in chunks]) if with_bm25 else None
+    bm25 = (
+        BM25(
+            [chunk.text for chunk in chunks],
+            k1=protocol.bm25_k1,
+            b=protocol.bm25_b,
+            epsilon=protocol.bm25_epsilon,
+        )
+        if with_bm25
+        else None
+    )
     corpus_build_seconds = max(
         0.0, time.perf_counter() - build_started - input_preflight_seconds
     )
@@ -379,34 +310,73 @@ def build_index(
     )
 
 
-def rank(index: ExactIndex, query: str, method: str, reranker: Reranker | None = None) -> list[int]:
-    if method == "bm25":
+def rank(
+    index: ExactIndex,
+    query: str,
+    method: str,
+    reranker: Reranker | None = None,
+    *,
+    retrieval_protocol: RetrievalProtocol | None = None,
+) -> list[int]:
+    protocol = retrieval_protocol or default_protocol()
+    retriever = method.split("|", 1)[0]
+    if retriever == "bm25":
         if index.bm25 is None:
             raise RuntimeError("This index was built without BM25")
-        return [identifier for identifier, _ in index.bm25.rank(query, 20)]
+        base = [
+            identifier
+            for identifier, _ in index.bm25.rank(query, protocol.pool_size)
+        ]
+        if reranker is None:
+            return base
+        local_order = reranker.rank(
+            query, [index.chunks[position].text for position in base]
+        )
+        return [base[position] for position in local_order]
 
     if index.vectors is None or index.embedder is None:
         raise RuntimeError("This index was built without dense vectors")
-    dense = [position for position, _ in dense_rank_with_scores(index, query, 20)]
-    if method == "dense":
-        return dense
-    if index.bm25 is None:
-        raise RuntimeError("This index was built without BM25")
-    lexical = [identifier for identifier, _ in index.bm25.rank(query, 20)]
-    fused = reciprocal_rank_fusion([dense, lexical], 20)
+    dense = [
+        position
+        for position, _ in dense_rank_with_scores(index, query, protocol.pool_size)
+    ]
+    if retriever == "dense":
+        base = dense
+    else:
+        if retriever != "rrf":
+            raise ValueError(f"Unsupported retrieval method: {method}")
+        if index.bm25 is None:
+            raise RuntimeError("This index was built without BM25")
+        lexical = [
+            identifier
+            for identifier, _ in index.bm25.rank(query, protocol.pool_size)
+        ]
+        base = reciprocal_rank_fusion(
+            [dense, lexical],
+            protocol.pool_size,
+            protocol.rrf_constant,
+            weights=protocol.rrf_weights,
+            tie_keys={
+                position: chunk.identifier
+                for position, chunk in enumerate(index.chunks)
+            },
+        )
     if reranker is None:
-        return fused
-    local_order = reranker.rank(query, [index.chunks[position].text for position in fused])
-    return [fused[position] for position in local_order]
+        return base
+    local_order = reranker.rank(
+        query, [index.chunks[position].text for position in base]
+    )
+    return [base[position] for position in local_order]
 
 
 def dense_rank_with_scores(
-    index: ExactIndex, query: str, limit: int = 20
+    index: ExactIndex, query: str, limit: int | None = None
 ) -> list[tuple[int, float]]:
     """Exact cosine ranking with stable corpus-order tie-breaking."""
 
     if index.vectors is None or index.embedder is None:
         raise RuntimeError("This index was built without dense vectors")
+    limit = default_protocol().pool_size if limit is None else limit
     query_vector = np.asarray(index.embedder.embed_query(query), dtype=np.float32)
     if query_vector.ndim != 1:
         raise RuntimeError("Query embedding must be one-dimensional")
@@ -466,7 +436,7 @@ def _chunking_contract(chunker) -> dict[str, object]:
     }
 
 
-def retrieval_metrics(question, selected, all_chunks, tokenizer) -> tuple[dict[str, float], int]:
+def retrieval_metrics(question, selected, all_chunks, _tokenizer) -> tuple[dict[str, float], int]:
     evidence = [
         interval
         for unit in evidence_units(question)
@@ -495,25 +465,7 @@ def retrieval_metrics(question, selected, all_chunks, tokenizer) -> tuple[dict[s
         if cutoff in {3, 5, 10}:
             metrics[f"map_at_{cutoff}"] = average_precision_at_k(grades, relevant_total, cutoff)
             metrics[f"ndcg_at_{cutoff}"] = ndcg_at_k(grades, cutoff, all_grades)
-    budget_intervals: list[tuple[int, int]] = []
-    token_total = 0
-    for chunk in selected:
-        remaining = 2048 - token_total
-        if remaining <= 0:
-            break
-        if chunk.tokens <= remaining:
-            if chunk.document_id == str(question["document_id"]):
-                budget_intervals.append((chunk.start, chunk.end))
-            token_total += chunk.tokens
-        else:
-            spans = tokenizer.spans(chunk.text)
-            truncated_end = spans[min(remaining, len(spans)) - 1][1] if spans and remaining else 0
-            if chunk.document_id == str(question["document_id"]):
-                budget_intervals.append((chunk.start, chunk.start + truncated_end))
-            token_total += min(remaining, len(spans))
-            break
-    metrics["context_recall_at_2048_tokens"] = context_recall(gold, budget_intervals)
-    return metrics, token_total
+    return metrics, sum(chunk.tokens for chunk in selected)
 
 
 def _grade(chunk: Chunk, evidence: Sequence[EvidenceInterval]) -> float:
@@ -526,18 +478,30 @@ def _grade(chunk: Chunk, evidence: Sequence[EvidenceInterval]) -> float:
 
 
 def reranker_for(
-    method: str, model_lock: Mapping[str, Mapping[str, object]]
+    method: str,
+    model_lock: Mapping[str, Mapping[str, object]],
+    *,
+    device: str = "cpu",
+    dtype: str = "float32",
+    retrieval_protocol: RetrievalProtocol | None = None,
 ) -> Reranker | None:
-    model = {
-        "rrf-gte-modernbert-reranker": "Alibaba-NLP/gte-reranker-modernbert-base",
-        "rrf-ettin-150m-reranker": "cross-encoder/ettin-reranker-150m-v1",
-        "rrf-ettin-400m-reranker": "cross-encoder/ettin-reranker-400m-v1",
-        "rrf-ettin-1b-reranker": "cross-encoder/ettin-reranker-1b-v1",
-    }.get(method)
+    from experiments.benchmarks.rag.retrieval.profiles import RERANKER_MODELS
+
+    reranker_name = method.split("|", 1)[1] if "|" in method else method
+    model = RERANKER_MODELS.get(reranker_name)
     if model is None:
         return None
+    protocol = retrieval_protocol or default_protocol()
     entry = model_lock[model]
-    return Reranker(model, str(entry["revision"]), str(entry["model_path"]))
+    return Reranker(
+        model,
+        str(entry["revision"]),
+        str(entry["model_path"]),
+        device=device,
+        dtype=dtype,
+        batch_size=protocol.reranker_batch_size,
+        maximum_length=protocol.maximum_tokens(reranker_name),
+    )
 
 
 RETRIEVAL_QUALITY_DIRECTIONS = {
@@ -568,17 +532,5 @@ RETRIEVAL_QUALITY_DIRECTIONS = {
     "context_precision_at_10": "max",
     "context_recall_at_1": "max",
     "context_recall_at_10": "max",
-    "context_recall_at_2048_tokens": "max",
     "determinism": "max",
-}
-
-RETRIEVAL_DIRECTIONS = {
-    **RETRIEVAL_QUALITY_DIRECTIONS,
-    "operational.indexing_seconds": "min",
-    "operational.chunk_count": "min",
-    "operational.mean_chunk_tokens": "min",
-    "operational.p95_chunk_tokens": "min",
-    "operational.p50_latency_seconds": "min",
-    "operational.p95_latency_seconds": "min",
-    "operational.storage_bytes": "min",
 }
