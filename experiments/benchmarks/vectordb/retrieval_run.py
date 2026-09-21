@@ -27,7 +27,7 @@ from experiments.benchmarks.rag.chunking_embedding.protocol import (
     DEFAULT_PROTOCOL_PATH as DEFAULT_CHUNKING_PROTOCOL_PATH,
     load_protocol as load_chunking_protocol,
 )
-from experiments.benchmarks.rag.retrieval.protocol import (
+from experiments.benchmarks.rag.retrieval_reranking.protocol import (
     DEFAULT_PROTOCOL_PATH as DEFAULT_RETRIEVAL_PROTOCOL_PATH,
     load_protocol as load_retrieval_protocol,
 )

@@ -22,11 +22,11 @@ from experiments.benchmarks.rag.generation.protocol import (
     DEFAULT_PROTOCOL_PATH as DEFAULT_GENERATION_PROTOCOL_PATH,
     load_protocol as load_generation_protocol,
 )
-from experiments.benchmarks.rag.retrieval.protocol import (
+from experiments.benchmarks.rag.retrieval_reranking.protocol import (
     DEFAULT_PROTOCOL_PATH as DEFAULT_RETRIEVAL_PROTOCOL_PATH,
     load_protocol as load_retrieval_protocol,
 )
-from experiments.benchmarks.rag.retrieval.profiles import parse_candidate
+from experiments.benchmarks.rag.retrieval_reranking.profiles import parse_candidate
 from experiments.benchmarks.rag.final.protocol import (
     DEFAULT_PROTOCOL_PATH as DEFAULT_FINAL_PROTOCOL_PATH,
     load_protocol as load_final_protocol,

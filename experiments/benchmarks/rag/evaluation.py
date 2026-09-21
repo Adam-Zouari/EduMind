@@ -31,7 +31,7 @@ from experiments.benchmarks.rag.chunking_embedding.protocol import (
     ChunkingEmbeddingProtocol,
 )
 from experiments.benchmarks.rag.methods import BM25, Reranker, reciprocal_rank_fusion
-from experiments.benchmarks.rag.retrieval.protocol import RetrievalProtocol
+from experiments.benchmarks.rag.retrieval_reranking.protocol import RetrievalProtocol
 
 
 @dataclass(frozen=True)
@@ -508,7 +508,7 @@ def reranker_for(
     dtype: str = "float32",
     retrieval_protocol: RetrievalProtocol,
 ) -> Reranker | None:
-    from experiments.benchmarks.rag.retrieval.profiles import RERANKER_MODELS
+    from experiments.benchmarks.rag.retrieval_reranking.profiles import RERANKER_MODELS
 
     reranker_name = method.split("|", 1)[1] if "|" in method else method
     model = RERANKER_MODELS.get(reranker_name)

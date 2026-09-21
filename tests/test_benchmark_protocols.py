@@ -30,10 +30,10 @@ from experiments.benchmarks.rag.generation.protocol import (
     load_protocol as load_generation_protocol,
 )
 from experiments.benchmarks.rag.generation.evaluate import _questions
-from experiments.benchmarks.rag.retrieval.protocol import (
+from experiments.benchmarks.rag.retrieval_reranking.protocol import (
     load_protocol as load_retrieval_protocol,
 )
-from experiments.benchmarks.rag.retrieval.run import main as retrieval_main
+from experiments.benchmarks.rag.retrieval_reranking.run import main as retrieval_main
 from experiments.benchmarks.vectordb.protocol import (
     load_protocol as load_vector_protocol,
 )
@@ -68,7 +68,7 @@ PROTOCOL_CASES = (
     ),
     (
         "retrieval",
-        ROOT / "experiments/benchmarks/rag/retrieval/protocol.yaml",
+        ROOT / "experiments/benchmarks/rag/retrieval_reranking/protocol.yaml",
         load_retrieval_protocol,
         ("retrieval", "bm25", "k1"),
     ),
@@ -294,7 +294,7 @@ def test_retrieval_uses_the_supplied_chunking_smoke_pair(tmp_path, monkeypatch) 
         raise RuntimeError("supplied smoke pair reached model lock")
 
     monkeypatch.setattr(
-        "experiments.benchmarks.rag.retrieval.run.load_selected_model_lock",
+        "experiments.benchmarks.rag.retrieval_reranking.run.load_selected_model_lock",
         check_model_selection,
     )
     with pytest.raises(RuntimeError, match="supplied smoke pair reached model lock"):

@@ -78,7 +78,7 @@ implementation:
 | ASR extraction | `experiments/benchmarks/extraction/audio/protocol.yaml` |
 | Video extraction | `experiments/benchmarks/extraction/video/protocol.yaml` |
 | Chunking and embedding | `experiments/benchmarks/rag/chunking_embedding/protocol.yaml` |
-| Retrieval and reranking | `experiments/benchmarks/rag/retrieval/protocol.yaml` |
+| Retrieval and reranking | `experiments/benchmarks/rag/retrieval_reranking/protocol.yaml` |
 | Generation | `experiments/benchmarks/rag/generation/protocol.yaml` |
 | Final RAG | `experiments/benchmarks/rag/final/protocol.yaml` |
 | Vector database | `experiments/benchmarks/vectordb/protocol.yaml` |
@@ -1707,7 +1707,7 @@ latency and memory describe the deployable path. The frozen pool is reused only
 to guarantee a fair quality comparison. The no-reranker child measures the same
 live first stage without a learned reranker.
 
-The versioned `experiments/benchmarks/rag/retrieval/protocol.yaml` file is the
+The versioned `experiments/benchmarks/rag/retrieval_reranking/protocol.yaml` file is the
 single source of truth for benchmark hyperparameters. Its strict schema rejects
 missing or unknown fields. Algorithm definitions and deterministic tie-breaking
 remain tested code invariants rather than configurable alternatives. The runner

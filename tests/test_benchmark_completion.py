@@ -81,7 +81,7 @@ def test_document_cold_worker_launches_as_module(
         "experiments.benchmarks.extraction.document.run",
         "experiments.benchmarks.extraction.video.run",
         "experiments.benchmarks.rag.chunking_embedding.run",
-        "experiments.benchmarks.rag.retrieval.run",
+        "experiments.benchmarks.rag.retrieval_reranking.run",
         "experiments.benchmarks.rag.generation.run",
         "experiments.benchmarks.rag.final.run",
         "experiments.benchmarks.rag.final.confirm_extraction",
@@ -125,7 +125,7 @@ def test_rag_entrypoint_import_does_not_parse_arguments(module: str) -> None:
     "module",
     (
         "experiments.benchmarks.rag.chunking_embedding.worker",
-        "experiments.benchmarks.rag.retrieval.worker",
+        "experiments.benchmarks.rag.retrieval_reranking.worker",
     ),
 )
 def test_rag_workers_import_as_modules(module: str) -> None:

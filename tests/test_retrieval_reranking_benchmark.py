@@ -27,24 +27,24 @@ from experiments.benchmarks.rag.chunking_embedding.protocol import (
     protocol_from_mapping as chunking_protocol_from_mapping,
 )
 from experiments.benchmarks.rag.evaluation import Chunk, ExactIndex
-from experiments.benchmarks.rag.retrieval import benchmark as retrieval_benchmark
+from experiments.benchmarks.rag.retrieval_reranking import benchmark as retrieval_benchmark
 from experiments.benchmarks.rag.methods import reciprocal_rank_fusion_with_scores
-from experiments.benchmarks.rag.retrieval.benchmark import (
+from experiments.benchmarks.rag.retrieval_reranking.benchmark import (
     _require_permutation,
     evaluate_candidate,
 )
-from experiments.benchmarks.rag.retrieval.comparisons import parent_artifact_builder
-from experiments.benchmarks.rag.retrieval.metrics import (
+from experiments.benchmarks.rag.retrieval_reranking.comparisons import parent_artifact_builder
+from experiments.benchmarks.rag.retrieval_reranking.metrics import (
     directions_for,
     pool_evidence_unit_recall,
 )
-from experiments.benchmarks.rag.retrieval.profiles import (
+from experiments.benchmarks.rag.retrieval_reranking.profiles import (
     development_candidates,
     owner_first,
     parse_candidate,
     validation_candidates,
 )
-from experiments.benchmarks.rag.retrieval.protocol import (
+from experiments.benchmarks.rag.retrieval_reranking.protocol import (
     load_protocol as default_protocol,
     protocol_from_mapping,
     protocol_from_settings,

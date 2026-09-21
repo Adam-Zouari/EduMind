@@ -30,7 +30,7 @@ from experiments.benchmarks.rag.evaluation import (
 )
 from experiments.benchmarks.rag.generation.models import generator_for
 from experiments.benchmarks.rag.generation.protocol import GenerationProtocol
-from experiments.benchmarks.rag.retrieval.protocol import RetrievalProtocol
+from experiments.benchmarks.rag.retrieval_reranking.protocol import RetrievalProtocol
 
 GENERATION_DIRECTIONS = {
     "exact_match": "max",

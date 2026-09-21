@@ -314,16 +314,16 @@ Then give the retrieval experiment an engineer-selected chunker–embedding
 decision:
 
 ```powershell
-python -m experiments.benchmarks.rag.retrieval.run --profile development `
+python -m experiments.benchmarks.rag.retrieval_reranking.run --profile development `
   --embedding-selection EMBEDDING_DECISION
 
-python -m experiments.benchmarks.rag.retrieval.run --profile validation `
+python -m experiments.benchmarks.rag.retrieval_reranking.run --profile validation `
   --embedding-selection EMBEDDING_DECISION `
   --shortlist RETRIEVAL_DECISION
 ```
 
 Both commands load
-`experiments/benchmarks/rag/retrieval/protocol.yaml` by default. Use
+`experiments/benchmarks/rag/retrieval_reranking/protocol.yaml` by default. Use
 `--protocol PATH` only for another reviewed protocol revision. The file owns
 pool depth, BM25/Dense/RRF settings, embedding and reranker batch sizes,
 reranker input limits, quality cutoffs, confidence settings, finalist limit,

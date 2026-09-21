@@ -28,7 +28,7 @@ from experiments.benchmarks.rag.chunking_embedding.profiles import (
 )
 from experiments.benchmarks.rag.chunking_embedding.protocol import load_protocol as load_chunking_protocol
 from experiments.benchmarks.rag.generation.protocol import load_protocol as load_generation_protocol
-from experiments.benchmarks.rag.retrieval.profiles import development_candidates
+from experiments.benchmarks.rag.retrieval_reranking.profiles import development_candidates
 from experiments.benchmarks.extraction.audio.protocol import load_protocol as load_audio_protocol
 from experiments.benchmarks.extraction.document.profiles import DOCUMENT_LOCK_CANDIDATES
 ROOT = Path(__file__).resolve().parents[1]

@@ -12,7 +12,7 @@ from experiments.benchmarks.common.metrics import paired_bootstrap_interval
 from experiments.benchmarks.rag.chunking_embedding.metrics import (
     covered_unit_ids,
 )
-from experiments.benchmarks.rag.retrieval.protocol import RetrievalProtocol
+from experiments.benchmarks.rag.retrieval_reranking.protocol import RetrievalProtocol
 
 
 OPERATIONAL_DIRECTIONS = {

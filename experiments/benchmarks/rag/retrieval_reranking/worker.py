@@ -7,7 +7,7 @@ import time
 WORKER_STARTED_AT = time.perf_counter()
 
 from experiments.benchmarks.common.process import json_worker_main  # noqa: E402
-from experiments.benchmarks.rag.retrieval.benchmark import execute_payload  # noqa: E402
+from experiments.benchmarks.rag.retrieval_reranking.benchmark import execute_payload  # noqa: E402
 
 
 def execute_with_start(payload: dict[str, object]) -> dict[str, object]:

@@ -22,20 +22,20 @@ from experiments.benchmarks.rag.chunking_embedding.protocol import (
     DEFAULT_PROTOCOL_PATH as DEFAULT_CHUNKING_PROTOCOL_PATH,
     load_protocol as load_chunking_protocol,
 )
-from experiments.benchmarks.rag.retrieval.benchmark import run_in_fresh_process
-from experiments.benchmarks.rag.retrieval.comparisons import parent_artifact_builder
-from experiments.benchmarks.rag.retrieval.metrics import (
+from experiments.benchmarks.rag.retrieval_reranking.benchmark import run_in_fresh_process
+from experiments.benchmarks.rag.retrieval_reranking.comparisons import parent_artifact_builder
+from experiments.benchmarks.rag.retrieval_reranking.metrics import (
     directions_for,
     primary_metrics,
 )
-from experiments.benchmarks.rag.retrieval.profiles import (
+from experiments.benchmarks.rag.retrieval_reranking.profiles import (
     development_candidates,
     owner_first,
     parse_candidate,
     required_reranker_models,
     validation_candidates,
 )
-from experiments.benchmarks.rag.retrieval.protocol import (
+from experiments.benchmarks.rag.retrieval_reranking.protocol import (
     DEFAULT_PROTOCOL_PATH,
     load_protocol,
 )
