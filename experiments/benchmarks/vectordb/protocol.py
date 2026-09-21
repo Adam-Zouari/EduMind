@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from experiments.benchmarks.common.arguments import load_candidates
+from experiments.benchmarks.vectordb.adapters import ADAPTERS
 from experiments.benchmarks.common.protocol import (
     ProtocolMetadata,
     boolean,
@@ -24,7 +24,6 @@ from experiments.benchmarks.common.protocol import (
 
 
 DEFAULT_PROTOCOL_PATH = Path(__file__).with_name("protocol.yaml")
-DEFAULT_CANDIDATE_PATH = Path(__file__).with_name("candidates.yaml")
 
 
 @dataclass(frozen=True)
@@ -201,7 +200,7 @@ def load_protocol(path: Path = DEFAULT_PROTOCOL_PATH) -> VectorDatabaseProtocol:
             "docker_restart_timeout_seconds",
         },
     )
-    declared_adapters = set(load_candidates(DEFAULT_CANDIDATE_PATH, "development"))
+    declared_adapters = set(ADAPTERS)
     batches = strict_object(
         adapters["upsert_batch_sizes"],
         "adapters.upsert_batch_sizes",

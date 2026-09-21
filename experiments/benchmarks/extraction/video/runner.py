@@ -579,7 +579,7 @@ def _selected_audio(arguments, protocol: AudioProtocol):
         if arguments.audio_candidate not in candidates:
             raise ValueError("Unknown smoke ASR candidate")
         # The synthetic decision fingerprint remains an explicit local input.
-        path = PROJECT_ROOT / "experiments/benchmarks/extraction/audio/candidates.yaml"
+        path = protocol.meta.source_path
         return arguments.audio_candidate, path
     if arguments.audio_selection is None:
         raise ValueError("Frozen ASR creation requires --audio-selection")

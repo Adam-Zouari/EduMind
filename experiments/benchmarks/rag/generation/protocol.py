@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Mapping
 
 from experiments.benchmarks.common.protocol import (
     ProtocolMetadata,
@@ -12,6 +13,7 @@ from experiments.benchmarks.common.protocol import (
     execution_profiles,
     integer,
     load_yaml,
+    mapping,
     metadata,
     number,
     strict_object,
@@ -20,11 +22,18 @@ from experiments.benchmarks.common.protocol import (
 
 
 DEFAULT_PROTOCOL_PATH = Path(__file__).with_name("protocol.yaml")
+GENERATOR_LOADERS = {
+    "falcon-h1-tiny-r-90m-control": "causal-lm",
+    "qwen3-0.6b-reasoning": "causal-lm",
+    "qwen3.5-0.8b-reasoning": "multimodal-lm",
+    "minicpm5-1b-reasoning": "causal-lm",
+}
 
 
 @dataclass(frozen=True)
 class GenerationProtocol:
     meta: ProtocolMetadata
+    models: Mapping[str, str]
     temperature: float
     do_sample: bool
     context_tokens: int
@@ -44,13 +53,22 @@ class GenerationProtocol:
     def profile(self, name: str):
         return self.meta.profile(name)
 
+    def model_id(self, alias: str) -> str:
+        try:
+            return self.models[alias]
+        except KeyError as exc:
+            raise ValueError(f"Unknown generation candidate: {alias}") from exc
+
 
 def load_protocol(path: Path = DEFAULT_PROTOCOL_PATH) -> GenerationProtocol:
     root = strict_object(
         load_yaml(path, "generation"),
         "generation protocol root",
-        {"schema_version", "protocol_version", "seed", "generation", "development_screen", "context", "faithfulness", "statistics", "selection", "resources", "profiles"},
+        {"schema_version", "protocol_version", "seed", "models", "generation", "development_screen", "context", "faithfulness", "statistics", "selection", "resources", "profiles"},
     )
+    models = {alias: string(model, f"models.{alias}") for alias, model in mapping(root["models"], "models").items()}
+    if set(models) != set(GENERATOR_LOADERS) or len(set(models.values())) != len(models):
+        raise ValueError("Generation models must define every supported generator exactly once with unique model IDs")
     generation = strict_object(
         root["generation"],
         "generation",
@@ -96,9 +114,8 @@ def load_protocol(path: Path = DEFAULT_PROTOCOL_PATH) -> GenerationProtocol:
     if {profile.batch_size for profile in profiles.values()} != {1}:
         raise ValueError("Generation profiles must use batch size one")
     return GenerationProtocol(
-        metadata("generation", path, root, profiles=profiles), temperature,
+        metadata("generation", path, root, profiles=profiles), models, temperature,
         do_sample, context_tokens, answer_tokens, streamer_timeout,
         question_count, selection,
         packing, tokenizer, model, behavior, trust, confidence, maximum_finalists, peak,
     )
-

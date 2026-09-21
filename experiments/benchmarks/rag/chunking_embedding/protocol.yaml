@@ -1,5 +1,5 @@
 schema_version: 1
-protocol_version: chunking-embedding-v1
+protocol_version: chunking-embedding-v2
 seed: 42
 
 tokenizer: tiktoken:cl100k_base
@@ -30,6 +30,16 @@ strategies:
     size: 512
     overlap: 64
     parser: markdown-table-formula-v1
+
+embedding_models:
+  - Alibaba-NLP/gte-modernbert-base
+  - Snowflake/snowflake-arctic-embed-m-v2.0
+  - codefuse-ai/F2LLM-v2-0.6B
+  - Octen/Octen-Embedding-0.6B
+  - Qwen/Qwen3-Embedding-0.6B
+  - nvidia/Nemotron-3-Embed-1B-BF16
+
+smoke_pair: token-256-32|Alibaba-NLP/gte-modernbert-base
 
 index:
   embedding_batch_size: 1

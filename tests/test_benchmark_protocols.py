@@ -33,6 +33,7 @@ from experiments.benchmarks.rag.generation.evaluate import _questions
 from experiments.benchmarks.rag.retrieval.protocol import (
     load_protocol as load_retrieval_protocol,
 )
+from experiments.benchmarks.rag.retrieval.run import main as retrieval_main
 from experiments.benchmarks.vectordb.protocol import (
     load_protocol as load_vector_protocol,
 )
@@ -287,8 +288,47 @@ def test_generation_screen_limit_and_final_profiles_are_explicit() -> None:
         final.profile("standard")
 
 
-def test_retrieval_rejects_an_undeclared_smoke_input(tmp_path) -> None:
-    root = deepcopy(load_retrieval_protocol().resolved)
-    root["smoke_fixture"]["chunking_embedding_candidate"] = "unknown|model"
-    with pytest.raises(ValueError, match="candidates.yaml"):
-        load_retrieval_protocol(_write_protocol(tmp_path, "retrieval-alias", root))
+def test_retrieval_uses_the_supplied_chunking_smoke_pair(tmp_path, monkeypatch) -> None:
+    chunk_root = deepcopy(load_chunking_protocol().meta.resolved)
+    chunk_root["smoke_pair"] = "token-256-32|Snowflake/snowflake-arctic-embed-m-v2.0"
+    chunk_path = _write_protocol(tmp_path, "chunking-smoke", chunk_root)
+
+    def check_model_selection(_path, *, candidates):
+        assert "Snowflake/snowflake-arctic-embed-m-v2.0" in candidates
+        raise RuntimeError("supplied smoke pair reached model lock")
+
+    monkeypatch.setattr(
+        "experiments.benchmarks.rag.retrieval.run.load_selected_model_lock",
+        check_model_selection,
+    )
+    with pytest.raises(RuntimeError, match="supplied smoke pair reached model lock"):
+        retrieval_main(["--chunking-protocol", str(chunk_path), "--profile", "smoke", "--no-mlflow"])
+
+
+def test_candidate_rosters_live_in_protocols_or_supported_adapters(tmp_path: Path) -> None:
+    assert not list((ROOT / "experiments/benchmarks").rglob("candidates.yaml"))
+
+    audio = load_audio_protocol()
+    assert len(audio.candidates) == 4
+    assert all(audio.candidate(alias).model_id for alias in audio.candidates)
+    audio_root = deepcopy(audio.meta.resolved)
+    audio_root["decoding"]["whisper-small-en-control"]["model_id"] = "other/model"
+    changed = load_audio_protocol(_write_protocol(tmp_path, "audio-model", audio_root))
+    assert changed.meta.checksum != audio.meta.checksum
+    assert changed.candidate("whisper-small-en-control").model_id == "other/model"
+
+    chunking = load_chunking_protocol()
+    assert len(chunking.development_candidates) == 48
+    assert chunking.smoke_pair == "token-256-32|Alibaba-NLP/gte-modernbert-base"
+    assert chunking.smoke_pair in chunking.development_candidates
+    assert "chunking_embedding_candidate" not in load_retrieval_protocol().resolved["smoke_fixture"]
+    bad_chunking = deepcopy(chunking.meta.resolved)
+    bad_chunking["smoke_pair"] = "missing|model"
+    with pytest.raises(ValueError, match="smoke_pair"):
+        load_chunking_protocol(_write_protocol(tmp_path, "chunking-smoke", bad_chunking))
+
+    generation = load_generation_protocol()
+    bad_generation = deepcopy(generation.meta.resolved)
+    bad_generation["models"]["unsupported"] = "other/model"
+    with pytest.raises(ValueError, match="supported generator"):
+        load_generation_protocol(_write_protocol(tmp_path, "generation-model", bad_generation))

@@ -6,16 +6,17 @@ from .pgvector import PgVector
 from .qdrant import Qdrant
 from .weaviate import Weaviate
 
+ADAPTERS = {
+    "chroma": Chroma,
+    "qdrant": Qdrant,
+    "weaviate": Weaviate,
+    "pgvector": PgVector,
+}
+
 
 def create(name: str, config: Config) -> Adapter:
-    adapters = {
-        "chroma": Chroma,
-        "qdrant": Qdrant,
-        "weaviate": Weaviate,
-        "pgvector": PgVector,
-    }
     try:
-        return adapters[name](config)
+        return ADAPTERS[name](config)
     except KeyError as exc:
         raise ValueError(f"Unknown vector server candidate: {name}") from exc
 

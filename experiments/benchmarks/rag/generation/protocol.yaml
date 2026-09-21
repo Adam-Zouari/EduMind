@@ -1,6 +1,12 @@
 schema_version: 1
-protocol_version: generation-v1
+protocol_version: generation-v2
 seed: 42
+
+models:
+  falcon-h1-tiny-r-90m-control: tiiuae/Falcon-H1-Tiny-R-90M
+  qwen3-0.6b-reasoning: Qwen/Qwen3-0.6B
+  qwen3.5-0.8b-reasoning: Qwen/Qwen3.5-0.8B
+  minicpm5-1b-reasoning: openbmb/MiniCPM5-1B
 
 generation:
   temperature: 0.0

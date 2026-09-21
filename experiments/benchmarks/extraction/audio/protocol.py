@@ -6,8 +6,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-import yaml
-
 from experiments.benchmarks.common.protocol import (
     ProtocolMetadata,
     boolean,
@@ -25,7 +23,12 @@ from experiments.benchmarks.common.protocol import (
 
 
 DEFAULT_PROTOCOL_PATH = Path(__file__).with_name("protocol.yaml")
-DEFAULT_CANDIDATE_PATH = Path(__file__).with_name("candidates.yaml")
+_BACKEND_BY_ALIAS = {
+    "whisper-small-en-control": "transformers",
+    "canary-180m": "nemo",
+    "parakeet-tdt-0.6b-v2": "nemo",
+    "moss-transcribe-diarize": "moss",
+}
 
 
 @dataclass(frozen=True)
@@ -33,7 +36,6 @@ class AudioCandidate:
     alias: str
     model_id: str
     backend: str
-    profiles: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -76,13 +78,10 @@ class AudioProtocol:
 
 def load_protocol(
     path: Path = DEFAULT_PROTOCOL_PATH,
-    *,
-    candidate_path: Path = DEFAULT_CANDIDATE_PATH,
 ) -> AudioProtocol:
     return protocol_from_mapping(
         load_yaml(path, "audio"),
         source_path=path,
-        candidate_path=candidate_path,
     )
 
 
@@ -90,7 +89,6 @@ def protocol_from_mapping(
     value: object,
     *,
     source_path: Path = DEFAULT_PROTOCOL_PATH,
-    candidate_path: Path = DEFAULT_CANDIDATE_PATH,
 ) -> AudioProtocol:
     root = strict_object(
         value,
@@ -117,13 +115,16 @@ def protocol_from_mapping(
     )
     number(audio["maximum_duration_seconds"], "audio.maximum_duration_seconds", minimum=0, minimum_exclusive=True, maximum=30)
     number(audio["manifest_duration_tolerance_seconds"], "audio.manifest_duration_tolerance_seconds", minimum=0)
-    candidates = _load_candidates(candidate_path)
     raw_decoding = mapping(root["decoding"], "decoding")
-    if set(raw_decoding) != set(candidates):
-        raise ValueError("Audio decoding entries must exactly match candidates.yaml aliases")
+    if set(raw_decoding) != set(_BACKEND_BY_ALIAS):
+        raise ValueError("Audio decoding must define every supported ASR adapter exactly once")
     decoding = {
-        alias: _decoder(alias, candidates[alias].backend, raw_decoding[alias])
-        for alias in candidates
+        alias: _decoder(alias, _BACKEND_BY_ALIAS[alias], value)
+        for alias, value in raw_decoding.items()
+    }
+    candidates = {
+        alias: AudioCandidate(alias, str(value["model_id"]), _BACKEND_BY_ALIAS[alias])
+        for alias, value in decoding.items()
     }
     alignment = strict_object(root["alignment"], "alignment", {"content_f1_threshold"})
     alignment_threshold = number(alignment["content_f1_threshold"], "alignment.content_f1_threshold", minimum=0, maximum=1)
@@ -183,42 +184,15 @@ def protocol_from_worker(value: object) -> AudioProtocol:
     return protocol
 
 
-def _load_candidates(path: Path) -> dict[str, AudioCandidate]:
-    root = strict_object(yaml.safe_load(path.read_text(encoding="utf-8")), "audio candidates root", {"candidates"})
-    raw = mapping(root["candidates"], "audio candidates")
-    result = {}
-    for alias, value in raw.items():
-        row = strict_object(value, f"candidates.{alias}", {"model_id", "backend", "profiles"})
-        result[alias] = AudioCandidate(
-            alias,
-            string(row["model_id"], f"candidates.{alias}.model_id"),
-            choice(row["backend"], f"candidates.{alias}.backend", {"transformers", "nemo", "moss"}),
-            _strings(row["profiles"], f"candidates.{alias}.profiles"),
-        )
-        unknown_profiles = set(result[alias].profiles) - {
-            "smoke",
-            "development",
-            "validation",
-            "locked",
-        }
-        if unknown_profiles:
-            raise ValueError(
-                f"Audio candidate {alias!r} has unknown profiles: "
-                + ", ".join(sorted(unknown_profiles))
-            )
-    if not result:
-        raise ValueError("Audio candidate registry is empty")
-    return result
-
-
 def _decoder(alias: str, backend: str, value: object) -> dict[str, object]:
-    common = {"language", "decoder", "timestamp_method", "cpu_dtype", "cuda_dtype"}
+    common = {"model_id", "language", "decoder", "timestamp_method", "cpu_dtype", "cuda_dtype"}
     extras = {
         "transformers": {"return_timestamps", "do_sample"},
         "nemo": ({"timestamps", "beam_size", "punctuation_and_capitalization"} if alias == "canary-180m" else {"timestamps", "decoding_strategy", "timestamp_level"}),
         "moss": {"max_new_tokens", "do_sample"},
     }[backend]
     row = strict_object(value, f"decoding.{alias}", common | extras)
+    string(row["model_id"], f"decoding.{alias}.model_id")
     choice(row["language"], f"decoding.{alias}.language", {"English"})
     expected_descriptors = {
         "whisper-small-en-control": ("greedy", "native-word"),

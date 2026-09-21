@@ -23,6 +23,7 @@ DEFAULT_PROTOCOL_PATH = Path(__file__).with_name("protocol.yaml")
 @dataclass(frozen=True)
 class FinalRAGProtocol:
     meta: ProtocolMetadata
+    smoke_system: tuple[str, str, str, str]
     top_k: tuple[int, ...]
     maximum_retrieval_finalists: int
     maximum_generation_finalists: int
@@ -35,13 +36,21 @@ class FinalRAGProtocol:
     def profile(self, profile: str):
         return self.meta.profile(profile)
 
+    def smoke_candidates(self) -> tuple[str, ...]:
+        return tuple(
+            "@@".join((*self.smoke_system, f"top_k={cutoff}"))
+            for cutoff in self.top_k
+        )
+
 
 def load_protocol(path: Path = DEFAULT_PROTOCOL_PATH) -> FinalRAGProtocol:
     root = strict_object(
         load_yaml(path, "final-rag"),
         "final-rag protocol root",
-        {"schema_version", "protocol_version", "seed", "selection", "human_review", "locked_test", "profiles"},
+        {"schema_version", "protocol_version", "seed", "smoke_system", "selection", "human_review", "locked_test", "profiles"},
     )
+    smoke = strict_object(root["smoke_system"], "smoke_system", {"chunking", "embedding_model", "retrieval", "generator"})
+    smoke_system = tuple(string(smoke[name], f"smoke_system.{name}") for name in ("chunking", "embedding_model", "retrieval", "generator"))
     selection = strict_object(root["selection"], "selection", {"top_k", "maximum_retrieval_finalists", "maximum_generation_finalists", "maximum_final_systems"})
     top_k = increasing_integers(selection["top_k"], "selection.top_k")
     retrieval = integer(selection["maximum_retrieval_finalists"], "selection.maximum_retrieval_finalists", minimum=1)
@@ -64,6 +73,6 @@ def load_protocol(path: Path = DEFAULT_PROTOCOL_PATH) -> FinalRAGProtocol:
     if {profile.batch_size for profile in profiles.values()} != {1}:
         raise ValueError("Final RAG profiles must use batch size one")
     return FinalRAGProtocol(
-        metadata("final_rag", path, root, profiles=profiles), top_k, retrieval,
+        metadata("final_rag", path, root, profiles=profiles), smoke_system, top_k, retrieval,
         generation, systems, samples, review_systems, judgments, marker,
     )

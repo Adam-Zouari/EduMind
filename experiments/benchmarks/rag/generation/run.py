@@ -11,13 +11,11 @@ from experiments.benchmarks.common.datasets import load_manifest, require_manife
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
 from experiments.benchmarks.rag.generation.evaluate import GENERATION_DIRECTIONS, evaluate_candidate
-from experiments.benchmarks.rag.generation.models import GENERATOR_PROFILES
 from experiments.benchmarks.rag.generation.protocol import (
     DEFAULT_PROTOCOL_PATH,
     load_protocol,
 )
 
-directory = Path(__file__).parent
 argument_parser = parser("Benchmark direct Hugging Face generation on frozen contexts")
 argument_parser.add_argument(
     "--device", choices=("cpu", "cuda"), help="Whole-model device shared by every candidate"
@@ -56,7 +54,7 @@ require_manifest_split(
     }[arguments.profile],
 )
 candidates = resolved_candidates(
-    directory / "candidates.yaml",
+    tuple(protocol.models),
     arguments.profile,
     arguments.shortlist,
     expected_source=("rag", "generation", "development"),
@@ -65,7 +63,7 @@ candidates = resolved_candidates(
 required_models = tuple(
     dict.fromkeys(
         [
-            *(GENERATOR_PROFILES[candidate][0] for candidate in candidates),
+            *(protocol.model_id(candidate) for candidate in candidates),
             protocol.faithfulness_model,
         ]
     )

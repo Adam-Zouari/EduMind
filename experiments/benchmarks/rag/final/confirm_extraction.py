@@ -21,7 +21,6 @@ from experiments.benchmarks.rag.chunking_embedding.protocol import (
     load_protocol as load_chunking_protocol,
 )
 from experiments.benchmarks.rag.generation.evaluate import GENERATION_DIRECTIONS, evaluate_candidate
-from experiments.benchmarks.rag.generation.models import GENERATOR_PROFILES
 from experiments.benchmarks.rag.generation.protocol import (
     DEFAULT_PROTOCOL_PATH as DEFAULT_GENERATION_PROTOCOL_PATH,
     load_protocol as load_generation_protocol,
@@ -82,11 +81,10 @@ def main() -> int:
         raise ValueError(f"top_k must be one of {final_protocol.top_k}")
     chunking_protocol.strategy(chunker)
     parsed_retrieval = parse_candidate(retrieval)
-    if generator not in GENERATOR_PROFILES:
-        raise ValueError(f"Unknown generation candidate: {generator}")
+    generator_model = generation_protocol.model_id(generator)
     required_models = {
         embedding,
-        GENERATOR_PROFILES[generator][0],
+        generator_model,
         generation_protocol.faithfulness_model,
     }
     if parsed_retrieval.reranker_model is not None:

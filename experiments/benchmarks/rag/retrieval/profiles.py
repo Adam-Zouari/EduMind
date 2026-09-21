@@ -2,52 +2,21 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
-
-import yaml
 
 
-_CANDIDATE_PATH = Path(__file__).with_name("candidates.yaml")
-
-
-def _candidate_identities() -> tuple[tuple[str, ...], dict[str, str]]:
-    payload = yaml.safe_load(_CANDIDATE_PATH.read_text(encoding="utf-8"))
-    if not isinstance(payload, Mapping):
-        raise ValueError("Retrieval candidate registry must be an object")
-    retrievers = payload.get("retrievers")
-    rerankers = payload.get("rerankers")
-    if not isinstance(retrievers, Mapping) or not isinstance(rerankers, Mapping):
-        raise ValueError("Retrieval candidate registry requires retrievers and rerankers")
-    expected_retrievers = {
-        "dense": "exact-cosine",
-        "bm25": "rank-bm25",
-        "rrf": "reciprocal-rank-fusion",
-    }
-    if set(retrievers) != set(expected_retrievers):
-        raise ValueError("Retrieval candidate registry must define dense, bm25, and rrf")
-    for alias, backend in expected_retrievers.items():
-        value = retrievers[alias]
-        if not isinstance(value, Mapping) or value.get("backend") != backend:
-            raise ValueError(f"Retrieval candidate {alias!r} has an invalid backend")
-    if "none" not in rerankers:
-        raise ValueError("Retrieval candidate registry requires the no-reranker control")
-    models: dict[str, str] = {}
-    for alias, value in rerankers.items():
-        if alias == "none":
-            continue
-        if not isinstance(alias, str) or not isinstance(value, Mapping):
-            raise ValueError("Retrieval reranker registry is malformed")
-        model_id = value.get("model_id")
-        if not isinstance(model_id, str) or not model_id:
-            raise ValueError(f"Reranker {alias!r} requires a model_id")
-        models[alias] = model_id
-    return tuple(expected_retrievers), models
-
-
-RETRIEVERS, RERANKER_MODELS = _candidate_identities()
+RETRIEVERS = ("dense", "bm25", "rrf")
+RERANKER_MODELS = {
+    "gte-modernbert": "Alibaba-NLP/gte-reranker-modernbert-base",
+    "ettin-150m": "cross-encoder/ettin-reranker-150m-v1",
+    "ettin-400m": "cross-encoder/ettin-reranker-400m-v1",
+    "ettin-1b": "cross-encoder/ettin-reranker-1b-v1",
+}
 RERANKERS = ("none", *RERANKER_MODELS)
+
+
+def development_candidates() -> tuple[str, ...]:
+    return tuple(f"{retriever}|{reranker}" for retriever in RETRIEVERS for reranker in RERANKERS)
 
 
 @dataclass(frozen=True)

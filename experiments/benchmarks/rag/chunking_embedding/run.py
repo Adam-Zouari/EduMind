@@ -5,7 +5,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
 from edumind.common.paths import PROJECT_ROOT
-from experiments.benchmarks.common.arguments import load_candidates, parser
+from experiments.benchmarks.common.arguments import parser
 from experiments.benchmarks.common.contracts import BenchmarkPlan
 from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
@@ -20,7 +20,6 @@ from experiments.benchmarks.rag.chunking_embedding.protocol import (
     load_protocol,
 )
 
-directory = Path(__file__).parent
 argument_parser = parser("Benchmark chunking and embedding pairs")
 argument_parser.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
 argument_parser.add_argument(
@@ -49,8 +48,7 @@ require_manifest_split(manifest, arguments.profile, {
     "development": {"dev", "development"},
     "validation": {"validation"},
 }[arguments.profile])
-candidate_path = directory / "candidates.yaml"
-declared = load_candidates(candidate_path, "development")
+declared = protocol.development_candidates
 if arguments.profile == "development":
     if arguments.shortlist is not None:
         raise ValueError(
@@ -77,7 +75,7 @@ elif arguments.profile == "validation":
 else:
     if arguments.shortlist is not None:
         raise ValueError("Smoke chunking/embedding does not accept a shortlist")
-    candidates = load_candidates(candidate_path, "smoke")
+    candidates = (protocol.smoke_pair,)
 embedding_names = tuple(sorted({candidate.split("|", 1)[1] for candidate in candidates}))
 model_lock_path = PROJECT_ROOT / "data/benchmarks/models/selected.json"
 model_lock = load_selected_model_lock(

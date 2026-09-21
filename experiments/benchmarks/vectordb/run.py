@@ -60,7 +60,7 @@ def main() -> int:
     chunking_protocol = load_chunking_protocol(arguments.chunking_protocol)
     execution = protocol.profile(arguments.profile)
     candidates = resolved_candidates(
-        DIRECTORY / "candidates.yaml",
+        tuple(protocol.upsert_batch_sizes),
         arguments.profile,
         arguments.shortlist,
         expected_source=("vectordb-server-v4", "dense-ann", "development"),

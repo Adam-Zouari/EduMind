@@ -1,5 +1,5 @@
 schema_version: 1
-protocol_version: audio-asr-v1
+protocol_version: audio-asr-v2
 seed: 42
 
 audio:
@@ -12,6 +12,7 @@ audio:
 
 decoding:
   whisper-small-en-control:
+    model_id: openai/whisper-small.en
     language: English
     decoder: greedy
     timestamp_method: native-word
@@ -20,6 +21,7 @@ decoding:
     cpu_dtype: float32
     cuda_dtype: float16
   canary-180m:
+    model_id: nvidia/canary-180m-flash
     language: English
     decoder: beam-1-pnc
     timestamp_method: native-segment
@@ -29,6 +31,7 @@ decoding:
     cpu_dtype: float32
     cuda_dtype: float16
   parakeet-tdt-0.6b-v2:
+    model_id: nvidia/parakeet-tdt-0.6b-v2
     language: English
     decoder: greedy
     timestamp_method: native-segment
@@ -38,6 +41,7 @@ decoding:
     cpu_dtype: float32
     cuda_dtype: float16
   moss-transcribe-diarize:
+    model_id: OpenMOSS-Team/MOSS-Transcribe-Diarize
     language: English
     decoder: deterministic
     timestamp_method: native-segment

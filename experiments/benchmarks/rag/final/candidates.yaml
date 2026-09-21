@@ -1,7 +1,0 @@
-candidates:
-  smoke-control:
-    chunking: token-256-32
-    embedding_model: Alibaba-NLP/gte-modernbert-base
-    retrieval: dense|none
-    generator: falcon-h1-tiny-r-90m-control
-    profiles: [smoke]

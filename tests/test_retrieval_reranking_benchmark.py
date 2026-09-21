@@ -18,7 +18,6 @@ from experiments.benchmarks.common.contracts import (
     DatasetManifest,
     SampleResult,
 )
-from experiments.benchmarks.common.arguments import load_candidates
 from experiments.benchmarks.common.datasets import load_manifest
 from experiments.benchmarks.rag.chunking_embedding.strategies import (
     build_chunking_strategy,
@@ -40,6 +39,7 @@ from experiments.benchmarks.rag.retrieval.metrics import (
     pool_evidence_unit_recall,
 )
 from experiments.benchmarks.rag.retrieval.profiles import (
+    development_candidates,
     owner_first,
     parse_candidate,
     validation_candidates,
@@ -51,12 +51,7 @@ from experiments.benchmarks.rag.retrieval.protocol import (
 )
 
 
-RETRIEVAL_CANDIDATES = owner_first(
-    load_candidates(
-        PROJECT_ROOT / "experiments/benchmarks/rag/retrieval/candidates.yaml",
-        "smoke",
-    )
-)
+RETRIEVAL_CANDIDATES = owner_first(development_candidates())
 
 
 def _settings(

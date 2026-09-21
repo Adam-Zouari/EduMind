@@ -8,7 +8,6 @@ import pytest
 from edumind.common.config import ConfigurationError, load_settings
 from edumind.extraction.pipeline import LOCK_CANDIDATE_BY_ENGINE
 from edumind.rag.contracts import EMBEDDING_SPECS, PRODUCTION_EMBEDDING_MODEL
-from experiments.benchmarks.common.arguments import load_candidates
 from experiments.benchmarks.common.selection import included_candidates, selection_entries
 from experiments.benchmarks.preparation.models import (
     APP_CANDIDATES,
@@ -27,26 +26,12 @@ from experiments.benchmarks.preparation.models import (
 from experiments.benchmarks.rag.chunking_embedding.profiles import (
     EXPERIMENTAL_EMBEDDING_SPECS,
 )
-from experiments.benchmarks.rag.generation.models import GENERATOR_PROFILES
+from experiments.benchmarks.rag.chunking_embedding.protocol import load_protocol as load_chunking_protocol
+from experiments.benchmarks.rag.generation.protocol import load_protocol as load_generation_protocol
+from experiments.benchmarks.rag.retrieval.profiles import development_candidates
+from experiments.benchmarks.extraction.audio.protocol import load_protocol as load_audio_protocol
+from experiments.benchmarks.extraction.document.profiles import DOCUMENT_LOCK_CANDIDATES
 ROOT = Path(__file__).resolve().parents[1]
-
-
-def test_candidate_registry_rejects_behavior_settings(tmp_path: Path) -> None:
-    registry = tmp_path / "candidates.yaml"
-    registry.write_text(
-        """matrix:
-  axes: [strategies, embeddings]
-  separator: "|"
-strategies:
-  token-control: {profiles: [development], size: 256}
-embeddings:
-  embedding-control: {model_id: example/model, profiles: [development]}
-""",
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ValueError, match="non-identity fields"):
-        load_candidates(registry, "development")
 
 
 def test_selection_history_counts_and_keys_are_preserved() -> None:
@@ -87,15 +72,12 @@ def test_executable_model_registries_match_approved_selection() -> None:
         for spec in [*EMBEDDING_SPECS.values(), *EXPERIMENTAL_EMBEDDING_SPECS.values()]
     )
 
-    chunk_pairs = load_candidates(
-        ROOT / "experiments/benchmarks/rag/chunking_embedding/candidates.yaml",
-        "development",
-    )
+    chunk_pairs = load_chunking_protocol().development_candidates
     assert len(chunk_pairs) == 48
     assert len({pair.split("|", 1)[0] for pair in chunk_pairs}) == 8
     assert {pair.split("|", 1)[1] for pair in chunk_pairs} == approved_embeddings
 
-    assert {model for model, _ in GENERATOR_PROFILES.values()} == set(
+    assert set(load_generation_protocol().models.values()) == set(
         included_candidates("generator")
     )
 
@@ -156,9 +138,7 @@ def test_reranker_audio_and_document_registries_are_exact() -> None:
             "ettin-1b",
         )
     }
-    registry = ROOT / "experiments/benchmarks/rag/retrieval/candidates.yaml"
-    assert set(load_candidates(registry, "smoke")) == expected_retrieval
-    assert set(load_candidates(registry, "development")) == expected_retrieval
+    assert set(development_candidates()) == expected_retrieval
     assert len(expected_retrieval) == 15
     approved_asr = {
         "whisper-small-en-control",
@@ -166,14 +146,8 @@ def test_reranker_audio_and_document_registries_are_exact() -> None:
         "parakeet-tdt-0.6b-v2",
         "moss-transcribe-diarize",
     }
-    audio_registry = ROOT / "experiments/benchmarks/extraction/audio/candidates.yaml"
-    assert set(load_candidates(audio_registry, "smoke")) == approved_asr
-    assert set(load_candidates(audio_registry, "development")) == approved_asr
-    document = load_candidates(
-        ROOT / "experiments/benchmarks/extraction/document/candidates.yaml",
-        "development",
-    )
-    assert set(document) == {
+    assert set(load_audio_protocol().candidates) == approved_asr
+    assert set(DOCUMENT_LOCK_CANDIDATES) == {
         "docling-standard",
         "docling-vlm-granite-258m",
         "paddleocr-vl-1.6",

@@ -1,9 +1,7 @@
 from pathlib import Path
-from collections.abc import Mapping
 import json
 import sys
 
-import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
@@ -15,14 +13,12 @@ from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
-from experiments.benchmarks.rag.chunking_embedding.profiles import split_candidate
 from experiments.benchmarks.rag.chunking_embedding.protocol import (
     DEFAULT_PROTOCOL_PATH as DEFAULT_CHUNKING_PROTOCOL_PATH,
     load_protocol as load_chunking_protocol,
 )
 from experiments.benchmarks.rag.evaluation import build_index, retrieval_quality_directions
 from experiments.benchmarks.rag.generation.evaluate import GENERATION_DIRECTIONS, evaluate_candidate
-from experiments.benchmarks.rag.generation.models import GENERATOR_PROFILES
 from experiments.benchmarks.rag.generation.protocol import (
     DEFAULT_PROTOCOL_PATH as DEFAULT_GENERATION_PROTOCOL_PATH,
     load_protocol as load_generation_protocol,
@@ -38,40 +34,6 @@ from experiments.benchmarks.rag.final.protocol import (
 )
 
 
-def _declared_systems(path: Path, profile: str, top_k: tuple[int, ...]) -> tuple[str, ...]:
-    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
-    raw = payload.get("candidates") if isinstance(payload, Mapping) else None
-    if not isinstance(raw, Mapping) or not raw:
-        raise ValueError("Final RAG candidates.yaml requires a candidate registry")
-    result = []
-    expected = {"chunking", "embedding_model", "retrieval", "generator", "profiles"}
-    for alias, value in raw.items():
-        if not isinstance(alias, str) or not isinstance(value, Mapping):
-            raise ValueError("Final RAG candidate registry is malformed")
-        if set(value) != expected:
-            raise ValueError(f"Final RAG candidate {alias!r} has invalid fields")
-        profiles = value["profiles"]
-        if not isinstance(profiles, list) or not all(
-            isinstance(item, str) for item in profiles
-        ):
-            raise ValueError(f"Final RAG candidate {alias!r} has invalid profiles")
-        if profile not in profiles:
-            continue
-        components = tuple(
-            str(value[name])
-            for name in ("chunking", "embedding_model", "retrieval", "generator")
-        )
-        if any(not component.strip() for component in components):
-            raise ValueError(f"Final RAG candidate {alias!r} has an empty identity")
-        result.extend(
-            "@@".join((*components, f"top_k={cutoff}")) for cutoff in top_k
-        )
-    if not result:
-        raise ValueError(f"Final RAG has no declared candidates for {profile}")
-    return tuple(result)
-
-
-directory = Path(__file__).parent
 argument_parser = parser(
     "Benchmark shortlisted complete RAG systems",
     profiles=("smoke", "development", "validation", "locked"),
@@ -168,9 +130,7 @@ if arguments.profile in {"validation", "locked"}:
         ),
     ).selected_candidates
 elif arguments.profile == "smoke":
-    candidates = _declared_systems(
-        directory / "candidates.yaml", arguments.profile, final_protocol.top_k
-    )
+    candidates = final_protocol.smoke_candidates()
 elif arguments.profile == "development":
     candidates = ()
 else:
@@ -192,7 +152,8 @@ if arguments.profile == "development":
         .get("settings", {})
         .get("chunker_embedding", "")
     )
-    split_candidate(selected_pair)
+    if selected_pair not in chunking_protocol.development_candidates:
+        raise ValueError("Final RAG chunking/embedding selection is not in the supplied protocol")
     generators = load_engineer_decision(
         arguments.generation_selection,
         maximum=final_protocol.maximum_generation_finalists,
@@ -243,13 +204,14 @@ required_models = {generation_protocol.faithfulness_model}
 for candidate in candidates:
     chunker, embedding, retrieval, generator, top_k_value = candidate.split("@@", 4)
     chunking_protocol.strategy(chunker)
+    if embedding not in chunking_protocol.embedding_models:
+        raise ValueError(f"Final RAG embedding model is not in the supplied protocol: {embedding}")
     parsed_retrieval = parse_candidate(retrieval)
-    if generator not in GENERATOR_PROFILES:
-        raise ValueError(f"Unknown generation candidate in final system: {generator}")
+    generator_model = generation_protocol.model_id(generator)
     if int(top_k_value.removeprefix("top_k=")) not in final_protocol.top_k:
         raise ValueError(f"Final system top_k is outside {final_protocol.top_k}")
     required_models.add(embedding)
-    required_models.add(GENERATOR_PROFILES[generator][0])
+    required_models.add(generator_model)
     if parsed_retrieval.reranker_model is not None:
         required_models.add(parsed_retrieval.reranker_model)
 model_lock = load_selected_model_lock(

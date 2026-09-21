@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from itertools import product
 from pathlib import Path
 
-from experiments.benchmarks.common.arguments import load_candidates
+from experiments.benchmarks.extraction.document.profiles import DOCUMENT_LOCK_CANDIDATES
 from experiments.benchmarks.common.protocol import (
     ProtocolMetadata,
     boolean,
@@ -25,7 +25,6 @@ from experiments.benchmarks.common.protocol import (
 
 
 DEFAULT_PROTOCOL_PATH = Path(__file__).with_name("protocol.yaml")
-DEFAULT_CANDIDATE_PATH = Path(__file__).with_name("candidates.yaml")
 
 
 @dataclass(frozen=True)
@@ -218,7 +217,7 @@ def protocol_from_mapping(
     timeout = integer(evaluators["timeout_seconds"], "evaluators.timeout_seconds", minimum=1)
     selection = strict_object(root["selection"], "selection", {"maximum_architecture_finalists"})
     maximum_finalists = integer(selection["maximum_architecture_finalists"], "selection.maximum_architecture_finalists", minimum=1)
-    candidate_aliases = set(load_candidates(DEFAULT_CANDIDATE_PATH, "development"))
+    candidate_aliases = set(DOCUMENT_LOCK_CANDIDATES)
     raw_devices = strict_object(
         root["backend_devices"],
         "backend_devices",

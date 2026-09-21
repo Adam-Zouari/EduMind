@@ -4,31 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
-
-import yaml
 
 
-_CANDIDATE_PATH = Path(__file__).with_name("candidates.yaml")
-
-
-def _model_identities() -> dict[str, str]:
-    payload = yaml.safe_load(_CANDIDATE_PATH.read_text(encoding="utf-8"))
-    candidates = payload.get("candidates") if isinstance(payload, Mapping) else None
-    if not isinstance(candidates, Mapping) or not candidates:
-        raise ValueError("Document candidates.yaml requires a candidate registry")
-    result = {}
-    for alias, value in candidates.items():
-        if not isinstance(alias, str) or not isinstance(value, Mapping):
-            raise ValueError("Document candidate registry is malformed")
-        model_id = value.get("model_id")
-        if not isinstance(model_id, str) or not model_id:
-            raise ValueError(f"Document candidate {alias!r} requires model_id")
-        result[alias] = model_id
-    return result
-
-
-DOCUMENT_LOCK_CANDIDATES = _model_identities()
+DOCUMENT_LOCK_CANDIDATES = {
+    "docling-standard": "docling-standard",
+    "docling-vlm-granite-258m": "ibm-granite/granite-docling-258M",
+    "paddleocr-vl-1.6": "PaddlePaddle/PaddleOCR-VL-1.6",
+}
 FACTOR_OPTIONS = {
     "ocr": "ocr_engine",
     "mode": "ocr_mode",

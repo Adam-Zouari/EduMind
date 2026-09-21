@@ -1,5 +1,0 @@
-candidates:
-  chroma: {backend: chroma, profiles: [smoke, development]}
-  qdrant: {backend: qdrant, profiles: [smoke, development]}
-  weaviate: {backend: weaviate, profiles: [smoke, development]}
-  pgvector: {backend: pgvector, profiles: [smoke, development]}

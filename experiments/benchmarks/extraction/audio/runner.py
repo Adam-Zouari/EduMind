@@ -10,7 +10,6 @@ from pathlib import Path
 
 from edumind.common.artifacts import sha256_file, stable_hash
 from edumind.common.paths import PROJECT_ROOT
-from experiments.benchmarks.common.arguments import load_candidates
 from experiments.benchmarks.common.contracts import BenchmarkPlan, SampleResult
 from experiments.benchmarks.common.datasets import (
     assert_no_split_leakage,
@@ -62,7 +61,6 @@ def main(directory: Path) -> int:
     protocol = load_protocol(arguments.protocol)
     device = arguments.device or protocol.profile(arguments.profile).device
     candidates = _candidates(
-        directory / "candidates.yaml",
         arguments.profile,
         arguments.shortlist,
         protocol,
@@ -546,7 +544,6 @@ def _audio_split_manifests(current_path: Path, current_split: str):
 
 
 def _candidates(
-    path: Path,
     profile: str,
     shortlist: Path | None,
     protocol: AudioProtocol,
@@ -554,7 +551,7 @@ def _candidates(
     if profile in {"smoke", "development"}:
         if shortlist is not None:
             raise ValueError(f"ASR {profile} runs the complete configured candidate list")
-        return load_candidates(path, profile)
+        return tuple(protocol.candidates)
     if shortlist is None:
         raise ValueError(f"ASR {profile} requires --shortlist DECISION_JSON")
     return load_engineer_decision(

@@ -12,7 +12,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
 from edumind.common.artifacts import stable_hash
 from edumind.common.paths import PROJECT_ROOT
-from experiments.benchmarks.common.arguments import load_candidates
 from experiments.benchmarks.common.contracts import BenchmarkPlan
 from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
@@ -33,6 +32,7 @@ from experiments.benchmarks.rag.retrieval.metrics import (
     primary_metrics,
 )
 from experiments.benchmarks.rag.retrieval.profiles import (
+    development_candidates,
     owner_first,
     parse_candidate,
     required_reranker_models,
@@ -117,12 +117,7 @@ def main(argv: list[str] | None = None) -> int:
         }[arguments.profile],
     )
 
-    candidate_path = Path(__file__).with_name("candidates.yaml")
-    smoke_candidates = load_candidates(candidate_path, "smoke")
-    development_candidates = load_candidates(candidate_path, "development")
-    if smoke_candidates != development_candidates:
-        raise ValueError("Smoke and development must declare the same candidate matrix")
-    declared = owner_first(development_candidates)
+    declared = owner_first(development_candidates())
     for candidate in declared:
         parse_candidate(candidate)
 
@@ -132,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.profile == "smoke":
         if arguments.embedding_selection or arguments.shortlist:
             parser.error("smoke does not accept selection decisions")
-        selected_pair = protocol.smoke_chunking_embedding_candidate
+        selected_pair = chunking_protocol.smoke_pair
         candidates = declared
     else:
         if arguments.embedding_selection is None:
@@ -170,6 +165,10 @@ def main(argv: list[str] | None = None) -> int:
             candidates = validation_candidates(finalists, declared)
             decision_files["retrieval_reranking"] = arguments.shortlist
 
+    if selected_pair not in chunking_protocol.development_candidates:
+        raise ValueError(
+            "Selected chunking/embedding pair is not declared by the supplied chunking protocol"
+        )
     _, embedding_name = split_candidate(selected_pair)
     model_lock_path = PROJECT_ROOT / "data/benchmarks/models/selected.json"
     required_models = (embedding_name, *required_reranker_models(candidates))

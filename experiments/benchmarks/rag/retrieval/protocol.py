@@ -24,15 +24,10 @@ from experiments.benchmarks.common.protocol import (
     string,
     validate_execution as validate_protocol_execution,
 )
-from experiments.benchmarks.common.arguments import load_candidates
-
 from .profiles import RERANKER_MODELS
 
 
 DEFAULT_PROTOCOL_PATH = Path(__file__).with_name("protocol.yaml")
-_CHUNKING_CANDIDATE_PATH = (
-    Path(__file__).parents[1] / "chunking_embedding" / "candidates.yaml"
-)
 
 
 @dataclass(frozen=True)
@@ -42,7 +37,6 @@ class RetrievalProtocol:
     version: str
     resolved: Mapping[str, object]
     seed: int
-    smoke_chunking_embedding_candidate: str
     smoke_expected_chunk_count: int
     pool_size: int
     evaluation_tokenizer: str
@@ -179,16 +173,8 @@ def protocol_from_mapping(value: object) -> RetrievalProtocol:
     smoke = _object(
         root["smoke_fixture"],
         "smoke_fixture",
-        {"chunking_embedding_candidate", "expected_chunk_count"},
+        {"expected_chunk_count"},
     )
-    smoke_candidate = _string(
-        smoke["chunking_embedding_candidate"],
-        "smoke_fixture.chunking_embedding_candidate",
-    )
-    if smoke_candidate not in load_candidates(_CHUNKING_CANDIDATE_PATH, "smoke"):
-        raise ValueError(
-            "Retrieval smoke chunking/embedding candidate is not in candidates.yaml"
-        )
     smoke_chunk_count = _integer(
         smoke["expected_chunk_count"],
         "smoke_fixture.expected_chunk_count",
@@ -391,7 +377,6 @@ def protocol_from_mapping(value: object) -> RetrievalProtocol:
         version=version,
         resolved=resolved,
         seed=seed,
-        smoke_chunking_embedding_candidate=smoke_candidate,
         smoke_expected_chunk_count=smoke_chunk_count,
         pool_size=pool_size,
         evaluation_tokenizer=evaluation_tokenizer,
