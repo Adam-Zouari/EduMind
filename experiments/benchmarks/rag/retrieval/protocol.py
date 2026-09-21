@@ -370,7 +370,7 @@ def protocol_from_mapping(value: object) -> RetrievalProtocol:
         minimum=0,
         exclusive=True,
     )
-    resolved = _plain(root)
+    resolved = plain(root)
     return RetrievalProtocol(
         schema_version=schema_version,
         checksum=stable_hash(resolved),
@@ -455,7 +455,3 @@ def _number(
         minimum_exclusive=exclusive,
         maximum_exclusive=maximum_exclusive,
     )
-
-
-def _plain(value: object) -> object:
-    return plain(value)

@@ -22,8 +22,6 @@ class Embedder:
         enforce_device: bool = False,
     ) -> None:
         self.spec = spec
-        self.model_name = spec.model_name
-        self.embedding_dim = spec.dimension
         self.batch_size = batch_size
         self.dtype = dtype
         self.enforce_device = enforce_device
@@ -40,8 +38,7 @@ class Embedder:
             role="query",
         )[0]
 
-    def embed_texts(self, texts: Sequence[str], show_progress: bool = False) -> np.ndarray:
-        del show_progress
+    def embed_texts(self, texts: Sequence[str]) -> np.ndarray:
         return self._encode(
             self._prepared_texts(texts, "document"),
             device=self.spec.document_device,

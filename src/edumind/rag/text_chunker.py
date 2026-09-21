@@ -54,8 +54,6 @@ class TextChunker:
 
     def __init__(self, strategy: ChunkingStrategy) -> None:
         self.strategy = strategy
-        self.chunk_size = getattr(strategy, "size", 0)
-        self.chunk_overlap = getattr(strategy, "overlap", 0)
 
     def chunk_document(self, document: IngestDocument) -> list[ChunkRecord]:
         spans = self.strategy.split(document.text)

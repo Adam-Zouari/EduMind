@@ -71,7 +71,7 @@ class ExperimentalDocumentExtractor:
         )
 
     def _docling_vlm(self, request: ExtractionRequest):
-        converter, _ = self._docling_converter(request)
+        converter = self._docling_converter(request)
         return converter.convert(str(request.source_path)).document
 
     def initialize_image_pipeline(self, request: ExtractionRequest) -> None:
@@ -80,7 +80,7 @@ class ExperimentalDocumentExtractor:
         if self.engine == "docling-vlm-granite-258m":
             from docling.datamodel.base_models import InputFormat
 
-            converter, _ = self._docling_converter(request)
+            converter = self._docling_converter(request)
             converter.initialize_pipeline(InputFormat.IMAGE)
             return
         self._paddle_runtime(request)
@@ -130,7 +130,7 @@ class ExperimentalDocumentExtractor:
                     ),
                 }
             )
-        return self._runtimes[key], InputFormat.IMAGE
+        return self._runtimes[key]
 
     def _paddle_vl(
         self, request: ExtractionRequest
