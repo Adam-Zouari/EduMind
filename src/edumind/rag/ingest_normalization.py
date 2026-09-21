@@ -1,4 +1,4 @@
-"""Normalize extraction documents and API payloads into RAG ingest documents."""
+"""Normalize extraction and API payloads into RAG ingest documents."""
 
 from __future__ import annotations
 

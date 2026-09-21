@@ -12,7 +12,7 @@ from edumind.common.models import load_model_lock, require_model
 from edumind.extraction import ExtractedDocument
 
 from .contracts import GenerationProfile, IndexManifest, embedding_spec
-from .document_processor import normalize_ingest_document
+from .ingest_normalization import normalize_ingest_document
 from .embedder import Embedder
 from .errors import RAGConfigurationError
 from .llm_generator import HuggingFaceGenerator
