@@ -6,6 +6,9 @@
 
 This guide prepares the provisional application and every approved benchmark candidate. The authoritative shortlist is described in [model selection](../benchmarks/model-selection.md); exact executable revisions are read from [selection evidence](../../experiments/benchmarks/selection_evidence.csv). Excluded rows are historical evidence and are never downloaded.
 
+Run the commands below from the repository root. Benchmark commands use Python
+module names (`python -m experiments.benchmarks...`).
+
 ## 1. System requirements
 
 Install these programs before creating the Python environment:
@@ -98,14 +101,14 @@ That file records the exact repository, revision, local path, composite submodel
 Inspect the complete download plan without network access:
 
 ```powershell
-python experiments/benchmarks/prepare.py --list
-python experiments/benchmarks/prepare.py all-models --dry-run
+python -m experiments.benchmarks.prepare --list
+python -m experiments.benchmarks.prepare all-models --dry-run
 ```
 
 Prepare only the provisional application controls:
 
 ```powershell
-python experiments/benchmarks/prepare.py app-models
+python -m experiments.benchmarks.prepare app-models
 ```
 
 This downloads the pinned GTE ModernBERT base embedding snapshot, Hugging Face
@@ -115,10 +118,10 @@ TableFormer, and RapidOCR. Prepare the additional experiment candidates and
 Docling components separately or together:
 
 ```powershell
-python experiments/benchmarks/prepare.py embedding-models
-python experiments/benchmarks/prepare.py rag-models
-python experiments/benchmarks/prepare.py extraction-models
-python experiments/benchmarks/prepare.py all-models
+python -m experiments.benchmarks.prepare embedding-models
+python -m experiments.benchmarks.prepare rag-models
+python -m experiments.benchmarks.prepare extraction-models
+python -m experiments.benchmarks.prepare all-models
 ```
 
 `embedding-models` prepares only the six candidates used by the
@@ -197,7 +200,7 @@ Ghostscript versions. They do not need to be installed on Windows.
 Start Docker Desktop, then prepare the evaluator explicitly:
 
 ```powershell
-python experiments/benchmarks/prepare.py evaluators
+python -m experiments.benchmarks.prepare evaluators
 ```
 
 The command checks out source revision
@@ -226,7 +229,7 @@ structured-evidence requirements, and all three combined-manifest commands.
 Prepare the initial paper-isolated QASPER manifests with:
 
 ```powershell
-python experiments/benchmarks/prepare.py qasper
+python -m experiments.benchmarks.prepare qasper
 ```
 
 Continue with the [RAG dataset preparation instructions](../benchmarks/datasets.md#3-install-the-rag-datasets).
@@ -244,15 +247,15 @@ To regenerate the committed multimodal smoke files, including real synthesized
 speech WAVs and deterministic silence/noise controls:
 
 ```powershell
-python experiments/benchmarks/prepare.py smoke-fixtures
+python -m experiments.benchmarks.prepare smoke-fixtures
 ```
 
 Regenerate only one fixture group when working on a single experiment:
 
 ```powershell
-python experiments/benchmarks/prepare.py smoke-fixtures --modality document
-python experiments/benchmarks/prepare.py smoke-fixtures --modality audio
-python experiments/benchmarks/prepare.py smoke-fixtures --modality video
+python -m experiments.benchmarks.prepare smoke-fixtures --modality document
+python -m experiments.benchmarks.prepare smoke-fixtures --modality audio
+python -m experiments.benchmarks.prepare smoke-fixtures --modality video
 ```
 
 Audio and video regeneration requires an FFmpeg build containing the optional
@@ -264,7 +267,7 @@ running the existing smoke benchmarks does not require `flite`.
 Prepare and digest-lock the four server images:
 
 ```powershell
-python experiments/benchmarks/prepare.py vectordb
+python -m experiments.benchmarks.prepare vectordb
 ```
 
 The compared servers are [Chroma](https://docs.trychroma.com/guides/deploy/docker), [Qdrant](https://qdrant.tech/documentation/installation/), [Weaviate](https://docs.weaviate.io/deploy/installation-guides/docker-installation), and [PostgreSQL with pgvector](https://github.com/pgvector/pgvector). The command writes `data/benchmarks/models/vectordb.json` and a digest-based Compose environment.

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -13,11 +16,102 @@ from experiments.benchmarks.common.contracts import (
     SampleResult,
 )
 from experiments.benchmarks.common.decisions import load_engineer_decision
+from experiments.benchmarks.common import process as benchmark_process
 from experiments.benchmarks.common.runner import run_benchmark
 import experiments.benchmarks.common.runner as benchmark_runner
+from experiments.benchmarks.extraction.document import runner as document_runner
 from experiments.benchmarks.rag.generation.protocol import (
     load_protocol as load_generation_protocol,
 )
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_worker_launcher_uses_repository_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    launched = []
+
+    def fake_run(command, **options):
+        launched.append((command, options))
+        Path(command[-1]).write_text('{"status":"success"}', encoding="utf-8")
+        return SimpleNamespace(returncode=0, stderr="", stdout="")
+
+    monkeypatch.setattr(benchmark_process.subprocess, "run", fake_run)
+    script = ROOT / "experiments/benchmarks/extraction/audio/worker.py"
+    result = benchmark_process.run_json_worker(
+        script, {}, device="cpu", prefix="worker-test-", error_label="test",
+        temporary_root=tmp_path,
+    )
+    assert result == {"status": "success"}
+    command, options = launched[0]
+    assert command[:3] == [
+        sys.executable, "-m", "experiments.benchmarks.extraction.audio.worker"
+    ]
+    assert options["cwd"] == ROOT
+
+
+def test_document_cold_worker_launches_as_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    launched = []
+
+    def fake_run(command, **options):
+        launched.append((command, options))
+        return SimpleNamespace(stdout="EDUMIND_FIRST_ITEM_COMPLETE", stderr="")
+
+    monkeypatch.setenv("TEMP", str(tmp_path))
+    monkeypatch.setattr(document_runner.subprocess, "run", fake_run)
+    protocol = SimpleNamespace(meta=SimpleNamespace(worker_payload=lambda: {}))
+    assert document_runner._cold_latency("candidate", {"id": "sample"}, {}, {}, protocol) >= 0
+    command, options = launched[0]
+    assert command[:3] == [
+        sys.executable, "-m", "experiments.benchmarks.extraction.document.cold_worker"
+    ]
+    assert options["cwd"] == ROOT
+
+
+@pytest.mark.parametrize(
+    "module",
+    (
+        "experiments.benchmarks.prepare",
+        "experiments.benchmarks.review",
+        "experiments.benchmarks.extraction.audio.run",
+        "experiments.benchmarks.extraction.document.run",
+        "experiments.benchmarks.extraction.video.run",
+        "experiments.benchmarks.rag.chunking_embedding.run",
+        "experiments.benchmarks.rag.retrieval.run",
+        "experiments.benchmarks.rag.generation.run",
+        "experiments.benchmarks.rag.final.run",
+        "experiments.benchmarks.rag.final.confirm_extraction",
+        "experiments.benchmarks.vectordb.run",
+        "experiments.benchmarks.vectordb.retrieval_run",
+    ),
+)
+def test_benchmark_entrypoint_runs_as_module(module: str) -> None:
+    completed = subprocess.run(
+        [sys.executable, "-m", module, "--help"],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "usage:" in completed.stdout.lower()
+
+
+@pytest.mark.parametrize(
+    "module",
+    (
+        "experiments.benchmarks.rag.chunking_embedding.worker",
+        "experiments.benchmarks.rag.retrieval.worker",
+    ),
+)
+def test_rag_workers_import_as_modules(module: str) -> None:
+    completed = subprocess.run(
+        [sys.executable, "-m", module], cwd=ROOT, capture_output=True, text=True
+    )
+    assert completed.returncode != 0
+    assert "usage:" in completed.stderr.lower()
+    assert "ModuleNotFoundError" not in completed.stderr
 
 
 def _plan(*candidates: str) -> BenchmarkPlan:

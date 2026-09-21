@@ -41,6 +41,9 @@ def run_json_worker(
     error_label: str,
     temporary_root: Path | None = None,
 ) -> dict[str, object]:
+    module = ".".join(
+        script.resolve().relative_to(PROJECT_ROOT.resolve()).with_suffix("").parts
+    )
     if temporary_root is not None:
         temporary_root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=prefix, dir=temporary_root) as raw:
@@ -49,7 +52,7 @@ def run_json_worker(
         output_path = directory / "output.json"
         atomic_write_json(input_path, dict(payload))
         completed = subprocess.run(
-            [sys.executable, str(script), str(input_path), str(output_path)],
+            [sys.executable, "-m", module, str(input_path), str(output_path)],
             cwd=PROJECT_ROOT,
             env=worker_environment(device),
             capture_output=True,

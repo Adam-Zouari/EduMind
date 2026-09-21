@@ -1,8 +1,5 @@
 from pathlib import Path
 import json
-import sys
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.arguments import parser, resolved_candidates

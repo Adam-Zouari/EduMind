@@ -6,8 +6,6 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
-
 from edumind.extraction import ExtractionPipeline
 from experiments.benchmarks.extraction.document.benchmark import extract_once
 from experiments.benchmarks.extraction.document.protocol import protocol_from_worker

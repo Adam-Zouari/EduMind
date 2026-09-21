@@ -174,7 +174,7 @@ Stopping either command does not discard already downloaded bytes.
 Prepare the pinned QASPER revision and deterministic paper-isolated splits:
 
 ```powershell
-python experiments/benchmarks/prepare.py qasper
+python -m experiments.benchmarks.prepare qasper
 ```
 
 This creates `qasper-dev.json`, `qasper-validation.json`, and
@@ -187,17 +187,17 @@ Create one reviewed structured manifest per matching split, then combine it with
 QASPER only after all evidence offsets and evidence-type counts pass validation:
 
 ```powershell
-python experiments/benchmarks/prepare.py rag-selection `
+python -m experiments.benchmarks.prepare rag-selection `
   --qasper-manifest data/benchmarks/rag/qasper-dev.json `
   --structured-manifest data/benchmarks/rag/structured-dev.json `
   --output data/benchmarks/rag/rag-selection-dev.json
 
-python experiments/benchmarks/prepare.py rag-selection `
+python -m experiments.benchmarks.prepare rag-selection `
   --qasper-manifest data/benchmarks/rag/qasper-validation.json `
   --structured-manifest data/benchmarks/rag/structured-validation.json `
   --output data/benchmarks/rag/rag-selection-validation.json
 
-python experiments/benchmarks/prepare.py rag-selection `
+python -m experiments.benchmarks.prepare rag-selection `
   --qasper-manifest data/benchmarks/rag/qasper-locked-test.json `
   --structured-manifest data/benchmarks/rag/structured-locked-test.json `
   --output data/benchmarks/rag/rag-selection-locked-test.json

@@ -57,25 +57,25 @@ def aggregate(*args, **kwargs):
 
 
 @pytest.mark.parametrize(
-    "relative_path, usage",
+    "module, usage",
     (
-        ("experiments/benchmarks/extraction/audio/worker.py", "usage: worker.py"),
+        ("experiments.benchmarks.extraction.audio.worker", "usage: worker.py"),
         (
-            "experiments/benchmarks/extraction/video/frozen_asr_worker.py",
+            "experiments.benchmarks.extraction.video.frozen_asr_worker",
             "usage: frozen_asr_worker.py",
         ),
         (
-            "experiments/benchmarks/extraction/video/visual_worker.py",
+            "experiments.benchmarks.extraction.video.visual_worker",
             "usage: visual_worker.py",
         ),
     ),
 )
-def test_fresh_workers_bootstrap_repository_imports(
-    tmp_path, relative_path, usage
+def test_fresh_workers_launch_as_modules(
+    module, usage
 ) -> None:
     completed = subprocess.run(
-        [sys.executable, str(ROOT / relative_path)],
-        cwd=tmp_path,
+        [sys.executable, "-m", module],
+        cwd=ROOT,
         capture_output=True,
         text=True,
     )

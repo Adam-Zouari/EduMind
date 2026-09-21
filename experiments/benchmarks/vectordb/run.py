@@ -5,12 +5,9 @@ from pathlib import Path
 import argparse
 import json
 import statistics
-import sys
 import time
 
 import numpy as np
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from edumind.common.paths import PROJECT_ROOT
 from edumind.common.artifacts import sha256_file, stable_hash

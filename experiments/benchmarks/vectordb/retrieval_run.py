@@ -6,12 +6,9 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 from pathlib import Path
-import sys
 import time
 
 import numpy as np
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.contracts import BenchmarkPlan, SampleResult

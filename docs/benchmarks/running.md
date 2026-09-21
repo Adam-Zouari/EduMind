@@ -96,7 +96,7 @@ document corpus containing table or formula annotations:
 
 ```powershell
 docker version
-python experiments/benchmarks/prepare.py evaluators
+python -m experiments.benchmarks.prepare evaluators
 ```
 
 Document parsers and common metrics run in the project's Python 3.12
@@ -107,7 +107,7 @@ Document extraction first screens the Docling configuration matrix on
 development:
 
 ```powershell
-python experiments/benchmarks/extraction/document/run.py --profile development `
+python -m experiments.benchmarks.extraction.document.run --profile development `
   --manifest data/benchmarks/extraction/document-development.json
 
 ```
@@ -124,7 +124,7 @@ may run with `--profile validation` on the validation manifest.
 Run the development architecture comparison with the configuration decisions:
 
 ```powershell
-python experiments/benchmarks/extraction/document/run.py --profile development `
+python -m experiments.benchmarks.extraction.document.run --profile development `
   --comparison architecture `
   --manifest data/benchmarks/extraction/document-development.json `
   --pdf-selection PDF_CONFIGURATION_DECISION.json `
@@ -134,7 +134,7 @@ python experiments/benchmarks/extraction/document/run.py --profile development `
 After reviewing that comparison, run only its recorded finalists on validation:
 
 ```powershell
-python experiments/benchmarks/extraction/document/run.py --profile validation `
+python -m experiments.benchmarks.extraction.document.run --profile validation `
   --comparison architecture `
   --manifest data/benchmarks/extraction/document-validation.json `
   --pdf-selection PDF_ARCHITECTURE_FINALISTS.json `
@@ -149,14 +149,14 @@ runner rejects using configuration decisions directly on validation.
 Run audio independently:
 
 ```powershell
-python experiments/benchmarks/extraction/audio/run.py --profile development `
+python -m experiments.benchmarks.extraction.audio.run --profile development `
   --manifest data/benchmarks/extraction/audio-development.json `
   --device cuda
-python experiments/benchmarks/extraction/audio/run.py --profile validation `
+python -m experiments.benchmarks.extraction.audio.run --profile validation `
   --manifest data/benchmarks/extraction/audio-validation.json `
   --shortlist AUDIO_DECISION `
   --device cuda
-python experiments/benchmarks/extraction/audio/run.py --profile locked `
+python -m experiments.benchmarks.extraction.audio.run --profile locked `
   --manifest data/benchmarks/extraction/audio-locked-test.json `
   --shortlist SELECTED_ASR_DECISION `
   --device cuda
@@ -178,7 +178,7 @@ protocols and binds their checksums plus the manifest checksum into the frozen
 artifact:
 
 ```powershell
-python experiments/benchmarks/extraction/video/run.py --profile development --phase frozen-asr `
+python -m experiments.benchmarks.extraction.video.run --profile development --phase frozen-asr `
   --manifest data/benchmarks/extraction/video-development.json `
   --audio-selection AUDIO_DECISION `
   --frozen-asr artifacts/video-development-asr.json `
@@ -191,19 +191,19 @@ document protocol (override it only with `--document-protocol PATH`) and record
 its checksum beside the video and audio protocol identities:
 
 ```powershell
-python experiments/benchmarks/extraction/video/run.py --profile development --phase fixed `
+python -m experiments.benchmarks.extraction.video.run --profile development --phase fixed `
   --manifest data/benchmarks/extraction/video-development.json `
   --frozen-asr artifacts/video-development-asr.json `
   --document-selection DOCUMENT_DECISION `
   --device cuda
 
-python experiments/benchmarks/extraction/video/run.py --profile development --phase scene `
+python -m experiments.benchmarks.extraction.video.run --profile development --phase scene `
   --manifest data/benchmarks/extraction/video-development.json `
   --frozen-asr artifacts/video-development-asr.json `
   --document-selection DOCUMENT_DECISION `
   --device cuda
 
-python experiments/benchmarks/extraction/video/run.py --profile development --phase hybrid `
+python -m experiments.benchmarks.extraction.video.run --profile development --phase hybrid `
   --manifest data/benchmarks/extraction/video-development.json `
   --frozen-asr artifacts/video-development-asr.json `
   --document-selection DOCUMENT_DECISION `
@@ -243,13 +243,13 @@ Run the validation finalists with a newly generated validation frozen-ASR
 artifact:
 
 ```powershell
-python experiments/benchmarks/extraction/video/run.py --profile validation --phase frozen-asr `
+python -m experiments.benchmarks.extraction.video.run --profile validation --phase frozen-asr `
   --manifest data/benchmarks/extraction/video-validation.json `
   --audio-selection SELECTED_ASR_DECISION.json `
   --frozen-asr artifacts/video-validation-asr.json `
   --device cuda
 
-python experiments/benchmarks/extraction/video/run.py --profile validation --phase all `
+python -m experiments.benchmarks.extraction.video.run --profile validation --phase all `
   --manifest data/benchmarks/extraction/video-validation.json `
   --frozen-asr artifacts/video-validation-asr.json `
   --document-selection DOCUMENT_DECISION.json `
@@ -261,13 +261,13 @@ After validation records one winner, generate the locked split's frozen ASR and
 run that configuration once:
 
 ```powershell
-python experiments/benchmarks/extraction/video/run.py --profile locked --phase frozen-asr `
+python -m experiments.benchmarks.extraction.video.run --profile locked --phase frozen-asr `
   --manifest data/benchmarks/extraction/video-locked-test.json `
   --audio-selection SELECTED_ASR_DECISION.json `
   --frozen-asr artifacts/video-locked-asr.json `
   --device cuda
 
-python experiments/benchmarks/extraction/video/run.py --profile locked --phase all `
+python -m experiments.benchmarks.extraction.video.run --profile locked --phase all `
   --manifest data/benchmarks/extraction/video-locked-test.json `
   --frozen-asr artifacts/video-locked-asr.json `
   --document-selection DOCUMENT_DECISION.json `
@@ -278,11 +278,11 @@ python experiments/benchmarks/extraction/video/run.py --profile locked --phase a
 Smoke uses the smoke settings in the committed video protocol:
 
 ```powershell
-python experiments/benchmarks/extraction/video/run.py --profile smoke --phase frozen-asr `
+python -m experiments.benchmarks.extraction.video.run --profile smoke --phase frozen-asr `
   --audio-candidate whisper-small-en-control `
   --frozen-asr artifacts/video-smoke-asr.json
 
-python experiments/benchmarks/extraction/video/run.py --profile smoke --phase all `
+python -m experiments.benchmarks.extraction.video.run --profile smoke --phase all `
   --frozen-asr artifacts/video-smoke-asr.json `
   --image-candidate "docling-standard|ocr=rapidocr|mode=full_page|table=fast|formula=off"
 ```
@@ -296,10 +296,10 @@ representation rules described in the methodology.
 Run the chunker–embedding matrix first:
 
 ```powershell
-python experiments/benchmarks/rag/chunking_embedding/run.py --profile development `
+python -m experiments.benchmarks.rag.chunking_embedding.run --profile development `
   --device cuda `
   --dtype float16
-python experiments/benchmarks/rag/chunking_embedding/run.py --profile validation `
+python -m experiments.benchmarks.rag.chunking_embedding.run --profile validation `
   --shortlist EMBEDDING_DECISION `
   --device cuda `
   --dtype float16
@@ -314,10 +314,10 @@ Then give the retrieval experiment an engineer-selected chunker–embedding
 decision:
 
 ```powershell
-python experiments/benchmarks/rag/retrieval/run.py --profile development `
+python -m experiments.benchmarks.rag.retrieval.run --profile development `
   --embedding-selection EMBEDDING_DECISION
 
-python experiments/benchmarks/rag/retrieval/run.py --profile validation `
+python -m experiments.benchmarks.rag.retrieval.run --profile validation `
   --embedding-selection EMBEDDING_DECISION `
   --shortlist RETRIEVAL_DECISION
 ```
@@ -367,9 +367,9 @@ docker compose -f experiments/benchmarks/vectordb/compose.yml ps
 Run dense ANN and conformance measurements:
 
 ```powershell
-python experiments/benchmarks/vectordb/run.py --profile smoke
-python experiments/benchmarks/vectordb/run.py --profile development
-python experiments/benchmarks/vectordb/run.py --profile validation `
+python -m experiments.benchmarks.vectordb.run --profile smoke
+python -m experiments.benchmarks.vectordb.run --profile development
+python -m experiments.benchmarks.vectordb.run --profile validation `
   --shortlist DATABASE_DECISION `
   --embedding-selection EMBEDDING_DECISION
 ```
@@ -377,7 +377,7 @@ python experiments/benchmarks/vectordb/run.py --profile validation `
 Then measure complete retrieval through a selected server:
 
 ```powershell
-python experiments/benchmarks/vectordb/retrieval_run.py `
+python -m experiments.benchmarks.vectordb.retrieval_run `
   --profile development `
   --database-selection DATABASE_DECISION `
   --embedding-selection EMBEDDING_DECISION `
@@ -399,8 +399,8 @@ Generation uses frozen evidence contexts so generator quality is not confused
 with retrieval quality:
 
 ```powershell
-python experiments/benchmarks/rag/generation/run.py --profile development --device cuda
-python experiments/benchmarks/rag/generation/run.py --profile validation `
+python -m experiments.benchmarks.rag.generation.run --profile development --device cuda
+python -m experiments.benchmarks.rag.generation.run --profile validation `
   --device cuda `
   --shortlist GENERATION_DECISION
 ```
@@ -417,7 +417,7 @@ Run the complete-system candidate grid on development data from explicit
 retrieval and generation decisions:
 
 ```powershell
-python experiments/benchmarks/rag/final/run.py --profile development `
+python -m experiments.benchmarks.rag.final.run --profile development `
   --manifest data/benchmarks/rag/rag-selection-dev.json `
   --retrieval-selection RETRIEVAL_DECISION `
   --generation-selection GENERATION_DECISION `
@@ -428,7 +428,7 @@ After inspecting development, record exactly three complete-system finalists and
 run them on validation:
 
 ```powershell
-python experiments/benchmarks/rag/final/run.py --profile validation `
+python -m experiments.benchmarks.rag.final.run --profile validation `
   --manifest data/benchmarks/rag/rag-selection-validation.json `
   --shortlist FINAL_RAG_FINALISTS_DECISION `
   --device cuda
@@ -437,18 +437,18 @@ python experiments/benchmarks/rag/final/run.py --profile validation `
 Export anonymous answers, enter judgments in the CSV, then import them:
 
 ```powershell
-python experiments/benchmarks/review.py export FINAL_RAG_VALIDATION REVIEW.csv
-python experiments/benchmarks/review.py import REVIEW.csv
+python -m experiments.benchmarks.review export FINAL_RAG_VALIDATION REVIEW.csv
+python -m experiments.benchmarks.review import REVIEW.csv
 ```
 
 Import writes `REVIEW.results.json` beside the CSV and attaches the judgments to
 the original MLflow run. The exact positional arguments and options are always
-available through `python experiments/benchmarks/review.py --help`.
+available through `python -m experiments.benchmarks.review --help`.
 
 The one locked-test run requires reviewed judgments and explicit confirmation:
 
 ```powershell
-python experiments/benchmarks/rag/final/run.py --profile locked `
+python -m experiments.benchmarks.rag.final.run --profile locked `
   --manifest data/benchmarks/rag/rag-selection-locked-test.json `
   --shortlist LOCKED_FINAL_DECISION `
   --review-results REVIEW.results.json `
@@ -467,7 +467,7 @@ After choosing a complete system, compare verified reference text with extracted
 text on separate non-locked documents:
 
 ```powershell
-python experiments/benchmarks/rag/final/confirm_extraction.py `
+python -m experiments.benchmarks.rag.final.confirm_extraction `
   --reference-manifest REFERENCE_MANIFEST `
   --extracted-manifest EXTRACTED_MANIFEST `
   --candidate FINAL_CANDIDATE `

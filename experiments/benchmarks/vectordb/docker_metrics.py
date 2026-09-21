@@ -195,7 +195,7 @@ def image_lock() -> dict[str, str]:
     path = PROJECT_ROOT / "data/benchmarks/models/vectordb.json"
     if not path.is_file():
         raise RuntimeError(
-            f"Missing {path}; run `python experiments/benchmarks/prepare.py vectordb`"
+            f"Missing {path}; run `python -m experiments.benchmarks.prepare vectordb`"
         )
     payload = json.loads(path.read_text(encoding="utf-8"))
     images = payload.get("images")

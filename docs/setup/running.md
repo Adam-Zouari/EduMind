@@ -56,7 +56,7 @@ to delete the stored index.
 
 | Symptom | What to check |
 |---|---|
-| Missing `selected.json` or model directory | Rerun `python experiments/benchmarks/prepare.py app-models` in the activated environment. |
+| Missing `selected.json` or model directory | Rerun `python -m experiments.benchmarks.prepare app-models` in the activated environment. |
 | Chroma unavailable | Start Docker Desktop, run the Compose `up -d` command, then inspect `docker compose -f infrastructure/chroma.yml logs`. |
 | Tesseract benchmark error | Tesseract is experiment-only; run `tesseract --list-langs` and confirm `eng` is present before the document configuration benchmark. |
 | FFmpeg not found | Install FFmpeg and reopen the terminal so `ffmpeg` is on `PATH`. |

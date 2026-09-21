@@ -189,7 +189,7 @@ def load_selected_model_lock(
     """Load and verify the requested entries from the generated runtime lock."""
     if not path.is_file():
         raise RuntimeError(
-            f"Missing model lock {path}; run `python experiments/benchmarks/prepare.py "
+            f"Missing model lock {path}; run `python -m experiments.benchmarks.prepare "
             "app-models` for the controls or the stage-specific model preparation command"
         )
     payload = json.loads(path.read_text(encoding="utf-8"))

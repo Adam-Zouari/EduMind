@@ -440,7 +440,8 @@ def _cold_latency(candidate, item, model_lock, component_options, protocol):
             completed = subprocess.run(
                 [
                     sys.executable,
-                    str(Path(__file__).with_name("cold_worker.py")),
+                    "-m",
+                    "experiments.benchmarks.extraction.document.cold_worker",
                     str(payload_path),
                 ],
                 cwd=PROJECT_ROOT,

@@ -34,7 +34,7 @@ def score_official_metrics(
     ):
         raise RuntimeError(
             "The pinned OmniDocBench source or Docker image is missing; run "
-            "python experiments/benchmarks/prepare.py evaluators"
+            "python -m experiments.benchmarks.prepare evaluators"
         )
     image = official_image_digest()
     worker = Path(__file__).with_name("omnidocbench_worker.py").resolve()
@@ -117,7 +117,7 @@ def official_image_digest() -> str:
     except (FileNotFoundError, KeyError, json.JSONDecodeError) as exc:
         raise RuntimeError(
             "The OmniDocBench Docker image lock is missing or invalid; run "
-            "python experiments/benchmarks/prepare.py evaluators"
+            "python -m experiments.benchmarks.prepare evaluators"
         ) from exc
     if "@sha256:" not in digest:
         raise RuntimeError("The OmniDocBench Docker image lock has no immutable digest")

@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
 from edumind.common.artifacts import stable_hash
 from edumind.common.paths import PROJECT_ROOT
