@@ -84,6 +84,8 @@ class CandidateResult:
     samples: tuple[SampleResult, ...]
     operational: Mapping[str, float]
     error: str | None = None
+    mlflow_run_id: str | None = None
+    parameters: Mapping[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

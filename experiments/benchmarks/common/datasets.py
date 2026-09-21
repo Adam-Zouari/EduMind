@@ -31,6 +31,16 @@ class EvidenceUnit:
 EVIDENCE_TYPES = frozenset({"text", "table", "formula"})
 
 
+def answerable_questions(
+    manifest: DatasetManifest,
+) -> list[Mapping[str, object]]:
+    return [
+        row
+        for row in manifest.samples
+        if row.get("kind") == "question" and row.get("answerable")
+    ]
+
+
 def load_manifest(path: str | Path, *, verify_checksum: bool = True) -> DatasetManifest:
     manifest_path = Path(path)
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))

@@ -14,9 +14,9 @@ from experiments.benchmarks.preparation.fixtures import _write_minimal_docx
 from edumind.common.paths import PROJECT_ROOT
 
 
-def test_smoke_dataset_has_eight_documents_24_questions_and_exact_offsets() -> None:
+def test_smoke_dataset_has_thirty_documents_24_questions_and_exact_offsets() -> None:
     manifest = load_manifest(PROJECT_ROOT / "data/benchmarks/rag/smoke.json")
-    assert sum(item.get("kind") == "document" for item in manifest.samples) == 8
+    assert sum(item.get("kind") == "document" for item in manifest.samples) == 30
     assert sum(item.get("kind") == "question" for item in manifest.samples) == 24
 
 

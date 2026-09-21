@@ -139,6 +139,40 @@ def test_failed_candidate_preserves_empty_audit_table(tmp_path: Path) -> None:
     ).is_file()
 
 
+def test_parent_artifact_validation_failure_marks_run_incomplete(
+    tmp_path: Path,
+) -> None:
+    def fail_parent(*_args):
+        raise ValueError("mirror mismatch")
+
+    result = run_benchmark(
+        _plan("candidate"),
+        lambda _candidate: (
+            [SampleResult("sample", {"quality": 1.0}, 0.01)],
+            {"p95_latency_seconds": 0.01},
+        ),
+        dataset_checksum="fixed-checksum",
+        directions={
+            "quality": "max",
+            "operational.p95_latency_seconds": "min",
+        },
+        primary_metric="quality",
+        no_mlflow=True,
+        artifact_root=tmp_path,
+        parent_artifact_builder=fail_parent,
+    )
+
+    assert result.complete is False
+    assert any(
+        "parent artifact validation failed" in problem
+        for problem in result.completion_problems
+    )
+    summary = json.loads(
+        (result.artifact_directory / "summary.json").read_text(encoding="utf-8")
+    )
+    assert summary["complete"] is False
+
+
 def test_paired_comparisons_resample_document_groups(tmp_path: Path) -> None:
     plan = _plan("left", "right")
 
@@ -214,7 +248,7 @@ def test_engineer_decision_requires_a_complete_non_smoke_run(tmp_path: Path) -> 
         load_engineer_decision(
             decision_path, expected_source=("other", "completion", "standard")
         )
-    with pytest.raises(ValueError, match="profile 'full'"):
+    with pytest.raises(ValueError, match="profile 'validation'"):
         load_engineer_decision(
             decision_path, expected_source=("test-suite", "completion", "full")
         )

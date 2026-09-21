@@ -37,7 +37,7 @@ from .statistics import aggregate_samples
 from .tracking import tracker
 
 Evaluator = Callable[
-    [str],
+    ...,
     tuple[list[SampleResult], Mapping[str, float]]
     | tuple[list[SampleResult], Mapping[str, float], Mapping[str, float]]
     | tuple[
@@ -82,6 +82,13 @@ def run_benchmark(
     monitor_temporary_disk: bool = True,
     paired_group_key: str | None = None,
     run_name_prefix: str | None = None,
+    shuffle_candidates: bool = True,
+    evaluator_receives_context: bool = False,
+    parent_artifact_builder: Callable[
+        [Path, Sequence[CandidateResult], BenchmarkPlan], Sequence[Path]
+    ]
+    | None = None,
+    operational_maximums: Mapping[str, float] | None = None,
 ) -> BenchmarkResult:
     if not plan.candidates:
         raise ValueError("A benchmark plan must contain at least one candidate")
@@ -150,7 +157,8 @@ def run_benchmark(
     run_fingerprint = stable_hash({"plan": plan_payload, "provenance": provenance})
     results: list[CandidateResult] = []
     order = list(plan.candidates)
-    random.Random(plan.seed).shuffle(order)
+    if shuffle_candidates:
+        random.Random(plan.seed).shuffle(order)
     with tracking.run(run_name) as mlflow_run_id:
         tracking.parameters(
             {
@@ -159,6 +167,11 @@ def run_benchmark(
                 "dataset": plan.dataset,
                 "dataset_checksum": dataset_checksum,
                 "seed": plan.seed,
+                "warmups": plan.warmups,
+                "repetitions": plan.repetitions,
+                "bootstrap_resamples": plan.bootstrap_resamples,
+                "candidates": json.dumps(list(plan.candidates)),
+                "settings": json.dumps(plan.settings, sort_keys=True),
                 "primary_metrics": json.dumps(list(primary_metrics)),
                 "required_metrics": json.dumps(list(required)),
                 "run_fingerprint": run_fingerprint,
@@ -198,6 +211,8 @@ def run_benchmark(
                     resource_artifact_name,
                     resource_monitor_options,
                     monitor_temporary_disk,
+                    evaluator_receives_context,
+                    operational_maximums,
                 )
             )
 
@@ -216,6 +231,20 @@ def run_benchmark(
                 group_key=paired_group_key,
             )
         )
+        custom_parent_artifacts: list[Path] = []
+        if parent_artifact_builder is not None:
+            try:
+                custom_parent_artifacts = list(
+                    parent_artifact_builder(directory, results, plan)
+                )
+            except Exception as exc:
+                problems.append(
+                    "parent artifact validation failed: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                complete = False
+        for path in custom_parent_artifacts:
+            tracking.artifact(path)
         summary = {
             "run_id": run_id,
             "fingerprint": run_fingerprint,
@@ -225,6 +254,10 @@ def run_benchmark(
             "provenance": provenance,
             "candidates": [_payload(result, include_samples=False) for result in results],
             "paired_comparisons": paired_comparisons_payload,
+            "parent_artifacts": [
+                {"name": path.name, "sha256": sha256_file(path)}
+                for path in custom_parent_artifacts
+            ],
             "complete": complete,
             "completion": {
                 "planned_candidates": len(plan.candidates),
@@ -236,15 +269,13 @@ def run_benchmark(
             "selection": {
                 "made_by_runner": False,
                 "instruction": (
-                    "Review the MLflow child runs and artifacts. After a complete standard/full "
+                    "Review the MLflow child runs and artifacts. After a complete non-smoke "
                     "run, record any advancement in a separate engineer-decision JSON file."
                 ),
             },
         }
         summary_path = directory / "summary.json"
-        paired_path = directory / "paired_comparisons.json"
         leaderboard_path = directory / "leaderboard.parquet"
-        atomic_write_json(paired_path, paired_comparisons_payload)
         pd.DataFrame(
             [
                 {
@@ -259,7 +290,12 @@ def run_benchmark(
             ]
         ).to_parquet(leaderboard_path, index=False)
         atomic_write_json(summary_path, summary)
-        for path in (leaderboard_path, paired_path, summary_path):
+        parent_paths = [leaderboard_path, summary_path]
+        if paired_comparisons:
+            paired_path = directory / "paired_comparisons.json"
+            atomic_write_json(paired_path, paired_comparisons_payload)
+            parent_paths.insert(1, paired_path)
+        for path in parent_paths:
             tracking.artifact(path)
         tracking.metrics(
             {
@@ -304,6 +340,8 @@ def _run_candidate(
     resource_artifact_name,
     resource_monitor_options,
     monitor_temporary_disk,
+    evaluator_receives_context,
+    operational_maximums,
 ) -> CandidateResult:
     samples: list[SampleResult] = []
     metrics: dict[str, float | None] = {}
@@ -315,7 +353,7 @@ def _run_candidate(
     sample_artifact_path: Path | None = None
     resource_rows: list[dict[str, object]] = []
     fingerprint = stable_hash({"run": run_fingerprint, "candidate": candidate})
-    with tracking.run(candidate, nested=True):
+    with tracking.run(candidate, nested=True) as child_run_id:
         try:
             tracking.parameters({"candidate": candidate, "profile": plan.profile})
             temporary_directory = directory / "temporary" / _safe(candidate)
@@ -329,7 +367,11 @@ def _run_candidate(
                 )
                 try:
                     with _temporary_environment(temporary_directory), resources:
-                        evaluated = evaluator(candidate)
+                        evaluated = (
+                            evaluator(candidate, {"mlflow_run_id": child_run_id})
+                            if evaluator_receives_context
+                            else evaluator(candidate)
+                        )
                 finally:
                     operational.update(resources.metrics())
                     resource_rows = resources.samples()
@@ -338,7 +380,11 @@ def _run_candidate(
                     )
             else:
                 with _temporary_environment(temporary_directory):
-                    evaluated = evaluator(candidate)
+                    evaluated = (
+                        evaluator(candidate, {"mlflow_run_id": child_run_id})
+                        if evaluator_receives_context
+                        else evaluator(candidate)
+                    )
             samples = list(evaluated[0])
             operational = {**dict(evaluated[1]), **operational}
             candidate_metrics = dict(evaluated[2]) if len(evaluated) >= 3 else {}
@@ -384,6 +430,9 @@ def _run_candidate(
                 operational_prefix,
                 nullable_metrics,
             )
+            _validate_operational_maximums(
+                operational, operational_maximums or {}
+            )
             result = CandidateResult(
                 candidate,
                 "success",
@@ -392,6 +441,8 @@ def _run_candidate(
                 intervals,
                 tuple(samples),
                 operational,
+                mlflow_run_id=child_run_id,
+                parameters=candidate_parameters,
             )
             tracking.metrics(
                 {
@@ -418,7 +469,6 @@ def _run_candidate(
                 candidate_artifact_name,
                 result,
                 artifact_names,
-                candidate_parameters,
             )
             tracking.artifact(candidate_path)
             return result
@@ -455,6 +505,8 @@ def _run_candidate(
                 tuple(samples),
                 operational,
                 str(exc),
+                child_run_id,
+                candidate_parameters,
             )
             partial_metrics = {
                 **metrics,
@@ -476,7 +528,6 @@ def _run_candidate(
                 candidate_artifact_name,
                 result,
                 artifact_names,
-                candidate_parameters,
             )
             tracking.artifact(candidate_path)
             tracking.tags(
@@ -497,6 +548,8 @@ def _run_candidate(
                 tuple(samples),
                 operational,
                 error,
+                child_run_id,
+                candidate_parameters,
             )
             tracking.parameters({"candidate_status": "failed", "candidate_error": error})
             tracking.tags(
@@ -612,7 +665,6 @@ def _write_candidate_result(
     name: str | None,
     result: CandidateResult,
     artifact_names: list[str],
-    parameters: Mapping[str, object] | None = None,
 ) -> Path:
     path = _candidate_path(directory, candidate, name)
     if path.name not in artifact_names:
@@ -621,8 +673,6 @@ def _write_candidate_result(
         **_payload(result, include_samples=False),
         "artifacts": artifact_names,
     }
-    if parameters is not None:
-        payload["parameters"] = dict(parameters)
     atomic_write_json(path, payload)
     return path
 
@@ -642,7 +692,11 @@ def _validate_metric_contract(
 ) -> None:
     if not directions:
         raise ValueError("A benchmark must declare at least one required metric")
-    invalid = sorted(name for name, direction in directions.items() if direction not in {"min", "max"})
+    invalid = sorted(
+        name
+        for name, direction in directions.items()
+        if direction not in {"min", "max", "descriptive", "gate"}
+    )
     if invalid:
         raise ValueError(f"Metrics have invalid directions: {', '.join(invalid)}")
     if not primary_metrics:
@@ -650,6 +704,26 @@ def _validate_metric_contract(
     missing = [name for name in primary_metrics if name not in directions]
     if missing:
         raise ValueError("Primary metrics are not required metrics: " + ", ".join(missing))
+    invalid_primary = [
+        name for name in primary_metrics if directions.get(name) not in {"min", "max"}
+    ]
+    if invalid_primary:
+        raise ValueError(
+            "Primary metrics require min/max directions: "
+            + ", ".join(invalid_primary)
+        )
+
+
+def _validate_operational_maximums(
+    operational: Mapping[str, float], maximums: Mapping[str, float]
+) -> None:
+    exceeded = [
+        f"{name}={operational[name]:.6g}>{maximum:.6g}"
+        for name, maximum in maximums.items()
+        if name in operational and operational[name] > maximum
+    ]
+    if exceeded:
+        raise ValueError("Operational limit exceeded: " + ", ".join(exceeded))
 
 
 @contextmanager
