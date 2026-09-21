@@ -67,6 +67,52 @@ stage's locked split is used once for its one engineer-selected final profile.
 Decision files are written after engineer review; runners validate those files
 but never promote candidates automatically.
 
+### Protocol ownership and reproducibility
+
+Each executable benchmark owns one strict, versioned `protocol.yaml` beside its
+implementation:
+
+| Benchmark | Protocol |
+|---|---|
+| Document extraction | `experiments/benchmarks/extraction/document/protocol.yaml` |
+| ASR extraction | `experiments/benchmarks/extraction/audio/protocol.yaml` |
+| Video extraction | `experiments/benchmarks/extraction/video/protocol.yaml` |
+| Chunking and embedding | `experiments/benchmarks/rag/chunking_embedding/protocol.yaml` |
+| Retrieval and reranking | `experiments/benchmarks/rag/retrieval/protocol.yaml` |
+| Generation | `experiments/benchmarks/rag/generation/protocol.yaml` |
+| Final RAG | `experiments/benchmarks/rag/final/protocol.yaml` |
+| Vector database | `experiments/benchmarks/vectordb/protocol.yaml` |
+
+These files own every setting that can change outputs, eligibility, latency,
+memory, or failure status: search ranges, parser and decoder options, cutoffs,
+warmups, repetitions, batch sizes, statistical settings, and hardware gates.
+Their schemas reject missing, unknown, contradictory, and non-finite values.
+The resolved protocol has a stable checksum. Parent fingerprints include all
+composed protocol checksums; workers verify the version, checksum, and resolved
+payload before loading a model or processing data.
+
+Every runner uses the same profile names directly: `smoke`, `development`,
+`validation`, and, where the benchmark has a final holdout stage, `locked`.
+Legacy `standard` and `full` spellings are rejected so command lines, run plans,
+decision provenance, protocol settings, and MLflow artifacts use one vocabulary.
+
+Configuration files have separate responsibilities:
+
+- `candidates.yaml` stores aliases, model/backend identities where applicable,
+  and profile membership, but no search ranges or decoding parameters.
+- `data/benchmarks/models/selected.json` stores pinned revisions, snapshot
+  locations, and checksums.
+- dataset manifests store samples, splits, annotations, and data provenance.
+- benchmark protocols store executable experimental behavior.
+- `config/base.yaml` stores provisional application behavior. Promotion is a
+  deliberate manual edit after review; no benchmark modifies it.
+
+Every parent run uploads the source YAML and writes a resolved
+`<name>_protocol.json`. Parent and child MLflow runs record protocol versions,
+checksums, and the resolved settings they executed. Historical artifacts remain
+valid evidence for their recorded checksum, but new runners do not reinterpret
+old protocol formats.
+
 Every comparison gives its candidates the same samples. MLflow stores the exact
 settings, revisions, data checksum, hardware, aggregate metrics, confidence
 intervals, and per-sample results. The engineer chooses what continues; the
@@ -1078,15 +1124,28 @@ truth.
 
 ### Execution
 
-The dedicated runner supports smoke, development, validation, and locked profiles. Every
-execution requires a versioned `VideoProtocolLock` bound to the exact manifest
-checksum. The lock freezes an ASR window length no greater than 30 seconds,
-overlap, deterministic normalized suffix/prefix stitching, visible-text
-unitization, occurrence-matching thresholds, protocol version, reviewer, and
-review date. Authoritative phases accept only a data-reviewed authoritative
-lock. The committed 30-second window, 2-second overlap, and test thresholds are
-smoke-only; the authoritative values remain a required data-review output in
-[pending-data-review.md](pending-data-review.md).
+The dedicated runner supports smoke, development, validation, and locked
+profiles. Its normal `protocol.yaml` freezes the candidate ranges, frame-zero
+and VFR rules, ASR windows and overlap, deterministic normalized suffix/prefix
+stitching, visible-text unitization, occurrence matching, dataset counts, and
+execution profiles. Manifests remain ordinary data inputs whose checksums are
+recorded in run provenance and in the frozen-ASR artifact; there is no separate
+manifest-bound video lock.
+
+The frozen-ASR phase composes the video and ASR protocols. Each visual phase
+also composes the document protocol so the selected image parser receives the
+same resolved parser options and candidate-factor validation used by the
+document benchmark. The visual worker verifies both protocol payloads before
+initializing the parser.
+
+The authoritative hybrid threshold and its development source run ID begin as
+`null`. Fixed and scene development comparisons can run in that state. After
+reviewing the scene comparison, an engineer writes the selected declared
+threshold and source run ID into `protocol.yaml` and increments the protocol
+version. Hybrid execution rejects missing or out-of-range values. Because this
+changes the protocol checksum, the development frozen-ASR artifact must be
+regenerated before the hybrid or combined nine-configuration run. The runner
+never writes the threshold or application configuration itself.
 
 ```text
 video frozen-ASR phase
@@ -1116,7 +1175,9 @@ Development proceeds in this order:
 
 1. Run the fixed-interval configurations at 5, 10, and 20 seconds.
 2. Run the scene-change configurations at thresholds 0.30, 0.40, and 0.50.
-3. Review visual quality and processing cost, then record one scene threshold.
+3. Review visual quality and processing cost, then record one scene threshold
+   and its source run ID in `protocol.yaml`; increment the protocol version and
+   regenerate the frozen-ASR artifact.
 4. Combine that threshold with maximum gaps of 5, 10, and 20 seconds and run
    the three hybrid configurations.
 5. Compare the resulting nine development configurations. Record finalists;

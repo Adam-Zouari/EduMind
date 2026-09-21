@@ -1949,7 +1949,7 @@ is visible. A reference occurrence is covered when a selected frame inside that
 interval yields matching text. Its delay is the first matching frame time minus
 the reference start time.
 
-The protocol lock supplies the normalized Content F1 eligibility threshold and
+The versioned video protocol supplies the normalized Content F1 eligibility threshold and
 freezes frame-time tolerance at zero, so a frame outside the verified interval
 is never eligible. Matching is one-to-one: each reference occurrence and
 each normalized text unit from a selected frame can be used at most once.

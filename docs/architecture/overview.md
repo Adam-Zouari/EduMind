@@ -86,7 +86,12 @@ The candidate-selection package has a different role:
 
 - `docs/benchmarks/model-selection.md` explains why a model or vector server was shortlisted.
 - `experiments/benchmarks/selection_evidence.csv` provides exact included identities and revisions.
-- experiment `candidates.yaml` files define only the settings/matrix to execute.
+- experiment `candidates.yaml` files define candidate identities and phase
+  membership;
+- each benchmark's adjacent `protocol.yaml` owns behavior-changing experiment
+  settings; and
+- `data/benchmarks/models/selected.json` owns prepared revisions, local paths,
+  and checksums.
 
 ## Why Chroma and an in-process application are provisional
 

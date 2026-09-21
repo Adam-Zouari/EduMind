@@ -134,8 +134,12 @@ explicitly reviewed production change
 - `docs/benchmarks/model-selection.md` explains the shortlist to a reader.
 - `experiments/benchmarks/selection_evidence.csv` records machine-readable include/exclude decisions and
   immutable revisions.
-- Candidate YAML files define experiment settings, not model revisions.
-- `selected.json` is generated during preparation and records local paths.
+- Candidate YAML files define candidate identities and profile membership, not
+  behavior-changing settings or model revisions.
+- Each executable benchmark's adjacent `protocol.yaml` is the strict,
+  versioned source of behavior-changing experimental settings.
+- `selected.json` is generated during preparation and records revisions, local
+  snapshot paths, and checksums.
 - MLflow and benchmark artifacts record what was actually executed.
 - No benchmark edits `config/base.yaml` or promotes a winner automatically.
 

@@ -134,6 +134,12 @@ in the model lock.
 
 Downloads are resumable through Hugging Face and are placed in deterministic project directories. Preparation never substitutes a newer repository head when the pinned revision is unavailable.
 
+Benchmark `protocol.yaml` files do not download models and do not replace the
+model lock. Protocols define executable behavior; preparation resolves the
+model identities from candidate registries and writes immutable revisions,
+local snapshot paths, and checksums to
+`data/benchmarks/models/selected.json`.
+
 ### RAG models
 
 The RAG download contains these exact approved identities:

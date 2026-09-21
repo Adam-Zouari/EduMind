@@ -773,9 +773,10 @@ Reliability samples contain an empty spoken reference and one of `silence`,
 Video samples additionally contain `duration_seconds`, `reference_transcript`,
 `reference_visual_text`, and `visual_occurrences` with text plus `start`/`end`
 for each verified appearance, along with annotations identifying intentional
-reappearance. Each authoritative video manifest has a separate reviewed
-`VideoProtocolLock` bound to its manifest fingerprint.
-The transcript is retained for the frozen-ASR diagnostic, but spoken and visible
+reappearance. The video protocol is a separate versioned input: its checksum
+and the manifest checksum are recorded together in normal run provenance, but
+the protocol is not stored in or bound into the manifest. The transcript is
+retained for the frozen-ASR diagnostic, but spoken and visible
 tokens are not merged into a combined quality score.
 
 RAG document rows contain canonical text and a stable source-document family.
@@ -787,12 +788,13 @@ questions contain evidence from at least two types. Unanswerable questions have
 no gold evidence units.
 
 The generated `FrozenASRArtifact` is a separate checksummed JSON artifact. It
-records its run ID; manifest, protocol, and model-decision fingerprints; selected
-model path, revisions, cache-manifest hash, and submodels; runtime parameters;
+records its run ID; manifest, video-protocol, audio-protocol, and model-decision
+fingerprints; selected model path, revisions, cache-manifest hash, and
+submodels; runtime parameters;
 FFmpeg version and exact commands; aggregate WER, latency, RTF, RAM, and VRAM;
 and one row per video containing transcript, token-level timestamp units,
 window records, latency, RTF, and WER counts. Visual children validate the
-artifact's manifest/protocol binding and exact video IDs before use.
+artifact's manifest and protocol checksums plus exact video IDs before use.
 
 Before freezing a manifest:
 

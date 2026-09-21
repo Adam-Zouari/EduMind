@@ -45,6 +45,17 @@ Failures remain visible rather than being silently skipped.
   never used for tuning.
 - `--manifest PATH` overrides a stage's default dataset manifest.
 
+Every command-line interface uses the semantic names directly. Run plans,
+decision provenance, resolved protocol artifacts, and MLflow parameters record
+the same profile name. The retired `standard` and `full` spellings are not
+accepted.
+
+Each runner loads the adjacent `protocol.yaml` by default. Use its `--protocol`
+option only to execute another reviewed, committed protocol revision. Final RAG
+and complete retrieval expose separate options for each composed protocol. A
+run uploads every source YAML, writes a resolved `<name>_protocol.json`, and
+records every protocol checksum in the parent fingerprint and child parameters.
+
 A decision JSON names candidates selected after inspecting a completed upstream
 run. It is an explicit input to the next stage, not an automatically generated
 winner. The runner validates that the referenced candidate exists.
@@ -63,6 +74,15 @@ winner. The runner validates that the referenced candidate exists.
 
 Resolve `source_summary` relative to the decision file. Create separate PDF and
 image decisions because they refer to different parent summaries.
+
+Keep reviewed decision files under `data/benchmarks/decisions/`, creating that
+directory when the first real decision exists. Use descriptive names such as
+`audio-validation.json`, `chunking-embedding-validation.json`, or
+`retrieval-validation.json`. Do not commit placeholder decisions: the source
+run ID, source summary, exact selected candidate names, reviewer, date, and
+reason must come from an actual completed development run. The path is then
+passed to the validation command through `--shortlist` or the stage-specific
+selection option shown below.
 
 The methodology assigns development, validation, and locked data according to
 the execution profile. A parser architecture must be compared on development
@@ -152,47 +172,52 @@ elsewhere. The locked profile rejects decisions containing more than one ASR
 profile.
 
 Video is a two-step benchmark. First, decode and transcribe the phase's audio
-once with the selected ASR and the manifest-bound `VideoProtocolLock`:
+once with the selected ASR. The runner composes the normal video and ASR
+protocols and binds their checksums plus the manifest checksum into the frozen
+artifact:
 
 ```powershell
 python experiments/benchmarks/extraction/video/run.py --profile development --phase frozen-asr `
   --manifest data/benchmarks/extraction/video-development.json `
-  --protocol-lock VIDEO_PROTOCOL_LOCK.json `
   --audio-selection AUDIO_DECISION `
   --frozen-asr artifacts/video-development-asr.json `
   --device cuda
 ```
 
 Then run visual-only comparisons. Every child validates and references the same
-frozen artifact and never invokes ASR:
+frozen artifact and never invokes ASR. Visual runs also load the adjacent
+document protocol (override it only with `--document-protocol PATH`) and record
+its checksum beside the video and audio protocol identities:
 
 ```powershell
 python experiments/benchmarks/extraction/video/run.py --profile development --phase fixed `
   --manifest data/benchmarks/extraction/video-development.json `
-  --protocol-lock VIDEO_PROTOCOL_LOCK.json `
   --frozen-asr artifacts/video-development-asr.json `
   --document-selection DOCUMENT_DECISION `
   --device cuda
 
 python experiments/benchmarks/extraction/video/run.py --profile development --phase scene `
   --manifest data/benchmarks/extraction/video-development.json `
-  --protocol-lock VIDEO_PROTOCOL_LOCK.json `
   --frozen-asr artifacts/video-development-asr.json `
   --document-selection DOCUMENT_DECISION `
   --device cuda
 
 python experiments/benchmarks/extraction/video/run.py --profile development --phase hybrid `
   --manifest data/benchmarks/extraction/video-development.json `
-  --protocol-lock VIDEO_PROTOCOL_LOCK.json `
   --frozen-asr artifacts/video-development-asr.json `
   --document-selection DOCUMENT_DECISION `
-  --scene-selection SCENE_THRESHOLD_DECISION.json `
   --device cuda
 ```
 
-After recording the scene choice, `--phase all` may rerun the resulting fixed,
-scene, and selected-threshold hybrid configurations in one nine-child
-development parent. The `validation` finalist decision must reference that completed
+The initial video protocol deliberately has
+`selected_scene_threshold: null` and
+`selected_scene_source_run_id: null`, so fixed and scene phases run while
+hybrid rejects execution. After reviewing the scene comparison, edit those two
+fields in `experiments/benchmarks/extraction/video/protocol.yaml`, increment
+`protocol_version`, and regenerate the frozen-ASR artifact. Its previous
+checksum is intentionally incompatible. `--phase all` may then rerun the
+resulting fixed, scene, and selected-threshold hybrid configurations in one
+nine-child development parent. The validation finalist decision must reference that completed
 `video-development` parent; the locked decision must reference the completed
 `video-validation` parent.
 
@@ -200,7 +225,8 @@ Development is an ordered nine-configuration study:
 
 1. compare fixed intervals of 5, 10, and 20 seconds;
 2. compare FFmpeg scene thresholds of 0.30, 0.40, and 0.50;
-3. record the selected scene threshold; and
+3. record the selected scene threshold and source development run ID in
+   `protocol.yaml`, bump its version, and regenerate frozen ASR; and
 4. compare hybrid maximum gaps of 5, 10, and 20 seconds using that threshold.
 
 Every configuration includes the first frame. The three comparisons remain in
@@ -209,59 +235,53 @@ can be filtered and compared together. Validation runs only the
 engineer-selected finalists; locked test runs one selected configuration once.
 `--profile validation` requires a shortlist of at most three development finalists;
 `--profile locked` requires a decision containing exactly one validation
-winner. Authoritative runs reject a smoke-scoped lock, a missing lock, and any
-manifest-checksum mismatch.
+winner. Frozen-ASR reuse rejects any manifest, video-protocol, audio-protocol,
+or sample-ID mismatch.
 
-Run the validation finalists with a validation-bound protocol lock and frozen
-ASR artifact:
+Run the validation finalists with a newly generated validation frozen-ASR
+artifact:
 
 ```powershell
 python experiments/benchmarks/extraction/video/run.py --profile validation --phase frozen-asr `
   --manifest data/benchmarks/extraction/video-validation.json `
-  --protocol-lock VIDEO_VALIDATION_PROTOCOL_LOCK.json `
   --audio-selection SELECTED_ASR_DECISION.json `
   --frozen-asr artifacts/video-validation-asr.json `
   --device cuda
 
 python experiments/benchmarks/extraction/video/run.py --profile validation --phase all `
   --manifest data/benchmarks/extraction/video-validation.json `
-  --protocol-lock VIDEO_VALIDATION_PROTOCOL_LOCK.json `
   --frozen-asr artifacts/video-validation-asr.json `
   --document-selection DOCUMENT_DECISION.json `
   --shortlist VIDEO_FINALISTS_DECISION.json `
   --device cuda
 ```
 
-After validation records one winner, run the locked phase once with a
-locked-manifest protocol lock:
+After validation records one winner, generate the locked split's frozen ASR and
+run that configuration once:
 
 ```powershell
 python experiments/benchmarks/extraction/video/run.py --profile locked --phase frozen-asr `
   --manifest data/benchmarks/extraction/video-locked-test.json `
-  --protocol-lock VIDEO_LOCKED_PROTOCOL_LOCK.json `
   --audio-selection SELECTED_ASR_DECISION.json `
   --frozen-asr artifacts/video-locked-asr.json `
   --device cuda
 
 python experiments/benchmarks/extraction/video/run.py --profile locked --phase all `
   --manifest data/benchmarks/extraction/video-locked-test.json `
-  --protocol-lock VIDEO_LOCKED_PROTOCOL_LOCK.json `
   --frozen-asr artifacts/video-locked-asr.json `
   --document-selection DOCUMENT_DECISION.json `
   --shortlist SELECTED_VIDEO_DECISION.json `
   --device cuda
 ```
 
-The committed smoke lock is only for fixture wiring:
+Smoke uses the smoke settings in the committed video protocol:
 
 ```powershell
 python experiments/benchmarks/extraction/video/run.py --profile smoke --phase frozen-asr `
-  --protocol-lock data/benchmarks/extraction/video-protocol-smoke.json `
   --audio-candidate whisper-small-en-control `
   --frozen-asr artifacts/video-smoke-asr.json
 
 python experiments/benchmarks/extraction/video/run.py --profile smoke --phase all `
-  --protocol-lock data/benchmarks/extraction/video-protocol-smoke.json `
   --frozen-asr artifacts/video-smoke-asr.json `
   --image-candidate "docling-standard|ocr=rapidocr|mode=full_page|table=fast|formula=off"
 ```

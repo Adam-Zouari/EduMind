@@ -63,6 +63,23 @@ silently reselected.
 - Performance results apply to the hardware and software environment recorded
   with that run.
 
+## Configuration ownership
+
+Every independently executable benchmark has one strict, versioned
+`protocol.yaml` beside its runner. The protocol is the only editable source for
+settings that can change output, eligibility, timing, memory, or failure status.
+Candidate registries contain identities and execution-profile membership;
+`data/benchmarks/models/selected.json` contains immutable model revisions, local
+snapshot paths, and checksums; manifests contain data and data provenance; and
+`config/base.yaml` contains provisional application settings. Benchmark runners
+never rewrite any of these inputs or promote a result automatically.
+
+Each parent fingerprint includes every protocol it composes. The parent stores
+the source YAML and a resolved `<name>_protocol.json`; parent and child MLflow
+runs record protocol version and checksum. A changed protocol therefore creates
+a different run identity and invalidates worker payloads or frozen artifacts
+created with the old checksum.
+
 Current implementation limitations that affect whether a run is authoritative
 are recorded beside the relevant commands in the [runbook](running.md), rather
 than being hidden in stage-specific pages.

@@ -41,14 +41,15 @@ the authoritative dataset manifests and methodology, then remove the item.
 
 ## Video extraction
 
-- Inspect actual video durations and supply the authoritative
-  `VideoProtocolLock` values for ASR window overlap and normalized
-  suffix/prefix stitching. The committed 30-second/2-second lock is smoke-only
-  and cannot authorize an authoritative run.
-- Supply the authoritative one-to-one occurrence-matching thresholds in that
-  lock after inspecting the annotations, so matching is neither too permissive
-  for short labels nor too strict for long slide text. Do not tune the lock on
-  validation or locked-test results.
+- Confirm that the reviewed video durations and annotations are compatible with
+  the frozen 30-second windows, 2-second overlap, normalized suffix/prefix
+  stitching, and one-to-one occurrence threshold in
+  `experiments/benchmarks/extraction/video/protocol.yaml`. Any required revision
+  must be justified from development data and receive a new protocol version;
+  validation and locked-test results cannot tune it.
+- After the development scene comparison, write the selected declared scene
+  threshold and its source development run ID into video `protocol.yaml`, bump
+  the protocol version, and regenerate the frozen-ASR artifact.
 - Confirm that SlideSpeech and the other selected sources are downloadable under
   the recorded terms and that the chosen assets can be checksum-pinned.
 - Verify how many independent validation and locked videos are available before

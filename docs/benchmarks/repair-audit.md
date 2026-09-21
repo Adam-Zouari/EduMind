@@ -14,6 +14,14 @@ methodology mismatch in those three systems.
 Application behavior, the end-to-end RAG pipeline, and authoritative dataset
 population were not part of this repair.
 
+The `VideoProtocolLock` references below describe the historical 2026-09-11
+repository state. They were superseded by the centralized benchmark-protocol
+migration: current video runs use
+`experiments/benchmarks/extraction/video/protocol.yaml`, normal manifest
+provenance, and frozen artifacts bound to both video and audio protocol
+checksums. Historical runs and their recorded lock artifacts are preserved and
+must not be reinterpreted as current-format runs.
+
 ## Implemented contract
 
 ### Document
@@ -62,7 +70,7 @@ population were not part of this repair.
   frame zero and uses FFmpeg variable-frame-rate output.
 - Smoke, development, validation, and locked profiles enforce their phase/selection
   contracts. Locked execution requires exactly one validated configuration.
-- A versioned `VideoProtocolLock` binds the manifest, ASR windows, overlap,
+- At that historical revision, a versioned `VideoProtocolLock` bound the manifest, ASR windows, overlap,
   deterministic stitching, visible-text units, occurrence thresholds,
   reviewer/date, and hybrid scene threshold. Authoritative runs reject smoke,
   missing, or checksum-mismatched locks.
@@ -156,8 +164,10 @@ results above.
 ## Residual limitations outside benchmark code
 
 - Authoritative manifests and the data-reviewed authoritative video protocol
-  values do not yet exist. The runners intentionally reject authoritative work
-  until those inputs are supplied; the committed lock is smoke-only.
+  values do not yet exist. The committed video protocol therefore leaves
+  `selected_scene_threshold` and `selected_scene_source_run_id` null. Fixed and
+  scene development work can run, while authoritative hybrid work intentionally
+  rejects the unresolved selection.
 - The installed pinned PaddlePaddle 3.3.1 Windows wheel is not compiled with
   CUDA. Paddle completed real CPU inference, while the CUDA request failed
   explicitly and did not fall back silently.
@@ -167,3 +177,75 @@ results above.
   pre-run baseline after observing the target process.
 - Prepared model snapshots and generated benchmark run artifacts are local,
   ignored artifacts rather than source-controlled data.
+
+## Centralized protocol migration and re-audit — 2026-09-21
+
+Every independently executable benchmark now owns a strict, versioned
+`protocol.yaml`: document, ASR, video, chunking–embedding,
+retrieval–reranking, generation, Final RAG, and vector database. Resolved
+protocol checksums participate in run fingerprints and provenance; parent and
+child runs persist the exact settings they execute. Candidate registries retain
+identities and phase membership, while immutable model revisions and snapshot
+checksums remain in the selected-model lock.
+
+The independent post-migration audit found and fixed these execution drifts:
+
+1. Document execution did not reject a manifest from the wrong split.
+2. Shared audio preparation still had hidden 16 kHz/mono/sample-width defaults.
+3. Several protocol fields accepted values unsupported by the actual adapters.
+4. Video occurrence settings were copied into a second worker field instead of
+   being read directly from the verified protocol.
+5. Generation reconstructed model dtype independently from the executed
+   protocol configuration.
+6. Vector concurrency, adapter timeouts, and confidence levels were not all
+   consumed from the resolved protocol.
+7. Sequential fresh-process candidates reused Python's cached first temporary
+   directory after that directory had been deleted.
+8. Windows WDDM VRAM monitoring rebased each child on transient memory retained
+   from its predecessor, and monitor failures could hide the underlying
+   candidate error.
+9. The vector HNSW protocol label omitted the final `ef_construction`
+   tie-break that the selector executes.
+10. Factorless Docling-standard paths could fall through to library OCR/table
+    defaults instead of the protocol's declared baseline configuration.
+
+Regression coverage was added for the corrected paths. A final search found no
+active `VideoProtocolLock`, `--protocol-lock`, `--scene-selection`, implicit
+cross-benchmark protocol load, duplicated execution-only parameter dictionary,
+or behavior-changing candidate-registry value outside the documented ownership
+rules. Historical lock references above remain intentionally dated evidence.
+
+### Verification results
+
+| Check | Result |
+|---|---|
+| Full test suite | 162 passed |
+| Repository Ruff check | Passed |
+| Python bytecode compilation | Passed |
+| `pip check` | No broken requirements |
+| `git diff --check` | Passed; line-ending notices only |
+| Protocol parser/behavior/worker identity tests | Passed for all eight suites |
+| CUDA retrieval/reranking matrix | All 15 stacks completed |
+
+### Real smoke evidence
+
+Smoke fixtures verify wiring and reproducibility; their scores are not model
+selection evidence.
+
+| System | Device | Result | Artifact run |
+|---|---:|---|---|
+| Chunking–embedding, GTE control | CUDA FP16 | Complete; normalized finite 768-dimensional vectors | `20260921-045230-4986c952` |
+| Document PDF | CUDA | Complete | `20260921-045258-c15ed291` |
+| Document image | CUDA | Complete | `20260921-045335-b404667c` |
+| Document DOCX | CUDA | Complete after explicit protocol-baseline routing | `20260921-052845-164db78b` |
+| ASR, all four active candidates | CUDA | Complete; 4/4 successful | `20260921-045426-a1ce9c9f` |
+| Video frozen-ASR phase | CUDA | Complete; regenerated artifact uses current video and audio checksums | `20260921-045640-28b59fb0` |
+| Video fixed visual candidates | CUDA | Complete; fixed 5/10/20-second candidates | `20260921-045651-05ed5108` |
+| Retrieval–reranking | CUDA FP16 | Complete; 15/15 stacks successful | `20260921-051356-1881454c` |
+
+Docker vector smoke could not run because the local Docker Desktop daemon was
+not available. Generation and Final-RAG real smoke could not run because their
+selected model snapshots are not prepared in the current model lock. These are
+environment/preparation limitations, not silent fallbacks; their protocol and
+mocked execution tests pass. Any pre-migration frozen video-ASR artifact remains
+intentionally incompatible and must be regenerated before reuse.
