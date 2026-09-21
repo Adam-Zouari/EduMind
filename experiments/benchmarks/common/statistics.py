@@ -9,7 +9,11 @@ from .metrics import paired_bootstrap_interval
 
 
 def aggregate_samples(
-    samples: Sequence[SampleResult], *, resamples: int = 10_000, seed: int = 42
+    samples: Sequence[SampleResult],
+    *,
+    resamples: int = 10_000,
+    seed: int = 42,
+    confidence: float = 0.95,
 ) -> tuple[dict[str, float], dict[str, dict[str, float]]]:
     metric_names = (
         sorted(set().union(*(sample.metrics.keys() for sample in samples))) if samples else []
@@ -21,7 +25,12 @@ def aggregate_samples(
         metrics[name] = sum(values) / len(values)
         if not resamples:
             continue
-        interval = paired_bootstrap_interval(values, resamples=resamples, seed=seed)
+        interval = paired_bootstrap_interval(
+            values,
+            resamples=resamples,
+            seed=seed,
+            confidence=confidence,
+        )
         intervals[name] = {
             "estimate": interval.estimate,
             "lower": interval.lower,

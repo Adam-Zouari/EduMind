@@ -10,31 +10,19 @@ from pathlib import Path
 
 import numpy as np
 
-from experiments.benchmarks.rag.retrieval.protocol import default_protocol
-
-
 class BM25:
     def __init__(
         self,
         documents: Sequence[str],
         *,
-        k1: float | None = None,
-        b: float | None = None,
-        epsilon: float | None = None,
+        k1: float,
+        b: float,
+        epsilon: float,
     ) -> None:
         try:
             from rank_bm25 import BM25Okapi
         except ModuleNotFoundError as exc:
             raise RuntimeError("Install requirements/benchmarks.lock for BM25") from exc
-        if k1 is None or b is None or epsilon is None:
-            if any(value is not None for value in (k1, b, epsilon)):
-                raise ValueError("BM25 parameters must be supplied together")
-            protocol = default_protocol()
-            k1, b, epsilon = (
-                protocol.bm25_k1,
-                protocol.bm25_b,
-                protocol.bm25_epsilon,
-            )
         self.model = BM25Okapi(
             [_tokens(text) for text in documents],
             k1=k1,
@@ -58,9 +46,9 @@ class BM25:
 def reciprocal_rank_fusion(
     rankings: Sequence[Sequence[int]],
     limit: int,
-    rrf_k: int | None = None,
+    rrf_k: int,
     *,
-    weights: Sequence[float] | None = None,
+    weights: Sequence[float],
     tie_keys: dict[int, str] | None = None,
 ) -> list[int]:
     return [
@@ -74,17 +62,13 @@ def reciprocal_rank_fusion(
 def reciprocal_rank_fusion_with_scores(
     rankings: Sequence[Sequence[int]],
     limit: int,
-    rrf_k: int | None = None,
+    rrf_k: int,
     *,
-    weights: Sequence[float] | None = None,
+    weights: Sequence[float],
     tie_keys: dict[int, str] | None = None,
 ) -> list[tuple[int, float]]:
     """Fuse ranks with the frozen RRF score and deterministic documented ties."""
 
-    if rrf_k is None or weights is None:
-        protocol = default_protocol()
-        rrf_k = protocol.rrf_constant if rrf_k is None else rrf_k
-        weights = protocol.rrf_weights if weights is None else weights
     weights = tuple(weights)
     if len(weights) != len(rankings) or any(weight <= 0 for weight in weights):
         raise ValueError("RRF requires one positive weight per source ranking")

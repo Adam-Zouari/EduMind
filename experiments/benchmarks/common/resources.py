@@ -10,6 +10,27 @@ from types import TracebackType
 from typing import Any
 
 
+_GPU_FLOOR_LOCK = threading.Lock()
+_GPU_FLOOR_BYTES: dict[int, int] = {}
+
+
+def _device_memory_floor(index: int, observed_bytes: int) -> int:
+    """Keep the lowest device baseline seen by this benchmark process.
+
+    Windows WDDM can retain a terminated CUDA child's allocation briefly while
+    reporting per-process memory as unavailable. Re-basing every candidate on
+    that transient allocation makes the next child appear to use zero VRAM.
+    The parent process is long-lived, so its lowest observed pre-run value is a
+    stable device floor for all sequential children.
+    """
+
+    with _GPU_FLOOR_LOCK:
+        previous = _GPU_FLOOR_BYTES.get(index)
+        floor = observed_bytes if previous is None else min(previous, observed_bytes)
+        _GPU_FLOOR_BYTES[index] = floor
+        return floor
+
+
 class ResourceMonitor:
     def __init__(
         self,
@@ -18,7 +39,10 @@ class ResourceMonitor:
         temporary_directory: Path | None = None,
         require_vram: bool = False,
         report_zero_vram: bool = False,
+        zero_vram_measurement_method: str = "cpu-zero",
     ) -> None:
+        if not zero_vram_measurement_method:
+            raise ValueError("zero_vram_measurement_method cannot be empty")
         self.interval_seconds = interval_seconds
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -32,6 +56,7 @@ class ResourceMonitor:
         self._temporary_directory = temporary_directory
         self._require_vram = require_vram
         self._report_zero_vram = report_zero_vram
+        self._zero_vram_measurement_method = zero_vram_measurement_method
         self._pynvml: Any | None = None
         self._gpu_handles: list[Any] = []
         self._gpu_baseline_bytes: list[int] = []
@@ -50,8 +75,11 @@ class ResourceMonitor:
                 for index in range(pynvml.nvmlDeviceGetCount())
             ]
             self._gpu_baseline_bytes = [
-                int(pynvml.nvmlDeviceGetMemoryInfo(handle).used)
-                for handle in self._gpu_handles
+                _device_memory_floor(
+                    index,
+                    int(pynvml.nvmlDeviceGetMemoryInfo(handle).used),
+                )
+                for index, handle in enumerate(self._gpu_handles)
             ]
             if self._require_vram and not self._gpu_handles:
                 raise RuntimeError("CUDA benchmark requested but NVML found no GPU")
@@ -110,7 +138,7 @@ class ResourceMonitor:
         if self._device_delta_vram_sampled:
             return "nvml-device-delta-wddm"
         if self._report_zero_vram and not self._require_vram:
-            return "cpu-zero"
+            return self._zero_vram_measurement_method
         return "unavailable"
 
     def _run(self) -> None:

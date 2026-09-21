@@ -86,9 +86,11 @@ class GenerationProfile:
     dtype: str
     reasoning: bool
     temperature: float
+    do_sample: bool
     seed: int
     context_tokens: int
     maximum_answer_tokens: int
+    streamer_timeout_seconds: float
 
     @property
     def fingerprint(self) -> str:

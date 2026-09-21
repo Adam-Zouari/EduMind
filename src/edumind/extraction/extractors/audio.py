@@ -97,7 +97,9 @@ def model_directory(request: ExtractionRequest) -> Path:
     return path
 
 
-def load_whisper_runtime(model_path: Path, device: str) -> tuple[Any, str]:
+def load_whisper_runtime(
+    model_path: Path, device: str, *, dtype: str | None = None
+) -> tuple[Any, str]:
     if device not in {"cpu", "cuda"}:
         raise ValueError("Whisper device must be cpu or cuda")
     try:
@@ -105,9 +107,13 @@ def load_whisper_runtime(model_path: Path, device: str) -> tuple[Any, str]:
         from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
     except ModuleNotFoundError as exc:
         raise MissingDependencyError("Transformers ASR dependencies are required") from exc
-    dtype = torch.float16 if device == "cuda" else torch.float32
+    torch_dtype = (
+        getattr(torch, dtype)
+        if dtype is not None
+        else (torch.float16 if device == "cuda" else torch.float32)
+    )
     model = AutoModelForSpeechSeq2Seq.from_pretrained(
-        str(model_path), dtype=dtype, local_files_only=True
+        str(model_path), dtype=torch_dtype, local_files_only=True
     ).to(device).eval()
     processor = AutoProcessor.from_pretrained(
         str(model_path), local_files_only=True
@@ -120,14 +126,20 @@ def load_whisper_runtime(model_path: Path, device: str) -> tuple[Any, str]:
         device=torch.device(device),
     )
     _assert_whisper_device(runtime.model, device)
-    return runtime, str(dtype).removeprefix("torch.")
+    return runtime, str(torch_dtype).removeprefix("torch.")
 
 
-def transcribe_whisper(runtime: Any, source: Path) -> WhisperTranscript:
+def transcribe_whisper(
+    runtime: Any,
+    source: Path,
+    *,
+    return_timestamps: str = "word",
+    do_sample: bool = False,
+) -> WhisperTranscript:
     result = runtime(
         str(source),
-        return_timestamps="word",
-        generate_kwargs={"do_sample": False},
+        return_timestamps=return_timestamps,
+        generate_kwargs={"do_sample": do_sample},
     )
     payload = result if isinstance(result, Mapping) else {}
     chunks = payload.get("chunks", [])

@@ -18,6 +18,10 @@ from edumind.extraction import ExtractionProfile, ExtractionRequest, SourceKind
 from experiments.benchmarks.common.resources import ResourceMonitor
 from experiments.benchmarks.common.provenance import package_versions
 from experiments.benchmarks.extraction.registry import build_experiment_registry
+from experiments.benchmarks.extraction.document.profiles import parse_document_profile
+from experiments.benchmarks.extraction.document.protocol import (
+    protocol_from_worker as document_protocol_from_worker,
+)
 from experiments.benchmarks.common.process import json_worker_main
 from experiments.benchmarks.extraction.video.candidates import frame_command, parse_candidate
 from experiments.benchmarks.extraction.video.metrics import (
@@ -25,17 +29,29 @@ from experiments.benchmarks.extraction.video.metrics import (
     bootstrap_quality,
     score_video,
 )
+from experiments.benchmarks.extraction.video.protocol import protocol_from_worker
 
 
 def execute(payload: dict[str, object]) -> dict[str, object]:
-    candidate = parse_candidate(str(payload["candidate"]))
+    protocol = protocol_from_worker(payload["protocol"])
+    document_protocol = document_protocol_from_worker(payload["document_protocol"])
+    candidate = parse_candidate(str(payload["candidate"]), protocol)
     device = str(payload["device"])
     items = list(payload["items"])  # type: ignore[arg-type]
     random.Random(int(payload["seed"])).shuffle(items)
     image_engine = str(payload["image_engine"])
+    image_profile = parse_document_profile(str(payload["image_candidate"]))
+    if image_profile.runtime_engine != image_engine:
+        raise ValueError("Visual worker image candidate and engine disagree")
+    document_protocol.validate_candidate_factors(image_profile.factors)
     image_revision = str(payload["image_revision"])
     image_options = dict(payload["image_options"])  # type: ignore[arg-type]
-    occurrence_matching = dict(payload["occurrence_matching"])  # type: ignore[arg-type]
+    expected_image_options = {
+        **document_protocol.parser_options(image_engine),
+        **image_profile.options,
+    }
+    if any(image_options.get(name) != value for name, value in expected_image_options.items()):
+        raise ValueError("Visual worker image options differ from the document protocol")
     extractor = build_experiment_registry().create(image_engine, SourceKind.IMAGE)
     timing_rows: list[dict[str, object]] = []
     sample_rows: list[dict[str, object]] = []
@@ -109,7 +125,11 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
                             }
                         )
                     quality_predictions, quality_latency, quality_frame_count = outputs[0]
-                    row = score_video(item, quality_predictions, occurrence_matching)
+                    row = score_video(
+                        item,
+                        quality_predictions,
+                        protocol.occurrence_matching,
+                    )
                     row["quality_latency_seconds"] = quality_latency
                     row["predictions"] = quality_predictions
                     row["selected_frame_count"] = quality_frame_count
@@ -122,6 +142,7 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
         sample_rows,
         resamples=int(payload["bootstrap_resamples"]),
         seed=int(payload["seed"]),
+        confidence=protocol.confidence_level,
     )
     latencies_by_video: dict[str, list[float]] = {}
     for row in timing_rows:
@@ -151,6 +172,7 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
             operational,
             resamples=int(payload["bootstrap_resamples"]),
             seed=int(payload["seed"]),
+            confidence=protocol.confidence_level,
         )
     )
     return {
@@ -167,8 +189,8 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
             "scene_threshold": candidate.scene_threshold,
             "maximum_gap_seconds": candidate.maximum_gap_seconds,
             "ffmpeg_filter": candidate.ffmpeg_filter,
-            "ffmpeg_frame_sync": "vfr",
-            "includes_frame_zero": True,
+            "ffmpeg_frame_sync": protocol.frame_sync,
+            "includes_frame_zero": protocol.include_frame_zero,
             "image_engine": image_engine,
             "image_revision": image_revision,
             "image_options": image_options,
@@ -225,7 +247,9 @@ def _process_video(
     return predictions, command, len(frames)
 
 
-def _bootstrap_operational(rows, timings, estimates, *, resamples, seed):
+def _bootstrap_operational(
+    rows, timings, estimates, *, resamples, seed, confidence
+):
     if not resamples or len(rows) < 2:
         return {}
     by_sample: dict[str, list[dict[str, object]]] = {}
@@ -263,12 +287,13 @@ def _bootstrap_operational(rows, timings, estimates, *, resamples, seed):
         draws["mean_selected_frames_per_video"].append(
             float(np.mean([float(row["selected_frame_count"]) for row in sampled]))
         )
+    alpha = (1.0 - confidence) / 2.0
     return {
         name: {
             "estimate": estimates[name],
-            "lower": float(np.quantile(values, 0.025)),
-            "upper": float(np.quantile(values, 0.975)),
-            "confidence": 0.95,
+            "lower": float(np.quantile(values, alpha)),
+            "upper": float(np.quantile(values, 1.0 - alpha)),
+            "confidence": confidence,
             "resamples": len(values),
         }
         for name, values in draws.items()

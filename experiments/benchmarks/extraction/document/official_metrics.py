@@ -19,6 +19,8 @@ from experiments.benchmarks.preparation.evaluators import (
 def score_official_metrics(
     table_pairs: Sequence[tuple[str, str]],
     formula_pairs: Sequence[tuple[str, str]],
+    *,
+    timeout_seconds: int,
 ) -> tuple[list[tuple[float, float]], list[float]]:
     if not table_pairs and not formula_pairs:
         return [], []
@@ -81,7 +83,7 @@ def score_official_metrics(
                 check=True,
                 capture_output=True,
                 text=True,
-                timeout=3600,
+                timeout=timeout_seconds,
             )
         except FileNotFoundError as exc:
             raise RuntimeError("Docker is required for official OmniDocBench scoring") from exc
@@ -89,7 +91,9 @@ def score_official_metrics(
             detail = (exc.stderr or exc.stdout or "no container output").strip()
             raise RuntimeError(f"OmniDocBench scorer failed: {detail[-3000:]}") from exc
         except subprocess.TimeoutExpired as exc:
-            raise RuntimeError("OmniDocBench scorer exceeded its one-hour timeout") from exc
+            raise RuntimeError(
+                f"OmniDocBench scorer exceeded its {timeout_seconds:g}-second timeout"
+            ) from exc
         output = work / "output.json"
         if not output.is_file():
             raise RuntimeError(
@@ -122,11 +126,15 @@ def official_image_digest() -> str:
     return digest
 
 
-def validate_official_runtime(*, tables: bool, formulas: bool) -> None:
+def validate_official_runtime(
+    *, tables: bool, formulas: bool, timeout_seconds: int
+) -> None:
     html = "<table><tr><td>x</td></tr></table>"
     table_pairs = [(html, html)] if tables else []
     formula_pairs = [("x", "x")] if formulas else []
-    table_scores, formula_scores = score_official_metrics(table_pairs, formula_pairs)
+    table_scores, formula_scores = score_official_metrics(
+        table_pairs, formula_pairs, timeout_seconds=timeout_seconds
+    )
     if table_scores and table_scores[0] != (1.0, 1.0):
         raise RuntimeError("Official TEDS evaluator failed its identity preflight")
     if formula_scores and formula_scores[0] != 1.0:

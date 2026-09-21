@@ -134,7 +134,7 @@ def aggregate_quality(rows: Sequence[Mapping[str, object]]) -> dict[str, float |
     }
 
 
-def bootstrap_quality(rows, *, resamples: int, seed: int):
+def bootstrap_quality(rows, *, resamples: int, seed: int, confidence: float):
     if not resamples or len(rows) < 2:
         return {}
     rng = np.random.default_rng(seed)
@@ -146,12 +146,13 @@ def bootstrap_quality(rows, *, resamples: int, seed: int):
             if value is not None:
                 draws[name].append(value)
     estimates = aggregate_quality(rows)
+    alpha = (1.0 - confidence) / 2.0
     return {
         name: {
             "estimate": estimates[name],
-            "lower": float(np.quantile(values, 0.025)),
-            "upper": float(np.quantile(values, 0.975)),
-            "confidence": 0.95,
+            "lower": float(np.quantile(values, alpha)),
+            "upper": float(np.quantile(values, 1.0 - alpha)),
+            "confidence": confidence,
             "resamples": len(values),
         }
         for name, values in draws.items()
@@ -178,6 +179,7 @@ def _occurrence_matches(occurrences, detections, settings):
     if not occurrences or not detections:
         return ()
     threshold = float(settings["content_f1_threshold"])
+    tolerance = float(settings["frame_timestamp_tolerance_seconds"])
     scores = np.zeros((len(occurrences), len(detections)), dtype=np.float64)
     eligible = np.zeros_like(scores, dtype=bool)
     delays = np.zeros_like(scores, dtype=np.float64)
@@ -185,7 +187,11 @@ def _occurrence_matches(occurrences, detections, settings):
     for left, occurrence in enumerate(occurrences):
         for right, detection in enumerate(detections):
             timestamp = float(detection["timestamp"])
-            if not float(occurrence["start"]) <= timestamp <= float(occurrence["end"]):
+            if not (
+                float(occurrence["start"]) - tolerance
+                <= timestamp
+                <= float(occurrence["end"]) + tolerance
+            ):
                 continue
             similarity = _content_f1(str(occurrence["text"]), str(detection["text"]))
             if similarity < threshold:

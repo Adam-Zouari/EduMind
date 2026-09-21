@@ -34,12 +34,16 @@ from experiments.benchmarks.extraction.document.metrics import (
     METRIC_DIRECTIONS,
     aggregate_evaluations,
     load_reference,
-    score_document,
+    score_document as _score_document,
     validate_reference,
 )
 from experiments.benchmarks.extraction.document import cli as document_cli
+from experiments.benchmarks.extraction.document.protocol import (
+    load_protocol as load_document_protocol,
+)
 from experiments.benchmarks.extraction.document.cli import _document_candidates
 from experiments.benchmarks.extraction.document.adapters import _paddle_blocks
+from experiments.benchmarks.extraction.document.protocol import load_protocol as default_document_protocol
 from edumind.extraction import (
     ExtractedDocument,
     ExtractedSegment,
@@ -52,6 +56,18 @@ from edumind.extraction.structured import build_structured_document
 from experiments.benchmarks.rag.chunking_embedding.strategies import (
     build_chunking_strategy,
 )
+from experiments.benchmarks.rag.chunking_embedding.protocol import load_protocol as default_chunking_protocol
+
+
+def score_document(*args, **kwargs):
+    protocol = default_document_protocol()
+    kwargs.setdefault(
+        "element_matching_threshold", protocol.element_matching_threshold
+    )
+    kwargs.setdefault(
+        "duplicate_content_threshold", protocol.duplicate_content_threshold
+    )
+    return _score_document(*args, **kwargs)
 
 
 def test_official_metric_worker_bootstraps_both_omnidocbench_import_roots(
@@ -189,7 +205,9 @@ def test_document_metrics_use_element_order_and_grouped_aggregates() -> None:
     )
     assert result.metrics["layout.element_f1"] == 1.0
     assert result.metrics["text.reading_order_accuracy"] == 0.0
-    metrics, intervals = aggregate_evaluations([result, result], resamples=50, seed=42)
+    metrics, intervals = aggregate_evaluations(
+        [result, result], resamples=50, seed=42, confidence=0.95
+    )
     assert metrics["text.content_f1"] == 1.0
     assert metrics["text.docx.content_f1"] == 1.0
     assert metrics["text.docx_native.content_f1"] == 1.0
@@ -202,7 +220,7 @@ def test_table_metrics_separate_detection_content_and_tree_similarity(monkeypatc
     monkeypatch.setattr(
         document_metrics,
         "score_official_metrics",
-        lambda tables, formulas: ([(0.8, 0.9) for _ in tables], [1.0 for _ in formulas]),
+            lambda tables, formulas, **_kwargs: ([(0.8, 0.9) for _ in tables], [1.0 for _ in formulas]),
     )
     document = _document(
         "A extra",
@@ -238,7 +256,7 @@ def test_table_metrics_separate_detection_content_and_tree_similarity(monkeypatc
         },
         document,
     )
-    document_metrics.apply_official_metrics([result])
+    document_metrics.apply_official_metrics([result], timeout_seconds=3600)
     assert result.metrics["tables.detection_f1"] == 1.0
     assert result.metrics["tables.content_precision"] == 0.5
     assert result.metrics["tables.content_recall"] == 0.5
@@ -261,7 +279,11 @@ def test_section_and_structure_chunkers_return_exact_source_spans() -> None:
 
     text = "# Section\n\nText\n\n| H | V |\n|---|---|\n| a | 1 |\n\n$$x^2$$"
     for name in ("section-aware-512-64", "structure-aware-512-64"):
-        spans = build_chunking_strategy(name, tokenizer=CharacterTokenizer()).split(text)
+        spans = build_chunking_strategy(
+            name,
+            tokenizer=CharacterTokenizer(),
+            protocol=default_chunking_protocol(),
+        ).split(text)
         assert spans
         assert all(text[start:end] and 0 <= start < end <= len(text) for start, end, _ in spans)
 
@@ -564,7 +586,9 @@ def test_docling_candidate_requires_every_behavior_component() -> None:
     )
     with pytest.raises(RuntimeError, match="code_formula, tesseract-cli"):
         validate_prepared_components(
-            candidate, {"prepared_components": ["layout", "tableformer"]}
+            candidate,
+            {"prepared_components": ["layout", "tableformer"]},
+            load_document_protocol(),
         )
     validate_prepared_components(
         candidate,
@@ -576,6 +600,7 @@ def test_docling_candidate_requires_every_behavior_component() -> None:
                 "tesseract-cli",
             ]
         },
+        load_document_protocol(),
     )
 
 
@@ -614,14 +639,18 @@ def test_document_runner_keeps_all_attempts_and_empties_partial_failure(monkeypa
             "docling-standard-native",
             [{"id": "sample", "kind": "pdf", "reference": "alpha"}],
             BenchmarkPlan(
-                "extraction", "document-test", "standard", "fixture", ("candidate",),
-                repetitions=3, warmups=0, bootstrap_resamples=0,
+                "extraction", "document-test", "development", "fixture", ("candidate",),
+                seed=default_document_protocol().meta.seed,
+                repetitions=3,
+                warmups=0,
+                bootstrap_resamples=0,
             ),
             {},
             {"device": "cpu"},
             {"sample": load_reference({"reference": "alpha"})},
             None,
             extract_once,
+            default_document_protocol(),
         )
     )
     assert len(artifacts["timings"]) == 3
@@ -635,11 +664,11 @@ def test_document_runner_keeps_all_attempts_and_empties_partial_failure(monkeypa
 
 
 def test_document_configuration_matrix_has_no_duplicate_image_modes() -> None:
-    arguments = SimpleNamespace(profile="standard")
-    path = Path("experiments/benchmarks/extraction/document/candidates.yaml")
-    pdf, _ = _document_candidates("pdf", arguments, path)
-    image, _ = _document_candidates("image", arguments, path)
-    docx, _ = _document_candidates("docx", arguments, path)
+    arguments = SimpleNamespace(profile="development")
+    protocol = default_document_protocol()
+    pdf, _ = _document_candidates("pdf", arguments, protocol)
+    image, _ = _document_candidates("image", arguments, protocol)
+    docx, _ = _document_candidates("docx", arguments, protocol)
     assert len(pdf) == 24
     assert len(image) == len(set(image)) == 12
     assert all("mode=full_page" in candidate for candidate in image)
@@ -658,7 +687,7 @@ def test_document_architecture_uses_development_before_validation(monkeypatch) -
 
     monkeypatch.setattr(document_cli, "_document_selection", selected)
     development_arguments = SimpleNamespace(
-        profile="standard",
+        profile="development",
         comparison="architecture",
         pdf_selection=Path("configuration-decision.json"),
         image_selection=None,
@@ -666,7 +695,7 @@ def test_document_architecture_uses_development_before_validation(monkeypatch) -
     development, _ = _document_candidates(
         "pdf",
         development_arguments,
-        Path("experiments/benchmarks/extraction/document/candidates.yaml"),
+        default_document_protocol(),
     )
     assert development == (
         configuration,
@@ -675,7 +704,7 @@ def test_document_architecture_uses_development_before_validation(monkeypatch) -
     )
 
     validation_arguments = SimpleNamespace(
-        profile="full",
+        profile="validation",
         comparison="architecture",
         pdf_selection=Path("architecture-decision.json"),
         image_selection=None,
@@ -683,7 +712,7 @@ def test_document_architecture_uses_development_before_validation(monkeypatch) -
     validation, _ = _document_candidates(
         "pdf",
         validation_arguments,
-        Path("experiments/benchmarks/extraction/document/candidates.yaml"),
+        default_document_protocol(),
     )
     assert validation == (configuration, "docling-vlm-granite-258m")
     assert calls == [

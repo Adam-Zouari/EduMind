@@ -1,10 +1,17 @@
-smoke:
-  - whisper-small-en-control
-  - canary-180m
-  - parakeet-tdt-0.6b-v2
-  - moss-transcribe-diarize
-standard:
-  - whisper-small-en-control
-  - canary-180m
-  - parakeet-tdt-0.6b-v2
-  - moss-transcribe-diarize
+candidates:
+  whisper-small-en-control:
+    model_id: openai/whisper-small.en
+    backend: transformers
+    profiles: [smoke, development, validation, locked]
+  canary-180m:
+    model_id: nvidia/canary-180m-flash
+    backend: nemo
+    profiles: [smoke, development, validation, locked]
+  parakeet-tdt-0.6b-v2:
+    model_id: nvidia/parakeet-tdt-0.6b-v2
+    backend: nemo
+    profiles: [smoke, development, validation, locked]
+  moss-transcribe-diarize:
+    model_id: OpenMOSS-Team/MOSS-Transcribe-Diarize
+    backend: moss
+    profiles: [smoke, development, validation, locked]

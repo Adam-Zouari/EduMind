@@ -1,0 +1,80 @@
+schema_version: 1
+protocol_version: chunking-embedding-v1
+seed: 42
+
+tokenizer: tiktoken:cl100k_base
+
+strategies:
+  recursive-character:
+    kind: recursive-character
+    size: 1000
+    overlap: 200
+    separators: ["\n\n", "\n", ". ", " "]
+    minimum_boundary_ratio: 0.5
+  token-256-32: {kind: token, size: 256, overlap: 32}
+  token-384-64: {kind: token, size: 384, overlap: 64}
+  token-512-64: {kind: token, size: 512, overlap: 64}
+  sentence-8-2: {kind: sentence, sentences: 8, overlap: 2}
+  semantic:
+    kind: semantic
+    maximum_tokens: 384
+    boundary_percentile: 0.2
+    boundary_embedding: candidate-embedding
+  section-aware-512-64:
+    kind: section-aware
+    size: 512
+    overlap: 64
+    parser: markdown-heading-v1
+  structure-aware-512-64:
+    kind: structure-aware
+    size: 512
+    overlap: 64
+    parser: markdown-table-formula-v1
+
+index:
+  embedding_batch_size: 1
+  similarity: exact-cosine
+  normalize_vectors: true
+  stored_vector_dtype: float32
+  reject_truncation: true
+
+quality:
+  cutoffs: [3, 5]
+  audit_depth: 20
+  alpha_ndcg_alpha: 0.5
+
+statistics:
+  minimum_latency_ci_documents: 20
+  confidence_level: 0.95
+
+selection:
+  maximum_finalists: 3
+
+resources:
+  authoritative_peak_vram_mb: 3584
+
+profiles:
+  smoke:
+    warmups: 1
+    repetitions: 1
+    bootstrap_resamples: 0
+    device: cpu
+    dtype: float32
+    batch_size: 1
+    hardware_required: false
+  development:
+    warmups: 2
+    repetitions: 3
+    bootstrap_resamples: 10000
+    device: cuda
+    dtype: float16
+    batch_size: 1
+    hardware_required: true
+  validation:
+    warmups: 2
+    repetitions: 3
+    bootstrap_resamples: 10000
+    device: cuda
+    dtype: float16
+    batch_size: 1
+    hardware_required: true

@@ -18,14 +18,17 @@ from experiments.benchmarks.extraction.audio.evaluate import (
     score_speech,
 )
 from experiments.benchmarks.common.process import json_worker_main
+from experiments.benchmarks.extraction.audio.protocol import protocol_from_worker
 
 
 def execute(payload: dict[str, object]) -> dict[str, object]:
     device = str(payload["device"])
+    protocol = protocol_from_worker(payload["protocol"])
     runtime = build_runtime(
         str(payload["candidate"]),
         payload["model_lock"],  # type: ignore[arg-type]
         device,
+        protocol,
     )
     speech = list(payload["speech"])  # type: ignore[arg-type]
     reliability = list(payload["reliability"])  # type: ignore[arg-type]
@@ -75,6 +78,10 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
                         quality_latency_seconds=quality_latency,
                         repeat_transcript_agreement=len(set(normalized_outputs)) == 1,
                         warnings=quality.warnings,
+                        alignment_threshold=protocol.alignment_threshold,
+                        timestamp_tolerance_seconds=float(
+                            protocol.audio["manifest_duration_tolerance_seconds"]
+                        ),
                     )
                 )
 
@@ -103,6 +110,7 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
         peak_vram_mb=0.0 if device == "cpu" else float(resources["peak_vram_mb"]),
         resamples=int(payload["bootstrap_resamples"]),
         seed=int(payload["seed"]),
+        confidence=protocol.confidence_level,
     )
     return {
         "samples": sample_rows,

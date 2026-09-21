@@ -1,0 +1,51 @@
+schema_version: 1
+protocol_version: final-rag-v1
+seed: 42
+
+selection:
+  top_k: [3, 5]
+  maximum_retrieval_finalists: 3
+  maximum_generation_finalists: 3
+  maximum_final_systems: 18
+
+human_review:
+  sample_count: 20
+  system_count: 3
+  required_judgment_count: 60
+
+locked_test:
+  marker_version: locked-test-v1
+
+profiles:
+  smoke:
+    warmups: 2
+    repetitions: 1
+    bootstrap_resamples: 0
+    device: cpu
+    dtype: auto
+    batch_size: 1
+    hardware_required: false
+  development:
+    warmups: 2
+    repetitions: 3
+    bootstrap_resamples: 10000
+    device: cuda
+    dtype: float16
+    batch_size: 1
+    hardware_required: true
+  validation:
+    warmups: 2
+    repetitions: 3
+    bootstrap_resamples: 10000
+    device: cuda
+    dtype: float16
+    batch_size: 1
+    hardware_required: true
+  locked:
+    warmups: 2
+    repetitions: 3
+    bootstrap_resamples: 10000
+    device: cuda
+    dtype: float16
+    batch_size: 1
+    hardware_required: true

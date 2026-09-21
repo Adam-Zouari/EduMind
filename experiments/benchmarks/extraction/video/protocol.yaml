@@ -1,0 +1,69 @@
+schema_version: 1
+protocol_version: video-v1
+seed: 42
+
+keyframes:
+  fixed_intervals_seconds: [5, 10, 20]
+  scene_thresholds: [0.30, 0.40, 0.50]
+  hybrid_maximum_gaps_seconds: [5, 10, 20]
+  include_frame_zero: true
+  frame_sync: vfr
+  smoke_hybrid_scene_threshold: 0.40
+  selected_scene_threshold: null
+  selected_scene_source_run_id: null
+
+asr:
+  window_length_seconds: 30
+  overlap_seconds: 2
+  stitching_method: normalized_suffix_prefix
+  stitching_normalization: asr-minimal-v1
+  maximum_overlap_units: 64
+
+visual_text:
+  unitization: normalized_lines_distinct_v1
+  occurrence_content_f1_threshold: 0.5
+  frame_timestamp_tolerance_seconds: 0.0
+
+datasets:
+  video_counts: {smoke: 2, development: 18, validation: 6, locked: 6}
+  manifest_duration_tolerance_seconds: 0.1
+
+statistics:
+  confidence_level: 0.95
+
+selection:
+  maximum_finalists: 3
+
+profiles:
+  smoke:
+    warmups: 2
+    repetitions: 1
+    bootstrap_resamples: 0
+    device: cpu
+    dtype: float32
+    batch_size: 1
+    hardware_required: false
+  development:
+    warmups: 2
+    repetitions: 3
+    bootstrap_resamples: 10000
+    device: cuda
+    dtype: float16
+    batch_size: 1
+    hardware_required: false
+  validation:
+    warmups: 2
+    repetitions: 3
+    bootstrap_resamples: 10000
+    device: cuda
+    dtype: float16
+    batch_size: 1
+    hardware_required: false
+  locked:
+    warmups: 2
+    repetitions: 3
+    bootstrap_resamples: 10000
+    device: cuda
+    dtype: float16
+    batch_size: 1
+    hardware_required: false

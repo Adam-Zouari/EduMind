@@ -10,9 +10,10 @@ from pathlib import Path
 
 from edumind.common.artifacts import atomic_write_json, sha256_file, stable_hash
 from edumind.common.paths import PROJECT_ROOT
-from experiments.benchmarks.extraction.audio.adapters import ASR_PROFILES
+from experiments.benchmarks.extraction.audio.adapters import profiles
+from experiments.benchmarks.extraction.audio.protocol import AudioProtocol
 from experiments.benchmarks.common.process import run_json_worker
-from experiments.benchmarks.extraction.video.protocol import VideoProtocolLock
+from experiments.benchmarks.extraction.video.protocol import VideoProtocol
 from experiments.benchmarks.preparation.models import load_selected_model_lock
 
 
@@ -21,27 +22,32 @@ def create_frozen_asr_artifact(
     *,
     items: Sequence[Mapping[str, object]],
     manifest_checksum: str,
-    protocol: VideoProtocolLock,
+    protocol: VideoProtocol,
+    audio_protocol: AudioProtocol,
     audio_candidate: str,
     audio_decision_path: Path,
     device: str,
     ffmpeg_version: str,
+    profile_name: str = "smoke",
 ) -> Path:
-    if audio_candidate not in ASR_PROFILES:
+    audio_profiles = profiles(audio_protocol)
+    if audio_candidate not in audio_profiles:
         raise ValueError(f"Unknown selected ASR profile: {audio_candidate}")
     lock = load_selected_model_lock(
         PROJECT_ROOT / "data/benchmarks/models/selected.json",
-        candidates=(ASR_PROFILES[audio_candidate].model,),
+        candidates=(audio_profiles[audio_candidate].model,),
     )
     payload = {
         "candidate": audio_candidate,
         "model_lock": lock,
         "items": list(items),
         "device": device,
-        "warmups": 2,
+        "warmups": protocol.profile(profile_name).warmups,
         "window_length_seconds": protocol.window_length_seconds,
         "overlap_seconds": protocol.overlap_seconds,
         "maximum_overlap_tokens": int(protocol.stitching["maximum_overlap_tokens"]),
+        "protocol": protocol.meta.worker_payload(),
+        "audio_protocol": audio_protocol.meta.worker_payload(),
     }
     result = run_json_worker(
         Path(__file__).with_name("frozen_asr_worker.py"),
@@ -50,14 +56,17 @@ def create_frozen_asr_artifact(
         prefix="edumind-frozen-asr-",
         error_label="Frozen video ASR worker",
     )
-    entry = lock[ASR_PROFILES[audio_candidate].model]
+    entry = lock[audio_profiles[audio_candidate].model]
     artifact = {
         "schema_version": 1,
         "artifact_type": "FrozenASRArtifact",
         "run_id": f"video-asr-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}",
         "created_unix_seconds": time.time(),
         "manifest_checksum": manifest_checksum,
-        "protocol_checksum": protocol.checksum,
+        "protocol_checksum": protocol.meta.checksum,
+        "protocol_version": protocol.meta.version,
+        "audio_protocol_checksum": audio_protocol.meta.checksum,
+        "audio_protocol_version": audio_protocol.meta.version,
         "model_decision_fingerprint": stable_hash(
             {
                 "path": str(audio_decision_path.resolve()),
@@ -88,6 +97,8 @@ def load_frozen_asr_artifact(
     *,
     manifest_checksum: str,
     protocol_checksum: str,
+    audio_protocol_checksum: str,
+    timestamp_tolerance_seconds: float,
     sample_ids: Sequence[str],
 ) -> tuple[dict[str, object], str]:
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -101,6 +112,8 @@ def load_frozen_asr_artifact(
         raise ValueError("Frozen ASR artifact manifest checksum mismatch")
     if payload.get("protocol_checksum") != protocol_checksum:
         raise ValueError("Frozen ASR artifact protocol checksum mismatch")
+    if payload.get("audio_protocol_checksum") != audio_protocol_checksum:
+        raise ValueError("Frozen ASR artifact audio protocol checksum mismatch")
     videos = payload.get("videos")
     if not isinstance(videos, list):
         raise ValueError("Frozen ASR artifact lacks per-video outputs")
@@ -158,7 +171,12 @@ def load_frozen_asr_artifact(
             if not isinstance(segment, Mapping) or not str(segment.get("text", "")).strip():
                 raise ValueError("Frozen ASR artifact contains a malformed timestamp segment")
             start, end = float(segment.get("start", -1)), float(segment.get("end", -1))
-            if start < previous or start < 0 or end <= start or end > duration + 0.1:
+            if (
+                start < previous
+                or start < 0
+                or end <= start
+                or end > duration + timestamp_tolerance_seconds
+            ):
                 raise ValueError("Frozen ASR artifact contains invalid timestamp boundaries")
             previous = start
     return dict(payload), sha256_file(path)

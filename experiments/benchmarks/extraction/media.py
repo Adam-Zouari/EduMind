@@ -33,7 +33,13 @@ def media_duration(path: Path) -> float:
     return float(completed.stdout.strip())
 
 
-def decode_canonical_audio(source: Path, destination: Path) -> list[str]:
+def decode_canonical_audio(
+    source: Path,
+    destination: Path,
+    *,
+    sample_rate_hz: int,
+    channels: int,
+) -> list[str]:
     command = [
         "ffmpeg",
         "-hide_banner",
@@ -44,9 +50,9 @@ def decode_canonical_audio(source: Path, destination: Path) -> list[str]:
         str(source),
         "-vn",
         "-ac",
-        "1",
+        str(channels),
         "-ar",
-        "16000",
+        str(sample_rate_hz),
         "-c:a",
         "pcm_s16le",
         str(destination),
@@ -55,12 +61,18 @@ def decode_canonical_audio(source: Path, destination: Path) -> list[str]:
     return command
 
 
-def canonical_wav_duration(path: Path) -> float:
+def canonical_wav_duration(
+    path: Path,
+    *,
+    sample_rate_hz: int,
+    channels: int,
+    sample_width_bytes: int,
+) -> float:
     with wave.open(str(path), "rb") as audio:
         if (
-            audio.getnchannels() != 1
-            or audio.getframerate() != 16_000
-            or audio.getsampwidth() != 2
+            audio.getnchannels() != channels
+            or audio.getframerate() != sample_rate_hz
+            or audio.getsampwidth() != sample_width_bytes
         ):
             raise ValueError(
                 f"FFmpeg did not produce canonical mono 16 kHz PCM audio: {path}"

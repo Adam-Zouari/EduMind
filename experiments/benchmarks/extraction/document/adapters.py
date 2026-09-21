@@ -112,7 +112,7 @@ class ExperimentalDocumentExtractor:
         options = vlm_model_specs.GRANITEDOCLING_TRANSFORMERS.model_copy(deep=True)
         options.repo_id = str(model_path)
         options.revision = request.profile.engine_revision
-        options.load_in_8bit = False
+        options.load_in_8bit = bool(request.options["load_in_8bit"])
         pipeline = VlmPipelineOptions(
             vlm_options=options,
             artifacts_path=model_path.parent,
@@ -175,8 +175,8 @@ class ExperimentalDocumentExtractor:
         key = request.profile.fingerprint
         if key not in self._runtimes:
             self._runtimes[key] = PaddleOCRVL(
-                pipeline_version="v1.6",
-                vl_rec_backend="native",
+                pipeline_version=str(request.options["pipeline_version"]),
+                vl_rec_backend=str(request.options["recognition_backend"]),
                 vl_rec_model_dir=str(model_path),
                 device="gpu" if request.profile and request.profile.device == "cuda" else "cpu",
             )

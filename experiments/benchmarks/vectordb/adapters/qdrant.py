@@ -15,7 +15,10 @@ class Qdrant:
 
         self.config = config
         self.models = models
-        self.client = QdrantClient(url="http://127.0.0.1:6333", timeout=120)
+        self.client = QdrantClient(
+            url="http://127.0.0.1:6333",
+            timeout=self.config.request_timeout_seconds,
+        )
 
     def health(self) -> bool:
         return self.client.get_collections() is not None
@@ -31,10 +34,12 @@ class Qdrant:
                 hnsw_config=self.models.HnswConfigDiff(
                     m=self.config.m,
                     ef_construct=self.config.ef_construction,
-                    full_scan_threshold=0,
+                    full_scan_threshold=self.config.qdrant_full_scan_threshold,
                 ),
             ),
-            optimizers_config=self.models.OptimizersConfigDiff(indexing_threshold=1),
+            optimizers_config=self.models.OptimizersConfigDiff(
+                indexing_threshold=self.config.qdrant_indexing_threshold
+            ),
         )
         for field in ("source_id", "scope_50", "scope_10", "scope_1", "scope_01"):
             self.client.create_payload_index(
@@ -43,8 +48,8 @@ class Qdrant:
 
     def upsert(self, records: Sequence[Record]) -> None:
         ensure_dimension(self.config, records)
-        for start in range(0, len(records), 2_000):
-            rows = records[start : start + 2_000]
+        for start in range(0, len(records), self.config.upsert_batch_size):
+            rows = records[start : start + self.config.upsert_batch_size]
             self.client.upsert(
                 self.config.collection,
                 points=[
@@ -107,7 +112,7 @@ class Qdrant:
         return int(self.client.count(self.config.collection, exact=True).count)
 
     def index_info(self) -> Mapping[str, object]:
-        deadline = time.monotonic() + 120
+        deadline = time.monotonic() + self.config.index_readiness_timeout_seconds
         while True:
             info = self.client.get_collection(self.config.collection)
             status = str(info.status).casefold()
@@ -117,7 +122,7 @@ class Qdrant:
                 return {"type": "hnsw", "status": status, "indexed": indexed, "points": points}
             if time.monotonic() >= deadline:
                 raise RuntimeError(f"Qdrant HNSW was not ready: {indexed}/{points}, {status}")
-            time.sleep(0.25)
+            time.sleep(self.config.index_readiness_poll_seconds)
 
     def close(self) -> None:
         self.client.close()

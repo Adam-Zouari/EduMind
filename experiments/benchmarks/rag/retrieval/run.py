@@ -12,7 +12,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
 from edumind.common.artifacts import stable_hash
 from edumind.common.paths import PROJECT_ROOT
-from edumind.rag.contracts import PRODUCTION_EMBEDDING_MODEL
 from experiments.benchmarks.common.arguments import load_candidates
 from experiments.benchmarks.common.contracts import BenchmarkPlan
 from experiments.benchmarks.common.decisions import load_engineer_decision
@@ -23,6 +22,10 @@ from experiments.benchmarks.preparation.models import (
     model_revisions,
 )
 from experiments.benchmarks.rag.chunking_embedding.profiles import split_candidate
+from experiments.benchmarks.rag.chunking_embedding.protocol import (
+    DEFAULT_PROTOCOL_PATH as DEFAULT_CHUNKING_PROTOCOL_PATH,
+    load_protocol as load_chunking_protocol,
+)
 from experiments.benchmarks.rag.retrieval.benchmark import run_in_fresh_process
 from experiments.benchmarks.rag.retrieval.comparisons import parent_artifact_builder
 from experiments.benchmarks.rag.retrieval.metrics import (
@@ -49,6 +52,11 @@ def main(argv: list[str] | None = None) -> int:
         "--profile",
         choices=("smoke", "development", "validation"),
         default="smoke",
+    )
+    parser.add_argument(
+        "--chunking-protocol",
+        type=Path,
+        default=DEFAULT_CHUNKING_PROTOCOL_PATH,
     )
     parser.add_argument("--manifest", type=Path)
     parser.add_argument(
@@ -78,6 +86,7 @@ def main(argv: list[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
 
     protocol = load_protocol(arguments.protocol)
+    chunking_protocol = load_chunking_protocol(arguments.chunking_protocol)
     execution = protocol.profile(arguments.profile)
     device = arguments.device or execution.device
     dtype = arguments.dtype or execution.dtype
@@ -123,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.profile == "smoke":
         if arguments.embedding_selection or arguments.shortlist:
             parser.error("smoke does not accept selection decisions")
-        selected_pair = f"token-256-32|{PRODUCTION_EMBEDDING_MODEL}"
+        selected_pair = protocol.smoke_chunking_embedding_candidate
         candidates = declared
     else:
         if arguments.embedding_selection is None:
@@ -180,9 +189,8 @@ def main(argv: list[str] | None = None) -> int:
         bootstrap_resamples=execution.bootstrap_resamples,
         warmups=execution.warmups,
         settings={
-            "retrieval_protocol": dict(protocol.resolved),
-            "retrieval_protocol_checksum": protocol.checksum,
-            "retrieval_protocol_version": protocol.version,
+            "retrieval_protocol": protocol.metadata(arguments.protocol).worker_payload(),
+            "chunking_embedding_protocol": chunking_protocol.meta.worker_payload(),
             "chunker_embedding": selected_pair,
             "chunker_embedding_decision_fingerprint": (
                 stable_hash(
@@ -248,16 +256,26 @@ def main(argv: list[str] | None = None) -> int:
         input_artifacts={
             "manifest": manifest_path,
             "model_lock": model_lock_path,
-            "retrieval_protocol": arguments.protocol,
+        },
+        protocols={
+            "retrieval": protocol.metadata(arguments.protocol),
+            "chunking_embedding": chunking_protocol.meta,
         },
         no_mlflow=arguments.no_mlflow,
         paired_comparisons=False,
         candidate_artifact_name="candidate.json",
         sample_artifact_name="query_metrics",
         resource_artifact_name="resources",
-        resource_monitor_options={
-            "require_vram": device == "cuda",
-            "report_zero_vram": device == "cpu",
+        resource_monitor_options=lambda candidate: {
+            "require_vram": (
+                device == "cuda" and parse_candidate(candidate).model_backed
+            ),
+            "report_zero_vram": (
+                device == "cpu" or not parse_candidate(candidate).model_backed
+            ),
+            "zero_vram_measurement_method": (
+                "cpu-zero" if device == "cpu" else "not-applicable-zero"
+            ),
         },
         monitor_temporary_disk=False,
         run_name_prefix=f"rag-retrieval-reranking-{arguments.profile}",

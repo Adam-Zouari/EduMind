@@ -7,6 +7,7 @@ import math
 import os
 import random
 import shutil
+import tempfile
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -31,6 +32,7 @@ from .contracts import (
     SampleResult,
 )
 from .provenance import git_provenance, hardware_summary
+from .protocol import ProtocolMetadata
 from .resources import ResourceMonitor
 from .metrics import paired_bootstrap_interval
 from .statistics import aggregate_samples
@@ -55,6 +57,9 @@ Evaluator = Callable[
         Mapping[str, object],
     ],
 ]
+ResourceMonitorOptions = (
+    Mapping[str, object] | Callable[[str], Mapping[str, object]]
+)
 
 
 def run_benchmark(
@@ -78,7 +83,7 @@ def run_benchmark(
     nullable_metrics: Sequence[str] = (),
     sample_artifact_name: str = "samples",
     resource_artifact_name: str | None = None,
-    resource_monitor_options: Mapping[str, object] | None = None,
+    resource_monitor_options: ResourceMonitorOptions | None = None,
     monitor_temporary_disk: bool = True,
     paired_group_key: str | None = None,
     run_name_prefix: str | None = None,
@@ -89,6 +94,7 @@ def run_benchmark(
     ]
     | None = None,
     operational_maximums: Mapping[str, float] | None = None,
+    protocols: Mapping[str, ProtocolMetadata] | None = None,
 ) -> BenchmarkResult:
     if not plan.candidates:
         raise ValueError("A benchmark plan must contain at least one candidate")
@@ -117,6 +123,24 @@ def run_benchmark(
     )
     run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     directory = artifact_root / plan.suite / plan.stage / run_id
+    protocol_values = dict(protocols or {})
+    for name, protocol in protocol_values.items():
+        if name != protocol.name:
+            raise ValueError(
+                f"Protocol mapping key {name!r} does not match {protocol.name!r}"
+            )
+        if not protocol.source_path.is_file():
+            raise FileNotFoundError(f"Protocol source is missing: {protocol.source_path}")
+    confidence_level = _protocol_confidence_level(protocol_values)
+    protocol_provenance = {
+        name: {
+            "version": protocol.version,
+            "checksum": protocol.checksum,
+            "source_path": str(protocol.source_path),
+            "source_sha256": sha256_file(protocol.source_path),
+        }
+        for name, protocol in protocol_values.items()
+    }
     provenance = {
         "dataset_checksum": dataset_checksum,
         "git": git_provenance(PROJECT_ROOT),
@@ -139,6 +163,7 @@ def run_benchmark(
             name: {"path": str(path.resolve()), "sha256": sha256_file(path)}
             for name, path in (input_artifacts or {}).items()
         },
+        "protocols": protocol_provenance,
     }
     plan_path = directory / "plan.json"
     provenance_path = directory / "provenance.json"
@@ -153,6 +178,11 @@ def run_benchmark(
     atomic_write_json(provenance_path, provenance)
     metric_contract_path = directory / "metric_contract.json"
     atomic_write_json(metric_contract_path, metric_contract)
+    protocol_artifacts: dict[str, Path] = {}
+    for name, protocol in protocol_values.items():
+        path = directory / f"{name}_protocol.json"
+        atomic_write_json(path, protocol.artifact_payload())
+        protocol_artifacts[name] = path
     tracking = tracker(disabled=no_mlflow, experiment=f"EduMind / {plan.suite}")
     run_fingerprint = stable_hash({"plan": plan_payload, "provenance": provenance})
     results: list[CandidateResult] = []
@@ -184,11 +214,22 @@ def run_benchmark(
                 "engineer_decisions": json.dumps(
                     provenance["engineer_decisions"], sort_keys=True
                 ),
+                **{
+                    f"protocol.{name}.version": protocol.version
+                    for name, protocol in protocol_values.items()
+                },
+                **{
+                    f"protocol.{name}.checksum": protocol.checksum
+                    for name, protocol in protocol_values.items()
+                },
             }
         )
         tracking.artifact(plan_path)
         tracking.artifact(provenance_path)
         tracking.artifact(metric_contract_path)
+        for name, path in protocol_artifacts.items():
+            tracking.artifact(path, "protocols")
+            tracking.artifact(protocol_values[name].source_path, f"inputs/protocols/{name}")
         for input_name, input_path in (input_artifacts or {}).items():
             tracking.artifact(input_path, f"inputs/{input_name}")
         for decision_name, decision_path in (decision_files or {}).items():
@@ -213,6 +254,8 @@ def run_benchmark(
                     monitor_temporary_disk,
                     evaluator_receives_context,
                     operational_maximums,
+                    protocol_values,
+                    confidence_level,
                 )
             )
 
@@ -229,6 +272,7 @@ def run_benchmark(
                 resamples=plan.bootstrap_resamples,
                 seed=plan.seed,
                 group_key=paired_group_key,
+                confidence=confidence_level,
             )
         )
         custom_parent_artifacts: list[Path] = []
@@ -258,6 +302,10 @@ def run_benchmark(
                 {"name": path.name, "sha256": sha256_file(path)}
                 for path in custom_parent_artifacts
             ],
+            "protocols": {
+                name: protocol.artifact_payload()
+                for name, protocol in protocol_values.items()
+            },
             "complete": complete,
             "completion": {
                 "planned_candidates": len(plan.candidates),
@@ -342,6 +390,8 @@ def _run_candidate(
     monitor_temporary_disk,
     evaluator_receives_context,
     operational_maximums,
+    protocols,
+    confidence_level,
 ) -> CandidateResult:
     samples: list[SampleResult] = []
     metrics: dict[str, float | None] = {}
@@ -353,18 +403,50 @@ def _run_candidate(
     sample_artifact_path: Path | None = None
     resource_rows: list[dict[str, object]] = []
     fingerprint = stable_hash({"run": run_fingerprint, "candidate": candidate})
+    protocol_parameters = (
+        {"protocols": {
+            name: {
+                "version": protocol.version,
+                "checksum": protocol.checksum,
+                "resolved": protocol.resolved,
+            }
+            for name, protocol in protocols.items()
+        }}
+        if protocols
+        else {}
+    )
+    candidate_parameters.update(protocol_parameters)
     with tracking.run(candidate, nested=True) as child_run_id:
         try:
-            tracking.parameters({"candidate": candidate, "profile": plan.profile})
+            tracking.parameters(
+                {
+                    "candidate": candidate,
+                    "profile": plan.profile,
+                    **{
+                        f"protocol.{name}.version": protocol.version
+                        for name, protocol in protocols.items()
+                    },
+                    **{
+                        f"protocol.{name}.checksum": protocol.checksum
+                        for name, protocol in protocols.items()
+                    },
+                }
+            )
             temporary_directory = directory / "temporary" / _safe(candidate)
             temporary_directory.mkdir(parents=True, exist_ok=True)
             if monitor_resources:
+                monitor_options = (
+                    resource_monitor_options(candidate)
+                    if callable(resource_monitor_options)
+                    else resource_monitor_options
+                )
                 resources = ResourceMonitor(
                     temporary_directory=(
                         temporary_directory if monitor_temporary_disk else None
                     ),
-                    **dict(resource_monitor_options or {}),
+                    **dict(monitor_options or {}),
                 )
+                evaluation_failed = False
                 try:
                     with _temporary_environment(temporary_directory), resources:
                         evaluated = (
@@ -372,12 +454,19 @@ def _run_candidate(
                             if evaluator_receives_context
                             else evaluator(candidate)
                         )
+                except BaseException:
+                    evaluation_failed = True
+                    raise
                 finally:
-                    operational.update(resources.metrics())
                     resource_rows = resources.samples()
                     resource_parameters["vram_measurement_method"] = (
                         resources.vram_measurement_method
                     )
+                    try:
+                        operational.update(resources.metrics())
+                    except RuntimeError:
+                        if not evaluation_failed:
+                            raise
             else:
                 with _temporary_environment(temporary_directory):
                     evaluated = (
@@ -389,7 +478,10 @@ def _run_candidate(
             operational = {**dict(evaluated[1]), **operational}
             candidate_metrics = dict(evaluated[2]) if len(evaluated) >= 3 else {}
             if len(evaluated) >= 4:
-                candidate_parameters = dict(evaluated[3])
+                candidate_parameters = {
+                    **dict(evaluated[3]),
+                    **protocol_parameters,
+                }
                 candidate_parameters.update(resource_parameters)
                 tracking.parameters(candidate_parameters)
             candidate_intervals = dict(evaluated[4]) if len(evaluated) >= 5 else {}
@@ -421,6 +513,7 @@ def _run_candidate(
                     samples,
                     resamples=0 if plan.profile == "smoke" else plan.bootstrap_resamples,
                     seed=plan.seed,
+                    confidence=confidence_level,
                 )
                 metrics.update(candidate_metrics)
             _validate_required_metrics(
@@ -479,7 +572,11 @@ def _run_candidate(
             metrics = dict(exc.metrics)
             intervals = dict(exc.intervals)
             operational = {**dict(exc.operational), **operational}
-            candidate_parameters = {**exc.parameters, **resource_parameters}
+            candidate_parameters = {
+                **exc.parameters,
+                **resource_parameters,
+                **protocol_parameters,
+            }
             tracking.parameters(
                 {
                     **candidate_parameters,
@@ -730,11 +827,15 @@ def _validate_operational_maximums(
 def _temporary_environment(directory: Path):
     names = ("TMP", "TEMP", "TMPDIR")
     previous = {name: os.environ.get(name) for name in names}
+    previous_tempdir = tempfile.tempdir
     try:
+        resolved = str(directory.resolve())
         for name in names:
-            os.environ[name] = str(directory.resolve())
+            os.environ[name] = resolved
+        tempfile.tempdir = resolved
         yield
     finally:
+        tempfile.tempdir = previous_tempdir
         for name, value in previous.items():
             if value is None:
                 os.environ.pop(name, None)
@@ -820,6 +921,7 @@ def _paired_comparisons(
     resamples: int,
     seed: int,
     group_key: str | None = None,
+    confidence: float,
 ):
     comparisons = []
     quality_metrics = [name for name in directions if not name.startswith("operational.")]
@@ -879,6 +981,7 @@ def _paired_comparisons(
                     right_values,
                     resamples=resamples,
                     seed=seed,
+                    confidence=confidence,
                 )
                 metrics[metric] = {
                     "left_minus_right": interval.estimate,
@@ -891,3 +994,27 @@ def _paired_comparisons(
                 }
             comparisons.append({"left": left.candidate, "right": right.candidate, "metrics": metrics})
     return comparisons
+
+
+def _protocol_confidence_level(
+    protocols: Mapping[str, ProtocolMetadata],
+) -> float:
+    values = set()
+    for protocol in protocols.values():
+        statistics = protocol.resolved.get("statistics")
+        if not isinstance(statistics, Mapping):
+            continue
+        value = statistics.get("confidence_level")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(
+                f"{protocol.name} protocol has an invalid statistics.confidence_level"
+            )
+        confidence = float(value)
+        if not math.isfinite(confidence) or not 0 < confidence < 1:
+            raise ValueError(
+                f"{protocol.name} protocol confidence level must be between zero and one"
+            )
+        values.add(confidence)
+    if len(values) > 1:
+        raise ValueError("Composed benchmark protocols disagree on confidence level")
+    return next(iter(values), 0.95)

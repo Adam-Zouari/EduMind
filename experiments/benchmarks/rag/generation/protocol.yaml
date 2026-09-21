@@ -1,0 +1,58 @@
+schema_version: 1
+protocol_version: generation-v1
+seed: 42
+
+generation:
+  temperature: 0.0
+  do_sample: false
+  context_tokens: 8192
+  maximum_answer_tokens: 256
+  streamer_timeout_seconds: 600
+
+development_screen:
+  question_count: 24
+  selection: deterministic-stratified-v1
+
+context:
+  frozen_packing_limit_tokens: 3500
+  tokenizer: tiktoken:cl100k_base
+
+faithfulness:
+  model_id: vectara/hallucination_evaluation_model
+  behavior: local-sequence-classification-predict-v1
+  trust_remote_code: true
+
+statistics:
+  confidence_level: 0.95
+
+selection:
+  maximum_finalists: 3
+
+resources:
+  authoritative_peak_vram_mb: 3584
+
+profiles:
+  smoke:
+    warmups: 2
+    repetitions: 1
+    bootstrap_resamples: 0
+    device: cpu
+    dtype: auto
+    batch_size: 1
+    hardware_required: false
+  development:
+    warmups: 2
+    repetitions: 3
+    bootstrap_resamples: 10000
+    device: cuda
+    dtype: float16
+    batch_size: 1
+    hardware_required: true
+  validation:
+    warmups: 2
+    repetitions: 3
+    bootstrap_resamples: 10000
+    device: cuda
+    dtype: float16
+    batch_size: 1
+    hardware_required: true

@@ -1,0 +1,98 @@
+schema_version: 1
+protocol_version: vector-database-v1
+seed: 42
+
+workloads:
+  smoke:
+    - {name: smoke-1k-d384, size: 1000, dimension: 384, queries: 50, concurrency: [1]}
+  development:
+    - {name: development-100k-d384, size: 100000, dimension: 384, queries: 500, concurrency: [1, 8, 32]}
+    - {name: development-100k-d1024, size: 100000, dimension: 1024, queries: 500, concurrency: [1, 8, 32]}
+  validation:
+    synthetic_size: 1000000
+    synthetic_queries: 1000
+    concurrency: [1, 8, 32, 64]
+    selected_real_query_limit: 1000
+
+synthetic:
+  centroid_count: 128
+  records_per_document: 5
+  cluster_noise: 0.08
+  near_duplicate_fraction: 0.05
+  near_duplicate_noise: 0.001
+  query_noise: 0.01
+  metadata_divisors: {scope_50: 2, scope_10: 10, scope_1: 100, scope_01: 1000}
+
+hnsw:
+  smoke: {m: 16, ef_construction: 100, ef_search: 64}
+  grid:
+    m: [16, 32]
+    ef_construction: [100, 200]
+    ef_search: [64, 128]
+  validation_corpus_limit: 10000
+  validation_query_limit: 50
+  target_recall_at_10: 0.99
+  tie_breaking: latency-then-m-then-ef-search-then-ef-construction
+
+evaluation:
+  cutoffs: [1, 3, 5, 10]
+  incremental_mutation_count: 1000
+  development_filters: [scope_50, scope_10, scope_1]
+  validation_filters: [scope_50, scope_10, scope_1, scope_01]
+  shortlist_limit: 3
+
+conformance:
+  size: 40
+  dimension_query_count: 4
+  seed: 7
+  search_limit: 10
+  compound_filters: [scope_50, scope_10]
+  empty_filter: scope_1
+
+adapters:
+  upsert_batch_sizes: {chroma: 2000, qdrant: 2000, weaviate: 200, pgvector: 2000}
+  index_verification_limit: 10
+  qdrant_full_scan_threshold: 0
+  qdrant_indexing_threshold: 1
+  request_timeout_seconds: 120
+  connection_pool_limit: 64
+  index_readiness_timeout_seconds: 120
+  index_readiness_poll_seconds: 0.25
+  docker_monitor_interval_seconds: 0.25
+  docker_stats_timeout_seconds: 10
+  docker_storage_timeout_seconds: 30
+  docker_helper_timeout_seconds: 60
+  docker_restart_timeout_seconds: 120
+
+measurement:
+  monitor_storage: true
+  monitor_server_memory: true
+
+statistics:
+  confidence_level: 0.95
+
+profiles:
+  smoke:
+    warmups: 2
+    repetitions: 1
+    bootstrap_resamples: 0
+    device: cpu
+    dtype: float32
+    batch_size: 1
+    hardware_required: false
+  development:
+    warmups: 2
+    repetitions: 3
+    bootstrap_resamples: 10000
+    device: cpu
+    dtype: float32
+    batch_size: 1
+    hardware_required: false
+  validation:
+    warmups: 2
+    repetitions: 3
+    bootstrap_resamples: 10000
+    device: cpu
+    dtype: float32
+    batch_size: 1
+    hardware_required: false

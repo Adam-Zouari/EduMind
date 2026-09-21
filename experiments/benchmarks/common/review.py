@@ -6,6 +6,7 @@ import csv
 import json
 import os
 import random
+from collections.abc import Mapping
 from pathlib import Path
 
 import pandas as pd
@@ -28,14 +29,15 @@ def export_review(
     selection_path: Path,
     output_path: Path,
     *,
-    finalist_count: int = 3,
-    question_count: int = 20,
-    seed: int = 42,
+    finalist_count: int,
+    question_count: int,
+    seed: int,
+    protocol: Mapping[str, object],
 ) -> Path:
     decision = load_engineer_decision(
         selection_path,
         exact=finalist_count,
-        expected_source=("rag", "final", "standard"),
+        expected_source=("rag", "final", "development"),
     )
     summary_path = decision.source_summary
     payload = json.loads(summary_path.read_text(encoding="utf-8"))
@@ -100,6 +102,7 @@ def export_review(
             "expected_judgments": finalist_count * question_count,
             "finalist_count": finalist_count,
             "question_count": question_count,
+            "final_rag_protocol": dict(protocol),
         },
     )
     return output_path
@@ -111,7 +114,9 @@ def import_review(review_path: Path, identity_path: Path | None = None) -> dict[
     known = identity.get("items", {})
     with review_path.open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
-    expected = int(identity.get("expected_judgments", 60))
+    if "expected_judgments" not in identity:
+        raise ValueError("Human-review identity lacks expected_judgments")
+    expected = int(identity["expected_judgments"])
     if len(rows) != expected:
         raise ValueError(f"Expected {expected} blinded judgments, received {len(rows)}")
     if len({row.get("item_id") for row in rows}) != len(rows):

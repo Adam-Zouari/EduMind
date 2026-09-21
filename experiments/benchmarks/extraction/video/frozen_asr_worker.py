@@ -13,17 +13,28 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 from experiments.benchmarks.common.resources import ResourceMonitor
 from experiments.benchmarks.extraction.audio.adapters import build_runtime
 from experiments.benchmarks.extraction.audio.evaluate import align_sequences, normalize_transcript
+from experiments.benchmarks.extraction.audio.protocol import (
+    protocol_from_worker as audio_protocol_from_worker,
+)
 from experiments.benchmarks.extraction.media import decode_canonical_audio
 from experiments.benchmarks.common.process import json_worker_main
 from experiments.benchmarks.extraction.video.metrics import stitch_text
+from experiments.benchmarks.extraction.video.protocol import protocol_from_worker
 
 
 def execute(payload: dict[str, object]) -> dict[str, object]:
+    protocol = protocol_from_worker(payload["protocol"])
+    audio_protocol = audio_protocol_from_worker(payload["audio_protocol"])
+    if float(payload["window_length_seconds"]) != protocol.window_length_seconds:
+        raise ValueError("Frozen ASR window length differs from the video protocol")
+    if float(payload["overlap_seconds"]) != protocol.overlap_seconds:
+        raise ValueError("Frozen ASR overlap differs from the video protocol")
     device = str(payload["device"])
     runtime = build_runtime(
         str(payload["candidate"]),
         payload["model_lock"],  # type: ignore[arg-type]
         device,
+        audio_protocol,
     )
     items = list(payload["items"])  # type: ignore[arg-type]
     length = float(payload["window_length_seconds"])
@@ -46,7 +57,10 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
                 first_id = str(items[0]["id"])
                 first_audio = temporary / f"{first_id}-full.wav"
                 first_command = decode_canonical_audio(
-                    Path(str(items[0]["source_path"])), first_audio
+                    Path(str(items[0]["source_path"])),
+                    first_audio,
+                    sample_rate_hz=int(audio_protocol.audio["sample_rate_hz"]),
+                    channels=int(audio_protocol.audio["channels"]),
                 )
                 decoded_audio[first_id] = first_audio
                 commands.append(
@@ -57,6 +71,9 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
                     temporary / "warmup.wav",
                     start=0.0,
                     duration=min(length, float(items[0]["duration_seconds"])),
+                    sample_rate_hz=int(audio_protocol.audio["sample_rate_hz"]),
+                    channels=int(audio_protocol.audio["channels"]),
+                    sample_width_bytes=int(audio_protocol.audio["sample_width_bytes"]),
                 )
                 for _ in range(int(payload["warmups"])):
                     runtime.transcribe(warmup_path)
@@ -72,7 +89,10 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
                     if sample_id not in decoded_audio:
                         decoded = temporary / f"{sample_id}-full.wav"
                         command = decode_canonical_audio(
-                            Path(str(item["source_path"])), decoded
+                            Path(str(item["source_path"])),
+                            decoded,
+                            sample_rate_hz=int(audio_protocol.audio["sample_rate_hz"]),
+                            channels=int(audio_protocol.audio["channels"]),
                         )
                         decoded_audio[sample_id] = decoded
                         commands.append(
@@ -89,6 +109,9 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
                             temporary / f"{item['id']}-{window_index}.wav",
                             start=start,
                             duration=window_duration,
+                            sample_rate_hz=int(audio_protocol.audio["sample_rate_hz"]),
+                            channels=int(audio_protocol.audio["channels"]),
+                            sample_width_bytes=int(audio_protocol.audio["sample_width_bytes"]),
                         )
                         started = time.perf_counter()
                         output = runtime.transcribe(window_path)
@@ -192,14 +215,23 @@ def _window_starts(duration: float, length: float, overlap: float):
     return starts
 
 
-def _slice_wav(source: Path, destination: Path, *, start: float, duration: float):
+def _slice_wav(
+    source: Path,
+    destination: Path,
+    *,
+    start: float,
+    duration: float,
+    sample_rate_hz: int,
+    channels: int,
+    sample_width_bytes: int,
+):
     """Create deterministic PCM windows from the one decoded per-video WAV."""
 
     with wave.open(str(source), "rb") as reader:
         if (
-            reader.getnchannels() != 1
-            or reader.getframerate() != 16_000
-            or reader.getsampwidth() != 2
+            reader.getnchannels() != channels
+            or reader.getframerate() != sample_rate_hz
+            or reader.getsampwidth() != sample_width_bytes
         ):
             raise ValueError("Decoded video audio is not mono 16 kHz PCM16")
         start_frame = min(reader.getnframes(), round(start * reader.getframerate()))

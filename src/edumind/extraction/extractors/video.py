@@ -21,6 +21,7 @@ from ..errors import ExtractionBackendError
 from .audio import WhisperExtractor
 from .base import build_document
 from .document import DoclingExtractor
+from ..video_policy import KeyframePolicy, frame_command
 
 
 class VideoExtractor:
@@ -28,12 +29,18 @@ class VideoExtractor:
 
     def __init__(
         self,
-        keyframes: str = "hybrid",
+        keyframes: str,
         *,
         audio_factory: Callable[[str, str], Extractor] | None = None,
         image_factory: Callable[[str, str], Extractor] | None = None,
+        fixed_interval_seconds: float,
+        scene_threshold: float,
+        maximum_hybrid_gap_seconds: float,
     ) -> None:
         self.keyframes = keyframes
+        self.fixed_interval_seconds = fixed_interval_seconds
+        self.scene_threshold = scene_threshold
+        self.maximum_hybrid_gap_seconds = maximum_hybrid_gap_seconds
         self.name = f"video-{keyframes}"
         self.revision = "ffmpeg-system"
         self._audio_factory = audio_factory or _production_audio_factory
@@ -91,7 +98,10 @@ class VideoExtractor:
                     )
                 audio_extractor = self._audio_extractors[audio_engine]
                 audio = audio_extractor.extract(audio_request, SourceKind.AUDIO)
-                frames = self._extract_frames(request.source_path, directory)
+                keyframe_policy = self._keyframe_policy(request.options)
+                frames = self._extract_frames(
+                    request.source_path, directory, keyframe_policy
+                )
                 visual_segments: list[tuple[str, float | None]] = []
                 image_engine = str(request.options.get("image_engine", "docling-standard"))
                 image_revision = str(request.options.get("image_revision", "from-lock"))
@@ -146,7 +156,14 @@ class VideoExtractor:
             timestamps=timestamps,
             separators=separators,
             metadata={
-                "keyframe_policy": self.keyframes,
+                "keyframe_policy": {
+                    "strategy": keyframe_policy.strategy,
+                    "fixed_interval_seconds": keyframe_policy.interval_seconds,
+                    "scene_threshold": keyframe_policy.scene_threshold,
+                    "maximum_hybrid_gap_seconds": keyframe_policy.maximum_gap_seconds,
+                    "include_frame_zero": keyframe_policy.include_frame_zero,
+                    "frame_sync": keyframe_policy.frame_sync,
+                },
                 "audio_engine": audio_engine,
                 "image_engine": image_engine,
                 "audio_segment_count": len(audio.segments),
@@ -159,31 +176,13 @@ class VideoExtractor:
         assert all(isinstance(segment, ExtractedSegment) for segment in result.segments)
         return result
 
-    def _extract_frames(self, source: Path, directory: Path) -> list[tuple[Path, float]]:
+    def _extract_frames(
+        self, source: Path, directory: Path, policy: KeyframePolicy
+    ) -> list[tuple[Path, float]]:
         pattern = directory / "frame-%05d.png"
-        if self.keyframes == "fixed":
-            video_filter = "fps=1/10"
-        elif self.keyframes == "scene":
-            video_filter = "select='gt(scene,0.35)'"
-        else:
-            video_filter = (
-                "select='gt(scene,0.35)+isnan(prev_selected_t)+gte(t-prev_selected_t,10)'"
-            )
+        command = frame_command(policy, str(source), str(pattern))
         process = subprocess.run(
-            [
-                "ffmpeg",
-                "-hide_banner",
-                "-loglevel",
-                "info",
-                "-y",
-                "-i",
-                str(source),
-                "-vf",
-                f"{video_filter},showinfo",
-                "-vsync",
-                "vfr",
-                str(pattern),
-            ],
+            command,
             check=True,
             capture_output=True,
             text=True,
@@ -196,6 +195,23 @@ class VideoExtractor:
         if len(timestamps) != len(frames):
             raise RuntimeError("FFmpeg keyframe timestamps did not match extracted frames")
         return list(zip(frames, timestamps, strict=True))
+
+    def _keyframe_policy(self, options) -> KeyframePolicy:
+        return KeyframePolicy(
+            str(options.get("keyframe_strategy", self.keyframes)),
+            interval_seconds=float(
+                options.get("fixed_interval_seconds", self.fixed_interval_seconds)
+            ),
+            scene_threshold=float(
+                options.get("scene_threshold", self.scene_threshold)
+            ),
+            maximum_gap_seconds=float(
+                options.get(
+                    "maximum_hybrid_gap_seconds",
+                    self.maximum_hybrid_gap_seconds,
+                )
+            ),
+        )
 
     @staticmethod
     def _run_ffmpeg(arguments: list[str]) -> None:

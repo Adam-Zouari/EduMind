@@ -114,6 +114,8 @@ def score_speech(
     quality_latency_seconds: float,
     repeat_transcript_agreement: bool,
     warnings: Sequence[str] = (),
+    alignment_threshold: float,
+    timestamp_tolerance_seconds: float,
 ) -> dict[str, object]:
     reference = normalize_transcript(str(item["reference"]))
     hypothesis = normalize_transcript(prediction)
@@ -129,8 +131,14 @@ def score_speech(
     predictions = _segments(
         predicted_segments, "prediction", allow_empty=not hypothesis
     )
-    _validate_predicted_timeline(predictions, float(item["duration_seconds"]))
-    timestamp = _timestamp_totals(references, predictions)
+    _validate_predicted_timeline(
+        predictions,
+        float(item["duration_seconds"]),
+        tolerance_seconds=timestamp_tolerance_seconds,
+    )
+    timestamp = _timestamp_totals(
+        references, predictions, alignment_threshold=alignment_threshold
+    )
     return {
         "sample_id": str(item["id"]),
         "sample_type": "speech",
@@ -194,6 +202,7 @@ def aggregate(
     peak_vram_mb: float,
     resamples: int,
     seed: int,
+    confidence: float,
 ) -> tuple[dict[str, float | None], dict[str, dict[str, float]]]:
     speech = [row for row in sample_rows if row["sample_type"] == "speech"]
     nonspeech = [row for row in sample_rows if row["sample_type"] == "nonspeech"]
@@ -209,7 +218,14 @@ def aggregate(
     if missing:
         raise ValueError("ASR candidate did not produce required metrics: " + ", ".join(missing))
     intervals = (
-        _bootstrap(speech, nonspeech, timing_rows, resamples=resamples, seed=seed)
+        _bootstrap(
+            speech,
+            nonspeech,
+            timing_rows,
+            resamples=resamples,
+            seed=seed,
+            confidence=confidence,
+        )
         if resamples
         else {}
     )
@@ -278,7 +294,9 @@ def _aggregate_rows(speech, nonspeech, timing_rows) -> dict[str, float | None]:
     }
 
 
-def _bootstrap(speech, nonspeech, timing_rows, *, resamples: int, seed: int):
+def _bootstrap(
+    speech, nonspeech, timing_rows, *, resamples: int, seed: int, confidence: float
+):
     timings_by_sample: dict[str, list[Mapping[str, object]]] = {}
     for row in timing_rows:
         timings_by_sample.setdefault(str(row["sample_id"]), []).append(row)
@@ -308,21 +326,28 @@ def _bootstrap(speech, nonspeech, timing_rows, *, resamples: int, seed: int):
             if value is not None:
                 estimates[name].append(value)
     result = {}
+    alpha = (1.0 - confidence) / 2.0
     for name, values in estimates.items():
         if not values:
             continue
         result[name] = {
             "estimate": float(np.mean(values)),
-            "lower": float(np.quantile(values, 0.025)),
-            "upper": float(np.quantile(values, 0.975)),
-            "confidence": 0.95,
+            "lower": float(np.quantile(values, alpha)),
+            "upper": float(np.quantile(values, 1.0 - alpha)),
+            "confidence": confidence,
             "resamples": len(values),
         }
     return result
 
 
-def _timestamp_totals(reference_segments, predicted_segments) -> dict[str, int | float]:
-    matches = _ordered_span_matches(reference_segments, predicted_segments)
+def _timestamp_totals(
+    reference_segments, predicted_segments, *, alignment_threshold: float
+) -> dict[str, int | float]:
+    matches = _ordered_span_matches(
+        reference_segments,
+        predicted_segments,
+        threshold=alignment_threshold,
+    )
     error = 0.0
     for reference_index, start_index, end_index, _ in matches:
         reference = reference_segments[reference_index]
@@ -360,7 +385,7 @@ def _segments(
     return segments
 
 
-def _ordered_span_matches(reference_segments, predicted_segments):
+def _ordered_span_matches(reference_segments, predicted_segments, *, threshold: float):
     """Choose one-to-one ordered spans with deterministic documented tie-breaks."""
 
     if not reference_segments or not predicted_segments:
@@ -376,7 +401,7 @@ def _ordered_span_matches(reference_segments, predicted_segments):
                     normalize_transcript(str(predicted_segments[end]["text"])).split()
                 )
                 similarity = _token_content_f1(expected, observed)
-                if similarity >= 0.5:
+                if similarity >= threshold:
                     spans.append((start, end, similarity))
         eligible[reference_index] = spans
 
@@ -422,11 +447,13 @@ def _token_content_f1(reference: Sequence[str], prediction: Sequence[str]) -> fl
     )[2]
 
 
-def _validate_predicted_timeline(segments, duration: float) -> None:
+def _validate_predicted_timeline(
+    segments, duration: float, *, tolerance_seconds: float
+) -> None:
     previous_start = -1.0
     for segment in segments:
         start, end = float(segment["start"]), float(segment["end"])
-        if start < previous_start or end > duration + 0.1:
+        if start < previous_start or end > duration + tolerance_seconds:
             raise ValueError("ASR prediction contains invalid or unordered timestamps")
         previous_start = start
 

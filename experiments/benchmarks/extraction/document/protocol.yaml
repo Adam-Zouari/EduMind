@@ -1,0 +1,75 @@
+schema_version: 1
+protocol_version: document-v1
+seed: 42
+
+candidate_factors:
+  ocr_engines: [rapidocr, tesseract, easyocr]
+  ocr_modes: [pdf_aware_layout_regions, full_page]
+  table_modes: [fast, accurate]
+  formula_enrichment: [false, true]
+  smoke_configuration:
+    ocr_engine: rapidocr
+    ocr_mode: full_page
+    table_mode: fast
+    formula_enrichment: false
+
+parser:
+  language: english
+  image_scale: 3.0
+  do_ocr: true
+  do_table_structure: true
+  do_cell_matching: true
+  do_code_enrichment: false
+  granite:
+    load_in_8bit: false
+  paddle:
+    pipeline_version: v1.6
+    recognition_backend: native
+
+matching:
+  element_threshold: 0.5
+  duplicate_content_threshold: 0.95
+
+datasets:
+  development: {image: 72, pdf: 36, docx: 27}
+  validation: {image: 24, pdf: 12, docx: 9}
+
+statistics:
+  confidence_level: 0.95
+
+evaluators:
+  timeout_seconds: 3600
+
+selection:
+  maximum_architecture_finalists: 3
+
+backend_devices:
+  docling-standard: [cpu, cuda]
+  docling-vlm-granite-258m: [cpu, cuda]
+  paddleocr-vl-1.6: [cpu, cuda]
+
+profiles:
+  smoke:
+    warmups: 2
+    repetitions: 1
+    bootstrap_resamples: 0
+    device: cpu
+    dtype: float32
+    batch_size: 1
+    hardware_required: false
+  development:
+    warmups: 2
+    repetitions: 3
+    bootstrap_resamples: 10000
+    device: cuda
+    dtype: float16
+    batch_size: 1
+    hardware_required: false
+  validation:
+    warmups: 2
+    repetitions: 3
+    bootstrap_resamples: 10000
+    device: cuda
+    dtype: float16
+    batch_size: 1
+    hardware_required: false

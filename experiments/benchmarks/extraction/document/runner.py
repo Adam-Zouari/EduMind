@@ -33,10 +33,13 @@ def evaluate_candidate(
     references,
     pipeline,
     extract_once,
+    protocol,
 ):
     ordered = list(items)
     random.Random(plan.seed).shuffle(ordered)
-    first_latency = _cold_latency(candidate, ordered[0], model_lock, component_options)
+    first_latency = _cold_latency(
+        candidate, ordered[0], model_lock, component_options, protocol
+    )
     for _ in range(plan.warmups):
         extract_once(candidate, ordered[0], model_lock, component_options, pipeline)
 
@@ -110,6 +113,8 @@ def evaluate_candidate(
             reference=references[str(item["id"])],
             repeated_documents=documents if all_succeeded else (),
             failed=not all_succeeded,
+            element_matching_threshold=protocol.element_matching_threshold,
+            duplicate_content_threshold=protocol.duplicate_content_threshold,
         )
         evaluations.append(evaluation)
         if successful_latencies:
@@ -140,10 +145,15 @@ def evaluate_candidate(
             )
         )
 
-    apply_official_metrics(evaluations)
+    apply_official_metrics(
+        evaluations, timeout_seconds=protocol.evaluator_timeout_seconds
+    )
     resamples = 0 if plan.profile == "smoke" else plan.bootstrap_resamples
     aggregate, intervals = aggregate_evaluations(
-        evaluations, resamples=resamples, seed=plan.seed
+        evaluations,
+        resamples=resamples,
+        seed=plan.seed,
+        confidence=protocol.confidence_level,
     )
     operational = {"first_item_latency_seconds": first_latency}
     if document_latencies:
@@ -167,7 +177,13 @@ def evaluate_candidate(
         )
     if resamples:
         intervals.update(
-            _latency_intervals(document_latencies, page_latencies, resamples, plan.seed)
+            _latency_intervals(
+                document_latencies,
+                page_latencies,
+                resamples,
+                plan.seed,
+                protocol.confidence_level,
+            )
         )
     for group, values in sorted(group_latencies.items()):
         operational[f"{group}.p50_complete_document_latency_seconds"] = float(
@@ -181,22 +197,34 @@ def evaluate_candidate(
                 {
                     name.replace("operational.", f"operational.{group}.", 1): interval
                     for name, interval in _latency_intervals(
-                        values, [], resamples, plan.seed
+                        values,
+                        [],
+                        resamples,
+                        plan.seed,
+                        protocol.confidence_level,
                     ).items()
                 }
             )
     document_profile = parse_document_profile(candidate)
     engine = document_profile.requested_engine
     lock_entry = model_lock.get(document_profile.lock_candidate, {})
+    executed_parser_options = {
+        **protocol.parser_options(document_profile.runtime_engine),
+        **document_profile.options,
+    }
     parameters = {
         "engine": engine,
         "engine_revision": lock_entry.get("revision", "system"),
         "model_path": lock_entry.get("model_path", ""),
-        "device": component_options.get("device", "cpu"),
+        "device": component_options["device"],
         "seed": plan.seed,
         "warmups": plan.warmups,
         "repetitions": plan.repetitions,
         "normalization": "none",
+        "resolved_parser_options": executed_parser_options,
+        "element_matching_threshold": protocol.element_matching_threshold,
+        "duplicate_content_threshold": protocol.duplicate_content_threshold,
+        "evaluator_timeout_seconds": protocol.evaluator_timeout_seconds,
         "model_cache_manifest_sha256": lock_entry.get(
             "model_cache_manifest_sha256", ""
         ),
@@ -216,35 +244,19 @@ def evaluate_candidate(
             )
         ),
     }
-    if engine in {"docling-standard", "docling-standard-native"}:
+    parameters.update(
+        {
+            f"parser.{name}": value
+            for name, value in executed_parser_options.items()
+        }
+    )
+    if engine == "paddleocr-vl-1.6":
         parameters.update(
             {
-                "language": "english",
-                "image_scale": 3.0,
-                "table_cell_matching": True,
-                "code_enrichment": False,
-            }
-        )
-    elif engine == "docling-vlm-granite-258m":
-        parameters.update(
-            {
-                "pipeline": "VlmPipeline",
-                "preset": "GRANITEDOCLING_TRANSFORMERS",
-                "load_in_8bit": False,
-                "offline": True,
-            }
-        )
-    elif engine == "paddleocr-vl-1.6":
-        parameters.update(
-            {
-                "pipeline_version": "v1.6",
-                "vl_rec_backend": "native",
                 "paddle_cache_path": lock_entry.get("paddle_cache_path", ""),
                 "paddle_cache_manifest_sha256": lock_entry.get(
                     "paddle_cache_manifest_sha256", ""
                 ),
-                "paddleocr_version": "3.7.0",
-                "paddlepaddle_version": "3.3.1",
             }
         )
     for key, value in document_profile.factors.items():
@@ -270,13 +282,16 @@ def evaluate_candidate(
     )
 
 
-def validate_prepared_components(candidate, lock_entry) -> None:
+def validate_prepared_components(candidate, lock_entry, protocol) -> None:
     """Reject Docling configurations whose parser dependencies were not locked."""
 
     profile = parse_document_profile(candidate)
     if profile.requested_engine != "docling-standard":
         return
-    factors = profile.factors
+    options = {
+        **protocol.parser_options(profile.runtime_engine),
+        **profile.options,
+    }
     required = {
         "layout",
         "tableformer",
@@ -284,9 +299,9 @@ def validate_prepared_components(candidate, lock_entry) -> None:
             "rapidocr": "rapidocr",
             "easyocr": "easyocr",
             "tesseract": "tesseract-cli",
-        }[factors.get("ocr", "rapidocr")],
+        }[str(options["ocr_engine"])],
     }
-    if factors.get("formula", "off") == "on":
+    if bool(options["formula_enrichment"]):
         required.add("code_formula")
     raw_prepared = lock_entry.get("prepared_components", [])
     if not isinstance(raw_prepared, (list, tuple)):
@@ -405,7 +420,7 @@ def paired_metrics(directions):
     )
 
 
-def _cold_latency(candidate, item, model_lock, component_options):
+def _cold_latency(candidate, item, model_lock, component_options, protocol):
     payload_path = (
         Path(os.environ.get("TEMP", ".")) / f"document-cold-worker-{os.getpid()}.json"
     )
@@ -416,6 +431,7 @@ def _cold_latency(candidate, item, model_lock, component_options):
             "item": dict(item),
             "model_lock": model_lock,
             "component_options": dict(component_options),
+            "protocol": protocol.meta.worker_payload(),
         },
     )
     started = time.perf_counter()
@@ -442,9 +458,12 @@ def _cold_latency(candidate, item, model_lock, component_options):
     return time.perf_counter() - started
 
 
-def _latency_intervals(document_values, page_values, resamples, seed):
+def _latency_intervals(
+    document_values, page_values, resamples, seed, confidence
+):
     result = {}
     rng = np.random.default_rng(seed)
+    tail = (1.0 - confidence) / 2.0
     for suffix, values in (
         ("complete_document_latency_seconds", document_values),
         ("warm_latency_per_page_seconds", page_values),
@@ -460,9 +479,9 @@ def _latency_intervals(document_values, page_values, resamples, seed):
         for quantile, estimates in draws.items():
             result[f"operational.p{int(quantile * 100)}_{suffix}"] = {
                 "estimate": float(np.quantile(observed, quantile)),
-                "lower": float(np.quantile(estimates, 0.025)),
-                "upper": float(np.quantile(estimates, 0.975)),
-                "confidence": 0.95,
+                "lower": float(np.quantile(estimates, tail)),
+                "upper": float(np.quantile(estimates, 1.0 - tail)),
+                "confidence": confidence,
             }
     return result
 

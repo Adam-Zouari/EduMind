@@ -129,17 +129,17 @@ class HuggingFaceGenerator:
             self._tokenizer,
             skip_prompt=True,
             skip_special_tokens=True,
-            timeout=600,
+            timeout=self.profile.streamer_timeout_seconds,
         )
         errors: list[BaseException] = []
         generation_options: dict[str, object] = {
             **encoded,
             "streamer": streamer,
             "max_new_tokens": self.profile.maximum_answer_tokens,
-            "do_sample": self.profile.temperature > 0,
+            "do_sample": self.profile.do_sample,
             "pad_token_id": self._tokenizer.eos_token_id,
         }
-        if self.profile.temperature > 0:
+        if self.profile.do_sample:
             generation_options["temperature"] = self.profile.temperature
 
         def run() -> None:

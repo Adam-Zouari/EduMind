@@ -10,6 +10,7 @@ import numpy as np
 from edumind.common.artifacts import stable_hash
 
 from .adapters import Hit, Record
+from .protocol import SyntheticSettings
 
 
 @dataclass(frozen=True)
@@ -21,31 +22,40 @@ class Corpus:
     fingerprint: str
 
 
-def clustered(size: int, dimension: int, queries: int, seed: int = 42) -> Corpus:
+def clustered(
+    size: int,
+    dimension: int,
+    queries: int,
+    seed: int,
+    *,
+    settings: SyntheticSettings,
+) -> Corpus:
     random = np.random.default_rng(seed + size + dimension)
-    centroids = random.normal(size=(128, dimension)).astype(np.float32)
+    centroids = random.normal(size=(settings.centroid_count, dimension)).astype(np.float32)
     centroids /= np.linalg.norm(centroids, axis=1, keepdims=True)
     assignments = random.integers(0, len(centroids), size=size)
-    vectors = centroids[assignments] + random.normal(0, 0.08, size=(size, dimension)).astype(np.float32)
+    vectors = centroids[assignments] + random.normal(
+        0, settings.cluster_noise, size=(size, dimension)
+    ).astype(np.float32)
     vectors /= np.linalg.norm(vectors, axis=1, keepdims=True)
-    duplicate_count = size // 20
+    duplicate_count = int(size * settings.near_duplicate_fraction)
     if duplicate_count:
         vectors[-duplicate_count:] = vectors[:duplicate_count] + random.normal(
-            0, 0.001, size=(duplicate_count, dimension)
+            0, settings.near_duplicate_noise, size=(duplicate_count, dimension)
         ).astype(np.float32)
         vectors[-duplicate_count:] /= np.linalg.norm(vectors[-duplicate_count:], axis=1, keepdims=True)
     query_indices = random.choice(size, size=min(queries, size), replace=False)
     query_vectors = vectors[query_indices] + random.normal(
-        0, 0.01, size=(len(query_indices), dimension)
+        0, settings.query_noise, size=(len(query_indices), dimension)
     ).astype(np.float32)
     query_vectors /= np.linalg.norm(query_vectors, axis=1, keepdims=True)
     metadata = tuple(
         {
-            "source_id": f"doc-{index // 5}",
-            "scope_50": str(index % 2),
-            "scope_10": str(index % 10),
-            "scope_1": str(index % 100),
-            "scope_01": str(index % 1000),
+            "source_id": f"doc-{index // settings.records_per_document}",
+            **{
+                name: str(index % divisor)
+                for name, divisor in settings.metadata_divisors.items()
+            },
         }
         for index in range(size)
     )
@@ -61,9 +71,13 @@ def clustered(size: int, dimension: int, queries: int, seed: int = 42) -> Corpus
                 "dimension": dimension,
                 "queries": queries,
                 "seed": seed,
-                "centroids": 128,
-                "noise": 0.08,
-                "near_duplicate_fraction": 0.05,
+                "centroids": settings.centroid_count,
+                "records_per_document": settings.records_per_document,
+                "noise": settings.cluster_noise,
+                "near_duplicate_fraction": settings.near_duplicate_fraction,
+                "near_duplicate_noise": settings.near_duplicate_noise,
+                "query_noise": settings.query_noise,
+                "metadata_divisors": dict(settings.metadata_divisors),
             }
         ),
     )

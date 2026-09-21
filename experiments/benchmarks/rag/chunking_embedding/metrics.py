@@ -13,22 +13,6 @@ import numpy as np
 from experiments.benchmarks.common.datasets import EvidenceUnit, evidence_units
 from experiments.benchmarks.common.metrics import ndcg_at_k, paired_bootstrap_interval
 from experiments.benchmarks.common.contracts import SampleResult
-
-
-QUALITY_CUTOFFS = (3, 5)
-MAX_QUALITY_K = max(QUALITY_CUTOFFS)
-AUDIT_K = 20
-ALPHA = 0.5
-MIN_LATENCY_CI_DOCUMENTS = 20
-PRIMARY_QUALITY_METRICS = tuple(
-    f"{name}_at_{k}"
-    for name in ("ndcg", "evidence_unit_recall", "evidence_token_precision")
-    for k in QUALITY_CUTOFFS
-)
-ALPHA_NDCG_METRICS = tuple(f"alpha_ndcg_at_{k}" for k in QUALITY_CUTOFFS)
-QUALITY_METRICS = (*PRIMARY_QUALITY_METRICS, *ALPHA_NDCG_METRICS)
-
-
 class RankedChunk(Protocol):
     identifier: str
     document_id: str
@@ -53,8 +37,8 @@ def score_question(
     all_chunks: Sequence[RankedChunk],
     tokenizer: EvaluationTokenizer,
     *,
-    cutoffs: Sequence[int] = QUALITY_CUTOFFS,
-    alpha: float = ALPHA,
+    cutoffs: Sequence[int],
+    alpha: float,
 ) -> QuestionScore:
     """Score one answerable question at the requested frozen cutoffs."""
 
@@ -116,7 +100,7 @@ def alpha_ndcg_at_k(
     corpus: Sequence[set[str]],
     k: int,
     *,
-    alpha: float = ALPHA,
+    alpha: float,
 ) -> float:
     """Standard binary-subtopic alpha-nDCG with a deterministic greedy ideal."""
 
@@ -185,7 +169,7 @@ def aggregate_quality(
     *,
     resamples: int,
     seed: int,
-    confidence: float = 0.95,
+    confidence: float,
 ) -> tuple[dict[str, float], dict[str, dict[str, float]]]:
     """Macro-average questions within documents, then documents within the corpus."""
 
@@ -227,8 +211,8 @@ def latency_intervals(
     *,
     resamples: int,
     seed: int,
-    minimum_documents: int = MIN_LATENCY_CI_DOCUMENTS,
-    confidence: float = 0.95,
+    minimum_documents: int,
+    confidence: float,
 ) -> dict[str, dict[str, float]]:
     """Cluster-bootstrap warm-query percentiles over source documents."""
 
@@ -280,7 +264,7 @@ def prefixed_quality(
 def eligible_counts(
     samples: Sequence[SampleResult],
     *,
-    alpha_metrics: Sequence[str] = ALPHA_NDCG_METRICS,
+    alpha_metrics: Sequence[str],
 ) -> dict[str, float]:
     """Expose question/document denominators for overall quality and every slice."""
 

@@ -10,8 +10,8 @@ WORKER_STARTED_AT = time.perf_counter()
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
-from experiments.benchmarks.common.process import json_worker_main
-from experiments.benchmarks.rag.retrieval.benchmark import execute_payload
+from experiments.benchmarks.common.process import json_worker_main  # noqa: E402
+from experiments.benchmarks.rag.retrieval.benchmark import execute_payload  # noqa: E402
 
 
 def execute_with_start(payload: dict[str, object]) -> dict[str, object]:

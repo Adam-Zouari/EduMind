@@ -29,6 +29,8 @@ from experiments.benchmarks.rag.evaluation import (
     retrieval_metrics,
 )
 from experiments.benchmarks.rag.generation.models import generator_for
+from experiments.benchmarks.rag.generation.protocol import GenerationProtocol
+from experiments.benchmarks.rag.retrieval.protocol import RetrievalProtocol
 
 GENERATION_DIRECTIONS = {
     "exact_match": "max",
@@ -69,8 +71,9 @@ GENERATION_DIRECTIONS = {
 
 
 class LocalFaithfulness:
-    def __init__(self, model_path: str) -> None:
+    def __init__(self, model_path: str, *, trust_remote_code: bool) -> None:
         self.model_path = model_path
+        self.trust_remote_code = trust_remote_code
         self.model = None
 
     def score(self, context: str, answer: str) -> float:
@@ -82,7 +85,7 @@ class LocalFaithfulness:
             self.model = AutoModelForSequenceClassification.from_pretrained(
                 self.model_path,
                 local_files_only=True,
-                trust_remote_code=True,
+                trust_remote_code=self.trust_remote_code,
             )
         score = self.model.predict([(context, _clean_answer(answer))])
         return float(score[0])
@@ -93,31 +96,50 @@ def evaluate_candidate(
     manifest: DatasetManifest,
     model_lock: Mapping[str, Mapping[str, object]],
     *,
-    final_index: ExactIndex | None = None,
-    retrieval_method: str = "frozen",
-    top_k: int = 5,
-    repetitions: int = 1,
-    device: str = "cpu",
-    bootstrap_resamples: int = 10_000,
-    bootstrap_seed: int = 42,
+    protocol: GenerationProtocol,
+    final_index: ExactIndex | None,
+    retrieval_method: str,
+    top_k: int | None,
+    repetitions: int,
+    device: str,
+    dtype: str,
+    bootstrap_resamples: int,
+    bootstrap_seed: int,
+    retrieval_protocol: RetrievalProtocol | None,
+    warmups: int,
+    question_scope: str,
 ):
-    questions = _questions(manifest, 24)
+    if question_scope not in {"development-screen", "all"}:
+        raise ValueError(f"Unknown generation question scope: {question_scope}")
+    questions = _questions(
+        manifest,
+        protocol.question_count if question_scope == "development-screen" else None,
+        protocol.meta.seed,
+    )
     documents = {
         str(row["id"]): str(row["text"])
         for row in manifest.samples
         if row.get("kind") == "document"
     }
-    generator = generator_for(candidate, model_lock, device)
-    tokenizer = TiktokenOffsetTokenizer()
-    faithfulness = LocalFaithfulness(
-        str(model_lock["vectara/hallucination_evaluation_model"]["model_path"])
+    generator = generator_for(candidate, model_lock, device, dtype, protocol)
+    tokenizer = TiktokenOffsetTokenizer(
+        protocol.context_tokenizer.removeprefix("tiktoken:")
     )
+    faithfulness = LocalFaithfulness(
+        str(model_lock[protocol.faithfulness_model]["model_path"]),
+        trust_remote_code=protocol.faithfulness_trust_remote_code,
+    )
+    if final_index is not None and retrieval_protocol is None:
+        raise ValueError("Retrieved generation requires an explicit retrieval protocol")
+    if final_index is not None and top_k is None:
+        raise ValueError("Retrieved generation requires an explicit top-k cutoff")
     retrieval_reranker = (
         reranker_for(
             retrieval_method,
             model_lock,
             device=device,
-            dtype="float16" if device == "cuda" else "float32",
+            dtype=dtype,
+            retrieval_protocol=retrieval_protocol,
         )
         if final_index is not None
         else None
@@ -126,15 +148,26 @@ def evaluate_candidate(
     context_questions = questions[:1] if final_index is not None else questions
     for question in context_questions:
         context_cache[str(question["id"])] = (
-            _retrieved_hits(question, final_index, retrieval_method, top_k, retrieval_reranker)
+            _retrieved_hits(
+                question,
+                final_index,
+                retrieval_method,
+                int(top_k),
+                retrieval_reranker,
+            )
             if final_index is not None
-            else _frozen_hits(question, documents, tokenizer)
+            else _frozen_hits(
+                question,
+                documents,
+                tokenizer,
+                protocol.context_packing_tokens,
+            )
         )
 
     first_hits, _, _ = context_cache[str(questions[0]["id"])]
     generator.unload()
     cold = generator.generate_measured_with_results(str(questions[0]["question"]), first_hits)
-    for _ in range(2):
+    for _ in range(warmups):
         generator.generate_measured_with_results(str(questions[0]["question"]), first_hits)
 
     samples: list[SampleResult] = []
@@ -149,7 +182,11 @@ def evaluate_candidate(
         for _ in range(repetitions):
             hits, context, retrieval_seconds = (
                 _retrieved_hits(
-                    question, final_index, retrieval_method, top_k, retrieval_reranker
+                    question,
+                    final_index,
+                    retrieval_method,
+                    int(top_k),
+                    retrieval_reranker,
                 )
                 if final_index is not None
                 else context_cache[str(question["id"])]
@@ -210,7 +247,11 @@ def evaluate_candidate(
             by_id = {chunk.identifier: chunk for chunk in final_index.chunks}
             selected = [by_id[hit.id] for hit in hits if hit.id in by_id]
             retrieval_quality, retrieved_tokens = retrieval_metrics(
-                question, selected, final_index.chunks, final_index.tokenizer
+                question,
+                selected,
+                final_index.chunks,
+                final_index.tokenizer,
+                cutoffs=retrieval_protocol.quality_cutoffs,
             )
             averaged_metrics.update(retrieval_quality)
         else:
@@ -271,6 +312,7 @@ def evaluate_candidate(
             predictions,
             resamples=bootstrap_resamples,
             seed=bootstrap_seed,
+            confidence=protocol.confidence_level,
         )
         answerability_intervals["answerability_balanced_accuracy"] = {
             "estimate": interval.estimate,
@@ -308,7 +350,9 @@ def evaluate_candidate(
     }, {}, answerability_intervals
 
 
-def _frozen_hits(question, documents, tokenizer) -> tuple[list[RetrievalHit], str, float]:
+def _frozen_hits(
+    question, documents, tokenizer, maximum_tokens: int
+) -> tuple[list[RetrievalHit], str, float]:
     document = documents[str(question["document_id"])]
     texts = [
         "\n".join(
@@ -317,11 +361,11 @@ def _frozen_hits(question, documents, tokenizer) -> tuple[list[RetrievalHit], st
         for unit in evidence_units(question)
     ]
     if not texts:
-        texts = [tokenizer.truncate(document, 3500)]
+        texts = [tokenizer.truncate(document, maximum_tokens)]
     packed_texts = []
     used = 0
     for text in texts:
-        available = 3500 - used
+        available = maximum_tokens - used
         if available <= 0:
             break
         packed = tokenizer.truncate(text, available)
@@ -392,7 +436,7 @@ def _supported_contexts(question, hits) -> set[int]:
     return result
 
 
-def _questions(manifest, count):
+def _questions(manifest, count, seed):
     import random
 
     rows = [
@@ -410,11 +454,12 @@ def _questions(manifest, count):
         key = f"{row.get('evidence_type', 'text')}|{answer_type}"
         groups.setdefault(key, []).append(row)
     for key, group in groups.items():
-        random.Random(42 + sum(ord(character) for character in key)).shuffle(group)
+        random.Random(seed + sum(ord(character) for character in key)).shuffle(group)
     selected = []
-    while len(selected) < min(count, len(rows)) and any(groups.values()):
+    target = len(rows) if count is None else min(count, len(rows))
+    while len(selected) < target and any(groups.values()):
         for key in sorted(groups):
-            if groups[key] and len(selected) < count:
+            if groups[key] and len(selected) < target:
                 selected.append(groups[key].pop())
     return selected
 

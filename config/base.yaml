@@ -6,6 +6,12 @@ extraction:
   cache_enabled: true
   cache_directory: artifacts/extraction/cache
   maximum_upload_bytes: 104857600
+  # Provisional values; benchmark promotion is a manual edit.
+  video:
+    keyframe_strategy: hybrid
+    fixed_interval_seconds: 10
+    scene_threshold: 0.35
+    maximum_hybrid_gap_seconds: 10
 
 embedding:
   model_name: Alibaba-NLP/gte-modernbert-base
@@ -43,6 +49,8 @@ generation:
   dtype: auto
   reasoning: false
   temperature: 0.0
+  do_sample: false
   seed: 42
   context_tokens: 8192
   maximum_answer_tokens: 256
+  streamer_timeout_seconds: 600

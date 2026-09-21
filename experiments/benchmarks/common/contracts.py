@@ -59,10 +59,10 @@ class BenchmarkPlan:
     profile: str
     dataset: str
     candidates: tuple[str, ...]
-    seed: int = 42
-    repetitions: int = 1
-    bootstrap_resamples: int = 10_000
-    warmups: int = 2
+    seed: int
+    repetitions: int
+    bootstrap_resamples: int
+    warmups: int
     settings: Mapping[str, object] = field(default_factory=dict)
 
 

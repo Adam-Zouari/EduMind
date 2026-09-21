@@ -12,31 +12,48 @@ import pytest
 from edumind.extraction.contracts import ExtractionProfile, ExtractionRequest, SourceKind
 from edumind.extraction.extractors.audio import WhisperExtractor
 from edumind.extraction.extractors.base import build_document
+from experiments.benchmarks.common import resources as resource_module
 from experiments.benchmarks.common.contracts import BenchmarkPlan, DatasetManifest, SampleResult
 from experiments.benchmarks.common.datasets import assert_no_split_leakage
 from experiments.benchmarks.common.resources import ResourceMonitor
 from experiments.benchmarks.extraction.audio.adapters import (
-    ASR_PROFILES,
     Transcript,
     WhisperRuntime,
+    profiles,
 )
 from experiments.benchmarks.extraction.audio.evaluate import (
     METRIC_DIRECTIONS,
-    aggregate,
+    aggregate as _aggregate,
     align_sequences,
     normalize_transcript,
     score_nonspeech,
-    score_speech,
+    score_speech as _score_speech,
 )
 from experiments.benchmarks.extraction.audio.runner import (
-    REQUIRED_SPEECH_CONDITIONS,
     _validate_reliability_split_isolation,
     _validate_manifest_rows,
 )
+from experiments.benchmarks.extraction.audio.protocol import load_protocol as default_protocol
 from experiments.benchmarks.common.process import worker_environment
 from experiments.benchmarks.common.runner import run_benchmark
 
 ROOT = Path(__file__).resolve().parents[1]
+AUDIO_PROTOCOL = default_protocol()
+ASR_PROFILES = profiles(AUDIO_PROTOCOL)
+
+
+def score_speech(*args, **kwargs):
+    kwargs.setdefault("alignment_threshold", AUDIO_PROTOCOL.alignment_threshold)
+    kwargs.setdefault(
+        "timestamp_tolerance_seconds",
+        float(AUDIO_PROTOCOL.audio["manifest_duration_tolerance_seconds"]),
+    )
+    return _score_speech(*args, **kwargs)
+
+
+def aggregate(*args, **kwargs):
+    kwargs.setdefault("confidence", AUDIO_PROTOCOL.confidence_level)
+    return _aggregate(*args, **kwargs)
 
 
 @pytest.mark.parametrize(
@@ -174,6 +191,7 @@ def test_mocked_asr_worker_phase_runs_end_to_end(monkeypatch) -> None:
             "repetitions": 1,
             "bootstrap_resamples": 0,
             "seed": 42,
+            "protocol": AUDIO_PROTOCOL.meta.worker_payload(),
         }
     )
     assert output["metrics"]["word_error_rate"] == 0.0
@@ -249,7 +267,7 @@ def test_whisper_preserves_untimed_text_and_benchmark_records_it(tmp_path) -> No
     assert [warning.code for warning in document.warnings] == ["incomplete_timestamp"]
 
     profile = ASR_PROFILES["whisper-small-en-control"]
-    runtime = WhisperRuntime(profile, Path("model"), "cpu")
+    runtime = WhisperRuntime(profile, Path("model"), "cpu", AUDIO_PROTOCOL)
     runtime._runtime = fake_runtime
 
     transcript = runtime.transcribe(Path("audio.wav"))
@@ -552,7 +570,7 @@ def test_audio_registry_and_duration_limit_are_frozen() -> None:
         },
     ]
     with pytest.raises(ValueError, match="between 0 and 30"):
-        _validate_manifest_rows(speech, controls, "smoke")
+        _validate_manifest_rows(speech, controls, "smoke", AUDIO_PROTOCOL)
 
     cpu_environment = worker_environment("cpu")
     assert cpu_environment["CUDA_VISIBLE_DEVICES"] == ""
@@ -585,7 +603,17 @@ def test_asr_runner_logs_flat_metrics_and_required_tables(tmp_path) -> None:
         )
 
     result = run_benchmark(
-        BenchmarkPlan("extraction", "audio-smoke", "smoke", "fixture", ("asr",)),
+        BenchmarkPlan(
+            "extraction",
+            "audio-smoke",
+            "smoke",
+            "fixture",
+            ("asr",),
+            seed=AUDIO_PROTOCOL.meta.seed,
+            repetitions=AUDIO_PROTOCOL.profile("smoke").repetitions,
+            bootstrap_resamples=AUDIO_PROTOCOL.profile("smoke").bootstrap_resamples,
+            warmups=AUDIO_PROTOCOL.profile("smoke").warmups,
+        ),
         evaluator,
         dataset_checksum="fixture",
         directions=METRIC_DIRECTIONS,
@@ -622,7 +650,17 @@ def test_failed_asr_candidate_keeps_one_sample_artifact(tmp_path) -> None:
         )
 
     result = run_benchmark(
-        BenchmarkPlan("extraction", "audio-smoke", "smoke", "fixture", ("asr",)),
+        BenchmarkPlan(
+            "extraction",
+            "audio-smoke",
+            "smoke",
+            "fixture",
+            ("asr",),
+            seed=AUDIO_PROTOCOL.meta.seed,
+            repetitions=AUDIO_PROTOCOL.profile("smoke").repetitions,
+            bootstrap_resamples=AUDIO_PROTOCOL.profile("smoke").bootstrap_resamples,
+            warmups=AUDIO_PROTOCOL.profile("smoke").warmups,
+        ),
         evaluator,
         dataset_checksum="fixture",
         directions={"required_quality": "min"},
@@ -792,7 +830,7 @@ def test_reference_transcript_must_match_timed_segment_text() -> None:
     ]
 
     with pytest.raises(ValueError, match="reference does not match its timed segments"):
-        _validate_manifest_rows(speech, controls, "smoke")
+        _validate_manifest_rows(speech, controls, "smoke", AUDIO_PROTOCOL)
 
     valid = speech[1]
     _validate_manifest_rows(
@@ -807,6 +845,7 @@ def test_reference_transcript_must_match_timed_segment_text() -> None:
         ],
         controls,
         "smoke",
+        AUDIO_PROTOCOL,
     )
 
 
@@ -847,12 +886,12 @@ def test_authoritative_audio_split_requires_all_condition_groups() -> None:
     ]
 
     with pytest.raises(ValueError, match="lacks required conditions"):
-        _validate_manifest_rows(speech, controls, "standard")
+        _validate_manifest_rows(speech, controls, "development", AUDIO_PROTOCOL)
 
     speech[0]["conditions"] = ["noisy", "accented", "multi_speaker"]
-    _validate_manifest_rows(speech, controls, "standard")
+    _validate_manifest_rows(speech, controls, "development", AUDIO_PROTOCOL)
 
-    assert {"accented", "multi_speaker"} <= REQUIRED_SPEECH_CONDITIONS
+    assert {"accented", "multi_speaker"} <= AUDIO_PROTOCOL.required_conditions
 
 
 def test_required_cuda_monitoring_cannot_report_fabricated_zero() -> None:
@@ -892,3 +931,13 @@ def test_cuda_monitor_uses_device_delta_when_wddm_hides_process_bytes() -> None:
 
     assert monitor.metrics()["peak_vram_mb"] == pytest.approx(500 / (1024**2))
     assert monitor.vram_measurement_method == "nvml-device-delta-wddm"
+
+
+def test_cuda_monitor_preserves_lowest_wddm_floor_across_children(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(resource_module, "_GPU_FLOOR_BYTES", {})
+
+    assert resource_module._device_memory_floor(0, 200) == 200
+    assert resource_module._device_memory_floor(0, 700) == 200
+    assert resource_module._device_memory_floor(0, 100) == 100

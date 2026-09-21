@@ -23,6 +23,10 @@ from experiments.benchmarks.common.datasets import load_manifest
 from experiments.benchmarks.rag.chunking_embedding.strategies import (
     build_chunking_strategy,
 )
+from experiments.benchmarks.rag.chunking_embedding.protocol import (
+    load_protocol as default_chunking_protocol,
+    protocol_from_mapping as chunking_protocol_from_mapping,
+)
 from experiments.benchmarks.rag.evaluation import Chunk, ExactIndex
 from experiments.benchmarks.rag.retrieval import benchmark as retrieval_benchmark
 from experiments.benchmarks.rag.methods import reciprocal_rank_fusion_with_scores
@@ -41,7 +45,7 @@ from experiments.benchmarks.rag.retrieval.profiles import (
     validation_candidates,
 )
 from experiments.benchmarks.rag.retrieval.protocol import (
-    default_protocol,
+    load_protocol as default_protocol,
     protocol_from_mapping,
     protocol_from_settings,
 )
@@ -72,10 +76,21 @@ def _settings(
     if bootstrap_resamples is not None:
         execution["bootstrap_resamples"] = bootstrap_resamples
     protocol = protocol_from_mapping(payload)
+    chunking_payload = deepcopy(default_chunking_protocol().meta.resolved)
+    chunking_execution = chunking_payload["profiles"][profile]
+    chunking_execution.update(
+        {
+            "warmups": execution["warmups"],
+            "repetitions": execution["repetitions"],
+            "bootstrap_resamples": execution["bootstrap_resamples"],
+            "device": execution["device"],
+            "dtype": execution["dtype"],
+        }
+    )
+    chunking_protocol = chunking_protocol_from_mapping(chunking_payload)
     return {
-        "retrieval_protocol": deepcopy(protocol.resolved),
-        "retrieval_protocol_checksum": protocol.checksum,
-        "retrieval_protocol_version": protocol.version,
+        "retrieval_protocol": protocol.metadata().worker_payload(),
+        "chunking_embedding_protocol": chunking_protocol.meta.worker_payload(),
         **overrides,
     }
 
@@ -159,12 +174,14 @@ def test_protocol_is_strict_and_plan_checksum_is_verified() -> None:
     with pytest.raises(ValueError, match="checksum"):
         protocol_from_settings(
             {
-                "retrieval_protocol": deepcopy(protocol.resolved),
-                "retrieval_protocol_checksum": "wrong",
+                "retrieval_protocol": {
+                    **protocol.metadata().worker_payload(),
+                    "checksum": "wrong",
+                },
             }
         )
     wrong_version = _settings()
-    wrong_version["retrieval_protocol_version"] = "wrong"
+    wrong_version["retrieval_protocol"]["protocol_version"] = "wrong"
     with pytest.raises(ValueError, match="version"):
         protocol_from_settings(wrong_version)
 
@@ -182,7 +199,13 @@ def test_bm25_freezes_documented_parameters(monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setattr(rank_bm25, "BM25Okapi", FixtureBM25)
 
-    methods.BM25(["First document", "second document"])
+    protocol = default_protocol()
+    methods.BM25(
+        ["First document", "second document"],
+        k1=protocol.bm25_k1,
+        b=protocol.bm25_b,
+        epsilon=protocol.bm25_epsilon,
+    )
     assert observed == {
         "documents": [["first", "document"], ["second", "document"]],
         "k1": 1.5,
@@ -196,6 +219,7 @@ def test_rrf_uses_documented_stable_tie_breaking() -> None:
         [[0], [1]],
         20,
         60,
+        weights=(1.0, 1.0),
         tie_keys={0: "z-chunk", 1: "a-chunk"},
     )
     assert [identifier for identifier, _ in result] == [1, 0]
@@ -204,7 +228,9 @@ def test_rrf_uses_documented_stable_tie_breaking() -> None:
 def test_smoke_fixture_produces_exactly_thirty_frozen_chunks() -> None:
     manifest = load_manifest(PROJECT_ROOT / "data/benchmarks/rag/smoke.json")
     tokenizer = TiktokenOffsetTokenizer("cl100k_base")
-    chunker = build_chunking_strategy("token-256-32", tokenizer=tokenizer)
+    chunker = build_chunking_strategy(
+        "token-256-32", tokenizer=tokenizer, protocol=default_chunking_protocol()
+    )
     chunks = [
         row
         for sample in manifest.samples
@@ -389,6 +415,7 @@ def test_owner_pool_is_reused_by_every_reranker_child(monkeypatch: pytest.Monkey
         "smoke",
         manifest.name,
         ("bm25|none", "bm25|ettin-150m"),
+        seed=default_protocol().seed,
         repetitions=2,
         bootstrap_resamples=0,
         warmups=0,
@@ -473,6 +500,7 @@ def test_measured_failure_keeps_every_timing_row(monkeypatch: pytest.MonkeyPatch
         "smoke",
         manifest.name,
         ("bm25|none",),
+        seed=default_protocol().seed,
         repetitions=3,
         bootstrap_resamples=0,
         warmups=0,
@@ -582,7 +610,10 @@ def test_parent_comparisons_are_separated_and_csv_matches_parquet(
         "validation",
         "fixture",
         RETRIEVAL_CANDIDATES,
+        seed=default_protocol().seed,
+        repetitions=1,
         bootstrap_resamples=100,
+        warmups=default_protocol().profile("validation").warmups,
         settings=_settings(
             profile="validation",
             repetitions=1,

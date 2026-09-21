@@ -20,16 +20,28 @@ from experiments.benchmarks.common.datasets import load_manifest
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
 from experiments.benchmarks.rag.evaluation import (
-    RETRIEVAL_QUALITY_DIRECTIONS,
     build_index,
     reranker_for,
     retrieval_metrics,
+    retrieval_quality_directions,
 )
 from experiments.benchmarks.rag.methods import reciprocal_rank_fusion
-from experiments.benchmarks.rag.retrieval.protocol import default_protocol
+from experiments.benchmarks.rag.chunking_embedding.protocol import (
+    DEFAULT_PROTOCOL_PATH as DEFAULT_CHUNKING_PROTOCOL_PATH,
+    load_protocol as load_chunking_protocol,
+)
+from experiments.benchmarks.rag.retrieval.protocol import (
+    DEFAULT_PROTOCOL_PATH as DEFAULT_RETRIEVAL_PROTOCOL_PATH,
+    load_protocol as load_retrieval_protocol,
+)
 from experiments.benchmarks.vectordb.adapters import Config, Record, create
 from experiments.benchmarks.vectordb.conformance import _finish_index
 from experiments.benchmarks.vectordb.docker_metrics import image_lock, verify_image
+from experiments.benchmarks.vectordb.protocol import (
+    DEFAULT_PROTOCOL_PATH as DEFAULT_VECTOR_PROTOCOL_PATH,
+    VectorDatabaseProtocol,
+    load_protocol as load_vector_protocol,
+)
 
 
 def main() -> int:
@@ -37,14 +49,38 @@ def main() -> int:
     parser.add_argument("--database-selection", type=Path, required=True)
     parser.add_argument("--embedding-selection", type=Path, required=True)
     parser.add_argument("--retrieval-selection", type=Path, required=True)
-    parser.add_argument("--profile", choices=("standard", "full"), default="standard")
+    parser.add_argument(
+        "--profile",
+        choices=("development", "validation"),
+        default="development",
+    )
+    parser.add_argument("--device", choices=("cpu", "cuda"))
+    parser.add_argument("--dtype", choices=("float32", "float16", "bfloat16"))
+    parser.add_argument("--protocol", type=Path, default=DEFAULT_VECTOR_PROTOCOL_PATH)
+    parser.add_argument("--retrieval-protocol", type=Path, default=DEFAULT_RETRIEVAL_PROTOCOL_PATH)
+    parser.add_argument("--chunking-protocol", type=Path, default=DEFAULT_CHUNKING_PROTOCOL_PATH)
     parser.add_argument("--no-mlflow", action="store_true")
     arguments = parser.parse_args()
+    vector_protocol = load_vector_protocol(arguments.protocol)
+    retrieval_protocol = load_retrieval_protocol(arguments.retrieval_protocol)
+    chunking_protocol = load_chunking_protocol(arguments.chunking_protocol)
+    vector_execution = vector_protocol.profile(arguments.profile)
+    retrieval_execution = retrieval_protocol.profile(arguments.profile)
+    device = arguments.device or retrieval_execution.device
+    dtype = arguments.dtype or retrieval_execution.dtype
+    if retrieval_execution.hardware_required and (device, dtype) != (
+        retrieval_execution.device,
+        retrieval_execution.dtype,
+    ):
+        parser.error(
+            f"{arguments.profile} complete retrieval requires "
+            f"--device {retrieval_execution.device} --dtype {retrieval_execution.dtype}"
+        )
     database_decision = load_engineer_decision(
         arguments.database_selection,
         minimum=2,
-        maximum=3,
-        expected_source=("vectordb-server-v4", "dense-ann", "full"),
+        maximum=vector_protocol.shortlist_limit,
+        expected_source=("vectordb-server-v4", "dense-ann", "validation"),
     )
     database_payload = _payload(database_decision.source_summary)
     embedding = _single_selection(
@@ -61,14 +97,16 @@ def main() -> int:
     )
     revisions = model_revisions(model_lock)
     vector_revisions = image_lock()
-    protocol = default_protocol()
     index = build_index(
         manifest,
         chunker_name,
         embedding_name,
         model_lock,
         with_bm25=True,
-        retrieval_protocol=protocol,
+        device=device,
+        dtype=dtype,
+        chunking_protocol=chunking_protocol,
+        retrieval_protocol=retrieval_protocol,
     )
     if index.bm25 is None:
         raise RuntimeError("Complete retrieval requires the BM25 index")
@@ -80,16 +118,35 @@ def main() -> int:
         arguments.profile,
         manifest.name,
         candidates,
-        repetitions=3,
-        bootstrap_resamples=10_000,
+        seed=vector_protocol.meta.seed,
+        repetitions=vector_execution.repetitions,
+        bootstrap_resamples=vector_execution.bootstrap_resamples,
+        warmups=vector_execution.warmups,
+        settings={
+            "device": device,
+            "dtype": dtype,
+        },
     )
 
     def evaluate(candidate):
-        verify_image(candidate, vector_revisions[f"image:{candidate}"])
-        reranker = reranker_for(
-            retrieval, model_lock, retrieval_protocol=protocol
+        verify_image(
+            candidate,
+            vector_revisions[f"image:{candidate}"],
+            timeout_seconds=vector_protocol.docker_storage_timeout_seconds,
         )
-        config = _config(database_payload, candidate, index.vectors.shape[1])
+        reranker = reranker_for(
+            retrieval,
+            model_lock,
+            device=device,
+            dtype=dtype,
+            retrieval_protocol=retrieval_protocol,
+        )
+        config = _config(
+            database_payload,
+            candidate,
+            index.vectors.shape[1],
+            vector_protocol,
+        )
         adapter = create(candidate, config)
         try:
             adapter.reset()
@@ -127,11 +184,11 @@ def main() -> int:
                 query_vector = index.embedder.embed_query(query)
                 dense = [
                     by_id[hit.identifier]
-                    for hit in adapter.search(query_vector, protocol.pool_size)
+                    for hit in adapter.search(query_vector, retrieval_protocol.pool_size)
                 ]
                 lexical = [
                     position
-                    for position, _ in bm25.rank(query, protocol.pool_size)
+                    for position, _ in bm25.rank(query, retrieval_protocol.pool_size)
                 ]
                 first_stage = retrieval.split("|", 1)[0]
                 if first_stage == "dense":
@@ -141,9 +198,9 @@ def main() -> int:
                 elif first_stage == "rrf":
                     order = reciprocal_rank_fusion(
                         [dense, lexical],
-                        protocol.pool_size,
-                        protocol.rrf_constant,
-                        weights=protocol.rrf_weights,
+                        retrieval_protocol.pool_size,
+                        retrieval_protocol.rrf_constant,
+                        weights=retrieval_protocol.rrf_weights,
                         tie_keys={
                             position: chunk.identifier
                             for position, chunk in enumerate(index.chunks)
@@ -158,17 +215,27 @@ def main() -> int:
                     order = [order[position] for position in local]
                 return order, time.perf_counter() - started
 
-            for question in questions[:2]:
+            questions = questions[: int(vector_protocol.workloads["validation"]["selected_real_query_limit"])]
+            for question in questions[: plan.warmups]:
                 retrieve(question)
             for question in questions:
                 measured = [retrieve(question) for _ in range(plan.repetitions)]
                 orders = [value[0] for value in measured]
                 item_latencies = [value[1] for value in measured]
                 order = orders[0]
-                selected = [index.chunks[position] for position in order[:10]]
+                selected = [
+                    index.chunks[position]
+                    for position in order[: max(retrieval_protocol.quality_cutoffs)]
+                ]
                 latency = float(np.median(item_latencies))
                 latencies.extend(item_latencies)
-                metrics, tokens = retrieval_metrics(question, selected, index.chunks, index.tokenizer)
+                metrics, tokens = retrieval_metrics(
+                    question,
+                    selected,
+                    index.chunks,
+                    index.tokenizer,
+                    cutoffs=retrieval_protocol.quality_cutoffs,
+                )
                 metrics["determinism"] = float(all(value == order for value in orders))
                 samples.append(
                     SampleResult(str(question["id"]), metrics, latency, {"retrieved_tokens": tokens})
@@ -177,7 +244,8 @@ def main() -> int:
                 "p50_latency_seconds": float(np.median(latencies)),
                 "p95_latency_seconds": float(np.quantile(latencies, 0.95)),
             }
-            for concurrency in (1, 8, 32, 64):
+            concurrency_values = vector_protocol.concurrency_levels(arguments.profile)
+            for concurrency in concurrency_values:
                 started = time.perf_counter()
                 errors = 0
                 concurrent_latencies = []
@@ -205,7 +273,7 @@ def main() -> int:
                     )
             return samples, operational, {
                 "target_concurrency_success": float(
-                    operational["error_rate_concurrency_64"] == 0.0
+                        operational[f"error_rate_concurrency_{concurrency_values[-1]}"] == 0.0
                 )
             }
         finally:
@@ -216,7 +284,7 @@ def main() -> int:
         evaluate,
         dataset_checksum=manifest.fingerprint,
         directions={
-            **RETRIEVAL_QUALITY_DIRECTIONS,
+            **retrieval_quality_directions(retrieval_protocol.quality_cutoffs),
             "operational.p50_latency_seconds": "min",
             "operational.p95_latency_seconds": "min",
             "target_concurrency_success": "max",
@@ -227,6 +295,11 @@ def main() -> int:
             "database": arguments.database_selection,
             "embedding": arguments.embedding_selection,
             "retrieval": arguments.retrieval_selection,
+        },
+        protocols={
+            "vector_database": vector_protocol.meta,
+            "retrieval": retrieval_protocol.metadata(arguments.retrieval_protocol),
+            "chunking_embedding": chunking_protocol.meta,
         },
         no_mlflow=arguments.no_mlflow,
     )
@@ -246,7 +319,12 @@ def _single_selection(path: Path, stage: str) -> str:
     ).selected_candidates[0]
 
 
-def _config(payload, candidate, dimension):
+def _config(
+    payload,
+    candidate,
+    dimension,
+    protocol: VectorDatabaseProtocol,
+):
     row = next(
         value for value in payload["candidates"] if value.get("candidate") == candidate
     )
@@ -255,11 +333,14 @@ def _config(payload, candidate, dimension):
         key.removesuffix(".selected_m")
         for key in operational
         if key.endswith(".selected_m")
-        and ("full-real-selected" in key or f"d{dimension}" in key)
+        and ("validation-real-selected" in key or f"d{dimension}" in key)
     ]
     if not prefixes:
         raise ValueError(f"No selected HNSW configuration for dimension {dimension}")
-    prefix = next((value for value in prefixes if "full-real-selected" in value), prefixes[0])
+    prefix = next(
+        (value for value in prefixes if "validation-real-selected" in value),
+        prefixes[0],
+    )
     selected = {
         key.removeprefix(prefix + "."): int(value)
         for key, value in operational.items()
@@ -267,9 +348,17 @@ def _config(payload, candidate, dimension):
     }
     return Config(
         dimension,
-        selected.get("selected_m", 16),
-        selected.get("selected_ef_construction", 100),
-        selected.get("selected_ef_search", 64),
+        selected["selected_m"],
+        selected["selected_ef_construction"],
+        selected["selected_ef_search"],
+        upsert_batch_size=protocol.upsert_batch_sizes[candidate],
+        request_timeout_seconds=protocol.request_timeout_seconds,
+        connection_pool_limit=protocol.connection_pool_limit,
+        index_readiness_timeout_seconds=protocol.index_readiness_timeout_seconds,
+        index_readiness_poll_seconds=protocol.index_readiness_poll_seconds,
+        index_verification_limit=protocol.index_verification_limit,
+        qdrant_full_scan_threshold=protocol.qdrant_full_scan_threshold,
+        qdrant_indexing_threshold=protocol.qdrant_indexing_threshold,
     )
 
 

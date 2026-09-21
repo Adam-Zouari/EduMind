@@ -1,9 +1,27 @@
-smoke:
-  matrix:
-    retriever: [dense, bm25, rrf]
-    reranker: [none, gte-modernbert, ettin-150m, ettin-400m, ettin-1b]
+matrix:
+  axes: [retrievers, rerankers]
+  separator: "|"
 
-development:
-  matrix:
-    retriever: [dense, bm25, rrf]
-    reranker: [none, gte-modernbert, ettin-150m, ettin-400m, ettin-1b]
+retrievers:
+  dense: {backend: exact-cosine, profiles: [smoke, development]}
+  bm25: {backend: rank-bm25, profiles: [smoke, development]}
+  rrf: {backend: reciprocal-rank-fusion, profiles: [smoke, development]}
+
+rerankers:
+  none: {backend: none, profiles: [smoke, development]}
+  gte-modernbert:
+    model_id: Alibaba-NLP/gte-reranker-modernbert-base
+    backend: transformers-sequence-classification
+    profiles: [smoke, development]
+  ettin-150m:
+    model_id: cross-encoder/ettin-reranker-150m-v1
+    backend: transformers-sequence-classification
+    profiles: [smoke, development]
+  ettin-400m:
+    model_id: cross-encoder/ettin-reranker-400m-v1
+    backend: transformers-sequence-classification
+    profiles: [smoke, development]
+  ettin-1b:
+    model_id: cross-encoder/ettin-reranker-1b-v1
+    backend: transformers-sequence-classification
+    profiles: [smoke, development]

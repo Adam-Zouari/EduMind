@@ -32,8 +32,8 @@ def test_manifest_checksum_tampering_is_detected(tmp_path) -> None:
 def test_manifest_split_must_match_the_requested_profile() -> None:
     manifest = load_manifest(PROJECT_ROOT / "data/benchmarks/rag/smoke.json")
     require_manifest_split(manifest, "smoke", "smoke")
-    with pytest.raises(DatasetValidationError, match="Profile standard requires split"):
-        require_manifest_split(manifest, "standard", {"dev", "development"})
+    with pytest.raises(DatasetValidationError, match="Profile development requires split"):
+        require_manifest_split(manifest, "development", {"dev", "development"})
 
 
 def test_document_level_leakage_is_rejected() -> None:

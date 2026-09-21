@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -14,15 +15,20 @@ from experiments.benchmarks.common.contracts import (
 from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.runner import run_benchmark
 import experiments.benchmarks.common.runner as benchmark_runner
+from experiments.benchmarks.rag.generation.protocol import (
+    load_protocol as load_generation_protocol,
+)
 
 
 def _plan(*candidates: str) -> BenchmarkPlan:
     return BenchmarkPlan(
         "test-suite",
         "completion",
-        "standard",
+        "development",
         "fixed-test-data",
         candidates,
+        seed=42,
+        repetitions=1,
         bootstrap_resamples=50,
         warmups=0,
     )
@@ -38,6 +44,58 @@ def _run(tmp_path: Path, plan: BenchmarkPlan, evaluator):
         no_mlflow=True,
         artifact_root=tmp_path,
     )
+
+
+def test_temporary_environment_does_not_reuse_deleted_candidate_directory(
+    tmp_path: Path,
+) -> None:
+    original = tempfile.tempdir
+    tempfile.tempdir = None
+    try:
+        first = tmp_path / "first"
+        second = tmp_path / "second"
+        first.mkdir()
+        second.mkdir()
+        with benchmark_runner._temporary_environment(first):
+            assert Path(tempfile.gettempdir()) == first.resolve()
+        first.rmdir()
+        with benchmark_runner._temporary_environment(second):
+            assert Path(tempfile.gettempdir()) == second.resolve()
+    finally:
+        tempfile.tempdir = original
+
+
+def test_resource_monitor_failure_does_not_mask_candidate_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Monitor:
+        vram_measurement_method = "unavailable"
+
+        def __init__(self, **_options):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def metrics(self):
+            raise RuntimeError("monitor failure")
+
+        def samples(self):
+            return []
+
+    monkeypatch.setattr(benchmark_runner, "ResourceMonitor", Monitor)
+
+    def evaluator(_candidate: str):
+        raise CandidateExecutionError("original candidate failure")
+
+    result = _run(tmp_path, _plan("failed"), evaluator)
+
+    assert result.candidates[0].status == "failed"
+    assert result.candidates[0].error == "original candidate failure"
 
 
 def test_bad_score_is_complete_and_runner_makes_no_selection(tmp_path: Path) -> None:
@@ -237,20 +295,20 @@ def test_engineer_decision_requires_a_complete_non_smoke_run(tmp_path: Path) -> 
     decision = load_engineer_decision(
         decision_path,
         exact=1,
-        expected_source=("test-suite", "completion", "standard"),
+        expected_source=("test-suite", "completion", "development"),
     )
     assert decision.selected_candidates == ("chosen",)
     with pytest.raises(ValueError, match="stage 'other'"):
         load_engineer_decision(
-            decision_path, expected_source=("test-suite", "other", "standard")
+            decision_path, expected_source=("test-suite", "other", "development")
         )
     with pytest.raises(ValueError, match="suite 'other'"):
         load_engineer_decision(
-            decision_path, expected_source=("other", "completion", "standard")
+            decision_path, expected_source=("other", "completion", "development")
         )
     with pytest.raises(ValueError, match="profile 'validation'"):
         load_engineer_decision(
-            decision_path, expected_source=("test-suite", "completion", "full")
+            decision_path, expected_source=("test-suite", "completion", "validation")
         )
 
     summary_path = result.artifact_directory / "summary.json"
@@ -306,3 +364,77 @@ def test_incomplete_candidate_and_parent_are_marked_failed_in_tracking(
     assert not result.complete
     assert tracking.failed[0] == "incomplete"
     assert tracking.failed[1].startswith("test-suite-completion-")
+
+
+def test_protocol_identity_and_resolved_settings_are_recorded_for_parent_and_child(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class RecordingTracker:
+        def __init__(self) -> None:
+            self.active: list[str] = []
+            self.parameter_calls: list[tuple[str, dict[str, object]]] = []
+            self.artifacts: list[tuple[str, Path, str | None]] = []
+
+        @contextmanager
+        def run(self, name: str, *, nested: bool = False):
+            del nested
+            self.active.append(name)
+            try:
+                yield name
+            finally:
+                self.active.pop()
+
+        def parameters(self, values) -> None:
+            self.parameter_calls.append((self.active[-1], dict(values)))
+
+        def metrics(self, values) -> None:
+            del values
+
+        def tags(self, values) -> None:
+            del values
+
+        def artifact(self, path, artifact_path=None) -> None:
+            self.artifacts.append((self.active[-1], Path(path), artifact_path))
+
+        def mark_failed(self) -> None:
+            raise AssertionError("The protocol-recording fixture must remain complete")
+
+    protocol = load_generation_protocol()
+    tracking = RecordingTracker()
+    monkeypatch.setattr(benchmark_runner, "tracker", lambda **_kwargs: tracking)
+    result = run_benchmark(
+        _plan("candidate"),
+        lambda _candidate: (
+            [SampleResult("sample", {"quality": 1.0}, 0.01)],
+            {"p95_latency_seconds": 0.01},
+        ),
+        dataset_checksum="fixed-checksum",
+        directions={"quality": "max", "operational.p95_latency_seconds": "min"},
+        primary_metric="quality",
+        artifact_root=tmp_path,
+        protocols={"generation": protocol.meta},
+    )
+
+    protocol_artifact = json.loads(
+        (result.artifact_directory / "generation_protocol.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert protocol_artifact["checksum"] == protocol.meta.checksum
+    candidate_artifact = json.loads(
+        (result.artifact_directory / "candidates" / "candidate.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    recorded = candidate_artifact["parameters"]["protocols"]["generation"]
+    assert recorded["version"] == protocol.meta.version
+    assert recorded["resolved"]["generation"]["maximum_answer_tokens"] == 256
+    assert any(
+        values.get("protocol.generation.checksum") == protocol.meta.checksum
+        for _run_name, values in tracking.parameter_calls
+    )
+    assert any(
+        path == protocol.meta.source_path
+        and artifact_path == "inputs/protocols/generation"
+        for _run_name, path, artifact_path in tracking.artifacts
+    )

@@ -1,23 +1,81 @@
 from pathlib import Path
+from collections.abc import Mapping
 import json
 import sys
+
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
 from edumind.common.paths import PROJECT_ROOT
 from edumind.common.artifacts import atomic_write_json
-from experiments.benchmarks.common.arguments import parser, resolved_candidates
+from experiments.benchmarks.common.arguments import parser
 from experiments.benchmarks.common.contracts import BenchmarkPlan
 from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
 from experiments.benchmarks.rag.chunking_embedding.profiles import split_candidate
-from experiments.benchmarks.rag.evaluation import RETRIEVAL_QUALITY_DIRECTIONS, build_index
+from experiments.benchmarks.rag.chunking_embedding.protocol import (
+    DEFAULT_PROTOCOL_PATH as DEFAULT_CHUNKING_PROTOCOL_PATH,
+    load_protocol as load_chunking_protocol,
+)
+from experiments.benchmarks.rag.evaluation import build_index, retrieval_quality_directions
 from experiments.benchmarks.rag.generation.evaluate import GENERATION_DIRECTIONS, evaluate_candidate
+from experiments.benchmarks.rag.generation.models import GENERATOR_PROFILES
+from experiments.benchmarks.rag.generation.protocol import (
+    DEFAULT_PROTOCOL_PATH as DEFAULT_GENERATION_PROTOCOL_PATH,
+    load_protocol as load_generation_protocol,
+)
+from experiments.benchmarks.rag.retrieval.protocol import (
+    DEFAULT_PROTOCOL_PATH as DEFAULT_RETRIEVAL_PROTOCOL_PATH,
+    load_protocol as load_retrieval_protocol,
+)
+from experiments.benchmarks.rag.retrieval.profiles import parse_candidate
+from experiments.benchmarks.rag.final.protocol import (
+    DEFAULT_PROTOCOL_PATH as DEFAULT_FINAL_PROTOCOL_PATH,
+    load_protocol as load_final_protocol,
+)
+
+
+def _declared_systems(path: Path, profile: str, top_k: tuple[int, ...]) -> tuple[str, ...]:
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    raw = payload.get("candidates") if isinstance(payload, Mapping) else None
+    if not isinstance(raw, Mapping) or not raw:
+        raise ValueError("Final RAG candidates.yaml requires a candidate registry")
+    result = []
+    expected = {"chunking", "embedding_model", "retrieval", "generator", "profiles"}
+    for alias, value in raw.items():
+        if not isinstance(alias, str) or not isinstance(value, Mapping):
+            raise ValueError("Final RAG candidate registry is malformed")
+        if set(value) != expected:
+            raise ValueError(f"Final RAG candidate {alias!r} has invalid fields")
+        profiles = value["profiles"]
+        if not isinstance(profiles, list) or not all(
+            isinstance(item, str) for item in profiles
+        ):
+            raise ValueError(f"Final RAG candidate {alias!r} has invalid profiles")
+        if profile not in profiles:
+            continue
+        components = tuple(
+            str(value[name])
+            for name in ("chunking", "embedding_model", "retrieval", "generator")
+        )
+        if any(not component.strip() for component in components):
+            raise ValueError(f"Final RAG candidate {alias!r} has an empty identity")
+        result.extend(
+            "@@".join((*components, f"top_k={cutoff}")) for cutoff in top_k
+        )
+    if not result:
+        raise ValueError(f"Final RAG has no declared candidates for {profile}")
+    return tuple(result)
+
 
 directory = Path(__file__).parent
-argument_parser = parser("Benchmark shortlisted complete RAG systems")
+argument_parser = parser(
+    "Benchmark shortlisted complete RAG systems",
+    profiles=("smoke", "development", "validation", "locked"),
+)
 argument_parser.add_argument("--retrieval-selection", type=Path)
 argument_parser.add_argument("--generation-selection", type=Path)
 argument_parser.add_argument("--review-results", type=Path)
@@ -25,22 +83,60 @@ argument_parser.add_argument("--confirm-locked-test", action="store_true")
 argument_parser.add_argument(
     "--device", choices=("cpu", "cuda"), help="Whole-model generator device"
 )
+argument_parser.add_argument(
+    "--dtype", choices=("float32", "float16", "bfloat16", "auto")
+)
+argument_parser.add_argument("--final-protocol", type=Path, default=DEFAULT_FINAL_PROTOCOL_PATH)
+argument_parser.add_argument("--generation-protocol", type=Path, default=DEFAULT_GENERATION_PROTOCOL_PATH)
+argument_parser.add_argument("--retrieval-protocol", type=Path, default=DEFAULT_RETRIEVAL_PROTOCOL_PATH)
+argument_parser.add_argument("--chunking-protocol", type=Path, default=DEFAULT_CHUNKING_PROTOCOL_PATH)
 arguments = argument_parser.parse_args()
-if (
-    arguments.profile == "standard"
-    and arguments.shortlist is None
-    and (arguments.retrieval_selection is None or arguments.generation_selection is None)
+final_protocol = load_final_protocol(arguments.final_protocol)
+generation_protocol = load_generation_protocol(arguments.generation_protocol)
+retrieval_protocol = load_retrieval_protocol(arguments.retrieval_protocol)
+chunking_protocol = load_chunking_protocol(arguments.chunking_protocol)
+execution = final_protocol.profile(arguments.profile)
+if arguments.profile in {"smoke", "development"} and arguments.shortlist is not None:
+    argument_parser.error(f"{arguments.profile} final RAG does not accept --shortlist")
+if arguments.profile in {"validation", "locked"} and arguments.shortlist is None:
+    argument_parser.error(
+        f"{arguments.profile} final RAG requires --shortlist DECISION_JSON"
+    )
+if arguments.profile == "development" and (
+    arguments.retrieval_selection is None or arguments.generation_selection is None
 ):
     argument_parser.error(
-        "standard final RAG requires --retrieval-selection and --generation-selection"
+        "development final RAG requires --retrieval-selection and "
+        "--generation-selection"
     )
-if arguments.profile in {"standard", "full"} and arguments.device is None:
-    argument_parser.error("standard/full final RAG requires explicit --device cpu|cuda")
-device = arguments.device or "cpu"
+if arguments.profile != "development" and (
+    arguments.retrieval_selection is not None
+    or arguments.generation_selection is not None
+):
+    argument_parser.error(
+        "retrieval and generation selections apply only to development final RAG"
+    )
+if arguments.profile != "locked" and (
+    arguments.review_results is not None or arguments.confirm_locked_test
+):
+    argument_parser.error(
+        "review results and locked-test confirmation apply only to --profile locked"
+    )
+if arguments.profile != "smoke" and arguments.device is None:
+    argument_parser.error(
+        "development/validation/locked final RAG requires explicit --device cpu|cuda"
+    )
+device = arguments.device or execution.device
+dtype = arguments.dtype or execution.dtype
+if execution.hardware_required and (device, dtype) != (execution.device, execution.dtype):
+    argument_parser.error(
+        f"{arguments.profile} final RAG requires --device {execution.device} "
+        f"--dtype {execution.dtype}"
+    )
 manifest_path = arguments.manifest or PROJECT_ROOT / (
     "data/benchmarks/rag/smoke.json"
     if arguments.profile == "smoke"
-    else f"data/benchmarks/rag/rag-selection-{'validation' if arguments.profile == 'standard' else 'locked-test'}.json"
+    else f"data/benchmarks/rag/rag-selection-{ {'development': 'dev', 'validation': 'validation', 'locked': 'locked-test'}[arguments.profile] }.json"
 )
 manifest = load_manifest(manifest_path)
 require_manifest_split(
@@ -48,23 +144,43 @@ require_manifest_split(
     arguments.profile,
     {
         "smoke": "smoke",
-        "standard": "validation",
-        "full": "locked-test",
+        "development": "dev",
+        "validation": "validation",
+        "locked": "locked-test",
     }[arguments.profile],
 )
-candidates = resolved_candidates(
-    directory / "candidates.yaml",
-    arguments.profile,
-    arguments.shortlist,
-    expected_source=("rag", "final", "standard"),
-    exact=1 if arguments.profile == "full" else None,
-)
-if arguments.shortlist is None and (arguments.retrieval_selection or arguments.generation_selection):
+if arguments.profile in {"validation", "locked"}:
+    expected_profile = (
+        "development" if arguments.profile == "validation" else "validation"
+    )
+    candidates = load_engineer_decision(
+        arguments.shortlist,
+        expected_source=("rag", "final", expected_profile),
+        exact=(
+            1
+            if arguments.profile == "locked"
+            else final_protocol.human_review_system_count
+        ),
+        maximum=(
+            final_protocol.human_review_system_count
+            if arguments.profile == "validation"
+            else None
+        ),
+    ).selected_candidates
+elif arguments.profile == "smoke":
+    candidates = _declared_systems(
+        directory / "candidates.yaml", arguments.profile, final_protocol.top_k
+    )
+elif arguments.profile == "development":
+    candidates = ()
+else:
+    raise AssertionError(f"Unhandled Final RAG profile: {arguments.profile}")
+if arguments.profile == "development":
     if not arguments.retrieval_selection or not arguments.generation_selection:
         raise ValueError("Provide both --retrieval-selection and --generation-selection")
     retrieval_decision = load_engineer_decision(
         arguments.retrieval_selection,
-        maximum=3,
+        maximum=final_protocol.maximum_retrieval_finalists,
         expected_source=("rag", "retrieval-reranking", "validation"),
     )
     retrievals = retrieval_decision.selected_candidates
@@ -79,36 +195,66 @@ if arguments.shortlist is None and (arguments.retrieval_selection or arguments.g
     split_candidate(selected_pair)
     generators = load_engineer_decision(
         arguments.generation_selection,
-        maximum=3,
-        expected_source=("rag", "generation", "full"),
+        maximum=final_protocol.maximum_generation_finalists,
+        expected_source=("rag", "generation", "validation"),
     ).selected_candidates
     candidates = tuple(
         f"{selected_pair.replace('|', '@@', 1)}@@{retrieval}@@{generator}@@top_k={top_k}"
         for retrieval in retrievals
         for generator in generators
-        for top_k in (3, 5)
+        for top_k in final_protocol.top_k
     )
-if arguments.profile == "full" and len(candidates) != 1:
-    raise ValueError("Locked-test full evaluation requires exactly one approved final candidate")
-locked_marker = PROJECT_ROOT / "artifacts/benchmarks/rag/final/locked-test-v1.json"
-if arguments.profile == "full":
+if arguments.profile == "locked" and len(candidates) != 1:
+    raise ValueError("Locked-test evaluation requires exactly one approved final candidate")
+if len(candidates) > final_protocol.maximum_final_systems:
+    raise ValueError(
+        "Final RAG candidate matrix exceeds protocol maximum_final_systems"
+    )
+locked_marker = (
+    PROJECT_ROOT
+    / "artifacts/benchmarks/rag/final"
+    / f"{final_protocol.locked_marker_version}.json"
+)
+if arguments.profile == "locked":
     if not arguments.confirm_locked_test or not arguments.review_results:
         raise ValueError(
-            "Full is the one-time locked test. Provide --review-results and "
+            "Locked is the one-time test. Provide --review-results and "
             "--confirm-locked-test after blinded review."
         )
     review = json.loads(arguments.review_results.read_text(encoding="utf-8"))
-    if not review.get("complete") or int(review.get("judgment_count", 0)) != 60:
-        raise ValueError("Locked test requires a complete imported 60-judgment review")
+    if (
+        not review.get("complete")
+        or int(review.get("judgment_count", 0))
+        != final_protocol.required_judgment_count
+    ):
+        raise ValueError(
+            "Locked test requires a complete imported "
+            f"{final_protocol.required_judgment_count}-judgment review"
+        )
     if candidates[0] not in review.get("candidates", {}):
         raise ValueError("The locked-test candidate was not one of the reviewed systems")
     if locked_marker.exists():
         raise ValueError(
-            f"Locked test v1 was already consumed; see {locked_marker}. "
+            f"Locked test {final_protocol.locked_marker_version} was already consumed; "
+            f"see {locked_marker}. "
             "Create a new benchmark version before another test evaluation."
         )
+required_models = {generation_protocol.faithfulness_model}
+for candidate in candidates:
+    chunker, embedding, retrieval, generator, top_k_value = candidate.split("@@", 4)
+    chunking_protocol.strategy(chunker)
+    parsed_retrieval = parse_candidate(retrieval)
+    if generator not in GENERATOR_PROFILES:
+        raise ValueError(f"Unknown generation candidate in final system: {generator}")
+    if int(top_k_value.removeprefix("top_k=")) not in final_protocol.top_k:
+        raise ValueError(f"Final system top_k is outside {final_protocol.top_k}")
+    required_models.add(embedding)
+    required_models.add(GENERATOR_PROFILES[generator][0])
+    if parsed_retrieval.reranker_model is not None:
+        required_models.add(parsed_retrieval.reranker_model)
 model_lock = load_selected_model_lock(
-    PROJECT_ROOT / "data/benchmarks/models/selected.json"
+    PROJECT_ROOT / "data/benchmarks/models/selected.json",
+    candidates=tuple(sorted(required_models)),
 )
 revisions = model_revisions(model_lock)
 indexes = {}
@@ -118,9 +264,10 @@ plan = BenchmarkPlan(
     arguments.profile,
     manifest.name,
     candidates,
-    repetitions=1 if arguments.profile == "smoke" else 3,
-    bootstrap_resamples=0 if arguments.profile == "smoke" else 10_000,
-    warmups=2,
+    seed=final_protocol.meta.seed,
+    repetitions=execution.repetitions,
+    bootstrap_resamples=execution.bootstrap_resamples,
+    warmups=execution.warmups,
 )
 
 def evaluate(candidate):
@@ -128,7 +275,15 @@ def evaluate(candidate):
     pair = (chunker, embedding)
     if pair not in indexes:
         indexes[pair] = build_index(
-            manifest, chunker, embedding, model_lock, with_bm25=True
+            manifest,
+            chunker,
+            embedding,
+            model_lock,
+            with_bm25=True,
+            device=device,
+            dtype=dtype,
+            chunking_protocol=chunking_protocol,
+            retrieval_protocol=retrieval_protocol,
         )
     return evaluate_candidate(
         generator,
@@ -139,15 +294,23 @@ def evaluate(candidate):
         top_k=int(top_k_value.removeprefix("top_k=")),
         repetitions=plan.repetitions,
         device=device,
+        dtype=dtype,
         bootstrap_resamples=plan.bootstrap_resamples,
         bootstrap_seed=plan.seed,
+        protocol=generation_protocol,
+        retrieval_protocol=retrieval_protocol,
+        warmups=plan.warmups,
+        question_scope="all",
     )
 
 result = run_benchmark(
     plan,
     evaluate,
     dataset_checksum=manifest.fingerprint,
-    directions={**GENERATION_DIRECTIONS, **RETRIEVAL_QUALITY_DIRECTIONS},
+    directions={
+        **GENERATION_DIRECTIONS,
+        **retrieval_quality_directions(retrieval_protocol.quality_cutoffs),
+    },
     primary_metric="citation_f1",
     revisions=revisions,
     decision_files={
@@ -159,10 +322,17 @@ result = run_benchmark(
         }.items()
         if path is not None
     },
+    input_artifacts={"manifest": manifest_path},
+    protocols={
+        "chunking_embedding": chunking_protocol.meta,
+        "retrieval": retrieval_protocol.metadata(arguments.retrieval_protocol),
+        "generation": generation_protocol.meta,
+        "final_rag": final_protocol.meta,
+    },
     no_mlflow=arguments.no_mlflow,
 )
 print(json.dumps({"run_id": result.run_id, "artifacts": str(result.artifact_directory)}, indent=2))
-if arguments.profile == "full" and result.complete:
+if arguments.profile == "locked" and result.complete:
     atomic_write_json(
         locked_marker,
         {

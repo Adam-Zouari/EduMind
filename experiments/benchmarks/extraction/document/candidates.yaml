@@ -1,9 +1,13 @@
-smoke:
-  - docling-standard|ocr=rapidocr|mode=full_page|table=fast|formula=off
-standard:
-  matrix:
-    parser: [docling-standard]
-    ocr: [ocr=rapidocr, ocr=tesseract, ocr=easyocr]
-    mode: [mode=pdf_aware_layout_regions, mode=full_page]
-    table: [table=fast, table=accurate]
-    formula: [formula=off, formula=on]
+candidates:
+  docling-standard:
+    model_id: docling-standard
+    backend: docling
+    profiles: [smoke, development, validation]
+  docling-vlm-granite-258m:
+    model_id: ibm-granite/granite-docling-258M
+    backend: docling-vlm
+    profiles: [development, validation]
+  paddleocr-vl-1.6:
+    model_id: PaddlePaddle/PaddleOCR-VL-1.6
+    backend: paddleocr-vl
+    profiles: [development, validation]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping, Sequence
 
 from .base import Config, Hit, Record, ensure_dimension
@@ -16,8 +17,18 @@ class PgVector:
         self.pool = ConnectionPool(
             "postgresql://edumind:edumind@127.0.0.1:5433/edumind",
             min_size=1,
-            max_size=64,
-            kwargs={"autocommit": True},
+            max_size=self.config.connection_pool_limit,
+            kwargs={
+                "autocommit": True,
+                "connect_timeout": max(
+                    1, math.ceil(self.config.request_timeout_seconds)
+                ),
+                "options": (
+                    "-c statement_timeout="
+                    f"{math.ceil(self.config.request_timeout_seconds * 1000)}"
+                ),
+            },
+            timeout=self.config.request_timeout_seconds,
             open=True,
         )
 
@@ -54,15 +65,16 @@ class PgVector:
             (row.identifier, _vector(row.vector), row.text, json.dumps(row.metadata))
             for row in records
         ]
-        with self.pool.connection() as connection:
-            with connection.cursor() as cursor:
-                cursor.executemany(
-                    "INSERT INTO edumind_benchmark (id, embedding, text, metadata) "
-                    "VALUES (%s, %s::vector, %s, %s::jsonb) "
-                    "ON CONFLICT (id) DO UPDATE SET embedding=excluded.embedding, "
-                    "text=excluded.text, metadata=excluded.metadata",
-                    rows,
-                )
+        for start in range(0, len(rows), self.config.upsert_batch_size):
+            with self.pool.connection() as connection:
+                with connection.cursor() as cursor:
+                    cursor.executemany(
+                        "INSERT INTO edumind_benchmark (id, embedding, text, metadata) "
+                        "VALUES (%s, %s::vector, %s, %s::jsonb) "
+                        "ON CONFLICT (id) DO UPDATE SET embedding=excluded.embedding, "
+                        "text=excluded.text, metadata=excluded.metadata",
+                        rows[start : start + self.config.upsert_batch_size],
+                    )
 
     def search(self, vector, limit, filters=None) -> list[Hit]:
         clauses = []
@@ -117,7 +129,8 @@ class PgVector:
                 connection.execute("SET LOCAL enable_seqscan=off")
                 explain = connection.execute(
                     "EXPLAIN SELECT id FROM edumind_benchmark "
-                    "ORDER BY embedding <=> %s::vector LIMIT 10",
+                    "ORDER BY embedding <=> %s::vector "
+                    f"LIMIT {self.config.index_verification_limit}",
                     ("[" + ",".join("0" for _ in range(self.config.dimension)) + "]",),
                 ).fetchall()
         if "Index Scan" not in " ".join(str(row[0]) for row in explain):

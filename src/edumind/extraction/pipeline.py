@@ -76,11 +76,12 @@ LOCK_CANDIDATE_BY_ENGINE = {
 }
 
 
-def build_default_registry() -> ExtractorRegistry:
+def build_default_registry(settings: Settings | None = None) -> ExtractorRegistry:
     from .extractors.audio import WhisperExtractor
     from .extractors.document import DoclingExtractor
     from .extractors.video import VideoExtractor
 
+    settings = settings or load_settings()
     registry = ExtractorRegistry()
     registrations: list[ExtractorRegistration] = [
         ExtractorRegistration(
@@ -96,7 +97,14 @@ def build_default_registry() -> ExtractorRegistry:
         ExtractorRegistration(
             "video-hybrid",
             frozenset({SourceKind.VIDEO}),
-            lambda: VideoExtractor("hybrid"),
+            lambda: VideoExtractor(
+                settings.extraction.video.keyframe_strategy,
+                fixed_interval_seconds=settings.extraction.video.fixed_interval_seconds,
+                scene_threshold=settings.extraction.video.scene_threshold,
+                maximum_hybrid_gap_seconds=(
+                    settings.extraction.video.maximum_hybrid_gap_seconds
+                ),
+            ),
         ),
     ]
     for registration in registrations:
@@ -111,7 +119,7 @@ class ExtractionPipeline:
         self, settings: Settings | None = None, registry: ExtractorRegistry | None = None
     ) -> None:
         self.settings = settings or load_settings()
-        self.registry = registry or build_default_registry()
+        self.registry = registry or build_default_registry(self.settings)
         self.cache = ExtractionCache(self.settings.extraction.cache_directory)
 
     def extract(

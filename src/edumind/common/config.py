@@ -19,10 +19,19 @@ class ConfigurationError(ValueError):
 
 
 @dataclass(frozen=True)
+class VideoSettings:
+    keyframe_strategy: str = "hybrid"
+    fixed_interval_seconds: float = 10.0
+    scene_threshold: float = 0.35
+    maximum_hybrid_gap_seconds: float = 10.0
+
+
+@dataclass(frozen=True)
 class ExtractionSettings:
     cache_enabled: bool = True
     cache_directory: Path = Path("artifacts/extraction/cache")
     maximum_upload_bytes: int = 100 * 1024 * 1024
+    video: VideoSettings = field(default_factory=VideoSettings)
 
 
 @dataclass(frozen=True)
@@ -75,9 +84,11 @@ class GenerationSettings:
     dtype: str = "auto"
     reasoning: bool = False
     temperature: float = 0.0
+    do_sample: bool = False
     seed: int = 42
     context_tokens: int = 8192
     maximum_answer_tokens: int = 256
+    streamer_timeout_seconds: float = 600.0
 
 
 @dataclass(frozen=True)
@@ -169,9 +180,25 @@ def _path(value: object, default: Path) -> Path:
     return path if path.is_absolute() else (Path.cwd() / path).resolve()
 
 
+def _number(
+    section: Mapping[str, object], key: str, default: float, *, minimum: float = 0.0
+) -> float:
+    value = section.get(key, default)
+    if isinstance(value, bool):
+        raise ConfigurationError(f"'{key}' must be numeric")
+    try:
+        result = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise ConfigurationError(f"'{key}' must be numeric") from exc
+    if result < minimum:
+        raise ConfigurationError(f"'{key}' must be >= {minimum}")
+    return result
+
+
 def _build(raw: Mapping[str, object]) -> Settings:
     models = _section(raw, "models")
     extraction = _section(raw, "extraction")
+    video = _section(extraction, "video")
     embedding = _section(raw, "embedding")
     chunking = _section(raw, "chunking")
     vector = _section(raw, "vector")
@@ -185,6 +212,35 @@ def _build(raw: Mapping[str, object]) -> Settings:
         raise ConfigurationError(
             "extraction.model_lock_path was replaced by models.lock_path"
         )
+    unknown_extraction = sorted(
+        set(extraction)
+        - {"cache_enabled", "cache_directory", "maximum_upload_bytes", "video"}
+    )
+    if unknown_extraction:
+        raise ConfigurationError(
+            "Unknown extraction settings: " + ", ".join(unknown_extraction)
+        )
+    unknown_video = sorted(
+        set(video)
+        - {
+            "keyframe_strategy",
+            "fixed_interval_seconds",
+            "scene_threshold",
+            "maximum_hybrid_gap_seconds",
+        }
+    )
+    if unknown_video:
+        raise ConfigurationError(
+            "Unknown extraction.video settings: " + ", ".join(unknown_video)
+        )
+    video_strategy = str(video.get("keyframe_strategy", "hybrid"))
+    if video_strategy not in {"fixed", "scene", "hybrid"}:
+        raise ConfigurationError(
+            "extraction.video.keyframe_strategy must be fixed, scene, or hybrid"
+        )
+    scene_threshold = _number(video, "scene_threshold", 0.35)
+    if scene_threshold > 1:
+        raise ConfigurationError("extraction.video.scene_threshold must be <= 1")
     obsolete_embedding = sorted({"revision", "model_path"} & embedding.keys())
     if obsolete_embedding:
         raise ConfigurationError(
@@ -198,9 +254,11 @@ def _build(raw: Mapping[str, object]) -> Settings:
         "dtype",
         "reasoning",
         "temperature",
+        "do_sample",
         "seed",
         "context_tokens",
         "maximum_answer_tokens",
+        "streamer_timeout_seconds",
     }
     unknown_generation = sorted(set(generation) - allowed_generation_keys)
     if unknown_generation:
@@ -276,6 +334,16 @@ def _build(raw: Mapping[str, object]) -> Settings:
             maximum_upload_bytes=_integer(
                 extraction, "maximum_upload_bytes", 100 * 1024 * 1024
             ),
+            video=VideoSettings(
+                keyframe_strategy=video_strategy,
+                fixed_interval_seconds=_number(
+                    video, "fixed_interval_seconds", 10.0, minimum=1e-9
+                ),
+                scene_threshold=scene_threshold,
+                maximum_hybrid_gap_seconds=_number(
+                    video, "maximum_hybrid_gap_seconds", 10.0, minimum=1e-9
+                ),
+            ),
         ),
         embedding=EmbeddingSettings(
             model_name=str(embedding.get("model_name", EmbeddingSettings.model_name)),
@@ -313,8 +381,15 @@ def _build(raw: Mapping[str, object]) -> Settings:
             dtype=generation_dtype,
             reasoning=bool(generation.get("reasoning", False)),
             temperature=float(generation.get("temperature", 0.0)),
+            do_sample=bool(generation.get("do_sample", False)),
             seed=_integer(generation, "seed", 42, 0),
             context_tokens=_integer(generation, "context_tokens", 8192),
             maximum_answer_tokens=_integer(generation, "maximum_answer_tokens", 256),
+            streamer_timeout_seconds=_number(
+                generation,
+                "streamer_timeout_seconds",
+                600.0,
+                minimum=1e-9,
+            ),
         ),
     )

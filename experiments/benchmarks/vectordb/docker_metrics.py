@@ -30,35 +30,61 @@ VOLUMES = {
 
 
 class DockerMonitor:
-    def __init__(self, candidate: str) -> None:
+    def __init__(
+        self,
+        candidate: str,
+        *,
+        interval_seconds: float,
+        stats_timeout_seconds: float,
+        storage_timeout_seconds: float,
+        helper_timeout_seconds: float,
+        monitor_memory: bool,
+        monitor_storage: bool,
+    ) -> None:
         self.candidate = candidate
         self.peak_bytes = 0
         self.sampled = False
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
+        self.interval_seconds = interval_seconds
+        self.stats_timeout_seconds = stats_timeout_seconds
+        self.storage_timeout_seconds = storage_timeout_seconds
+        self.helper_timeout_seconds = helper_timeout_seconds
+        self.monitor_memory = monitor_memory
+        self.monitor_storage = monitor_storage
 
     def __enter__(self):
-        self.thread = threading.Thread(target=self._run, daemon=True)
-        self.thread.start()
+        if self.monitor_memory:
+            self.thread = threading.Thread(target=self._run, daemon=True)
+            self.thread.start()
         return self
 
     def __exit__(self, *_) -> None:
         self.stop_event.set()
         if self.thread:
-            self.thread.join(timeout=2)
-        self._sample()
+            self.thread.join(timeout=max(1.0, self.interval_seconds * 4))
+        if self.monitor_memory:
+            self._sample()
 
     def metrics(self) -> dict[str, float]:
         result = {}
         if self.sampled:
             result["peak_server_memory_bytes"] = float(self.peak_bytes)
-        storage = _storage_bytes(self.candidate)
+        storage = (
+            _storage_bytes(
+                self.candidate,
+                timeout_seconds=self.storage_timeout_seconds,
+                helper_timeout_seconds=self.helper_timeout_seconds,
+            )
+            if self.monitor_storage
+            else None
+        )
         if storage is not None:
             result["persistent_storage_bytes"] = float(storage)
         return result
 
     def _run(self) -> None:
-        while not self.stop_event.wait(0.25):
+        while not self.stop_event.wait(self.interval_seconds):
             self._sample()
 
     def _sample(self) -> None:
@@ -74,7 +100,7 @@ class DockerMonitor:
                 ],
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=self.stats_timeout_seconds,
             )
             if process.returncode == 0 and process.stdout.strip():
                 value = _bytes(process.stdout.split("/")[0].strip())
@@ -85,23 +111,29 @@ class DockerMonitor:
             return
 
 
-def _storage_bytes(candidate: str) -> int | None:
+def _storage_bytes(
+    candidate: str, *, timeout_seconds: float, helper_timeout_seconds: float
+) -> int | None:
     try:
         process = subprocess.run(
             ["docker", "exec", CONTAINERS[candidate], "du", "-sb", DATA_PATHS[candidate]],
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=timeout_seconds,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
     if process.returncode != 0:
-        return _helper_storage_bytes(candidate)
+        return _helper_storage_bytes(candidate, timeout_seconds=helper_timeout_seconds)
     match = re.match(r"(\d+)", process.stdout.strip())
-    return int(match.group(1)) if match else _helper_storage_bytes(candidate)
+    return (
+        int(match.group(1))
+        if match
+        else _helper_storage_bytes(candidate, timeout_seconds=helper_timeout_seconds)
+    )
 
 
-def _helper_storage_bytes(candidate: str) -> int | None:
+def _helper_storage_bytes(candidate: str, *, timeout_seconds: float) -> int | None:
     lock = PROJECT_ROOT / "data/benchmarks/models/vectordb.json"
     try:
         payload = json.loads(lock.read_text(encoding="utf-8"))
@@ -120,7 +152,7 @@ def _helper_storage_bytes(candidate: str) -> int | None:
             ],
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=timeout_seconds,
         )
     except (FileNotFoundError, KeyError, OSError, json.JSONDecodeError, subprocess.TimeoutExpired):
         return None
@@ -128,7 +160,9 @@ def _helper_storage_bytes(candidate: str) -> int | None:
     return int(match.group(1)) * 1024 if match else None
 
 
-def verify_image(candidate: str, expected_digest: str) -> None:
+def verify_image(
+    candidate: str, expected_digest: str, *, timeout_seconds: float
+) -> None:
     """Fail when a running benchmark container does not match its locked image digest."""
     try:
         expected = subprocess.run(
@@ -136,14 +170,14 @@ def verify_image(candidate: str, expected_digest: str) -> None:
             check=True,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=timeout_seconds,
         ).stdout.strip()
         running = subprocess.run(
             ["docker", "inspect", CONTAINERS[candidate], "--format", "{{.Image}}"],
             check=True,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=timeout_seconds,
         ).stdout.strip()
     except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         raise RuntimeError(

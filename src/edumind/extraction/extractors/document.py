@@ -93,7 +93,9 @@ class DoclingExtractor:
         )
         ocr_options: Any
         if ocr_engine == "rapidocr":
-            ocr_options = RapidOcrOptions(lang=["english"], mode=ocr_mode)
+            ocr_options = RapidOcrOptions(
+                lang=[str(options.get("language", "english"))], mode=ocr_mode
+            )
         elif ocr_engine == "tesseract":
             ocr_options = TesseractCliOcrOptions(lang=["eng"], mode=ocr_mode)
         elif ocr_engine == "easyocr":
@@ -108,11 +110,11 @@ class DoclingExtractor:
         pipeline = PdfPipelineOptions(
             artifacts_path=artifacts,
             accelerator_options=AcceleratorOptions(device=request.profile.device),
-            images_scale=3.0,
-            do_ocr=True,
+            images_scale=float(options.get("image_scale", 3.0)),
+            do_ocr=bool(options.get("do_ocr", True)),
             ocr_options=ocr_options,
-            do_table_structure=True,
-            do_code_enrichment=False,
+            do_table_structure=bool(options.get("do_table_structure", True)),
+            do_code_enrichment=bool(options.get("do_code_enrichment", False)),
             do_formula_enrichment=bool(options.get("formula_enrichment", False)),
         )
         pipeline.table_structure_options.mode = (
@@ -120,7 +122,9 @@ class DoclingExtractor:
             if str(options.get("table_mode", "fast")) == "accurate"
             else TableFormerMode.FAST
         )
-        pipeline.table_structure_options.do_cell_matching = True
+        pipeline.table_structure_options.do_cell_matching = bool(
+            options.get("do_cell_matching", True)
+        )
         key = request.profile.fingerprint
         if key not in self._runtimes:
             formats: dict[Any, Any] = {

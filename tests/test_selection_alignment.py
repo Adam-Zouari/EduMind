@@ -31,6 +31,24 @@ from experiments.benchmarks.rag.generation.models import GENERATOR_PROFILES
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_candidate_registry_rejects_behavior_settings(tmp_path: Path) -> None:
+    registry = tmp_path / "candidates.yaml"
+    registry.write_text(
+        """matrix:
+  axes: [strategies, embeddings]
+  separator: "|"
+strategies:
+  token-control: {profiles: [development], size: 256}
+embeddings:
+  embedding-control: {model_id: example/model, profiles: [development]}
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="non-identity fields"):
+        load_candidates(registry, "development")
+
+
 def test_selection_history_counts_and_keys_are_preserved() -> None:
     with (ROOT / "experiments/benchmarks/selection_evidence.csv").open(
         encoding="utf-8", newline=""
@@ -71,7 +89,7 @@ def test_executable_model_registries_match_approved_selection() -> None:
 
     chunk_pairs = load_candidates(
         ROOT / "experiments/benchmarks/rag/chunking_embedding/candidates.yaml",
-        "standard",
+        "development",
     )
     assert len(chunk_pairs) == 48
     assert len({pair.split("|", 1)[0] for pair in chunk_pairs}) == 8
@@ -150,11 +168,16 @@ def test_reranker_audio_and_document_registries_are_exact() -> None:
     }
     audio_registry = ROOT / "experiments/benchmarks/extraction/audio/candidates.yaml"
     assert set(load_candidates(audio_registry, "smoke")) == approved_asr
-    assert set(load_candidates(audio_registry, "standard")) == approved_asr
+    assert set(load_candidates(audio_registry, "development")) == approved_asr
     document = load_candidates(
-        ROOT / "experiments/benchmarks/extraction/document/candidates.yaml", "standard"
+        ROOT / "experiments/benchmarks/extraction/document/candidates.yaml",
+        "development",
     )
-    assert len(document) == len(set(document)) == 24
+    assert set(document) == {
+        "docling-standard",
+        "docling-vlm-granite-258m",
+        "paddleocr-vl-1.6",
+    }
     assert LOCK_CANDIDATE_BY_ENGINE["docling-vlm-granite-258m"] == (
         "ibm-granite/granite-docling-258M"
     )

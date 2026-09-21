@@ -4,20 +4,22 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import ClassVar
 
 from edumind.common.artifacts import stable_hash
 from edumind.rag.contracts import ChunkingStrategy
 from edumind.rag.text_chunker import TokenChunkingStrategy
 from edumind.rag.tokenizers import OffsetTokenizer, TiktokenOffsetTokenizer
+from experiments.benchmarks.rag.chunking_embedding.protocol import (
+    ChunkingEmbeddingProtocol,
+)
 
 
 @dataclass(frozen=True)
 class SentenceChunkingStrategy:
     tokenizer: OffsetTokenizer
-    sentences: int = 8
-    overlap: int = 2
-    name: str = "sentence"
+    sentences: int
+    overlap: int
+    name: str
 
     @property
     def fingerprint(self) -> str:
@@ -54,11 +56,11 @@ class SentenceChunkingStrategy:
 @dataclass(frozen=True)
 class RecursiveCharacterChunkingStrategy:
     tokenizer: OffsetTokenizer
-    size: int = 1000
-    overlap: int = 200
-    name: str = "recursive-character"
-    separators: ClassVar[tuple[str, ...]] = ("\n\n", "\n", ". ", " ")
-    minimum_boundary_ratio: ClassVar[float] = 0.5
+    size: int
+    overlap: int
+    name: str
+    separators: tuple[str, ...]
+    minimum_boundary_ratio: float
 
     @property
     def fingerprint(self) -> str:
@@ -106,8 +108,8 @@ class SemanticChunkingStrategy:
         tokenizer: OffsetTokenizer,
         embed_sentences,
         boundary_embedding_fingerprint: str,
-        maximum_tokens: int = 384,
-        percentile: float = 0.2,
+        maximum_tokens: int,
+        percentile: float,
     ) -> None:
         self.tokenizer = tokenizer
         self.embed_sentences = embed_sentences
@@ -182,9 +184,10 @@ class SectionAwareChunkingStrategy:
     """Keep Markdown sections intact where possible, then apply a token ceiling."""
 
     tokenizer: OffsetTokenizer
-    size: int = 512
-    overlap: int = 64
-    name: str = "section-aware-512-64"
+    size: int
+    overlap: int
+    name: str
+    parser_identity: str
 
     @property
     def fingerprint(self) -> str:
@@ -194,7 +197,7 @@ class SectionAwareChunkingStrategy:
                 "tokenizer": self.tokenizer.name,
                 "size": self.size,
                 "overlap": self.overlap,
-                "heading_pattern": "markdown-v1",
+                "parser": self.parser_identity,
             }
         )
 
@@ -219,9 +222,10 @@ class StructureAwareChunkingStrategy:
     """Respect Markdown sections, tables, and display formulas under a token ceiling."""
 
     tokenizer: OffsetTokenizer
-    size: int = 512
-    overlap: int = 64
-    name: str = "structure-aware-512-64"
+    size: int
+    overlap: int
+    name: str
+    parser_identity: str
 
     @property
     def fingerprint(self) -> str:
@@ -231,7 +235,7 @@ class StructureAwareChunkingStrategy:
                 "tokenizer": self.tokenizer.name,
                 "size": self.size,
                 "overlap": self.overlap,
-                "structure_parser": "markdown-table-formula-v1",
+                "structure_parser": self.parser_identity,
             }
         )
 
@@ -409,22 +413,33 @@ def _bounded_span(
 def build_chunking_strategy(
     name: str,
     *,
+    protocol: ChunkingEmbeddingProtocol,
     tokenizer: OffsetTokenizer | None = None,
     embed_sentences=None,
     semantic_embedding_fingerprint: str | None = None,
 ) -> ChunkingStrategy:
-    tokenizer = tokenizer or TiktokenOffsetTokenizer()
-    if name == "token-256-32":
-        return TokenChunkingStrategy(tokenizer, 256, 32, name)
-    if name == "token-384-64":
-        return TokenChunkingStrategy(tokenizer, 384, 64, "token-384-64")
-    if name == "token-512-64":
-        return TokenChunkingStrategy(tokenizer, 512, 64, "token-512-64")
-    if name == "sentence-8-2":
-        return SentenceChunkingStrategy(tokenizer, 8, 2, name)
-    if name == "recursive-character":
-        return RecursiveCharacterChunkingStrategy(tokenizer)
-    if name == "semantic":
+    tokenizer_name = protocol.tokenizer.removeprefix("tiktoken:")
+    tokenizer = tokenizer or TiktokenOffsetTokenizer(tokenizer_name)
+    settings = protocol.strategy(name)
+    kind = str(settings["kind"])
+    if kind == "token":
+        return TokenChunkingStrategy(
+            tokenizer, int(settings["size"]), int(settings["overlap"]), name
+        )
+    if kind == "sentence":
+        return SentenceChunkingStrategy(
+            tokenizer, int(settings["sentences"]), int(settings["overlap"]), name
+        )
+    if kind == "recursive-character":
+        return RecursiveCharacterChunkingStrategy(
+            tokenizer,
+            int(settings["size"]),
+            int(settings["overlap"]),
+            name,
+            tuple(str(value) for value in settings["separators"]),
+            float(settings["minimum_boundary_ratio"]),
+        )
+    if kind == "semantic":
         if embed_sentences is None:
             raise ValueError(
                 "Semantic chunking requires the production sentence embedding function"
@@ -434,12 +449,28 @@ def build_chunking_strategy(
                 "Semantic chunking requires the boundary-embedding fingerprint"
             )
         return SemanticChunkingStrategy(
-            tokenizer, embed_sentences, semantic_embedding_fingerprint
+            tokenizer,
+            embed_sentences,
+            semantic_embedding_fingerprint,
+            int(settings["maximum_tokens"]),
+            float(settings["boundary_percentile"]),
         )
-    if name == "section-aware-512-64":
-        return SectionAwareChunkingStrategy(tokenizer)
-    if name == "structure-aware-512-64":
-        return StructureAwareChunkingStrategy(tokenizer)
+    if kind == "section-aware":
+        return SectionAwareChunkingStrategy(
+            tokenizer,
+            int(settings["size"]),
+            int(settings["overlap"]),
+            name,
+            str(settings["parser"]),
+        )
+    if kind == "structure-aware":
+        return StructureAwareChunkingStrategy(
+            tokenizer,
+            int(settings["size"]),
+            int(settings["overlap"]),
+            name,
+            str(settings["parser"]),
+        )
     raise ValueError(f"Unknown chunking strategy: {name}")
 
 

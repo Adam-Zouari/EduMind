@@ -54,19 +54,13 @@ def load_engineer_decision(
     suite = str(plan.get("suite", ""))
     stage = str(plan.get("stage", ""))
     profile = str(plan.get("profile", ""))
-    if profile not in {"development", "validation", "standard", "full"}:
+    if profile not in {"development", "validation"}:
         raise ValueError(
             f"{source_summary} uses profile {profile!r}; smoke runs cannot support selection"
         )
     if expected_source is not None:
         fields = ("suite", "stage", "profile")
-        profile_aliases = {"standard": "development", "full": "validation"}
-        observed_source = (suite, stage, profile_aliases.get(profile, profile))
-        expected_source = (
-            expected_source[0],
-            expected_source[1],
-            profile_aliases.get(expected_source[2], expected_source[2]),
-        )
+        observed_source = (suite, stage, profile)
         for field, observed, expected in zip(
             fields, observed_source, expected_source, strict=True
         ):

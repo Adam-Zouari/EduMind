@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from types import SimpleNamespace
 
@@ -23,6 +24,10 @@ from experiments.benchmarks.rag.chunking_embedding.metrics import (
     score_question,
 )
 from experiments.benchmarks.rag.chunking_embedding.profiles import embedding_spec
+from experiments.benchmarks.rag.chunking_embedding.protocol import (
+    load_protocol as default_chunking_protocol,
+    protocol_from_mapping as chunking_protocol_from_mapping,
+)
 from experiments.benchmarks.rag.chunking_embedding.strategies import (
     RecursiveCharacterChunkingStrategy,
     SemanticChunkingStrategy,
@@ -43,6 +48,22 @@ from edumind.rag.errors import RAGConfigurationError
 from edumind.rag.text_chunker import TokenChunkingStrategy
 from edumind.rag.tokenizers import TiktokenOffsetTokenizer
 from edumind.rag.types import RetrievalHit
+
+
+CHUNKING_PROTOCOL = default_chunking_protocol()
+
+
+def _protocol_settings(*, warmups=1, repetitions=1, bootstrap_resamples=0):
+    payload = deepcopy(CHUNKING_PROTOCOL.meta.resolved)
+    payload["profiles"]["smoke"].update(
+        {
+            "warmups": warmups,
+            "repetitions": repetitions,
+            "bootstrap_resamples": bootstrap_resamples,
+        }
+    )
+    protocol = chunking_protocol_from_mapping(payload)
+    return {"chunking_embedding_protocol": protocol.meta.worker_payload()}
 
 
 @dataclass(frozen=True)
@@ -126,8 +147,8 @@ def test_qasper_preparation_emits_typed_units_and_rejects_ambiguous_offsets() ->
 
 def test_alpha_ndcg_penalizes_duplicate_evidence_before_novel_evidence() -> None:
     corpus = [{"a"}, {"a"}, {"b"}]
-    duplicate_first = alpha_ndcg_at_k(corpus, corpus, 3)
-    novel_first = alpha_ndcg_at_k([{"a"}, {"b"}, {"a"}], corpus, 3)
+    duplicate_first = alpha_ndcg_at_k(corpus, corpus, 3, alpha=0.5)
+    novel_first = alpha_ndcg_at_k([{"a"}, {"b"}, {"a"}], corpus, 3, alpha=0.5)
     assert 0.0 <= duplicate_first < novel_first <= 1.0
 
 
@@ -161,7 +182,9 @@ def test_quality_uses_three_and_five_cutoffs_and_alpha_requires_multiple_units()
         Chunk("d3", "other", "z", 2, 3),
     ]
 
-    score = score_question(question, ranking, ranking, WordTokenizer())
+    score = score_question(
+        question, ranking, ranking, WordTokenizer(), cutoffs=(3, 5), alpha=0.5
+    )
 
     assert score.metrics["evidence_unit_recall_at_3"] == 0.5
     assert score.metrics["evidence_unit_recall_at_5"] == 1.0
@@ -187,8 +210,10 @@ def test_single_unit_questions_omit_alpha_ndcg_and_its_metric_contract() -> None
     question = next(row for row in manifest.samples if row.get("kind") == "question")
     chunk = Chunk("a", "doc", "alpha", 0, 5)
 
-    score = score_question(question, [chunk], [chunk], WordTokenizer())
-    directions, _ = benchmark.directions_for(manifest)
+    score = score_question(
+        question, [chunk], [chunk], WordTokenizer(), cutoffs=(3, 5), alpha=0.5
+    )
+    directions, _ = benchmark.directions_for(manifest, CHUNKING_PROTOCOL)
 
     assert not any(name.startswith("alpha_ndcg") for name in score.metrics)
     assert not any("alpha_ndcg" in name for name in directions)
@@ -208,7 +233,9 @@ def test_single_unit_questions_omit_alpha_ndcg_and_its_metric_contract() -> None
         ],
     }
     multi_evidence = replace(manifest, samples=tuple(rows))
-    multi_directions, _ = benchmark.directions_for(multi_evidence)
+    multi_directions, _ = benchmark.directions_for(
+        multi_evidence, CHUNKING_PROTOCOL
+    )
     assert "quality.overall.alpha_ndcg_at_3" in multi_directions
     assert "quality.text.alpha_ndcg_at_5" in multi_directions
 
@@ -235,12 +262,22 @@ def test_retrieval_metrics_use_complete_units_and_evaluation_tokens() -> None:
     distractor = Chunk("other", "other", "alpha beta", 0, 10)
 
     partial_score = score_question(
-        question, [partial, distractor], [partial, complete, distractor], WordTokenizer()
+        question,
+        [partial, distractor],
+        [partial, complete, distractor],
+        WordTokenizer(),
+        cutoffs=(3, 5),
+        alpha=0.5,
     )
     assert partial_score.metrics["evidence_unit_recall_at_5"] == 0.0
 
     complete_score = score_question(
-        question, [complete], [partial, complete, distractor], WordTokenizer()
+        question,
+        [complete],
+        [partial, complete, distractor],
+        WordTokenizer(),
+        cutoffs=(3, 5),
+        alpha=0.5,
     )
     assert complete_score.metrics["evidence_unit_recall_at_5"] == 1.0
     assert complete_score.metrics["evidence_token_precision_at_5"] == pytest.approx(2 / 3)
@@ -264,7 +301,9 @@ def test_downstream_retrieval_metrics_accept_multi_interval_evidence_units() -> 
         ],
     }
     chunk = Chunk("complete", "doc", "alpha beta", 0, 10, 2)
-    metrics, _ = retrieval_metrics(question, [chunk], [chunk], WordTokenizer())
+    metrics, _ = retrieval_metrics(
+        question, [chunk], [chunk], WordTokenizer(), cutoffs=(1, 3, 5, 10)
+    )
     assert metrics["context_recall_at_5"] == 1.0
 
 
@@ -326,7 +365,9 @@ def test_quality_aggregation_uses_documents_as_statistical_units() -> None:
         SampleResult("q2", {"quality.overall.alpha_ndcg_at_5": 1.0}, 0.1, {"document_id": "a", "evidence_type": "text"}),
         SampleResult("q3", {"quality.overall.alpha_ndcg_at_5": 0.0}, 0.1, {"document_id": "b", "evidence_type": "text"}),
     ]
-    aggregate, intervals = aggregate_quality(samples, resamples=100, seed=42)
+    aggregate, intervals = aggregate_quality(
+        samples, resamples=100, seed=42, confidence=0.95
+    )
     assert aggregate["quality.overall.alpha_ndcg_at_5"] == 0.5
     assert aggregate["quality.overall.alpha_ndcg_at_5.sample_count"] == 2
     assert intervals["quality.overall.alpha_ndcg_at_5"]["estimate"] == 0.5
@@ -342,7 +383,13 @@ def test_latency_intervals_resample_documents_not_query_rows() -> None:
         )
         for index in range(1, 21)
     ]
-    intervals = latency_intervals(samples, resamples=100, seed=42)
+    intervals = latency_intervals(
+        samples,
+        resamples=100,
+        seed=42,
+        minimum_documents=20,
+        confidence=0.95,
+    )
     assert set(intervals) == {
         "operational.query_latency_ms_p50",
         "operational.query_latency_ms_p95",
@@ -446,6 +493,7 @@ def test_all_chunking_strategies_return_exact_nonempty_source_spans() -> None:
             tokenizer=CharacterTokenizer(),
             embed_sentences=embed_sentences,
             semantic_embedding_fingerprint="fixture-embedding",
+            protocol=CHUNKING_PROTOCOL,
         )
         chunks = strategy.split(text)
         assert chunks
@@ -459,7 +507,12 @@ def test_all_chunking_strategies_return_exact_nonempty_source_spans() -> None:
 
 def test_recursive_chunker_does_not_emit_whitespace_only_chunks() -> None:
     strategy = RecursiveCharacterChunkingStrategy(
-        CharacterTokenizer(), size=10, overlap=2
+        CharacterTokenizer(),
+        size=10,
+        overlap=2,
+        name="recursive-character",
+        separators=("\n\n", "\n", ". ", " "),
+        minimum_boundary_ratio=0.5,
     )
     chunks = strategy.split("a" + " " * 40 + "b")
     assert chunks
@@ -467,17 +520,29 @@ def test_recursive_chunker_does_not_emit_whitespace_only_chunks() -> None:
 
 
 def test_recursive_chunker_fingerprint_includes_tokenizer() -> None:
-    first = RecursiveCharacterChunkingStrategy(WordTokenizer())
+    arguments = {
+        "size": 1000,
+        "overlap": 200,
+        "name": "recursive-character",
+        "separators": ("\n\n", "\n", ". ", " "),
+        "minimum_boundary_ratio": 0.5,
+    }
+    first = RecursiveCharacterChunkingStrategy(WordTokenizer(), **arguments)
     second_tokenizer = WordTokenizer()
     second_tokenizer.name = "fixture:different"
-    second = RecursiveCharacterChunkingStrategy(second_tokenizer)
+    second = RecursiveCharacterChunkingStrategy(second_tokenizer, **arguments)
 
     assert first.fingerprint != second.fingerprint
 
 
 def test_recursive_chunker_uses_frozen_separator_priority() -> None:
     strategy = RecursiveCharacterChunkingStrategy(
-        CharacterTokenizer(), size=16, overlap=2
+        CharacterTokenizer(),
+        size=16,
+        overlap=2,
+        name="recursive-character",
+        separators=("\n\n", "\n", ". ", " "),
+        minimum_boundary_ratio=0.5,
     )
 
     chunks = strategy.split("aaaa aaaa\n\nbbbb bbbb")
@@ -493,6 +558,8 @@ def test_semantic_chunker_does_not_invent_boundaries_for_equal_similarity() -> N
         WordTokenizer(),
         lambda sentences: np.ones((len(sentences), 2), dtype=float),
         "fixture-embedding",
+        maximum_tokens=384,
+        percentile=0.2,
     )
     assert len(strategy.split("First sentence. Second sentence.")) == 1
 
@@ -503,6 +570,7 @@ def test_semantic_chunker_bounds_one_oversized_sentence() -> None:
         lambda sentences: np.ones((len(sentences), 2), dtype=float),
         "fixture-embedding",
         maximum_tokens=3,
+        percentile=0.2,
     )
 
     chunks = strategy.split("one two three four five six")
@@ -512,7 +580,11 @@ def test_semantic_chunker_bounds_one_oversized_sentence() -> None:
 
 def test_structure_chunker_enforces_ceiling_for_oversized_table_rows() -> None:
     strategy = StructureAwareChunkingStrategy(
-        CharacterTokenizer(), size=10, overlap=2
+        CharacterTokenizer(),
+        size=10,
+        overlap=2,
+        name="structure-aware-fixture",
+        parser_identity="markdown-table-formula-v1",
     )
     chunks = strategy.split(
         "| Header | Value |\n|---|---|\n| " + "x" * 40 + " | 1 |\n| b | 2 |"
@@ -670,6 +742,9 @@ def test_build_index_rejects_model_inputs_before_embedding(monkeypatch) -> None:
             "embedding",
             {"embedding": {"revision": "rev", "model_path": "path"}},
             with_bm25=False,
+            device="cpu",
+            dtype="float32",
+            chunking_protocol=CHUNKING_PROTOCOL,
         )
     assert caught.value.report["offending_document_count"] == 2
 
@@ -754,6 +829,9 @@ def test_cl100k_boundaries_send_canonical_text_not_token_ids_to_embedder(
         "embedding",
         {"embedding": {"revision": "rev", "model_path": "path"}},
         with_bm25=False,
+        device="cpu",
+        dtype="float32",
+        chunking_protocol=CHUNKING_PROTOCOL,
     )
 
     assert isinstance(index.tokenizer, TiktokenOffsetTokenizer)
@@ -772,8 +850,11 @@ def test_worker_marks_oversized_input_as_failed_with_reason_code(monkeypatch) ->
         "smoke",
         "fixture",
         (candidate,),
+        seed=CHUNKING_PROTOCOL.meta.seed,
+        repetitions=1,
         warmups=0,
         bootstrap_resamples=0,
+        settings=_protocol_settings(warmups=0),
     )
 
     def reject(*_args, **_kwargs):
@@ -837,9 +918,11 @@ def test_candidate_emits_new_metrics_and_auditable_top_twenty(monkeypatch) -> No
         "smoke",
         "fixture",
         ("fixture|embedding",),
+        seed=CHUNKING_PROTOCOL.meta.seed,
         repetitions=2,
         warmups=0,
         bootstrap_resamples=0,
+        settings=_protocol_settings(warmups=0, repetitions=2),
     )
     result = benchmark.evaluate_candidate(
         "fixture|embedding",
@@ -865,13 +948,13 @@ def test_candidate_emits_new_metrics_and_auditable_top_twenty(monkeypatch) -> No
     assert _parameters["manifest_checksum"] == "checksum"
     assert _parameters["manifest_fingerprint"]
     assert _parameters["quality_cutoffs"] == (3, 5)
-    assert set(benchmark.PRIMARY_METRICS) == {
-        "quality.overall.ndcg_at_3",
-        "quality.overall.ndcg_at_5",
-        "quality.overall.evidence_unit_recall_at_3",
-        "quality.overall.evidence_unit_recall_at_5",
-        "quality.overall.evidence_token_precision_at_3",
-        "quality.overall.evidence_token_precision_at_5",
+    assert set(CHUNKING_PROTOCOL.primary_quality_metrics) == {
+        "ndcg_at_3",
+        "ndcg_at_5",
+        "evidence_unit_recall_at_3",
+        "evidence_unit_recall_at_5",
+        "evidence_token_precision_at_3",
+        "evidence_token_precision_at_5",
     }
     assert intervals == {}
     assert len(artifacts["retrievals"]) == 20
@@ -916,9 +999,11 @@ def test_measured_query_failure_runs_every_repetition(monkeypatch) -> None:
         "smoke",
         "fixture",
         ("fixture|embedding",),
+        seed=CHUNKING_PROTOCOL.meta.seed,
         repetitions=3,
         warmups=0,
         bootstrap_resamples=0,
+        settings=_protocol_settings(warmups=0, repetitions=3),
     )
     with pytest.raises(benchmark.CandidateExecutionError) as caught:
         benchmark.evaluate_candidate(
@@ -943,8 +1028,11 @@ def test_worker_serializes_unexpected_python_failures_with_validation_report(
         "smoke",
         "fixture",
         (candidate,),
+        seed=CHUNKING_PROTOCOL.meta.seed,
+        repetitions=1,
         warmups=0,
         bootstrap_resamples=0,
+        settings=_protocol_settings(warmups=0),
     )
     def fail(*_args, **_kwargs):
         raise RuntimeError("injected")

@@ -12,6 +12,7 @@ from .base import Config, Hit, Record, ensure_dimension
 class Weaviate:
     def __init__(self, config: Config) -> None:
         import weaviate
+        from weaviate.config import AdditionalConfig, Timeout
 
         self.config = config
         self.client = weaviate.connect_to_custom(
@@ -21,6 +22,13 @@ class Weaviate:
             grpc_host="127.0.0.1",
             grpc_port=50051,
             grpc_secure=False,
+            additional_config=AdditionalConfig(
+                timeout=Timeout(
+                    init=self.config.request_timeout_seconds,
+                    query=self.config.request_timeout_seconds,
+                    insert=self.config.request_timeout_seconds,
+                )
+            ),
         )
         self.collection: Any | None = None
 
@@ -64,7 +72,9 @@ class Weaviate:
     def upsert(self, records: Sequence[Record]) -> None:
         ensure_dimension(self.config, records)
         collection = self._collection()
-        with collection.batch.fixed_size(batch_size=200) as batch:
+        with collection.batch.fixed_size(
+            batch_size=self.config.upsert_batch_size
+        ) as batch:
             for row in records:
                 batch.add_object(
                     uuid=_uuid(row.identifier),

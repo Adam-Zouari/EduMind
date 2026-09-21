@@ -2,6 +2,10 @@ schema_version: 1
 protocol_version: retrieval-reranking-v1
 seed: 42
 
+smoke_fixture:
+  chunking_embedding_candidate: token-256-32|Alibaba-NLP/gte-modernbert-base
+  expected_chunk_count: 30
+
 retrieval:
   pool_size: 20
   evaluation_tokenizer: tiktoken:cl100k_base
@@ -47,20 +51,26 @@ profiles:
     warmups: 1
     repetitions: 1
     bootstrap_resamples: 0
-    default_device: cpu
-    default_dtype: float32
+    device: cpu
+    dtype: float32
+    batch_size: 1
+    hardware_required: false
   development:
     warmups: 2
     repetitions: 3
     bootstrap_resamples: 10000
-    required_device: cuda
-    required_dtype: float16
+    device: cuda
+    dtype: float16
+    batch_size: 1
+    hardware_required: true
   validation:
     warmups: 2
     repetitions: 3
     bootstrap_resamples: 10000
-    required_device: cuda
-    required_dtype: float16
+    device: cuda
+    dtype: float16
+    batch_size: 1
+    hardware_required: true
 
 resources:
   authoritative_peak_vram_mb: 3584

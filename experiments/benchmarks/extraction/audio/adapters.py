@@ -12,6 +12,7 @@ from typing import Any
 from edumind.extraction.errors import MissingDependencyError
 from edumind.extraction.extractors.audio import load_whisper_runtime, transcribe_whisper
 from experiments.benchmarks.common.provenance import package_versions
+from experiments.benchmarks.extraction.audio.protocol import AudioProtocol
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,7 @@ class ASRProfile:
     backend: str
     decoder: str
     timestamp_method: str
+    decoding: Mapping[str, object]
 
 
 @dataclass(frozen=True)
@@ -30,46 +32,29 @@ class Transcript:
     warnings: tuple[str, ...] = ()
 
 
-ASR_PROFILES = {
-    profile.candidate: profile
-    for profile in (
-        ASRProfile(
-            "whisper-small-en-control",
-            "openai/whisper-small.en",
-            "transformers",
-            "greedy",
-            "native-word",
-        ),
-        ASRProfile(
-            "canary-180m",
-            "nvidia/canary-180m-flash",
-            "nemo",
-            "beam-1-pnc",
-            "native-segment",
-        ),
-        ASRProfile(
-            "parakeet-tdt-0.6b-v2",
-            "nvidia/parakeet-tdt-0.6b-v2",
-            "nemo",
-            "greedy",
-            "native-segment",
-        ),
-        ASRProfile(
-            "moss-transcribe-diarize",
-            "OpenMOSS-Team/MOSS-Transcribe-Diarize",
-            "moss",
-            "deterministic",
-            "native-segment",
-        ),
-    )
-}
+def profiles(protocol: AudioProtocol) -> dict[str, ASRProfile]:
+    return {
+        alias: ASRProfile(
+            alias,
+            candidate.model_id,
+            candidate.backend,
+            str(protocol.decoder(alias)["decoder"]),
+            str(protocol.decoder(alias)["timestamp_method"]),
+            protocol.decoder(alias),
+        )
+        for alias, candidate in protocol.candidates.items()
+    }
 
 
 def build_runtime(
-    candidate: str, model_lock: Mapping[str, Mapping[str, object]], device: str
+    candidate: str,
+    model_lock: Mapping[str, Mapping[str, object]],
+    device: str,
+    protocol: AudioProtocol,
 ):
+    configured = profiles(protocol)
     try:
-        profile = ASR_PROFILES[candidate]
+        profile = configured[candidate]
     except KeyError as exc:
         raise ValueError(f"Unknown ASR candidate: {candidate}") from exc
     entry = model_lock.get(profile.model)
@@ -83,7 +68,7 @@ def build_runtime(
         "nemo": NemoRuntime,
         "moss": MossRuntime,
     }[profile.backend]
-    return runtime_type(profile, model_path, device)
+    return runtime_type(profile, model_path, device, protocol)
 
 
 class BaseRuntime:
@@ -92,14 +77,16 @@ class BaseRuntime:
         profile: ASRProfile,
         model_path: Path,
         device: str,
+        protocol: AudioProtocol,
     ) -> None:
         if device not in {"cpu", "cuda"}:
             raise ValueError("ASR device must be cpu or cuda")
         self.profile = profile
         self.model_path = model_path
         self.device = device
+        self.protocol = protocol
         self._runtime: Any | None = None
-        self.dtype = "float32" if device == "cpu" else "float16"
+        self.dtype = protocol.dtype(profile.candidate, device)
 
     def load(self) -> None:
         raise NotImplementedError
@@ -119,11 +106,11 @@ class BaseRuntime:
             "runtime_version": _runtime_version(self.profile.backend),
             "device": self.device,
             "dtype": self.dtype,
-            "language": "English",
+            "language": self.profile.decoding["language"],
             "decoder": self.profile.decoder,
             "timestamp_method": self.profile.timestamp_method,
-            "sample_rate_hz": 16_000,
-            "batch_size": 1,
+            "sample_rate_hz": self.protocol.audio["sample_rate_hz"],
+            "batch_size": self.protocol.batch_size,
             "package_versions": package_versions(
                 (
                     "torch",
@@ -141,15 +128,29 @@ class WhisperRuntime(BaseRuntime):
     def parameters(self) -> dict[str, object]:
         return {
             **super().parameters(),
-            "return_timestamps": "word",
-            "do_sample": False,
+            "return_timestamps": self.profile.decoding["return_timestamps"],
+            "do_sample": self.profile.decoding["do_sample"],
         }
 
     def load(self) -> None:
-        self._runtime, self.dtype = load_whisper_runtime(self.model_path, self.device)
+        expected_dtype = self.dtype
+        self._runtime, self.dtype = load_whisper_runtime(
+            self.model_path,
+            self.device,
+            dtype=expected_dtype,
+        )
+        if self.dtype != expected_dtype:
+            raise RuntimeError(
+                f"Whisper loaded {self.dtype} instead of protocol dtype {expected_dtype}"
+            )
 
     def transcribe(self, source: Path) -> Transcript:
-        result = transcribe_whisper(self._runtime, source)
+        result = transcribe_whisper(
+            self._runtime,
+            source,
+            return_timestamps=str(self.profile.decoding["return_timestamps"]),
+            do_sample=bool(self.profile.decoding["do_sample"]),
+        )
         complete = tuple(
             segment
             for segment in result.segments
@@ -168,18 +169,29 @@ class NemoRuntime(BaseRuntime):
     def parameters(self) -> dict[str, object]:
         values = {
             **super().parameters(),
-            "timestamps": True,
+            "timestamps": self.profile.decoding["timestamps"],
         }
         if self.profile.candidate == "canary-180m":
-            values.update({"beam_size": 1, "punctuation_and_capitalization": True})
+            values.update(
+                {
+                    "beam_size": self.profile.decoding["beam_size"],
+                    "punctuation_and_capitalization": self.profile.decoding[
+                        "punctuation_and_capitalization"
+                    ],
+                }
+            )
         else:
             values.update(
-                {"decoding_strategy": "greedy_batch", "timestamp_level": "segment_then_word"}
+                {
+                    "decoding_strategy": self.profile.decoding["decoding_strategy"],
+                    "timestamp_level": self.profile.decoding["timestamp_level"],
+                }
             )
         return values
 
     def load(self) -> None:
         try:
+            import torch
             import nemo.collections.asr as nemo_asr
         except ModuleNotFoundError as exc:
             raise MissingDependencyError("NVIDIA NeMo ASR is required") from exc
@@ -189,20 +201,35 @@ class NemoRuntime(BaseRuntime):
         self._runtime = nemo_asr.models.ASRModel.restore_from(
             restore_path=str(checkpoints[0]), map_location=self.device
         )
-        self._runtime = self._runtime.to(self.device).eval()
+        expected_dtype = self.protocol.dtype(self.profile.candidate, self.device)
+        self._runtime = self._runtime.to(
+            device=self.device,
+            dtype=getattr(torch, expected_dtype),
+        ).eval()
         _assert_device(self._runtime, self.device)
         decoding = self._runtime.cfg.decoding
         if self.profile.candidate == "canary-180m":
-            decoding.beam.beam_size = 1
+            decoding.beam.beam_size = int(self.profile.decoding["beam_size"])
         else:
-            decoding.strategy = "greedy_batch"
+            decoding.strategy = str(self.profile.decoding["decoding_strategy"])
         self._runtime.change_decoding_strategy(decoding)
         self.dtype = str(next(self._runtime.parameters()).dtype).removeprefix("torch.")
+        if self.dtype != expected_dtype:
+            raise RuntimeError(
+                f"NeMo loaded {self.dtype} instead of protocol dtype {expected_dtype}"
+            )
 
     def transcribe(self, source: Path) -> Transcript:
-        arguments: dict[str, object] = {"batch_size": 1, "timestamps": True}
+        arguments: dict[str, object] = {
+            "batch_size": self.protocol.batch_size,
+            "timestamps": self.profile.decoding["timestamps"],
+        }
         if self.profile.candidate == "canary-180m":
-            arguments["pnc"] = "True"
+            arguments["pnc"] = (
+                "True"
+                if self.profile.decoding["punctuation_and_capitalization"]
+                else "False"
+            )
         output = self._runtime.transcribe([str(source)], **arguments)[0]
         timestamp_payload = getattr(output, "timestamp", {}) or {}
         segments = timestamp_payload.get("segment", [])
@@ -224,7 +251,7 @@ class MossRuntime(BaseRuntime):
             raise MissingDependencyError(
                 "The pinned MOSS-Transcribe-Diarize runtime is required"
             ) from exc
-        dtype = torch.bfloat16 if self.device == "cuda" else torch.float32
+        dtype = getattr(torch, self.protocol.dtype(self.profile.candidate, self.device))
         processor = AutoProcessor.from_pretrained(
             str(self.model_path),
             trust_remote_code=True,
@@ -250,8 +277,8 @@ class MossRuntime(BaseRuntime):
         return {
             **super().parameters(),
             "attention": str(self.attention_report),
-            "max_new_tokens": 2048,
-            "do_sample": False,
+            "max_new_tokens": self.profile.decoding["max_new_tokens"],
+            "do_sample": self.profile.decoding["do_sample"],
         }
 
     def transcribe(self, source: Path) -> Transcript:
@@ -270,8 +297,8 @@ class MossRuntime(BaseRuntime):
             model,
             processor,
             build_transcription_messages(str(source)),
-            max_new_tokens=2048,
-            do_sample=False,
+            max_new_tokens=int(self.profile.decoding["max_new_tokens"]),
+            do_sample=bool(self.profile.decoding["do_sample"]),
             device=device,
             dtype=dtype,
             attention_report=attention_report,

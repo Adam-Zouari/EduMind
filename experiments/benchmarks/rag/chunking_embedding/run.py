@@ -12,10 +12,12 @@ from experiments.benchmarks.common.datasets import load_manifest, require_manife
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
 from experiments.benchmarks.rag.chunking_embedding.benchmark import (
-    PAIRED_METRICS,
-    PRIMARY_METRICS,
     directions_for,
     run_in_fresh_process,
+)
+from experiments.benchmarks.rag.chunking_embedding.protocol import (
+    DEFAULT_PROTOCOL_PATH,
+    load_protocol,
 )
 
 directory = Path(__file__).parent
@@ -24,31 +26,46 @@ argument_parser.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
 argument_parser.add_argument(
     "--dtype", choices=("float32", "float16", "bfloat16"), default="float32"
 )
+argument_parser.add_argument("--protocol", type=Path, default=DEFAULT_PROTOCOL_PATH)
 arguments = argument_parser.parse_args()
+protocol = load_protocol(arguments.protocol)
+execution = protocol.profile(arguments.profile)
+if execution.hardware_required and (arguments.device, arguments.dtype) != (
+    execution.device,
+    execution.dtype,
+):
+    argument_parser.error(
+        f"{arguments.profile} requires --device {execution.device} "
+        f"--dtype {execution.dtype}"
+    )
 manifest_path = arguments.manifest or PROJECT_ROOT / (
     "data/benchmarks/rag/smoke.json"
     if arguments.profile == "smoke"
-    else f"data/benchmarks/rag/rag-selection-{'dev' if arguments.profile == 'standard' else 'validation'}.json"
+    else f"data/benchmarks/rag/rag-selection-{'dev' if arguments.profile == 'development' else 'validation'}.json"
 )
 manifest = load_manifest(manifest_path)
 require_manifest_split(manifest, arguments.profile, {
     "smoke": {"smoke"},
-    "standard": {"dev", "development"},
-    "full": {"validation"},
+    "development": {"dev", "development"},
+    "validation": {"validation"},
 }[arguments.profile])
 candidate_path = directory / "candidates.yaml"
-declared = load_candidates(candidate_path, "standard")
-if arguments.profile == "standard":
+declared = load_candidates(candidate_path, "development")
+if arguments.profile == "development":
     if arguments.shortlist is not None:
-        raise ValueError("Standard chunking/embedding must run the complete declared matrix")
+        raise ValueError(
+            "Development chunking/embedding must run the complete declared matrix"
+        )
     candidates = declared
-elif arguments.profile == "full":
+elif arguments.profile == "validation":
     if arguments.shortlist is None:
-        raise ValueError("Full chunking/embedding requires --shortlist DECISION_JSON")
+        raise ValueError(
+            "Validation chunking/embedding requires --shortlist DECISION_JSON"
+        )
     decision = load_engineer_decision(
         arguments.shortlist,
-        maximum=3,
-        expected_source=("rag", "chunking-embedding", "standard"),
+        maximum=protocol.maximum_finalists,
+        expected_source=("rag", "chunking-embedding", "development"),
     )
     candidates = decision.selected_candidates
     unknown = sorted(set(candidates) - set(declared))
@@ -74,20 +91,17 @@ plan = BenchmarkPlan(
     arguments.profile,
     manifest.name,
     candidates,
-    repetitions=1 if arguments.profile == "smoke" else 3,
-    bootstrap_resamples=0 if arguments.profile == "smoke" else 10_000,
-    warmups=1 if arguments.profile == "smoke" else 2,
+    seed=protocol.meta.seed,
+    repetitions=execution.repetitions,
+    bootstrap_resamples=execution.bootstrap_resamples,
+    warmups=execution.warmups,
     settings={
         "device": arguments.device,
         "dtype": arguments.dtype,
-        "evaluation_tokenizer": "tiktoken:cl100k_base",
-        "quality_cutoffs": [3, 5],
-        "maximum_scored_rank": 5,
-        "artifact_top_k": 20,
-        "alpha": 0.5,
+        "chunking_embedding_protocol": protocol.meta.worker_payload(),
     },
 )
-directions, required_metrics = directions_for(manifest)
+directions, required_metrics = directions_for(manifest, protocol)
 
 result = run_benchmark(
     plan,
@@ -101,12 +115,22 @@ result = run_benchmark(
     ),
     dataset_checksum=manifest.checksum,
     directions=directions,
-    primary_metric=PRIMARY_METRICS,
+    primary_metric=tuple(
+        f"quality.overall.{metric}" for metric in protocol.primary_quality_metrics
+    ),
     required_metrics=required_metrics,
-    paired_metrics=tuple(metric for metric in PAIRED_METRICS if metric in directions),
+    paired_metrics=tuple(
+        metric
+        for metric in (
+            *(f"quality.overall.{name}" for name in protocol.primary_quality_metrics),
+            *(f"quality.overall.{name}" for name in protocol.alpha_ndcg_metrics),
+        )
+        if metric in directions
+    ),
     revisions=revisions,
     decision_files={"shortlist": arguments.shortlist} if arguments.shortlist else None,
     input_artifacts={"manifest": manifest_path, "model_lock": model_lock_path},
+    protocols={"chunking_embedding": protocol.meta},
     no_mlflow=arguments.no_mlflow,
     candidate_artifact_name="candidate.json",
     sample_artifact_name="query_metrics",
@@ -119,9 +143,14 @@ result = run_benchmark(
     paired_group_key="document_id",
     run_name_prefix={
         "smoke": "rag-chunking-embedding-smoke",
-        "standard": "rag-chunking-embedding-standard-development",
-        "full": "rag-chunking-embedding-full-validation",
+        "development": "rag-chunking-embedding-development",
+        "validation": "rag-chunking-embedding-validation",
     }[arguments.profile],
+    operational_maximums=(
+        {"peak_vram_mb": protocol.authoritative_peak_vram_mb}
+        if execution.hardware_required
+        else None
+    ),
 )
 print(json.dumps({"run_id": result.run_id, "artifacts": str(result.artifact_directory)}, indent=2))
 raise SystemExit(0 if result.complete else 2)

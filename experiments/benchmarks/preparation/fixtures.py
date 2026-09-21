@@ -16,6 +16,10 @@ from experiments.benchmarks.extraction.media import (
     canonical_wav_duration,
     media_duration,
 )
+from experiments.benchmarks.extraction.audio.protocol import (
+    AudioProtocol,
+    load_protocol as load_audio_protocol,
+)
 
 
 def prepare_smoke_fixtures(root: Path, *, modality: str = "all") -> Path:
@@ -30,6 +34,11 @@ def prepare_smoke_fixtures(root: Path, *, modality: str = "all") -> Path:
         raise ValueError(f"Unknown smoke-fixture modality: {modality}")
     if modality in {"all", "audio", "video"}:
         _require_ffmpeg_flite()
+    audio_protocol = (
+        load_audio_protocol()
+        if modality in {"all", "audio", "video"}
+        else None
+    )
     manifest_path = root / "data/benchmarks/extraction/smoke.json"
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     for sample in payload["samples"]:
@@ -56,13 +65,15 @@ def prepare_smoke_fixtures(root: Path, *, modality: str = "all") -> Path:
         elif kind == "docx":
             _write_minimal_docx(destination, text)
         elif kind == "audio":
-            _synthesize_speech(text, destination)
-            duration = canonical_wav_duration(destination)
+            assert audio_protocol is not None
+            _synthesize_speech(text, destination, audio_protocol)
+            duration = _canonical_duration(destination, audio_protocol)
             sample["duration_seconds"] = duration
             sample["reference_segments"] = [
                 {"text": text, "start": 0.0, "end": duration}
             ]
         elif kind == "video":
+            assert audio_protocol is not None
             from PIL import Image, ImageDraw
 
             temporary_image = destination.with_suffix(".png")
@@ -70,7 +81,7 @@ def prepare_smoke_fixtures(root: Path, *, modality: str = "all") -> Path:
             image = Image.new("RGB", (1280, 720), "white")
             ImageDraw.Draw(image).text((80, 320), text, fill="black")
             image.save(temporary_image)
-            _synthesize_speech(text, temporary_audio)
+            _synthesize_speech(text, temporary_audio, audio_protocol)
             try:
                 subprocess.run(
                     [
@@ -110,7 +121,8 @@ def prepare_smoke_fixtures(root: Path, *, modality: str = "all") -> Path:
     payload["checksum"] = manifest_content_checksum(payload["samples"])
     atomic_write_json(manifest_path, payload)
     if modality in {"all", "audio"}:
-        _prepare_audio_reliability(root)
+        assert audio_protocol is not None
+        _prepare_audio_reliability(root, audio_protocol)
     return manifest_path
 
 
@@ -177,7 +189,9 @@ def _require_ffmpeg_flite() -> None:
         )
 
 
-def _synthesize_speech(text: str, destination: Path) -> None:
+def _synthesize_speech(
+    text: str, destination: Path, protocol: AudioProtocol
+) -> None:
     escaped = text.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
     subprocess.run(
         [
@@ -191,16 +205,16 @@ def _synthesize_speech(text: str, destination: Path) -> None:
             "-i",
             f"flite=text='{escaped}':voice=slt",
             "-ar",
-            "16000",
+            str(protocol.audio["sample_rate_hz"]),
             "-ac",
-            "1",
+            str(protocol.audio["channels"]),
             str(destination),
         ],
         check=True,
     )
 
 
-def _prepare_audio_reliability(root: Path) -> None:
+def _prepare_audio_reliability(root: Path, protocol: AudioProtocol) -> None:
     manifest_path = root / "data/benchmarks/extraction/audio-reliability-smoke.json"
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     for sample in payload["samples"]:
@@ -209,21 +223,36 @@ def _prepare_audio_reliability(root: Path) -> None:
         _write_pcm(
             destination,
             noise=sample["nonspeech_kind"] == "background_noise",
+            protocol=protocol,
         )
-        sample["duration_seconds"] = canonical_wav_duration(destination)
+        sample["duration_seconds"] = _canonical_duration(destination, protocol)
         sample["asset_sha256"] = sha256_file(destination)
     payload["checksum"] = manifest_content_checksum(payload["samples"])
     atomic_write_json(manifest_path, payload)
 
 
-def _write_pcm(destination: Path, *, noise: bool) -> None:
-    randomizer = random.Random(42)
+def _write_pcm(
+    destination: Path, *, noise: bool, protocol: AudioProtocol
+) -> None:
+    sample_rate = int(protocol.audio["sample_rate_hz"])
+    channels = int(protocol.audio["channels"])
+    sample_width = int(protocol.audio["sample_width_bytes"])
+    randomizer = random.Random(protocol.meta.seed)
     frames = bytearray()
-    for _ in range(16_000 * 2):
+    for _ in range(sample_rate * 2 * channels):
         sample = randomizer.randint(-1800, 1800) if noise else 0
-        frames.extend(int(sample).to_bytes(2, "little", signed=True))
+        frames.extend(int(sample).to_bytes(sample_width, "little", signed=True))
     with wave.open(str(destination), "wb") as audio:
-        audio.setnchannels(1)
-        audio.setsampwidth(2)
-        audio.setframerate(16_000)
+        audio.setnchannels(channels)
+        audio.setsampwidth(sample_width)
+        audio.setframerate(sample_rate)
         audio.writeframes(frames)
+
+
+def _canonical_duration(path: Path, protocol: AudioProtocol) -> float:
+    return canonical_wav_duration(
+        path,
+        sample_rate_hz=int(protocol.audio["sample_rate_hz"]),
+        channels=int(protocol.audio["channels"]),
+        sample_width_bytes=int(protocol.audio["sample_width_bytes"]),
+    )

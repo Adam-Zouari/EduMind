@@ -107,9 +107,11 @@ class RAGPipeline:
                 self.settings.generation.dtype,
                 self.settings.generation.reasoning,
                 self.settings.generation.temperature,
+                self.settings.generation.do_sample,
                 self.settings.generation.seed,
                 self.settings.generation.context_tokens,
                 self.settings.generation.maximum_answer_tokens,
+                self.settings.generation.streamer_timeout_seconds,
             )
             self.llm_generator = HuggingFaceGenerator(generation_profile)
         self.top_k = self.settings.retrieval.top_k

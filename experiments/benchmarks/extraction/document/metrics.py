@@ -260,7 +260,9 @@ def validate_reference(
         )
 
 
-def validate_official_evaluators(references: Sequence[ReferenceDocument]) -> bool:
+def validate_official_evaluators(
+    references: Sequence[ReferenceDocument], *, timeout_seconds: int
+) -> bool:
     tables = any(
         "tables" in reference.capabilities
         and any(element.kind is SegmentKind.TABLE for element in reference.elements)
@@ -271,16 +273,22 @@ def validate_official_evaluators(references: Sequence[ReferenceDocument]) -> boo
         and any(element.kind is SegmentKind.FORMULA for element in reference.elements)
         for reference in references
     )
-    validate_official_runtime(tables=tables, formulas=formulas)
+    validate_official_runtime(
+        tables=tables, formulas=formulas, timeout_seconds=timeout_seconds
+    )
     return tables or formulas
 
 
-def apply_official_metrics(records: Sequence[DocumentEvaluation]) -> None:
+def apply_official_metrics(
+    records: Sequence[DocumentEvaluation], *, timeout_seconds: int
+) -> None:
     """Batch all official table/formula scoring into one Docker invocation."""
 
     table_pairs = [pair for record in records for pair in record.table_pairs]
     formula_pairs = [pair for record in records for pair in record.formula_pairs]
-    table_results, formula_results = score_official_metrics(table_pairs, formula_pairs)
+    table_results, formula_results = score_official_metrics(
+        table_pairs, formula_pairs, timeout_seconds=timeout_seconds
+    )
     table_offset = 0
     formula_offset = 0
     for record in records:
@@ -319,6 +327,8 @@ def score_document(
     reference: ReferenceDocument | None = None,
     repeated_documents: Sequence[ExtractedDocument] = (),
     failed: bool = False,
+    element_matching_threshold: float,
+    duplicate_content_threshold: float,
 ) -> DocumentEvaluation:
     reference = reference or load_reference(item)
     kind = str(item["kind"])
@@ -330,10 +340,17 @@ def score_document(
     predicted = tuple(document.segments) if document else ()
 
     if "pages" in reference.capabilities:
-        result.metrics.update(_page_metrics(reference, predicted))
+        result.metrics.update(
+            _page_metrics(reference, predicted, duplicate_content_threshold)
+        )
         # Page attribution follows content matches and then checks the page label.
         # Matching by box alone could count unrelated text at the same coordinates.
-        page_matches = _match_elements(reference.elements, predicted, visual=False)
+        page_matches = _match_elements(
+            reference.elements,
+            predicted,
+            visual=False,
+            threshold=element_matching_threshold,
+        )
         attributed = [
             (reference.elements[left], predicted[right])
             for left, right, _ in page_matches
@@ -365,6 +382,7 @@ def score_document(
             layout_predictions,
             visual=kind in VISUAL_KINDS,
             use_boxes="layout_boxes" in reference.capabilities,
+            threshold=element_matching_threshold,
         )
         result.counts["layout"] = (
             len(matches),
@@ -385,9 +403,23 @@ def score_document(
                 result.metrics["text.reading_order_accuracy"] = reading_order
 
     if "tables" in reference.capabilities:
-        _score_structured_kind(result, reference, predicted, SegmentKind.TABLE, kind)
+        _score_structured_kind(
+            result,
+            reference,
+            predicted,
+            SegmentKind.TABLE,
+            kind,
+            element_matching_threshold,
+        )
     if "formulas" in reference.capabilities:
-        _score_structured_kind(result, reference, predicted, SegmentKind.FORMULA, kind)
+        _score_structured_kind(
+            result,
+            reference,
+            predicted,
+            SegmentKind.FORMULA,
+            kind,
+            element_matching_threshold,
+        )
     result.metrics["reliability.empty_output_rate"] = float(not hypothesis.strip())
     if "text" in reference.capabilities:
         duplicate_rate = _duplicate_content_rate(reference.text, hypothesis)
@@ -409,9 +441,11 @@ def aggregate_evaluations(
     *,
     resamples: int,
     seed: int,
+    confidence: float,
 ) -> tuple[dict[str, float], dict[str, dict[str, float]]]:
     metrics: dict[str, float] = {}
     intervals: dict[str, dict[str, float]] = {}
+    tail = (1.0 - confidence) / 2.0
     group_names = sorted(set().union(*(record.groups for record in records)))
     for group in (None, *group_names):
         selected = [record for record in records if group is None or group in record.groups]
@@ -440,9 +474,9 @@ def aggregate_evaluations(
                 qualified = _grouped_name(name, prefix)
                 intervals[qualified] = {
                     "estimate": metrics[qualified],
-                    "lower": float(np.quantile(values, 0.025)),
-                    "upper": float(np.quantile(values, 0.975)),
-                    "confidence": 0.95,
+                    "lower": float(np.quantile(values, tail)),
+                    "upper": float(np.quantile(values, 1.0 - tail)),
+                    "confidence": confidence,
                     "defined_resamples": float(len(values)),
                 }
     return metrics, intervals
@@ -509,7 +543,9 @@ def _text_metrics(reference: ReferenceDocument, hypothesis: str) -> dict[str, fl
 
 
 def _page_metrics(
-    reference: ReferenceDocument, predicted: Sequence[ExtractedSegment]
+    reference: ReferenceDocument,
+    predicted: Sequence[ExtractedSegment],
+    duplicate_content_threshold: float,
 ) -> dict[str, float]:
     predicted_pages: dict[int, str] = {}
     for segment in predicted:
@@ -525,7 +561,9 @@ def _page_metrics(
     coverage = sum(page_f1.get(page, 0.0) > 0.0 for page in reference.pages) / len(reference.pages)
     predicted_texts = [value for value in predicted_pages.values() if value.strip()]
     reference_texts = [value for value in reference.pages.values() if value.strip()]
-    duplicates = _unsupported_near_duplicates(predicted_texts, reference_texts)
+    duplicates = _unsupported_near_duplicates(
+        predicted_texts, reference_texts, duplicate_content_threshold
+    )
     result = {
         "pages.page_coverage": coverage,
         "pages.page_content_f1": float(np.mean(list(page_f1.values()))) if page_f1 else 0.0,
@@ -535,11 +573,13 @@ def _page_metrics(
     return result
 
 
-def _unsupported_near_duplicates(predicted: Sequence[str], reference: Sequence[str]) -> int:
+def _unsupported_near_duplicates(
+    predicted: Sequence[str], reference: Sequence[str], threshold: float
+) -> int:
     groups: list[list[str]] = []
     for text in predicted:
         for group in groups:
-            if _content_f1(group[0], text) >= 0.95:
+            if _content_f1(group[0], text) >= threshold:
                 group.append(text)
                 break
         else:
@@ -551,7 +591,7 @@ def _unsupported_near_duplicates(predicted: Sequence[str], reference: Sequence[s
             - max(
                 1,
                 sum(
-                    _content_f1(group[0], expected) >= 0.95
+                    _content_f1(group[0], expected) >= threshold
                     for expected in reference
                 ),
             ),
@@ -604,7 +644,9 @@ def _layout_metrics(
     return result
 
 
-def _score_structured_kind(result, reference, predicted, target, source_kind) -> None:
+def _score_structured_kind(
+    result, reference, predicted, target, source_kind, matching_threshold
+) -> None:
     references = tuple(element for element in reference.elements if element.kind is target)
     predictions = tuple(segment for segment in predicted if segment.kind is target)
     annotation_key = "tables" if target is SegmentKind.TABLE else "formulas"
@@ -616,7 +658,12 @@ def _score_structured_kind(result, reference, predicted, target, source_kind) ->
     )
     if not references and not predictions:
         return
-    matches = _match_elements(references, predictions, visual=source_kind in VISUAL_KINDS)
+    matches = _match_elements(
+        references,
+        predictions,
+        visual=source_kind in VISUAL_KINDS,
+        threshold=matching_threshold,
+    )
     result.counts[annotation_key] = (
         len(matches), len(predictions) - len(matches), len(references) - len(matches)
     )
@@ -686,7 +733,12 @@ def _aggregate_group(records: Sequence[DocumentEvaluation]) -> dict[str, float]:
 
 
 def _match_elements(
-    references, predictions, *, visual: bool, use_boxes: bool | None = None
+    references,
+    predictions,
+    *,
+    visual: bool,
+    use_boxes: bool | None = None,
+    threshold: float,
 ):
     if not references or not predictions:
         return []
@@ -708,7 +760,6 @@ def _match_elements(
     except ModuleNotFoundError as exc:
         raise RuntimeError("scipy is required for one-to-one document-element matching") from exc
     rows, columns = linear_sum_assignment(-scores)
-    threshold = 0.5
     return [
         (int(left), int(right), float(scores[left, right]))
         for left, right in zip(rows, columns)

@@ -5,14 +5,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from experiments.benchmarks.common.arguments import load_candidates, parser
+from experiments.benchmarks.common.arguments import parser
 from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.extraction.document.benchmark import run
+from experiments.benchmarks.extraction.document.protocol import DEFAULT_PROTOCOL_PATH, load_protocol
 
 
 def main(directory: Path) -> int:
     argument_parser = parser("Benchmark document extraction", shortlist=False)
-    argument_parser.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
+    argument_parser.add_argument("--device", choices=("cpu", "cuda"))
+    argument_parser.add_argument("--protocol", type=Path, default=DEFAULT_PROTOCOL_PATH)
     argument_parser.add_argument(
         "--source", choices=("all", "pdf", "image", "docx"), default="all"
     )
@@ -28,18 +30,26 @@ def main(directory: Path) -> int:
     argument_parser.add_argument(
         "--pdf-selection",
         type=Path,
-        help="PDF configuration decision (standard) or architecture-finalist decision (full)",
+        help=(
+            "PDF configuration decision (development) or architecture-finalist "
+            "decision (validation)"
+        ),
     )
     argument_parser.add_argument(
         "--image-selection",
         type=Path,
-        help="image configuration decision (standard) or architecture-finalist decision (full)",
+        help=(
+            "image configuration decision (development) or architecture-finalist "
+            "decision (validation)"
+        ),
     )
     arguments = argument_parser.parse_args()
     return _document_main(arguments, directory)
 
 
 def _document_main(arguments, directory: Path) -> int:
+    protocol = load_protocol(arguments.protocol)
+    device = arguments.device or protocol.profile(arguments.profile).device
     sources = (
         ("pdf", "image", "docx") if arguments.source == "all" else (arguments.source,)
     )
@@ -47,12 +57,12 @@ def _document_main(arguments, directory: Path) -> int:
     comparison = (
         "configuration"
         if arguments.comparison == "configuration"
-        else f"architecture-{'development' if arguments.profile == 'standard' else 'validation'}"
+        else f"architecture-{arguments.profile}"
     )
     results = []
     for source in sources:
         candidates, decisions = _document_candidates(
-            source, arguments, directory / "candidates.yaml"
+            source, arguments, protocol
         )
         results.append(
             (
@@ -62,10 +72,11 @@ def _document_main(arguments, directory: Path) -> int:
                     candidates,
                     manifest_path=arguments.manifest,
                     no_mlflow=arguments.no_mlflow,
-                    component_options={"device": arguments.device},
+                    component_options={"device": device},
                     decision_files=decisions,
                     document_kind=source,
                     document_comparison=comparison,
+                    protocol_path=arguments.protocol,
                 ),
             )
         )
@@ -86,25 +97,13 @@ def _document_main(arguments, directory: Path) -> int:
     return 0 if all(result.complete for _, result in results) else 2
 
 
-def _document_candidates(source: str, arguments, path: Path):
+def _document_candidates(source: str, arguments, protocol):
     comparison = getattr(arguments, "comparison", "configuration")
     if comparison == "configuration":
-        configured = load_candidates(path, arguments.profile)
         if source == "pdf":
-            return configured, {}
+            return protocol.configuration_candidates(arguments.profile), {}
         if source == "image":
-            unique = []
-            for candidate in configured:
-                factors = [
-                    factor
-                    for factor in candidate.split("|")
-                    if not factor.startswith("mode=")
-                ]
-                factors.insert(2, "mode=full_page")
-                value = "|".join(factors)
-                if value not in unique:
-                    unique.append(value)
-            return tuple(unique), {}
+            return protocol.configuration_candidates(arguments.profile, image=True), {}
         return ("docling-standard-native",), {}
 
     if source == "docx":
@@ -112,7 +111,7 @@ def _document_candidates(source: str, arguments, path: Path):
     decision_path = (
         arguments.pdf_selection if source == "pdf" else arguments.image_selection
     )
-    if arguments.profile == "standard":
+    if arguments.profile == "development":
         selected = _document_selection(
             decision_path, f"document-configuration-{source}", exact=1
         )
@@ -122,7 +121,9 @@ def _document_candidates(source: str, arguments, path: Path):
             "paddleocr-vl-1.6",
         ), {source: decision_path}
     selected = _document_selection(
-        decision_path, f"document-architecture-development-{source}", maximum=3
+        decision_path,
+        f"document-architecture-development-{source}",
+        maximum=protocol.maximum_architecture_finalists,
     )
     return selected, {source: decision_path}
 
@@ -130,16 +131,17 @@ def _document_candidates(source: str, arguments, path: Path):
 def _validate_document_arguments(arguments, sources: tuple[str, ...]) -> None:
     comparison = arguments.comparison
     if comparison == "configuration":
-        if arguments.profile == "full":
+        if arguments.profile == "validation":
             raise ValueError(
-                "Document configuration is selected on development; use --profile standard"
+                "Document configuration is selected on development; use "
+                "--profile development"
             )
         if arguments.pdf_selection or arguments.image_selection:
             raise ValueError("Selection files apply only to --comparison architecture")
         return
     if arguments.profile == "smoke":
         raise ValueError(
-            "Document architecture comparison requires standard or full data"
+            "Document architecture comparison requires development or validation data"
         )
     for source in sources:
         if source == "pdf" and arguments.pdf_selection is None:
@@ -167,6 +169,6 @@ def _document_selection(
         path,
         exact=exact,
         maximum=maximum,
-        expected_source=("extraction", expected_stage, "standard"),
+        expected_source=("extraction", expected_stage, "development"),
     )
     return decision.selected_candidates

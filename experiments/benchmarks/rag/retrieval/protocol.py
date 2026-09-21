@@ -2,38 +2,48 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
-from functools import lru_cache
-import math
 from pathlib import Path
 
 import yaml
 
 from edumind.common.artifacts import stable_hash
+from experiments.benchmarks.common.protocol import (
+    ExecutionProfile,
+    ProtocolMetadata,
+    boolean,
+    choice,
+    execution_profile,
+    integer,
+    mapping,
+    number,
+    plain,
+    sequence,
+    strict_object,
+    string,
+    validate_execution as validate_protocol_execution,
+)
+from experiments.benchmarks.common.arguments import load_candidates
 
 from .profiles import RERANKER_MODELS
 
 
 DEFAULT_PROTOCOL_PATH = Path(__file__).with_name("protocol.yaml")
-
-
-@dataclass(frozen=True)
-class ExecutionProfile:
-    warmups: int
-    repetitions: int
-    bootstrap_resamples: int
-    device: str
-    dtype: str
-    hardware_required: bool
+_CHUNKING_CANDIDATE_PATH = (
+    Path(__file__).parents[1] / "chunking_embedding" / "candidates.yaml"
+)
 
 
 @dataclass(frozen=True)
 class RetrievalProtocol:
+    schema_version: int
     checksum: str
     version: str
     resolved: Mapping[str, object]
     seed: int
+    smoke_chunking_embedding_candidate: str
+    smoke_expected_chunk_count: int
     pool_size: int
     evaluation_tokenizer: str
     evidence_coverage_rule: str
@@ -59,6 +69,18 @@ class RetrievalProtocol:
     maximum_finalists: int
     profiles: Mapping[str, ExecutionProfile]
     authoritative_peak_vram_mb: float
+
+    def metadata(self, source_path: Path = DEFAULT_PROTOCOL_PATH) -> ProtocolMetadata:
+        return ProtocolMetadata(
+            name="retrieval",
+            source_path=source_path.resolve(),
+            schema_version=self.schema_version,
+            version=self.version,
+            checksum=self.checksum,
+            resolved=self.resolved,
+            seed=self.seed,
+            profiles=self.profiles,
+        )
 
     @property
     def primary_quality_metrics(self) -> tuple[str, ...]:
@@ -106,22 +128,17 @@ class RetrievalProtocol:
         dtype: str,
     ) -> None:
         profile = self.profile(profile_name)
-        observed = (seed, warmups, repetitions, bootstrap_resamples)
-        expected = (
-            self.seed,
-            profile.warmups,
-            profile.repetitions,
-            profile.bootstrap_resamples,
+        validate_protocol_execution(
+            self.metadata(),
+            profile_name,
+            seed=seed,
+            warmups=warmups,
+            repetitions=repetitions,
+            bootstrap_resamples=bootstrap_resamples,
+            device=device,
+            dtype=dtype,
+            batch_size=profile.batch_size,
         )
-        if observed != expected:
-            raise ValueError("Benchmark plan does not match the retrieval protocol profile")
-        if profile.hardware_required and (device, dtype) != (
-            profile.device,
-            profile.dtype,
-        ):
-            raise ValueError(
-                "Benchmark hardware does not match the retrieval protocol profile"
-            )
 
 
 def load_protocol(path: Path = DEFAULT_PROTOCOL_PATH) -> RetrievalProtocol:
@@ -129,19 +146,10 @@ def load_protocol(path: Path = DEFAULT_PROTOCOL_PATH) -> RetrievalProtocol:
     return protocol_from_mapping(payload)
 
 
-@lru_cache(maxsize=1)
-def default_protocol() -> RetrievalProtocol:
-    return load_protocol(DEFAULT_PROTOCOL_PATH)
-
-
 def protocol_from_settings(settings: Mapping[str, object]) -> RetrievalProtocol:
     payload = _mapping(settings.get("retrieval_protocol"), "retrieval_protocol")
-    protocol = protocol_from_mapping(payload)
-    expected = str(settings.get("retrieval_protocol_checksum", ""))
-    if not expected or expected != protocol.checksum:
-        raise ValueError("Retrieval protocol checksum does not match the resolved plan")
-    if settings.get("retrieval_protocol_version") != protocol.version:
-        raise ValueError("Retrieval protocol version does not match the resolved plan")
+    protocol = protocol_from_mapping(payload.get("resolved"))
+    protocol.metadata().validate_worker_payload(payload)
     return protocol
 
 
@@ -153,6 +161,7 @@ def protocol_from_mapping(value: object) -> RetrievalProtocol:
             "schema_version",
             "protocol_version",
             "seed",
+            "smoke_fixture",
             "retrieval",
             "reranking",
             "quality",
@@ -162,10 +171,29 @@ def protocol_from_mapping(value: object) -> RetrievalProtocol:
             "resources",
         },
     )
-    if _integer(root["schema_version"], "schema_version") != 1:
+    schema_version = _integer(root["schema_version"], "schema_version")
+    if schema_version != 1:
         raise ValueError("Retrieval protocol must use schema_version 1")
     version = _string(root["protocol_version"], "protocol_version")
     seed = _integer(root["seed"], "seed", minimum=0)
+    smoke = _object(
+        root["smoke_fixture"],
+        "smoke_fixture",
+        {"chunking_embedding_candidate", "expected_chunk_count"},
+    )
+    smoke_candidate = _string(
+        smoke["chunking_embedding_candidate"],
+        "smoke_fixture.chunking_embedding_candidate",
+    )
+    if smoke_candidate not in load_candidates(_CHUNKING_CANDIDATE_PATH, "smoke"):
+        raise ValueError(
+            "Retrieval smoke chunking/embedding candidate is not in candidates.yaml"
+        )
+    smoke_chunk_count = _integer(
+        smoke["expected_chunk_count"],
+        "smoke_fixture.expected_chunk_count",
+        minimum=1,
+    )
 
     retrieval = _object(
         root["retrieval"],
@@ -341,6 +369,12 @@ def protocol_from_mapping(value: object) -> RetrievalProtocol:
         name: _execution_profile(name, raw_profiles[name])
         for name in ("smoke", "development", "validation")
     }
+    if {profile.batch_size for profile in profiles.values()} != {
+        embedding_batch_size
+    } or embedding_batch_size != reranker_batch_size:
+        raise ValueError(
+            "Retrieval profile, embedding, and reranker batch sizes must agree"
+        )
     resources = _object(
         root["resources"], "resources", {"authoritative_peak_vram_mb"}
     )
@@ -352,10 +386,13 @@ def protocol_from_mapping(value: object) -> RetrievalProtocol:
     )
     resolved = _plain(root)
     return RetrievalProtocol(
+        schema_version=schema_version,
         checksum=stable_hash(resolved),
         version=version,
         resolved=resolved,
         seed=seed,
+        smoke_chunking_embedding_candidate=smoke_candidate,
+        smoke_expected_chunk_count=smoke_chunk_count,
         pool_size=pool_size,
         evaluation_tokenizer=evaluation_tokenizer,
         evidence_coverage_rule=coverage_rule,
@@ -385,87 +422,35 @@ def protocol_from_mapping(value: object) -> RetrievalProtocol:
 
 
 def _execution_profile(name: str, value: object) -> ExecutionProfile:
-    device_key = "default_device" if name == "smoke" else "required_device"
-    dtype_key = "default_dtype" if name == "smoke" else "required_dtype"
-    payload = _object(
-        value,
-        f"profiles.{name}",
-        {"warmups", "repetitions", "bootstrap_resamples", device_key, dtype_key},
-    )
-    return ExecutionProfile(
-        _integer(payload["warmups"], f"profiles.{name}.warmups", minimum=0),
-        _integer(payload["repetitions"], f"profiles.{name}.repetitions", minimum=1),
-        _integer(
-            payload["bootstrap_resamples"],
-            f"profiles.{name}.bootstrap_resamples",
-            minimum=0,
-        ),
-        _choice(payload[device_key], f"profiles.{name}.{device_key}", {"cpu", "cuda"}),
-        _choice(
-            payload[dtype_key],
-            f"profiles.{name}.{dtype_key}",
-            {"float32", "float16", "bfloat16"},
-        ),
-        name != "smoke",
-    )
+    return execution_profile(value, f"profiles.{name}")
 
 
 def _object(value: object, label: str, fields: set[str]) -> dict[str, object]:
-    payload = _mapping(value, label)
-    missing = sorted(fields - set(payload))
-    unknown = sorted(set(payload) - fields)
-    if missing or unknown:
-        details = []
-        if missing:
-            details.append("missing " + ", ".join(missing))
-        if unknown:
-            details.append("unknown " + ", ".join(unknown))
-        raise ValueError(f"Retrieval protocol {label}: {'; '.join(details)}")
-    return payload
+    return strict_object(value, f"Retrieval protocol {label}", fields)
 
 
 def _mapping(value: object, label: str) -> dict[str, object]:
-    if not isinstance(value, Mapping):
-        raise ValueError(f"Retrieval protocol {label} must be an object")
-    return {str(key): item for key, item in value.items()}
+    return mapping(value, f"Retrieval protocol {label}")
 
 
 def _sequence(value: object, label: str) -> list[object]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
-        raise ValueError(f"Retrieval protocol {label} must be a list")
-    return list(value)
+    return sequence(value, f"Retrieval protocol {label}")
 
 
 def _string(value: object, label: str) -> str:
-    if not isinstance(value, str):
-        raise ValueError(f"Retrieval protocol {label} must be a string")
-    result = value.strip()
-    if not result:
-        raise ValueError(f"Retrieval protocol {label} must be a non-empty string")
-    return result
+    return string(value, f"Retrieval protocol {label}")
 
 
 def _choice(value: object, label: str, choices: set[str]) -> str:
-    result = _string(value, label)
-    if result not in choices:
-        raise ValueError(
-            f"Retrieval protocol {label} must be one of: {', '.join(sorted(choices))}"
-        )
-    return result
+    return choice(value, f"Retrieval protocol {label}", choices)
 
 
 def _boolean(value: object, label: str) -> bool:
-    if not isinstance(value, bool):
-        raise ValueError(f"Retrieval protocol {label} must be boolean")
-    return value
+    return boolean(value, f"Retrieval protocol {label}")
 
 
 def _integer(value: object, label: str, *, minimum: int = 0) -> int:
-    if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
-        raise ValueError(
-            f"Retrieval protocol {label} must be an integer >= {minimum}"
-        )
-    return value
+    return integer(value, f"Retrieval protocol {label}", minimum=minimum)
 
 
 def _number(
@@ -477,23 +462,15 @@ def _number(
     exclusive: bool = False,
     maximum_exclusive: bool = False,
 ) -> float:
-    if not isinstance(value, (int, float)) or isinstance(value, bool):
-        raise ValueError(f"Retrieval protocol {label} must be numeric")
-    result = float(value)
-    if not math.isfinite(result):
-        raise ValueError(f"Retrieval protocol {label} must be finite")
-    if result < minimum or (exclusive and result == minimum):
-        raise ValueError(f"Retrieval protocol {label} is below its valid range")
-    if maximum is not None and (
-        result > maximum or (maximum_exclusive and result == maximum)
-    ):
-        raise ValueError(f"Retrieval protocol {label} exceeds its valid range")
-    return result
+    return number(
+        value,
+        f"Retrieval protocol {label}",
+        minimum=minimum,
+        maximum=maximum,
+        minimum_exclusive=exclusive,
+        maximum_exclusive=maximum_exclusive,
+    )
 
 
 def _plain(value: object) -> object:
-    if isinstance(value, Mapping):
-        return {str(key): _plain(item) for key, item in value.items()}
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-        return [_plain(item) for item in value]
-    return value
+    return plain(value)

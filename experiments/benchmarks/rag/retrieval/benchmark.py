@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import random
 import time
 from collections.abc import Mapping, Sequence
@@ -38,6 +37,9 @@ from experiments.benchmarks.rag.chunking_embedding.metrics import (
     score_question,
 )
 from experiments.benchmarks.rag.chunking_embedding.profiles import split_candidate
+from experiments.benchmarks.rag.chunking_embedding.protocol import (
+    protocol_from_settings as chunking_protocol_from_settings,
+)
 from experiments.benchmarks.rag.evaluation import (
     ExactIndex,
     InputCompatibilityError,
@@ -77,6 +79,7 @@ def evaluate_candidate(
     """Evaluate one complete stack and return auditable rows and aggregates."""
 
     protocol = protocol_from_settings(plan.settings)
+    chunking_protocol = chunking_protocol_from_settings(plan.settings)
     protocol.validate_execution(
         plan.profile,
         seed=plan.seed,
@@ -87,8 +90,6 @@ def evaluate_candidate(
         dtype=dtype,
     )
     seed_deterministically(plan.seed)
-    os.environ["EDUMIND_BENCHMARK_EMBEDDING_DEVICE"] = device
-    os.environ["EDUMIND_BENCHMARK_EMBEDDING_DTYPE"] = dtype
     candidate = parse_candidate(candidate_name)
     chunker_name, embedding_name = split_candidate(
         str(plan.settings.get("chunker_embedding", ""))
@@ -110,11 +111,18 @@ def evaluate_candidate(
         model_lock,
         with_dense=candidate.retriever in {"dense", "rrf"},
         with_bm25=candidate.retriever in {"bm25", "rrf"},
+        device=device,
+        dtype=dtype,
+        chunking_protocol=chunking_protocol,
         retrieval_protocol=protocol,
     )
-    if plan.profile == "smoke" and len(index.chunks) != 30:
+    if (
+        plan.profile == "smoke"
+        and len(index.chunks) != protocol.smoke_expected_chunk_count
+    ):
         raise RuntimeError(
-            f"Retrieval smoke fixture must produce exactly 30 chunks, got {len(index.chunks)}"
+            "Retrieval smoke fixture must produce exactly "
+            f"{protocol.smoke_expected_chunk_count} chunks, got {len(index.chunks)}"
         )
     reranker = _reranker(
         candidate, model_lock, protocol, device=device, dtype=dtype

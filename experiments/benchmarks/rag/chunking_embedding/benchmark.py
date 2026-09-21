@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import random
 import time
 from collections.abc import Mapping
@@ -20,6 +19,7 @@ from experiments.benchmarks.common.contracts import (
 )
 from experiments.benchmarks.common.datasets import answerable_questions, evidence_units
 from experiments.benchmarks.common.provenance import package_versions
+from experiments.benchmarks.common.protocol import validate_execution
 from experiments.benchmarks.common.process import (
     benchmark_objects_from_payload,
     candidate_execution_payload,
@@ -35,13 +35,6 @@ from experiments.benchmarks.rag.evaluation import (
 )
 
 from .metrics import (
-    ALPHA,
-    ALPHA_NDCG_METRICS,
-    AUDIT_K,
-    MAX_QUALITY_K,
-    PRIMARY_QUALITY_METRICS,
-    QUALITY_CUTOFFS,
-    QUALITY_METRICS,
     aggregate_quality,
     eligible_counts,
     latency_intervals,
@@ -49,13 +42,9 @@ from .metrics import (
     score_question,
 )
 from .profiles import embedding_spec, split_candidate
+from .protocol import ChunkingEmbeddingProtocol, protocol_from_settings
 
 
-QUALITY_DIRECTIONS = {
-    f"quality.{scope}.{metric}": "max"
-    for scope in ("overall", "text", "table", "formula", "mixed")
-    for metric in QUALITY_METRICS
-}
 OPERATIONAL_DIRECTIONS = {
     "operational.corpus_build_seconds": "min",
     "operational.corpus_build_source_tokens_per_second": "max",
@@ -64,17 +53,13 @@ OPERATIONAL_DIRECTIONS = {
     "operational.peak_process_tree_ram_mb": "min",
     "operational.peak_vram_mb": "min",
 }
-PRIMARY_METRICS = tuple(
-    f"quality.overall.{metric}" for metric in PRIMARY_QUALITY_METRICS
-)
-PAIRED_METRICS = (
-    *PRIMARY_METRICS,
-    *(f"quality.overall.{metric}" for metric in ALPHA_NDCG_METRICS),
-)
 WORKER = Path(__file__).with_name("worker.py")
 
 
-def directions_for(manifest: DatasetManifest) -> tuple[dict[str, str], tuple[str, ...]]:
+def directions_for(
+    manifest: DatasetManifest,
+    protocol: ChunkingEmbeddingProtocol,
+) -> tuple[dict[str, str], tuple[str, ...]]:
     """Declare only the evidence slices present in this frozen manifest."""
 
     questions = answerable_questions(manifest)
@@ -87,12 +72,18 @@ def directions_for(manifest: DatasetManifest) -> tuple[dict[str, str], tuple[str
         if alpha_questions
         else set()
     )
+    quality_directions = {
+        f"quality.{scope}.{metric}": "max"
+        for scope in ("overall", "text", "table", "formula", "mixed")
+        for metric in protocol.quality_metrics
+    }
+    alpha_metrics = set(protocol.alpha_ndcg_metrics)
     quality = {}
-    for name, direction in QUALITY_DIRECTIONS.items():
+    for name, direction in quality_directions.items():
         _, scope, metric = name.split(".", 2)
         if scope not in scopes:
             continue
-        if metric in ALPHA_NDCG_METRICS and scope not in alpha_scopes:
+        if metric in alpha_metrics and scope not in alpha_scopes:
             continue
         quality[name] = direction
     directions = {**quality, **OPERATIONAL_DIRECTIONS}
@@ -110,9 +101,19 @@ def evaluate_candidate(
 ):
     """Evaluate one eligible pair; the caller supplies process isolation."""
 
+    protocol = protocol_from_settings(plan.settings)
+    validate_execution(
+        protocol.meta,
+        plan.profile,
+        seed=plan.seed,
+        warmups=plan.warmups,
+        repetitions=plan.repetitions,
+        bootstrap_resamples=plan.bootstrap_resamples,
+        device=device,
+        dtype=dtype,
+        batch_size=protocol.embedding_batch_size,
+    )
     seed_deterministically(plan.seed)
-    os.environ["EDUMIND_BENCHMARK_EMBEDDING_DEVICE"] = device
-    os.environ["EDUMIND_BENCHMARK_EMBEDDING_DTYPE"] = dtype
     chunker_name, embedding_name = split_candidate(candidate)
     entry = model_lock[embedding_name]
     index = build_index(
@@ -122,13 +123,18 @@ def evaluate_candidate(
         model_lock,
         with_dense=True,
         with_bm25=False,
+        device=device,
+        dtype=dtype,
+        chunking_protocol=protocol,
     )
     questions = answerable_questions(manifest)
     random.Random(plan.seed).shuffle(questions)
     if not questions:
         raise RuntimeError("Chunking/embedding requires answerable questions")
     for _ in range(plan.warmups):
-        dense_rank_with_scores(index, str(questions[0]["question"]), AUDIT_K)
+        dense_rank_with_scores(
+            index, str(questions[0]["question"]), protocol.audit_depth
+        )
 
     samples: list[SampleResult] = []
     query_rows: list[dict[str, object]] = []
@@ -146,7 +152,7 @@ def evaluate_candidate(
             started = time.perf_counter()
             try:
                 ranking = dense_rank_with_scores(
-                    index, str(question["question"]), AUDIT_K
+                    index, str(question["question"]), protocol.audit_depth
                 )
                 latency = time.perf_counter() - started
                 rankings.append(ranking)
@@ -177,9 +183,10 @@ def evaluate_candidate(
                 )
         if len(rankings) != plan.repetitions:
             continue
-        first_ids = [position for position, _ in rankings[0]][:MAX_QUALITY_K]
+        maximum_quality_rank = max(protocol.quality_cutoffs)
+        first_ids = [position for position, _ in rankings[0]][:maximum_quality_rank]
         deterministic = all(
-            [position for position, _ in ranking][:MAX_QUALITY_K] == first_ids
+            [position for position, _ in ranking][:maximum_quality_rank] == first_ids
             for ranking in rankings[1:]
         )
         if not deterministic:
@@ -187,7 +194,14 @@ def evaluate_candidate(
         latency = float(np.median(latencies))
         query_latencies.append(latency)
         selected = [index.chunks[position] for position, _ in rankings[0]]
-        score = score_question(question, selected, index.chunks, index.tokenizer)
+        score = score_question(
+            question,
+            selected,
+            index.chunks,
+            index.tokenizer,
+            cutoffs=protocol.quality_cutoffs,
+            alpha=protocol.alpha_ndcg_alpha,
+        )
         evidence_type = str(question["evidence_type"])
         metrics = prefixed_quality(score.metrics, evidence_type)
         samples.append(
@@ -198,7 +212,7 @@ def evaluate_candidate(
                 {
                     "document_id": str(question["document_id"]),
                     "evidence_type": evidence_type,
-                    f"deterministic_top_{MAX_QUALITY_K}": deterministic,
+                    f"deterministic_top_{maximum_quality_rank}": deterministic,
                 },
             )
         )
@@ -222,7 +236,7 @@ def evaluate_candidate(
                     "start": chunk.start,
                     "end": chunk.end,
                     "cosine_similarity": similarity,
-                    "scored": rank <= MAX_QUALITY_K,
+                    "scored": rank <= maximum_quality_rank,
                 }
             )
         match_rows.extend(
@@ -273,13 +287,24 @@ def evaluate_candidate(
         "validity.zero_norm_vector_count": 0.0,
         "validity.dimension_mismatch_count": 0.0,
         "validity.determinism_mismatch_count": float(determinism_mismatches),
-        **eligible_counts(samples),
+        **eligible_counts(samples, alpha_metrics=protocol.alpha_ndcg_metrics),
     }
     resamples = 0 if plan.profile == "smoke" else plan.bootstrap_resamples
     aggregate, intervals = aggregate_quality(
-        samples, resamples=resamples, seed=plan.seed
+        samples,
+        resamples=resamples,
+        seed=plan.seed,
+        confidence=protocol.confidence_level,
     )
-    intervals.update(latency_intervals(samples, resamples=resamples, seed=plan.seed))
+    intervals.update(
+        latency_intervals(
+            samples,
+            resamples=resamples,
+            seed=plan.seed,
+            minimum_documents=protocol.minimum_latency_ci_documents,
+            confidence=protocol.confidence_level,
+        )
+    )
     latency_sample_count = float(
         len({str(sample.metadata["document_id"]) for sample in samples})
     )
@@ -318,6 +343,7 @@ def evaluate_candidate(
         manifest.checksum,
         manifest.fingerprint,
         index=index,
+        protocol=protocol,
     )
     validation_errors = [*failures]
     if determinism_mismatches:
@@ -401,6 +427,7 @@ def execute_payload(payload: dict[str, object]) -> dict[str, object]:
 
     candidate, manifest, model_lock, plan = benchmark_objects_from_payload(payload)
     device, dtype = str(payload["device"]), str(payload["dtype"])
+    protocol = protocol_from_settings(plan.settings)
     try:
         evaluated = evaluate_candidate(
             candidate, manifest, model_lock, plan, device=device, dtype=dtype
@@ -419,6 +446,7 @@ def execute_payload(payload: dict[str, object]) -> dict[str, object]:
             manifest.checksum,
             manifest.fingerprint,
             preflight=exc.report,
+            protocol=protocol,
         )
         report = {
             "candidate": candidate,
@@ -452,6 +480,7 @@ def execute_payload(payload: dict[str, object]) -> dict[str, object]:
             manifest.split,
             manifest.checksum,
             manifest.fingerprint,
+            protocol=protocol,
         )
         return {
             "status": "failed",
@@ -486,6 +515,7 @@ def _parameters(
     *,
     index=None,
     preflight: Mapping[str, object] | None = None,
+    protocol: ChunkingEmbeddingProtocol,
 ) -> dict[str, object]:
     resolved_spec = (
         index.embedding_spec
@@ -524,9 +554,9 @@ def _parameters(
         "embedding": embedding_name,
         "embedding_contract": embedding_contract,
         "embedding_batch_size": (
-            getattr(index.embedder, "batch_size", 1)
+            getattr(index.embedder, "batch_size", protocol.embedding_batch_size)
             if index is not None and index.embedder is not None
-            else 1
+            else protocol.embedding_batch_size
         ),
         "model_revision": entry.get("revision"),
         "model_path": entry.get("model_path"),
@@ -544,15 +574,15 @@ def _parameters(
         "normalize": embedding_contract.get("normalize"),
         "device": device,
         "model_dtype": dtype,
-        "stored_vector_dtype": "float32",
+        "stored_vector_dtype": protocol.stored_vector_dtype,
         "search_matrix_normalization": "l2",
         "exact_search": "numpy-cosine-stable-corpus-order-v1",
-        "evaluation_tokenizer": "tiktoken:cl100k_base",
+        "evaluation_tokenizer": protocol.tokenizer,
         "evidence_coverage_rule": "single-chunk-complete-unit-v1",
-        "quality_cutoffs": QUALITY_CUTOFFS,
-        "maximum_scored_rank": MAX_QUALITY_K,
-        "artifact_top_k": AUDIT_K,
-        "alpha": ALPHA,
+        "quality_cutoffs": protocol.quality_cutoffs,
+        "maximum_scored_rank": max(protocol.quality_cutoffs),
+        "artifact_top_k": protocol.audit_depth,
+        "alpha": protocol.alpha_ndcg_alpha,
         "seed": plan.seed,
         "warmups": plan.warmups,
         "repetitions": plan.repetitions,

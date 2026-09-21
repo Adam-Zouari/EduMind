@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -17,7 +18,18 @@ class Chroma:
         self.client = chromadb.HttpClient(
             host="127.0.0.1",
             port=8001,
-            settings=Settings(anonymized_telemetry=False),
+            settings=Settings(
+                anonymized_telemetry=False,
+                chroma_logservice_request_timeout_seconds=math.ceil(
+                    self.config.request_timeout_seconds
+                ),
+                chroma_sysdb_request_timeout_seconds=math.ceil(
+                    self.config.request_timeout_seconds
+                ),
+                chroma_query_request_timeout_seconds=math.ceil(
+                    self.config.request_timeout_seconds
+                ),
+            ),
         )
         self.collection: Any | None = None
 
@@ -50,8 +62,8 @@ class Chroma:
 
     def upsert(self, records: Sequence[Record]) -> None:
         ensure_dimension(self.config, records)
-        for start in range(0, len(records), 2_000):
-            rows = records[start : start + 2_000]
+        for start in range(0, len(records), self.config.upsert_batch_size):
+            rows = records[start : start + self.config.upsert_batch_size]
             self._collection().upsert(
                 ids=[row.identifier for row in rows],
                 embeddings=[list(row.vector) for row in rows],

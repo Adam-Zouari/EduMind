@@ -1,0 +1,104 @@
+schema_version: 1
+protocol_version: audio-asr-v1
+seed: 42
+
+audio:
+  sample_rate_hz: 16000
+  channels: 1
+  sample_width_bytes: 2
+  encoding: PCM signed 16-bit little-endian
+  maximum_duration_seconds: 30
+  manifest_duration_tolerance_seconds: 0.1
+
+decoding:
+  whisper-small-en-control:
+    language: English
+    decoder: greedy
+    timestamp_method: native-word
+    return_timestamps: word
+    do_sample: false
+    cpu_dtype: float32
+    cuda_dtype: float16
+  canary-180m:
+    language: English
+    decoder: beam-1-pnc
+    timestamp_method: native-segment
+    timestamps: true
+    beam_size: 1
+    punctuation_and_capitalization: true
+    cpu_dtype: float32
+    cuda_dtype: float16
+  parakeet-tdt-0.6b-v2:
+    language: English
+    decoder: greedy
+    timestamp_method: native-segment
+    timestamps: true
+    decoding_strategy: greedy_batch
+    timestamp_level: segment_then_word
+    cpu_dtype: float32
+    cuda_dtype: float16
+  moss-transcribe-diarize:
+    language: English
+    decoder: deterministic
+    timestamp_method: native-segment
+    max_new_tokens: 2048
+    do_sample: false
+    cpu_dtype: float32
+    cuda_dtype: bfloat16
+
+alignment:
+  content_f1_threshold: 0.5
+
+datasets:
+  speech_counts: {smoke: 2, development: 54, validation: 18, locked: 18}
+  required_speech_conditions: [clean, noisy, accented, multi_speaker]
+  exclusive_condition_groups: [[clean, noisy]]
+  reliability_categories: [silence, music_without_lyrics, background_noise, environmental_sound]
+  smoke_reliability_categories: [silence, background_noise]
+
+statistics:
+  confidence_level: 0.95
+
+selection:
+  maximum_finalists: 3
+
+resources:
+  authoritative_peak_vram_mb: 3584
+  allow_fallback: false
+  allow_offload: false
+  allow_quantization: false
+  allow_device_splitting: false
+
+profiles:
+  smoke:
+    warmups: 2
+    repetitions: 1
+    bootstrap_resamples: 0
+    device: cpu
+    dtype: auto
+    batch_size: 1
+    hardware_required: false
+  development:
+    warmups: 2
+    repetitions: 3
+    bootstrap_resamples: 10000
+    device: cuda
+    dtype: auto
+    batch_size: 1
+    hardware_required: true
+  validation:
+    warmups: 2
+    repetitions: 3
+    bootstrap_resamples: 10000
+    device: cuda
+    dtype: auto
+    batch_size: 1
+    hardware_required: true
+  locked:
+    warmups: 2
+    repetitions: 3
+    bootstrap_resamples: 10000
+    device: cuda
+    dtype: auto
+    batch_size: 1
+    hardware_required: true

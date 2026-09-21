@@ -10,7 +10,7 @@ from edumind.common.artifacts import sha256_file
 from edumind.common.paths import PROJECT_ROOT
 from edumind.extraction import ExtractionPipeline, ExtractionProfile, SourceKind
 from experiments.benchmarks.common.contracts import BenchmarkPlan, BenchmarkResult
-from experiments.benchmarks.common.datasets import load_manifest
+from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.extraction.document import runner
 from experiments.benchmarks.extraction.document.metrics import (
@@ -25,6 +25,10 @@ from experiments.benchmarks.extraction.document.official_metrics import (
 from experiments.benchmarks.extraction.document.profiles import (
     lock_paths,
     parse_document_profile,
+)
+from experiments.benchmarks.extraction.document.protocol import (
+    DEFAULT_PROTOCOL_PATH,
+    load_protocol,
 )
 from experiments.benchmarks.extraction.registry import build_experiment_registry
 from experiments.benchmarks.preparation.evaluators import OMNIDOCBENCH_REVISION
@@ -41,8 +45,16 @@ def run(
     decision_files: Mapping[str, Path] | None = None,
     document_kind: str | None = None,
     document_comparison: str | None = None,
+    protocol_path: Path = DEFAULT_PROTOCOL_PATH,
 ) -> BenchmarkResult:
+    protocol = load_protocol(protocol_path)
+    execution = protocol.profile(profile)
     manifest = load_manifest(manifest_path or _manifest(profile))
+    require_manifest_split(
+        manifest,
+        profile,
+        profile,
+    )
     selected = [
         item
         for item in manifest.samples
@@ -51,7 +63,7 @@ def run(
     ]
     if not selected:
         raise ValueError(f"Manifest {manifest.name} has no document samples")
-    minimum = _minimum_samples(profile, document_kind)
+    minimum = protocol.minimum_samples(profile, document_kind)
     if minimum and len(selected) < minimum:
         raise ValueError(
             f"Document {profile} requires at least {minimum} frozen samples; "
@@ -60,7 +72,7 @@ def run(
     _validate_assets(
         selected,
         require_checksums=True,
-        require_provenance=profile in {"standard", "full"},
+        require_provenance=profile in {"development", "validation"},
     )
     loaded_references = {
         str(item["id"]): load_reference_data(item) for item in selected
@@ -69,17 +81,26 @@ def run(
         payload, reference = loaded_references[str(item["id"])]
         validate_reference(
             item,
-            authoritative=profile in {"standard", "full"},
+            authoritative=profile in {"development", "validation"},
             payload=payload,
             reference=reference,
         )
     references = {
         sample_id: reference for sample_id, (_, reference) in loaded_references.items()
     }
-    uses_official_evaluators = validate_official_evaluators(tuple(references.values()))
+    uses_official_evaluators = validate_official_evaluators(
+        tuple(references.values()), timeout_seconds=protocol.evaluator_timeout_seconds
+    )
     component_options = dict(component_options or {})
+    unknown_component_options = set(component_options) - {"device"}
+    if unknown_component_options:
+        raise ValueError(
+            "Document runtime options belong in protocol.yaml: "
+            + ", ".join(sorted(unknown_component_options))
+        )
+    component_options.setdefault("device", execution.device)
     comparison = document_comparison or (
-        "architecture-validation" if profile == "full" else "configuration"
+        "architecture-validation" if profile == "validation" else "configuration"
     )
     plan = BenchmarkPlan(
         "extraction",
@@ -87,15 +108,27 @@ def run(
         profile,
         manifest.name,
         candidates,
-        repetitions=1 if profile == "smoke" else 3,
-        bootstrap_resamples=0 if profile == "smoke" else 10_000,
+        seed=protocol.meta.seed,
+        repetitions=execution.repetitions,
+        bootstrap_resamples=execution.bootstrap_resamples,
+        warmups=execution.warmups,
         settings=component_options,
     )
     model_lock = _model_lock(candidates)
+    requested_device = str(component_options.get("device", execution.device))
     for candidate in candidates:
         document_profile = parse_document_profile(candidate)
+        allowed_devices = protocol.backend_devices[document_profile.runtime_engine]
+        if requested_device not in allowed_devices:
+            raise ValueError(
+                f"{document_profile.runtime_engine} cannot run on {requested_device}; "
+                f"allowed devices: {', '.join(allowed_devices)}"
+            )
+        protocol.validate_candidate_factors(document_profile.factors)
         runner.validate_prepared_components(
-            candidate, model_lock.get(document_profile.lock_candidate, {})
+            candidate,
+            model_lock.get(document_profile.lock_candidate, {}),
+            protocol,
         )
 
     def evaluate(candidate: str):
@@ -108,7 +141,8 @@ def run(
             component_options,
             references,
             pipeline,
-            extract_once,
+            lambda *args: extract_once(*args, protocol=protocol),
+            protocol,
         )
 
     directions = runner.directions_for(tuple(references.values()), METRIC_DIRECTIONS)
@@ -135,18 +169,21 @@ def run(
             ),
         },
         decision_files=decision_files,
+        input_artifacts={"manifest": (manifest_path or _manifest(profile)).resolve()},
+        protocols={"document": protocol.meta},
         no_mlflow=no_mlflow,
     )
 
 
-def extract_once(candidate, item, model_lock, component_options, pipeline):
+def extract_once(
+    candidate, item, model_lock, component_options, pipeline, *, protocol
+):
     started = time.perf_counter()
     kind = SourceKind(str(item["kind"]))
     document_profile = parse_document_profile(candidate)
     lock_entry = model_lock.get(document_profile.lock_candidate, {})
-    raw_options = item.get("options", {})
-    options = dict(raw_options) if isinstance(raw_options, Mapping) else {}
-    options.update(component_options)
+    options = dict(component_options)
+    options.update(protocol.parser_options(document_profile.runtime_engine))
     options.update(document_profile.options)
     options.update(lock_paths(lock_entry))
     document = pipeline.extract(
@@ -159,24 +196,12 @@ def extract_once(candidate, item, model_lock, component_options, pipeline):
             preprocessing="raw",
             normalization="none",
             routing="direct",
-            device=str(item.get("device") or component_options.get("device") or "cpu"),
+            device=str(component_options["device"]),
             options=options,
         ),
         use_cache=False,
     )
     return document, time.perf_counter() - started
-
-
-def _minimum_samples(profile: str, document_kind: str | None) -> int:
-    if profile == "smoke":
-        return 0
-    targets = {
-        "standard": {"image": 72, "pdf": 36, "docx": 27},
-        "full": {"image": 24, "pdf": 12, "docx": 9},
-    }
-    if document_kind:
-        return targets[profile][document_kind]
-    return sum(targets[profile].values())
 
 
 def _validate_assets(
@@ -234,5 +259,5 @@ def _model_lock(candidates: tuple[str, ...]) -> dict[str, dict[str, object]]:
 def _manifest(profile: str) -> Path:
     if profile == "smoke":
         return PROJECT_ROOT / "data/benchmarks/extraction/smoke.json"
-    split = "development" if profile == "standard" else "validation"
+    split = profile
     return PROJECT_ROOT / f"data/benchmarks/extraction/document-{split}.json"

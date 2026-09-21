@@ -14,9 +14,17 @@ class InvalidIndexState(RuntimeError):
 @dataclass(frozen=True)
 class Config:
     dimension: int
-    m: int = 16
-    ef_construction: int = 100
-    ef_search: int = 64
+    m: int
+    ef_construction: int
+    ef_search: int
+    upsert_batch_size: int
+    request_timeout_seconds: float
+    connection_pool_limit: int
+    index_readiness_timeout_seconds: float
+    index_readiness_poll_seconds: float
+    index_verification_limit: int
+    qdrant_full_scan_threshold: int
+    qdrant_indexing_threshold: int
     collection: str = "edumind_benchmark"
 
 
