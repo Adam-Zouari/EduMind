@@ -10,6 +10,8 @@ from pathlib import Path
 
 import numpy as np
 
+from edumind.common.model_placement import inspect_model_placement
+
 
 class BM25:
     def __init__(
@@ -156,6 +158,17 @@ class Reranker:
                 and parameter.device.type != "cuda"
             ):
                 raise RuntimeError("Reranker silently fell back from CUDA")
+
+    def placement_report(self) -> dict[str, object]:
+        if self.model is None:
+            return {
+                "status": "placement_unverifiable",
+                "expected_device": self.device,
+                "observed_devices": [],
+            }
+        return inspect_model_placement(
+            self.model, expected_device=self.device, strict=True
+        )
 
     def input_token_counts(self, query: str, documents: Sequence[str]) -> list[int]:
         self.prepare()

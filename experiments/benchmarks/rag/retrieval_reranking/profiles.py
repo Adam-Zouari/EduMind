@@ -55,22 +55,6 @@ def owner_first(candidates: tuple[str, ...]) -> tuple[str, ...]:
     )
 
 
-def validation_candidates(
-    finalists: tuple[str, ...], declared: tuple[str, ...]
-) -> tuple[str, ...]:
-    """Add no-reranker controls while preserving a deterministic owner-first order."""
-
-    parsed = tuple(parse_candidate(candidate) for candidate in finalists)
-    requested = set(finalists) | {
-        candidate.owner_identifier
-        for candidate in parsed
-        if candidate.reranker != "none"
-    }
-    return owner_first(
-        tuple(candidate for candidate in declared if candidate in requested)
-    )
-
-
 def required_reranker_models(candidates: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(
         sorted(

@@ -320,7 +320,7 @@ def protocol_from_mapping(
     )
 
     profiles = execution_profiles(
-        root["profiles"], names=("smoke", "development", "validation")
+        root["profiles"], names=("smoke", "development", "validation", "locked")
     )
     if {profile.batch_size for profile in profiles.values()} != {
         embedding_batch_size

@@ -537,8 +537,44 @@ def run_in_fresh_process(
     return decode_worker_result(result)
 
 
+def preflight_in_fresh_process(
+    candidate: str,
+    manifest: DatasetManifest,
+    model_lock: Mapping[str, Mapping[str, object]],
+    plan: BenchmarkPlan,
+    *,
+    vram_limit_mb: float,
+) -> dict[str, object]:
+    chunker, _embedding = split_candidate(str(plan.settings["chunker_embedding"]))
+    model_backed = parse_candidate(candidate).model_backed or chunker == "semantic"
+    result = run_json_worker(
+        WORKER,
+        {
+            "candidate": candidate,
+            "manifest": asdict(manifest),
+            "model_lock": model_lock,
+            "plan": asdict(plan),
+            "device": "cuda",
+            "dtype": "float16",
+            "mode": "preflight",
+        },
+        device="cuda",
+        prefix="edumind-retrieval-reranking-preflight-",
+        error_label=f"retrieval/reranking preflight worker {candidate}",
+        vram_limit_mb=vram_limit_mb if model_backed else None,
+    )
+    supervision = result.pop("_worker_supervision", {})
+    if isinstance(supervision, Mapping):
+        result.update(supervision)
+    if not model_backed:
+        result.setdefault("vram_measurement_method", "not-applicable")
+    return result
+
+
 def execute_payload(payload: dict[str, object]) -> dict[str, object]:
     candidate, manifest, model_lock, plan = benchmark_objects_from_payload(payload)
+    if payload.get("mode") == "preflight":
+        return _preflight_candidate(candidate, manifest, model_lock, plan)
     try:
         evaluated = evaluate_candidate(
             candidate,
@@ -566,6 +602,100 @@ def execute_payload(payload: dict[str, object]) -> dict[str, object]:
     except Exception as exc:  # noqa: BLE001 - worker reports candidate failure
         return _unexpected_failure(candidate, manifest, f"{type(exc).__name__}: {exc}")
     return successful_execution_payload(evaluated)
+
+
+def _preflight_candidate(candidate_name, manifest, model_lock, plan):
+    protocol = protocol_from_settings(plan.settings)
+    chunking_protocol = chunking_protocol_from_settings(plan.settings)
+    seed_deterministically(plan.seed)
+    candidate = parse_candidate(candidate_name)
+    chunker_name, embedding_name = split_candidate(
+        str(plan.settings["chunker_embedding"])
+    )
+    index = build_index(
+        manifest,
+        chunker_name,
+        embedding_name,
+        model_lock,
+        with_dense=candidate.retriever in {"dense", "rrf"},
+        with_bm25=candidate.retriever in {"bm25", "rrf"},
+        device="cuda",
+        dtype="float16",
+        chunking_protocol=chunking_protocol,
+        retrieval_protocol=protocol,
+    )
+    questions = answerable_questions(manifest)
+    if not questions:
+        raise RuntimeError("Retrieval preflight requires an answerable question")
+    question = questions[0]
+    pool = _first_stage(index, str(question["question"]), candidate.retriever, protocol)
+    reranker = _reranker(
+        candidate, model_lock, protocol, device="cuda", dtype="float16"
+    )
+    reports = []
+    placement_before = []
+    placement_after = []
+    embedding_before = index.preflight.get("placement")
+    if isinstance(embedding_before, Mapping):
+        reports.append(embedding_before)
+        placement_before.append(dict(embedding_before))
+    if index.embedder is not None:
+        embedding_after = index.embedder.placement_report("cuda")
+        reports.append(embedding_after)
+        placement_after.append(embedding_after)
+    if reranker is not None:
+        reranker.prepare()
+        reranker_before = reranker.placement_report()
+        reports.append(reranker_before)
+        placement_before.append(reranker_before)
+        counts = reranker.input_token_counts(
+            str(question["question"]),
+            [index.chunks[position].text for position, _ in pool],
+        )
+        if any(count > reranker.maximum_length for count in counts):
+            raise InputCompatibilityError(
+                f"{reranker.model_name} exceeds its input contract",
+                {
+                    "reason_code": "input_length_exceeded",
+                    "maximum_length": reranker.maximum_length,
+                    "input_token_counts": counts,
+                },
+            )
+        reranker.rank_with_scores(
+            str(question["question"]),
+            [index.chunks[position].text for position, _ in pool],
+            validate_inputs=False,
+        )
+        reranker_after = reranker.placement_report()
+        reports.append(reranker_after)
+        placement_after.append(reranker_after)
+    return {
+        "placement": _combined_placement(reports),
+        "placement_before": placement_before,
+        "placement_after": placement_after,
+        "input_validation": dict(index.preflight),
+        "stress_question_id": str(question["id"]),
+        "stress_pool_size": len(pool),
+    }
+
+
+def _combined_placement(reports):
+    if not reports:
+        return {
+            "status": "qualified",
+            "verification": "not-applicable-no-model-weights",
+            "observed_devices": [],
+        }
+    statuses = {str(report.get("status")) for report in reports}
+    if "offload_detected" in statuses:
+        status = "offload_detected"
+    elif "wrong_device" in statuses:
+        status = "wrong_device"
+    elif "placement_unverifiable" in statuses:
+        status = "placement_unverifiable"
+    else:
+        status = "qualified"
+    return {"status": status, "components": [dict(report) for report in reports]}
 
 
 def _first_stage(

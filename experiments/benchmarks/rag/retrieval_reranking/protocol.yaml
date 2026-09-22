@@ -1,5 +1,5 @@
 schema_version: 1
-protocol_version: retrieval-reranking-v2
+protocol_version: retrieval-reranking-v3
 seed: 42
 
 smoke_fixture:
@@ -54,6 +54,8 @@ profiles:
     dtype: float32
     batch_size: 1
     hardware_required: false
+    devices: [cpu, cuda]
+    device_dtypes: {cpu: float32, cuda: float16}
   development:
     warmups: 2
     repetitions: 3
@@ -63,6 +65,14 @@ profiles:
     batch_size: 1
     hardware_required: true
   validation:
+    warmups: 2
+    repetitions: 3
+    bootstrap_resamples: 10000
+    device: cuda
+    dtype: float16
+    batch_size: 1
+    hardware_required: true
+  locked:
     warmups: 2
     repetitions: 3
     bootstrap_resamples: 10000

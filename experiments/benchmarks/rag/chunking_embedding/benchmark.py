@@ -425,12 +425,46 @@ def run_in_fresh_process(
     return decode_worker_result(result)
 
 
+def preflight_in_fresh_process(
+    candidate: str,
+    manifest: DatasetManifest,
+    model_lock: Mapping[str, Mapping[str, object]],
+    plan: BenchmarkPlan,
+    *,
+    vram_limit_mb: float,
+) -> dict[str, object]:
+    result = run_json_worker(
+        WORKER,
+        {
+            "candidate": candidate,
+            "manifest": asdict(manifest),
+            "model_lock": model_lock,
+            "plan": asdict(plan),
+            "device": "cuda",
+            "dtype": "float16",
+            "mode": "preflight",
+        },
+        device="cuda",
+        prefix="edumind-chunking-embedding-preflight-",
+        error_label=f"chunking/embedding preflight worker {candidate}",
+        vram_limit_mb=vram_limit_mb,
+    )
+    supervision = result.pop("_worker_supervision", {})
+    if isinstance(supervision, Mapping):
+        result.update(supervision)
+    return result
+
+
 def execute_payload(payload: dict[str, object]) -> dict[str, object]:
     """JSON worker entry point."""
 
     candidate, manifest, model_lock, plan = benchmark_objects_from_payload(payload)
     device, dtype = str(payload["device"]), str(payload["dtype"])
     protocol = protocol_from_settings(plan.settings)
+    if payload.get("mode") == "preflight":
+        return _preflight_candidate(
+            candidate, manifest, model_lock, plan, device=device, dtype=dtype
+        )
     try:
         evaluated = evaluate_candidate(
             candidate, manifest, model_lock, plan, device=device, dtype=dtype
@@ -502,6 +536,50 @@ def execute_payload(payload: dict[str, object]) -> dict[str, object]:
             },
         }
     return successful_execution_payload(evaluated)
+
+
+def _preflight_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
+    protocol = protocol_from_settings(plan.settings)
+    chunker_name, embedding_name = split_candidate(candidate)
+    index = build_index(
+        manifest,
+        chunker_name,
+        embedding_name,
+        model_lock,
+        with_dense=True,
+        with_bm25=False,
+        device=device,
+        dtype=dtype,
+        chunking_protocol=protocol,
+    )
+    questions = answerable_questions(manifest)
+    if not questions:
+        raise RuntimeError("Chunking/embedding preflight requires one question")
+    placement_before = dict(index.preflight.get("placement", {}))
+    dense_rank_with_scores(index, str(questions[0]["question"]), protocol.audit_depth)
+    placement_after = (
+        index.embedder.placement_report(device)
+        if index.embedder is not None
+        else {"status": "placement_unverifiable"}
+    )
+    return {
+        "placement": _worst_placement(placement_before, placement_after),
+        "placement_before": placement_before,
+        "placement_after": placement_after,
+        "input_validation": dict(index.preflight),
+        "stress_manifest_fingerprint": manifest.fingerprint,
+        "stress_question_id": str(questions[0]["id"]),
+    }
+
+
+def _worst_placement(*reports: Mapping[str, object]) -> dict[str, object]:
+    priority = {
+        "qualified": 0,
+        "wrong_device": 1,
+        "placement_unverifiable": 2,
+        "offload_detected": 3,
+    }
+    return dict(max(reports, key=lambda row: priority.get(str(row.get("status")), 2)))
 
 
 def _parameters(

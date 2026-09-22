@@ -295,6 +295,10 @@ def build_index(
         _validate_vectors(vectors, len(chunks), spec.dimension, "document")
         vectors = vectors.astype(np.float32, copy=False)
         vectors = vectors / np.linalg.norm(vectors, axis=1, keepdims=True)
+    if embedder is not None:
+        placement_report = getattr(embedder, "placement_report", None)
+        if callable(placement_report):
+            preflight["placement"] = placement_report(device)
     bm25 = (
         BM25(
             [chunk.text for chunk in chunks],

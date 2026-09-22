@@ -1,5 +1,5 @@
 schema_version: 1
-protocol_version: chunking-embedding-v2
+protocol_version: chunking-embedding-v3
 seed: 42
 
 tokenizer: tiktoken:cl100k_base
@@ -72,6 +72,8 @@ profiles:
     dtype: float32
     batch_size: 1
     hardware_required: false
+    devices: [cpu, cuda]
+    device_dtypes: {cpu: float32, cuda: float16}
   development:
     warmups: 2
     repetitions: 3
@@ -81,6 +83,14 @@ profiles:
     batch_size: 1
     hardware_required: true
   validation:
+    warmups: 2
+    repetitions: 3
+    bootstrap_resamples: 10000
+    device: cuda
+    dtype: float16
+    batch_size: 1
+    hardware_required: true
+  locked:
     warmups: 2
     repetitions: 3
     bootstrap_resamples: 10000

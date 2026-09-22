@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -33,6 +34,7 @@ from experiments.benchmarks.rag.methods import reciprocal_rank_fusion_with_score
 from experiments.benchmarks.rag.retrieval_reranking import (
     benchmark as retrieval_benchmark,
 )
+from experiments.benchmarks.rag.retrieval_reranking import run as retrieval_run
 from experiments.benchmarks.rag.retrieval_reranking.benchmark import (
     _require_permutation,
     evaluate_candidate,
@@ -48,7 +50,6 @@ from experiments.benchmarks.rag.retrieval_reranking.profiles import (
     development_candidates,
     owner_first,
     parse_candidate,
-    validation_candidates,
 )
 from experiments.benchmarks.rag.retrieval_reranking.protocol import (
     load_protocol as default_protocol,
@@ -117,15 +118,73 @@ def test_candidate_matrix_is_full_cross_and_owners_run_first() -> None:
     }
 
 
-def test_validation_adds_matching_no_reranker_controls() -> None:
-    selected = ("bm25|ettin-150m", "rrf|none", "dense|ettin-1b")
-    assert validation_candidates(selected, RETRIEVAL_CANDIDATES) == (
-        "dense|none",
-        "bm25|none",
-        "rrf|none",
-        "dense|ettin-1b",
-        "bm25|ettin-150m",
+@pytest.mark.parametrize(
+    ("chunker", "expected_limit"),
+    (("semantic", 3584.0), ("token-256-32", None)),
+)
+def test_bm25_preflight_applies_gpu_gate_when_chunking_is_model_backed(
+    chunker: str,
+    expected_limit: float | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed = {}
+
+    def worker(*_args, **kwargs):
+        observed.update(kwargs)
+        return {}
+
+    monkeypatch.setattr(retrieval_benchmark, "run_json_worker", worker)
+    manifest = _fixture_manifest()
+    plan = BenchmarkPlan(
+        "rag",
+        "retrieval-reranking",
+        "development",
+        manifest.name,
+        ("bm25|none",),
+        seed=42,
+        repetitions=1,
+        bootstrap_resamples=0,
+        warmups=0,
+        settings=_settings(chunker_embedding=f"{chunker}|{PRODUCTION_EMBEDDING_MODEL}"),
     )
+
+    result = retrieval_benchmark.preflight_in_fresh_process(
+        "bm25|none",
+        manifest,
+        {},
+        plan,
+        vram_limit_mb=3584.0,
+    )
+
+    assert observed["vram_limit_mb"] == expected_limit
+    if expected_limit is None:
+        assert result["vram_measurement_method"] == "not-applicable"
+
+
+def test_validation_runs_exactly_the_engineer_selected_candidates(monkeypatch) -> None:
+    selected = ("bm25|ettin-150m", "dense|ettin-1b")
+    monkeypatch.setattr(
+        retrieval_run,
+        "load_engineer_decision",
+        lambda *_args, **_kwargs: SimpleNamespace(selected_candidates=selected),
+    )
+    assert (
+        retrieval_run._selected_candidates(
+            "validation", Path("decision.json"), RETRIEVAL_CANDIDATES, 3
+        )
+        == selected
+    )
+
+
+def test_locked_retrieval_requires_exactly_one_candidate(monkeypatch) -> None:
+    def decision(_path, **options):
+        assert options["exact"] == 1
+        return SimpleNamespace(selected_candidates=("rrf|ettin-400m",))
+
+    monkeypatch.setattr(retrieval_run, "load_engineer_decision", decision)
+    assert retrieval_run._selected_candidates(
+        "locked", Path("decision.json"), RETRIEVAL_CANDIDATES, 3
+    ) == ("rrf|ettin-400m",)
 
 
 def test_pool_recall_requires_complete_evidence_unit() -> None:
