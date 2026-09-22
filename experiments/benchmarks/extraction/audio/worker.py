@@ -6,6 +6,7 @@ import random
 import time
 from pathlib import Path
 
+from edumind.common.model_placement import inspect_model_placement
 from experiments.benchmarks.common.process import json_worker_main
 from experiments.benchmarks.common.resources import ResourceMonitor
 from experiments.benchmarks.extraction.audio.adapters import build_runtime
@@ -27,6 +28,8 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
         device,
         protocol,
     )
+    if payload.get("mode") == "preflight":
+        return _preflight(runtime, payload, device)
     speech = list(payload["speech"])  # type: ignore[arg-type]
     reliability = list(payload["reliability"])  # type: ignore[arg-type]
     random.Random(int(payload["seed"])).shuffle(speech)
@@ -121,6 +124,40 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
             "warmups": int(payload["warmups"]),
             "repetitions": int(payload["repetitions"]),
         },
+    }
+
+
+def _preflight(runtime, payload: dict[str, object], device: str) -> dict[str, object]:
+    speech = list(payload["speech"])  # type: ignore[arg-type]
+    if not speech:
+        raise ValueError("ASR preflight requires one canonical speech sample")
+    monitor = ResourceMonitor(require_vram=True)
+    try:
+        with monitor:
+            runtime.load()
+            before = inspect_model_placement(
+                *runtime.placement_models(), expected_device="cuda", strict=True
+            )
+            runtime.transcribe(Path(str(speech[0]["canonical_path"])))
+            after = inspect_model_placement(
+                *runtime.placement_models(), expected_device="cuda", strict=True
+            )
+    finally:
+        runtime.close()
+    resources = monitor.metrics()
+    placement = after if after["status"] != "qualified" else before
+    if before["status"] == "qualified" and after["status"] == "qualified":
+        placement = after
+    return {
+        "placement": placement,
+        "placement_before": before,
+        "placement_after": after,
+        "peak_vram_mb": float(resources["peak_vram_mb"]),
+        "peak_process_tree_ram_mb": float(resources["peak_process_tree_ram_mb"]),
+        "vram_measurement_method": monitor.vram_measurement_method,
+        "stress_sample_id": str(speech[0]["id"]),
+        "stress_duration_seconds": float(speech[0]["duration_seconds"]),
+        "parameters": runtime.parameters(),
     }
 
 

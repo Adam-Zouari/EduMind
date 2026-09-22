@@ -98,6 +98,11 @@ class BaseRuntime:
         self._runtime = None
         _release_memory()
 
+    def placement_models(self) -> tuple[object, ...]:
+        if self._runtime is None:
+            return ()
+        return (getattr(self._runtime, "model", self._runtime),)
+
     def parameters(self) -> dict[str, object]:
         return {
             "candidate": self.profile.candidate,
@@ -244,6 +249,9 @@ class NemoRuntime(BaseRuntime):
 
 
 class MossRuntime(BaseRuntime):
+    def placement_models(self) -> tuple[object, ...]:
+        return (self._runtime[0],) if self._runtime is not None else ()
+
     def load(self) -> None:
         try:
             import torch

@@ -10,6 +10,11 @@ from pathlib import Path
 
 from edumind.common.artifacts import sha256_file, stable_hash
 from edumind.common.paths import PROJECT_ROOT
+from experiments.benchmarks.common.arguments import (
+    LIFECYCLE_PROFILES,
+    default_decision_path,
+    execution_devices,
+)
 from experiments.benchmarks.common.contracts import BenchmarkPlan, SampleResult
 from experiments.benchmarks.common.datasets import (
     assert_no_split_leakage,
@@ -17,6 +22,13 @@ from experiments.benchmarks.common.datasets import (
     require_manifest_split,
 )
 from experiments.benchmarks.common.decisions import load_engineer_decision
+from experiments.benchmarks.common.preflight import (
+    current_qualification_fingerprint,
+    eligible_candidates,
+    model_lock_fingerprints,
+    resolve_preflight_report,
+    run_preflight,
+)
 from experiments.benchmarks.common.process import run_json_worker
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.extraction.audio.evaluate import (
@@ -34,7 +46,9 @@ from experiments.benchmarks.extraction.media import (
     decode_canonical_audio,
     ffmpeg_version,
 )
-from experiments.benchmarks.preparation.models import load_selected_model_lock
+from experiments.benchmarks.preparation.models import (
+    load_selected_model_lock,
+)
 
 PROFILE_STAGE = {
     "smoke": "audio-smoke",
@@ -48,7 +62,7 @@ def main(directory: Path) -> int:
     parser = argparse.ArgumentParser(description="Benchmark English audio extraction")
     parser.add_argument(
         "--profile",
-        choices=("smoke", "development", "validation", "locked"),
+        choices=LIFECYCLE_PROFILES,
         default="smoke",
     )
     parser.add_argument("--manifest", type=Path)
@@ -58,38 +72,77 @@ def main(directory: Path) -> int:
         type=Path,
         help="engineer decision selecting finalists or one ASR",
     )
-    parser.add_argument("--device", choices=("cpu", "cuda"))
+    parser.add_argument("--device", choices=("cpu", "cuda", "both"))
+    parser.add_argument("--preflight-report", type=Path)
+    parser.add_argument("--preflight-run-id")
     parser.add_argument("--protocol", type=Path, default=DEFAULT_PROTOCOL_PATH)
     parser.add_argument("--no-mlflow", action="store_true")
     arguments = parser.parse_args()
     protocol = load_protocol(arguments.protocol)
-    device = arguments.device or protocol.profile(arguments.profile).device
+    execution_profile = (
+        "development" if arguments.profile == "preflight" else arguments.profile
+    )
+    execution = protocol.profile(execution_profile)
+    devices = execution_devices(
+        arguments.profile,
+        arguments.device,
+        smoke_devices=protocol.profile("smoke").devices,
+        authoritative_device=execution.device,
+    )
+    shortlist = arguments.shortlist or default_decision_path("audio", arguments.profile)
     candidates = _candidates(
         arguments.profile,
-        arguments.shortlist,
+        shortlist,
         protocol,
     )
-    result = run(
-        arguments.profile,
-        candidates,
-        manifest_path=arguments.manifest,
-        reliability_path=arguments.reliability_manifest,
-        device=device,
-        no_mlflow=arguments.no_mlflow,
-        decision_file=arguments.shortlist,
-        protocol_path=arguments.protocol,
-    )
+    if arguments.profile == "preflight":
+        result = run_preflight_profile(
+            candidates,
+            manifest_path=arguments.manifest,
+            device=devices[0],
+            no_mlflow=arguments.no_mlflow,
+            protocol_path=arguments.protocol,
+        )
+        payload = {
+            "run_id": result.run_id,
+            "ready_for_development": result.ready_for_development,
+            "qualified_candidates": result.qualified_candidates,
+            "excluded_candidates": result.excluded_candidates,
+            "blocked_candidates": result.blocked_candidates,
+            "artifacts": str(result.artifact_directory),
+        }
+        print(json.dumps(payload, indent=2))
+        return 0 if result.ready_for_development else 2
+    results = [
+        run(
+            arguments.profile,
+            candidates,
+            manifest_path=arguments.manifest,
+            reliability_path=arguments.reliability_manifest,
+            device=device,
+            no_mlflow=arguments.no_mlflow,
+            decision_file=shortlist,
+            preflight_report=arguments.preflight_report,
+            preflight_run_id=arguments.preflight_run_id,
+            protocol_path=arguments.protocol,
+        )
+        for device in devices
+    ]
     print(
         json.dumps(
-            {
-                "run_id": result.run_id,
-                "complete": result.complete,
-                "artifacts": str(result.artifact_directory),
-            },
+            [
+                {
+                    "device": device,
+                    "run_id": result.run_id,
+                    "complete": result.complete,
+                    "artifacts": str(result.artifact_directory),
+                }
+                for device, result in zip(devices, results, strict=True)
+            ],
             indent=2,
         )
     )
-    return 0 if result.complete else 2
+    return 0 if all(result.complete for result in results) else 2
 
 
 def run(
@@ -101,6 +154,8 @@ def run(
     device: str,
     no_mlflow: bool,
     decision_file: Path | None,
+    preflight_report: Path | None = None,
+    preflight_run_id: str | None = None,
     protocol_path: Path = DEFAULT_PROTOCOL_PATH,
 ):
     protocol = load_protocol(protocol_path)
@@ -126,13 +181,29 @@ def run(
     _validate_candidates(candidates, protocol)
     if profile != "smoke":
         assert_no_split_leakage(_audio_split_manifests(speech_path, split))
+    declared = tuple(protocol.candidates)
+    lock_candidates = declared if profile != "smoke" else candidates
     required_models = tuple(
-        protocol.candidate(candidate).model_id for candidate in candidates
+        protocol.candidate(candidate).model_id for candidate in lock_candidates
     )
     model_lock = load_selected_model_lock(
         PROJECT_ROOT / "data/benchmarks/models/selected.json",
         candidates=required_models,
     )
+    qualification_path = None
+    qualification = None
+    if profile != "smoke":
+        fingerprint, _ = _qualification_identity(protocol, model_lock)
+        qualification_path, qualification = resolve_preflight_report(
+            benchmark="audio",
+            fingerprint=fingerprint,
+            candidates=declared,
+            explicit=preflight_report,
+            run_id=preflight_run_id,
+        )
+        candidates = eligible_candidates(
+            candidates, qualification, profile=profile, label="ASR"
+        )
 
     temporary_root = PROJECT_ROOT / "artifacts/benchmarks/asr-canonical"
     temporary_root.mkdir(parents=True, exist_ok=True)
@@ -168,6 +239,19 @@ def run(
                     str(item["id"]): item["canonical_sha256"]
                     for item in [*canonical_speech, *canonical_controls]
                 },
+                "preflight_run_id": (
+                    qualification.get("mlflow_run_id") if qualification else None
+                ),
+                "preflight_fingerprint": (
+                    qualification.get("qualification_fingerprint")
+                    if qualification
+                    else None
+                ),
+                "hardware_exclusions": (
+                    qualification.get("excluded_candidates", [])
+                    if qualification
+                    else []
+                ),
             },
         )
 
@@ -256,7 +340,15 @@ def run(
             paired_metrics=(),
             revisions=revisions,
             decision_files={"shortlist": decision_file} if decision_file else None,
-            input_artifacts={"speech": speech_path, "reliability": controls_path},
+            input_artifacts={
+                "speech": speech_path,
+                "reliability": controls_path,
+                **(
+                    {"preflight_report": qualification_path}
+                    if qualification_path is not None
+                    else {}
+                ),
+            },
             protocols={"audio": protocol.meta},
             no_mlflow=no_mlflow,
             monitor_resources=False,
@@ -269,6 +361,72 @@ def run(
                 if execution.hardware_required
                 else None
             ),
+            run_name_prefix=(
+                f"asr-smoke-{device}" if profile == "smoke" else f"asr-{profile}"
+            ),
+        )
+
+
+def run_preflight_profile(
+    candidates: tuple[str, ...],
+    *,
+    manifest_path: Path | None,
+    device: str,
+    no_mlflow: bool,
+    protocol_path: Path = DEFAULT_PROTOCOL_PATH,
+):
+    if device != "cuda":
+        raise ValueError("ASR preflight requires CUDA")
+    protocol = load_protocol(protocol_path)
+    speech_path = (manifest_path or _speech_manifest("development")).resolve()
+    speech_manifest = load_manifest(speech_path)
+    require_manifest_split(speech_manifest, "development", "development")
+    speech = [item for item in speech_manifest.samples if item.get("kind") == "audio"]
+    _validate_manifest_rows(speech, None, "development", protocol)
+    stress = max(speech, key=lambda item: float(item["duration_seconds"]))
+    model_ids = tuple(
+        protocol.candidate(candidate).model_id for candidate in candidates
+    )
+    model_lock = load_selected_model_lock(
+        PROJECT_ROOT / "data/benchmarks/models/selected.json", candidates=model_ids
+    )
+    fingerprint, context = _qualification_identity(protocol, model_lock)
+    temporary_root = PROJECT_ROOT / "artifacts/benchmarks/asr-preflight-canonical"
+    temporary_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=temporary_root) as raw_directory:
+        directory = Path(raw_directory)
+        canonical = _canonicalize((stress,), directory / "speech", protocol)
+
+        def probe(candidate: str):
+            return _run_worker(
+                candidate,
+                model_lock,
+                canonical,
+                (),
+                device="cuda",
+                warmups=0,
+                repetitions=1,
+                bootstrap_resamples=0,
+                seed=protocol.meta.seed,
+                directory=directory,
+                protocol=protocol,
+                mode="preflight",
+                vram_limit_mb=protocol.authoritative_peak_vram_mb,
+            )
+
+        context = {
+            **context,
+            "stress_manifest": str(speech_path),
+            "stress_manifest_checksum": speech_manifest.fingerprint,
+            "stress_sample_id": stress["id"],
+        }
+        return run_preflight(
+            benchmark="audio",
+            candidates=candidates,
+            fingerprint=fingerprint,
+            context=context,
+            probe=probe,
+            no_mlflow=no_mlflow,
         )
 
 
@@ -285,6 +443,8 @@ def _run_worker(
     seed,
     directory,
     protocol,
+    mode=None,
+    vram_limit_mb=None,
 ):
     safe = "".join(character if character.isalnum() else "-" for character in candidate)
     return run_json_worker(
@@ -300,11 +460,13 @@ def _run_worker(
             "bootstrap_resamples": bootstrap_resamples,
             "seed": seed,
             "protocol": protocol.meta.worker_payload(),
+            **({"mode": mode} if mode else {}),
         },
         device=device,
         prefix=f"{safe}-",
         error_label="ASR worker",
         temporary_root=directory,
+        vram_limit_mb=vram_limit_mb,
     )
 
 
@@ -447,6 +609,8 @@ def _validate_manifest_rows(
                 "ASR speech split lacks required conditions: "
                 + ", ".join(sorted(missing_conditions))
             )
+    if controls is None:
+        return
     if not controls:
         raise ValueError("ASR benchmark requires nonspeech reliability controls")
     kinds = {str(item.get("nonspeech_kind")) for item in controls}
@@ -589,10 +753,11 @@ def _candidates(
     shortlist: Path | None,
     protocol: AudioProtocol,
 ) -> tuple[str, ...]:
-    if profile in {"smoke", "development"}:
+    if profile in {"smoke", "preflight", "development"}:
         if shortlist is not None:
             raise ValueError(
-                f"ASR {profile} runs the complete configured candidate list"
+                f"ASR {profile} does not accept a manual shortlist; its roster "
+                "comes from the protocol and applicable preflight"
             )
         return tuple(protocol.candidates)
     if shortlist is None:
@@ -607,6 +772,35 @@ def _candidates(
             "development" if profile == "validation" else "validation",
         ),
     ).selected_candidates
+
+
+def _qualification_identity(protocol: AudioProtocol, model_lock):
+    execution = protocol.profile("development")
+    locked_models = model_lock_fingerprints(model_lock)
+    revisions = {
+        alias: locked_models[protocol.candidate(alias).model_id]
+        for alias in protocol.candidates
+    }
+    return current_qualification_fingerprint(
+        benchmark="audio",
+        candidates=tuple(protocol.candidates),
+        protocols={"audio": protocol.meta},
+        revisions=revisions,
+        execution={
+            "device": "cuda",
+            "dtype_by_candidate": {
+                alias: protocol.dtype(alias, "cuda") for alias in protocol.candidates
+            },
+            "batch_size": execution.batch_size,
+            "vram_limit_mb": protocol.authoritative_peak_vram_mb,
+        },
+        input_envelope={
+            "kind": "canonical-audio",
+            "sample_rate_hz": protocol.audio["sample_rate_hz"],
+            "channels": protocol.audio["channels"],
+            "maximum_duration_seconds": protocol.audio["maximum_duration_seconds"],
+        },
+    )
 
 
 def _speech_manifest(profile: str) -> Path:

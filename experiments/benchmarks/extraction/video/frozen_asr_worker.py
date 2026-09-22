@@ -7,6 +7,7 @@ import time
 import wave
 from pathlib import Path
 
+from edumind.common.model_placement import inspect_model_placement
 from experiments.benchmarks.common.process import json_worker_main
 from experiments.benchmarks.common.resources import ResourceMonitor
 from experiments.benchmarks.extraction.audio.adapters import build_runtime
@@ -55,6 +56,9 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
                 started = time.perf_counter()
                 runtime.load()
                 cold_load_seconds = time.perf_counter() - started
+                placement_before = inspect_model_placement(
+                    *runtime.placement_models(), expected_device=device, strict=True
+                )
                 decoded_audio: dict[str, Path] = {}
                 first_id = str(items[0]["id"])
                 first_audio = temporary / f"{first_id}-full.wav"
@@ -184,10 +188,13 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
                             "word_insertions": alignment.insertions,
                         }
                     )
+                placement_after = inspect_model_placement(
+                    *runtime.placement_models(), expected_device=device, strict=True
+                )
         finally:
             runtime.close()
             resources = monitor.metrics()
-    return {
+    result = {
         "videos": videos,
         "ffmpeg_commands": commands,
         "metrics": {
@@ -209,6 +216,27 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
             "vram_measurement_method": monitor.vram_measurement_method,
         },
     }
+    if payload.get("mode") == "preflight":
+        placement = (
+            placement_after
+            if placement_after["status"] != "qualified"
+            else placement_before
+        )
+        if (
+            placement_before["status"] == "qualified"
+            and placement_after["status"] == "qualified"
+        ):
+            placement = placement_after
+        return {
+            "placement": placement,
+            "placement_before": placement_before,
+            "placement_after": placement_after,
+            "peak_vram_mb": result["metrics"]["peak_vram_mb"],
+            "peak_process_tree_ram_mb": result["metrics"]["peak_process_tree_ram_mb"],
+            "vram_measurement_method": monitor.vram_measurement_method,
+            "stress_sample_ids": [str(item["id"]) for item in items],
+        }
+    return result
 
 
 def _window_starts(duration: float, length: float, overlap: float):

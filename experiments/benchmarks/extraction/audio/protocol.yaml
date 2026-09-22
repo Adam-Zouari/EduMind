@@ -1,5 +1,5 @@
 schema_version: 1
-protocol_version: audio-asr-v2
+protocol_version: audio-asr-v3
 seed: 42
 
 audio:
@@ -82,6 +82,7 @@ profiles:
     dtype: auto
     batch_size: 1
     hardware_required: false
+    devices: [cpu, cuda]
   development:
     warmups: 2
     repetitions: 3

@@ -41,7 +41,13 @@ from experiments.benchmarks.common.metrics import (
 )
 from experiments.benchmarks.extraction.document import cli as document_cli
 from experiments.benchmarks.extraction.document.adapters import _paddle_blocks
-from experiments.benchmarks.extraction.document.cli import _document_candidates
+from experiments.benchmarks.extraction.document.benchmark import (
+    _manifest as document_manifest,
+)
+from experiments.benchmarks.extraction.document.cli import (
+    _document_candidates,
+    _validate_document_arguments,
+)
 from experiments.benchmarks.extraction.document.metrics import (
     METRIC_DIRECTIONS,
     aggregate_evaluations,
@@ -771,6 +777,41 @@ def test_document_architecture_uses_development_before_validation(monkeypatch) -
         "document-configuration-pdf",
         "document-architecture-development-pdf",
     ]
+
+
+def test_document_locked_uses_exactly_one_validation_winner(monkeypatch) -> None:
+    winner = "docling-vlm-granite-258m"
+    calls = []
+
+    def selected(path, expected_stage, **limits):
+        calls.append((path, expected_stage, limits))
+        return (winner,)
+
+    monkeypatch.setattr(document_cli, "_document_selection", selected)
+    arguments = SimpleNamespace(
+        profile="locked",
+        comparison="architecture",
+        pdf_selection=Path("validation-winner.json"),
+        image_selection=None,
+    )
+
+    candidates, decisions = _document_candidates(
+        "pdf", arguments, default_document_protocol()
+    )
+
+    assert candidates == (winner,)
+    assert decisions == {"pdf": Path("validation-winner.json")}
+    assert calls == [
+        (
+            Path("validation-winner.json"),
+            "document-architecture-validation-pdf",
+            {"expected_profile": "validation", "exact": 1},
+        )
+    ]
+    assert document_manifest("locked").name == "document-locked-test.json"
+
+    with pytest.raises(ValueError, match="complete PDF, image, and DOCX"):
+        _validate_document_arguments(arguments, ("pdf",))
 
 
 def test_canonical_document_preserves_exact_offsets_and_structure() -> None:

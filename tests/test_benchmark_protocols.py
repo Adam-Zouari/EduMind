@@ -197,6 +197,13 @@ def test_chunking_strategy_kind_cannot_contradict_candidate_alias(
         load_chunking_protocol(_write_protocol(tmp_path, "chunk-kind", root))
 
 
+def test_smoke_device_dtypes_cover_every_declared_device(tmp_path: Path) -> None:
+    root = deepcopy(load_chunking_protocol().meta.resolved)
+    root["profiles"]["smoke"]["device_dtypes"].pop("cuda")
+    with pytest.raises(ValueError, match="define every declared device exactly"):
+        load_chunking_protocol(_write_protocol(tmp_path, "chunk-dtypes", root))
+
+
 def test_rag_and_vector_behavior_comes_from_protocol(tmp_path) -> None:
     chunk_root = deepcopy(load_chunking_protocol().meta.resolved)
     chunk_root["strategies"]["token-256-32"].update({"size": 8, "overlap": 2})
@@ -285,6 +292,10 @@ def test_generation_screen_limit_and_final_profiles_are_explicit() -> None:
     assert final.profile("locked") == final.meta.profile("locked")
     with pytest.raises(ValueError, match="no profile 'standard'"):
         final.profile("standard")
+
+    document = load_document_protocol()
+    assert document.profile("locked") == document.meta.profile("locked")
+    assert document.sample_counts["locked"] == {"image": 24, "pdf": 12, "docx": 9}
 
 
 def test_retrieval_uses_the_supplied_chunking_smoke_pair(tmp_path, monkeypatch) -> None:

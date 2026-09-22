@@ -1,5 +1,5 @@
 schema_version: 1
-protocol_version: video-v1
+protocol_version: video-v2
 seed: 42
 
 keyframes:
@@ -43,6 +43,7 @@ profiles:
     dtype: float32
     batch_size: 1
     hardware_required: false
+    devices: [cpu, cuda]
   development:
     warmups: 2
     repetitions: 3
@@ -50,7 +51,7 @@ profiles:
     device: cuda
     dtype: float16
     batch_size: 1
-    hardware_required: false
+    hardware_required: true
   validation:
     warmups: 2
     repetitions: 3
@@ -58,7 +59,7 @@ profiles:
     device: cuda
     dtype: float16
     batch_size: 1
-    hardware_required: false
+    hardware_required: true
   locked:
     warmups: 2
     repetitions: 3
@@ -66,4 +67,4 @@ profiles:
     device: cuda
     dtype: float16
     batch_size: 1
-    hardware_required: false
+    hardware_required: true

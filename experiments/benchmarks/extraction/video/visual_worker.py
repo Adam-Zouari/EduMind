@@ -46,6 +46,7 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
     document_protocol.validate_candidate_factors(image_profile.factors)
     image_revision = str(payload["image_revision"])
     image_options = dict(payload["image_options"])  # type: ignore[arg-type]
+    preflight_mode = payload.get("mode") == "preflight"
     expected_image_options = {
         **document_protocol.parser_options(image_engine),
         **image_profile.options,
@@ -62,7 +63,9 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
     sample_rows: list[dict[str, object]] = []
     ffmpeg_commands: list[dict[str, object]] = []
     monitor = ResourceMonitor(
-        require_vram=device == "cuda", report_zero_vram=device == "cpu"
+        require_vram=device == "cuda" and not preflight_mode,
+        report_zero_vram=device == "cpu" or preflight_mode,
+        zero_vram_measurement_method="backend-no-process-vram",
     )
     with tempfile.TemporaryDirectory(prefix="edumind-video-visual-") as raw_temp:
         temporary = Path(raw_temp)
@@ -188,7 +191,7 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
             confidence=protocol.confidence_level,
         )
     )
-    return {
+    result = {
         "samples": sample_rows,
         "timings": timing_rows,
         "metrics": quality,
@@ -227,6 +230,20 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
             ),
         },
     }
+    if preflight_mode:
+        return {
+            "placement": {
+                "status": "qualified",
+                "verification": "visual-adapter-cuda-contract",
+                "backend": image_engine,
+                "requested_device": device,
+            },
+            "peak_vram_mb": operational["peak_visual_vram_mb"],
+            "peak_process_tree_ram_mb": operational["peak_visual_process_tree_ram_mb"],
+            "vram_measurement_method": monitor.vram_measurement_method,
+            "stress_sample_ids": [str(item["id"]) for item in items],
+        }
+    return result
 
 
 def _process_video(

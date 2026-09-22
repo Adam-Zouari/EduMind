@@ -113,7 +113,7 @@ class DocumentProtocol:
         return tuple(candidates)
 
     def minimum_samples(self, profile: str, kind: str | None) -> int:
-        if profile not in {"development", "validation"}:
+        if profile not in {"development", "validation", "locked"}:
             return 0
         counts = self.sample_counts[profile]
         return counts[kind] if kind else sum(counts.values())
@@ -240,11 +240,11 @@ def protocol_from_mapping(
         maximum=1,
     )
     datasets = strict_object(
-        root["datasets"], "datasets", {"development", "validation"}
+        root["datasets"], "datasets", {"development", "validation", "locked"}
     )
     sample_counts = {
         split: _counts(datasets[split], f"datasets.{split}")
-        for split in ("development", "validation")
+        for split in ("development", "validation", "locked")
     }
     statistics = strict_object(root["statistics"], "statistics", {"confidence_level"})
     confidence = number(
@@ -287,7 +287,7 @@ def protocol_from_mapping(
             )
         devices[name] = values
     profiles = execution_profiles(
-        root["profiles"], names=("smoke", "development", "validation")
+        root["profiles"], names=("smoke", "development", "validation", "locked")
     )
     if {profile.batch_size for profile in profiles.values()} != {1}:
         raise ValueError("Document parser profiles must process one sample at a time")

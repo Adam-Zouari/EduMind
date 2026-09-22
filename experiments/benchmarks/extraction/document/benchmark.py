@@ -11,6 +11,14 @@ from edumind.common.paths import PROJECT_ROOT
 from edumind.extraction import ExtractionPipeline, ExtractionProfile, SourceKind
 from experiments.benchmarks.common.contracts import BenchmarkPlan, BenchmarkResult
 from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
+from experiments.benchmarks.common.preflight import (
+    current_qualification_fingerprint,
+    eligible_candidates,
+    model_lock_fingerprints,
+    resolve_preflight_report,
+    run_preflight,
+)
+from experiments.benchmarks.common.process import run_json_worker
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.extraction.document import runner
 from experiments.benchmarks.extraction.document.metrics import (
@@ -45,6 +53,8 @@ def run(
     decision_files: Mapping[str, Path] | None = None,
     document_kind: str | None = None,
     document_comparison: str | None = None,
+    preflight_report: Path | None = None,
+    preflight_run_id: str | None = None,
     protocol_path: Path = DEFAULT_PROTOCOL_PATH,
 ) -> BenchmarkResult:
     protocol = load_protocol(protocol_path)
@@ -53,7 +63,7 @@ def run(
     require_manifest_split(
         manifest,
         profile,
-        profile,
+        "locked-test" if profile == "locked" else profile,
     )
     selected = [
         item
@@ -72,7 +82,7 @@ def run(
     _validate_assets(
         selected,
         require_checksums=True,
-        require_provenance=profile in {"development", "validation"},
+        require_provenance=profile in {"development", "validation", "locked"},
     )
     loaded_references = {
         str(item["id"]): load_reference_data(item) for item in selected
@@ -81,7 +91,7 @@ def run(
         payload, reference = loaded_references[str(item["id"])]
         validate_reference(
             item,
-            authoritative=profile in {"development", "validation"},
+            authoritative=profile in {"development", "validation", "locked"},
             payload=payload,
             reference=reference,
         )
@@ -100,7 +110,9 @@ def run(
         )
     component_options.setdefault("device", execution.device)
     comparison = document_comparison or (
-        "architecture-validation" if profile == "validation" else "configuration"
+        f"architecture-{profile}"
+        if profile in {"validation", "locked"}
+        else "configuration"
     )
     plan = BenchmarkPlan(
         "extraction",
@@ -114,6 +126,36 @@ def run(
         warmups=execution.warmups,
         settings=component_options,
     )
+    declared = declared_document_candidates(protocol)
+    qualification_path = None
+    qualification = None
+    if profile != "smoke":
+        qualification_lock = _model_lock(declared)
+        fingerprint, _ = _qualification_identity(protocol, qualification_lock, declared)
+        qualification_path, qualification = resolve_preflight_report(
+            benchmark="document",
+            fingerprint=fingerprint,
+            candidates=declared,
+            explicit=preflight_report,
+            run_id=preflight_run_id,
+        )
+        candidates = eligible_candidates(
+            candidates, qualification, profile=profile, label="Document"
+        )
+        plan = BenchmarkPlan(
+            **{
+                **vars(plan),
+                "candidates": candidates,
+                "settings": {
+                    **plan.settings,
+                    "preflight_run_id": qualification.get("mlflow_run_id"),
+                    "preflight_fingerprint": qualification.get(
+                        "qualification_fingerprint"
+                    ),
+                    "hardware_exclusions": qualification.get("excluded_candidates", []),
+                },
+            }
+        )
     model_lock = _model_lock(candidates)
     requested_device = str(component_options.get("device", execution.device))
     for candidate in candidates:
@@ -169,9 +211,134 @@ def run(
             ),
         },
         decision_files=decision_files,
-        input_artifacts={"manifest": (manifest_path or _manifest(profile)).resolve()},
+        input_artifacts={
+            "manifest": (manifest_path or _manifest(profile)).resolve(),
+            **(
+                {"preflight_report": qualification_path}
+                if qualification_path is not None
+                else {}
+            ),
+        },
         protocols={"document": protocol.meta},
         no_mlflow=no_mlflow,
+        run_name_prefix=(
+            f"document-{comparison}-{document_kind or 'all'}-smoke-{requested_device}"
+            if profile == "smoke"
+            else f"document-{comparison}-{document_kind or 'all'}-{profile}"
+        ),
+    )
+
+
+def run_preflight_profile(
+    *,
+    manifest_path: Path | None,
+    no_mlflow: bool,
+    protocol_path: Path = DEFAULT_PROTOCOL_PATH,
+):
+    protocol = load_protocol(protocol_path)
+    path = (manifest_path or _manifest("development")).resolve()
+    manifest = load_manifest(path)
+    require_manifest_split(manifest, "development", "development")
+    items = [
+        item
+        for item in manifest.samples
+        if item.get("kind") in {"image", "pdf", "docx"}
+    ]
+    _validate_assets(items, require_checksums=True, require_provenance=True)
+    stress = tuple(
+        max(
+            (item for item in items if item.get("kind") == kind),
+            key=lambda item: (PROJECT_ROOT / str(item["source_path"])).stat().st_size,
+        )
+        for kind in ("image", "pdf", "docx")
+    )
+    candidates = declared_document_candidates(protocol)
+    model_lock = _model_lock(candidates)
+    for candidate in candidates:
+        profile = parse_document_profile(candidate)
+        runner.validate_prepared_components(
+            candidate, model_lock.get(profile.lock_candidate, {}), protocol
+        )
+    fingerprint, context = _qualification_identity(protocol, model_lock, candidates)
+
+    def probe(candidate: str):
+        candidate_items = _preflight_items(candidate, stress)
+        model_backed = candidate != "docling-standard-native"
+        result = run_json_worker(
+            Path(__file__).with_name("preflight_worker.py"),
+            {
+                "candidate": candidate,
+                "items": candidate_items,
+                "model_lock": model_lock,
+                "protocol": protocol.meta.worker_payload(),
+            },
+            device="cuda",
+            prefix="edumind-document-preflight-",
+            error_label=f"document preflight worker {candidate}",
+            require_vram_measurement=model_backed,
+        )
+        supervision = result.pop("_worker_supervision", {})
+        if isinstance(supervision, Mapping):
+            result.update(supervision)
+        if not model_backed:
+            result.setdefault("vram_measurement_method", "not-applicable")
+        return result
+
+    return run_preflight(
+        benchmark="document",
+        candidates=candidates,
+        fingerprint=fingerprint,
+        context={
+            **context,
+            "stress_manifest": str(path),
+            "stress_manifest_checksum": manifest.fingerprint,
+            "stress_sample_ids": [str(item["id"]) for item in stress],
+        },
+        probe=probe,
+        no_mlflow=no_mlflow,
+    )
+
+
+def _preflight_items(candidate: str, stress):
+    by_kind = {str(item["kind"]): item for item in stress}
+    profile = parse_document_profile(candidate)
+    if profile.requested_engine == "docling-standard-native":
+        kinds = ("docx",)
+    elif profile.factors.get("mode") == "pdf_aware_layout_regions":
+        kinds = ("pdf",)
+    else:
+        kinds = ("pdf", "image")
+    return tuple(by_kind[kind] for kind in kinds)
+
+
+def declared_document_candidates(protocol):
+    return tuple(
+        dict.fromkeys(
+            (
+                *protocol.configuration_candidates("development"),
+                *protocol.configuration_candidates("development", image=True),
+                "docling-standard-native",
+                "docling-vlm-granite-258m",
+                "paddleocr-vl-1.6",
+            )
+        )
+    )
+
+
+def _qualification_identity(protocol, model_lock, candidates):
+    execution = protocol.profile("development")
+    return current_qualification_fingerprint(
+        benchmark="document",
+        candidates=candidates,
+        protocols={"document": protocol.meta},
+        revisions=model_lock_fingerprints(model_lock),
+        execution={
+            "device": execution.device,
+            "dtype": execution.dtype,
+            "batch_size": execution.batch_size,
+            "resource_policy": "backend-specific-reporting",
+        },
+        input_envelope={"source_types": ["image", "pdf", "docx"]},
     )
 
 
@@ -257,5 +424,5 @@ def _model_lock(candidates: tuple[str, ...]) -> dict[str, dict[str, object]]:
 def _manifest(profile: str) -> Path:
     if profile == "smoke":
         return PROJECT_ROOT / "data/benchmarks/extraction/smoke.json"
-    split = profile
+    split = "locked-test" if profile == "locked" else profile
     return PROJECT_ROOT / f"data/benchmarks/extraction/document-{split}.json"

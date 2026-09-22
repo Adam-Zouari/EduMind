@@ -12,6 +12,7 @@ from experiments.benchmarks.extraction.audio.protocol import (
 from experiments.benchmarks.extraction.document.protocol import (
     load_protocol as load_document_protocol,
 )
+from experiments.benchmarks.extraction.video import runner as video_runner
 from experiments.benchmarks.extraction.video.candidates import (
     all_candidates,
     frame_command,
@@ -35,6 +36,38 @@ ROOT = Path(__file__).resolve().parents[1]
 VIDEO_PROTOCOL = load_protocol()
 AUDIO_PROTOCOL = load_audio_protocol()
 DOCUMENT_PROTOCOL = load_document_protocol()
+
+
+def test_video_smoke_uses_a_device_specific_frozen_asr_artifact(monkeypatch) -> None:
+    commands = []
+
+    def run(command, **_options):
+        commands.append(command)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(video_runner.subprocess, "run", run)
+    monkeypatch.setattr(
+        video_runner.sys,
+        "argv",
+        ["run.py", "--profile", "smoke", "--phase", "all"],
+    )
+    arguments = SimpleNamespace(phase="all", frozen_asr=None)
+    assert video_runner._run_smoke_devices(arguments, ("cpu", "cuda")) == 0
+    artifacts = [
+        Path(command[command.index("--frozen-asr") + 1]) for command in commands
+    ]
+    assert [path.name for path in artifacts] == [
+        "smoke-cpu.json",
+        "smoke-cpu.json",
+        "smoke-cuda.json",
+        "smoke-cuda.json",
+    ]
+    assert [command[command.index("--phase") + 1] for command in commands] == [
+        "frozen-asr",
+        "all",
+        "frozen-asr",
+        "all",
+    ]
 
 
 def test_all_nine_video_configurations_include_frame_zero_and_vfr() -> None:
