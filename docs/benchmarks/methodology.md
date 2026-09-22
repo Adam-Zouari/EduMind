@@ -9,8 +9,9 @@ Generation is tested on fixed evidence so retrieval cannot influence it. Finally
 combine the approved retrieval and generation profiles and review their answers.
 
 ```text
-1. Document extraction: configuration on development, architectures on validation
-2. Audio extraction: all candidates on development, finalists on validation
+1. Document extraction: configuration on development, architectures on validation,
+   and one frozen route per source type on locked test
+2. Audio extraction: qualified candidates on development, finalists on validation
 1 + 2 --> 3. Video keyframes with parser and ASR frozen
 
 4. Chunking x embedding --> 5. Retrieval and reranking
@@ -38,17 +39,22 @@ architecture, quality level, or hardware preset. Candidate/runtime profiles,
 such as a Docling parser configuration or an ASR decoding configuration, are a
 different concept and always run inside one of these execution profiles.
 
-The four execution profiles form a one-way evaluation process:
+The benchmark lifecycle is one-way:
 
 ```text
-smoke -> development -> validation -> locked
+smoke-cpu + smoke-cuda -> preflight -> development -> validation -> locked
 ```
 
-| Execution profile | Data | Candidates | Purpose | Result may be used for |
+`preflight` is a hardware-qualification phase, not a quality-evaluation
+profile. The four evaluation profiles remain `smoke`, `development`,
+`validation`, and `locked`.
+
+| Phase or profile | Data | Candidates | Purpose | Result may be used for |
 |---|---|---|---|---|
-| `smoke` | Tiny committed fixtures | Runnable candidate paths needed by the smoke check | Catch loading, wiring, schema, scoring, and artifact errors cheaply. | Debugging only; never ranking, tuning, or selection. |
-| `development` | Development manifest | Every candidate declared for that stage | Compare alternatives, inspect failures, and make all tuning or shortlist decisions. | An engineer-reviewed finalist decision for validation. |
-| `validation` | Unseen validation manifest | Only finalists recorded from a completed development run, plus explicitly documented controls | Test whether the development conclusion holds on unseen data without reopening the search. | An engineer-reviewed final component or complete-system decision. |
+| `smoke` | Tiny committed fixtures | The protocol's smoke roster | Run separate CPU and CUDA parents to catch loading, wiring, schema, scoring, artifact, and device-path errors cheaply. | Debugging only; never ranking, tuning, qualification, or selection. |
+| `preflight` | Reviewed development/stress inputs | Every declared candidate | Qualify the exact model, protocol, software locks, CUDA device, dtype, batch size, and supported input envelope. | Hardware eligibility for development only. |
+| `development` | Development manifest | Candidates marked `qualified` by the matching preflight | Compare alternatives, inspect failures, and make all tuning or shortlist decisions. | An engineer-reviewed finalist decision for validation. |
+| `validation` | Unseen validation manifest | Only finalists recorded from a completed development run | Test whether the development conclusion holds on unseen data without reopening the search. | An engineer-reviewed final component or complete-system decision. |
 | `locked` | Untouched locked-test manifest | Exactly one fully frozen selection | Produce the final unbiased estimate after every model, setting, and policy decision is fixed. | Reporting only; never further tuning or reselection. |
 
 The profiles answer different questions, so a later profile does not merely mean
@@ -61,11 +67,126 @@ must not be used to quietly tune and rerun the same evaluation. Any post-lock
 change to data, models, settings, metrics, or protocol requires a new benchmark
 version and a new untouched locked-test set.
 
+One `--profile smoke` command launches independent `smoke-cpu` and
+`smoke-cuda` parents. Neither path may fall back to the other device. The
+optional `--device cpu|cuda|both` argument only narrows smoke for debugging;
+development, validation, and locked use the CUDA device and dtype frozen in the
+protocol and reject CPU overrides. When CPU and CUDA require different numeric
+types, the smoke profile records an explicit dtype for each device; the current
+embedding, retrieval, generation, and Final RAG CUDA smoke paths use the same
+FP16 contract as their authoritative CUDA execution.
+
+Preflight has one parent and one child per candidate in the benchmark's normal
+MLflow experiment. A fresh CUDA worker performs real inference while the parent
+continuously samples its process tree. ASR, embedding, learned-reranker, and
+video-ASR workers are stopped when sampled VRAM exceeds 3,584 MiB. Document and
+video visual parsers instead use their backend-specific placement contracts and
+report VRAM without a shared cap. Framework placement inspection checks all
+available parameters and buffers, Hugging Face device maps, Accelerate hooks,
+and disk/meta placement. CPU tokenization and media decoding are not offloading.
+
+`vram_limit_exceeded`, `gpu_oom`, and `offload_detected` are definitive hardware
+exclusions. Missing measurement, unverifiable placement, and infrastructure or
+execution failures block development; they never silently eliminate a
+candidate. Development resolves an exact preflight fingerprint and runs only
+its `qualified_candidates`. Validation and locked reuse that qualification only
+when candidate identity, model lock, protocols, dependency locks, GPU/driver,
+device, dtype, batch size, and input envelope still match.
+
 Development, validation, and locked runs use seed 42, retain per-sample results,
 and report 95% confidence intervals for eligible sample-based aggregates. A
-stage's locked split is used once for its one engineer-selected final profile.
+stage's locked split is used once for its engineer-selected winner or frozen
+source-routing policy.
 Decision files are written after engineer review; runners validate those files
 but never promote candidates automatically.
+
+### How candidates advance between stages
+
+Benchmark progression uses two different records that must not be confused:
+
+- `preflight_report.json` is generated automatically. It records hardware
+  qualification and determines which declared candidates are eligible to enter
+  development. It does not rank quality or select a preferred candidate.
+- An engineer-decision JSON is written manually after reviewing a complete
+  development or validation comparison. It records which successful candidates
+  advance and why. It never changes benchmark settings or application
+  configuration.
+
+The complete flow is:
+
+```text
+protocol + model lock + smoke manifest
+-> smoke-cpu and smoke-cuda
+-> wiring evidence only; no candidate advances from smoke
+
+protocol + model lock + reviewed development inputs
+-> preflight
+-> machine-generated preflight_report.json
+-> exact qualified candidate roster
+
+qualified candidates + development manifest
+-> development comparison
+-> complete development summary.json
+-> engineer review
+-> <benchmark>-validation.json
+
+selected finalists + validation manifest
+-> validation comparison
+-> complete validation summary.json
+-> engineer review
+-> <benchmark>-locked.json
+
+one frozen winner + locked-test manifest
+-> locked report
+-> no further tuning, selection, or promotion
+```
+
+Project-owned decisions live under `data/benchmarks/decisions/` because they are
+reviewed experimental inputs, not executable implementation. Validation
+resolves its development-finalist decision automatically; locked resolves its
+validation-winner decision automatically. CLI selection arguments may point to
+an explicit alternative file, but the same provenance checks still apply. A
+decision is treated as immutable after a run consumes it; a changed choice is a
+new versioned decision, not an edit to the consumed file. Placeholder decisions
+are not committed.
+
+Every decision uses this contract:
+
+```json
+{
+  "schema_version": 1,
+  "source_summary": "path/to/completed/source/summary.json",
+  "source_run_id": "matching-source-run-id",
+  "selected_candidates": ["candidate-id"],
+  "selected_by": "reviewer identity",
+  "selected_date": "YYYY-MM-DD",
+  "reason": "Evidence-based rationale for the selection"
+}
+```
+
+The runner rejects a decision unless the referenced summary is complete, its
+run ID and expected suite/stage/profile match, and every selected candidate is a
+successful child of that run. The protocol sets the permitted finalist count;
+locked decisions require exactly one winner. Each consumed decision is uploaded
+as an MLflow input artifact, and its content fingerprint is attached to the
+parent and candidate children.
+
+Document extraction has source-specific routing rather than one parser that
+accepts every format. Its development configuration decisions are
+`document-pdf-configuration.json` and `document-image-configuration.json`;
+architecture-development results produce `document-pdf-validation.json` and
+`document-image-validation.json`; validation produces the exact-one
+`document-pdf-locked.json` and `document-image-locked.json` decisions. Native
+Docling is the fixed DOCX route. The Document locked command consumes both
+winner files and evaluates the complete PDF/image/DOCX policy together.
+
+Protocols remain the source of candidate rosters and execution settings. They
+are not edited to remove a failed preflight candidate or advance a finalist.
+Manifests remain the source of exact samples and split provenance; model locks
+remain the source of revisions, local snapshots, and checksums. MLflow summaries
+provide the evidence referenced by decisions. This separation prevents a
+selection from silently changing the benchmark definition, data, or model
+identity.
 
 ### Protocol ownership and reproducibility
 
@@ -91,8 +212,10 @@ The resolved protocol has a stable checksum. Parent fingerprints include all
 composed protocol checksums; workers verify the version, checksum, and resolved
 payload before loading a model or processing data.
 
-Every runner uses the same profile names directly: `smoke`, `development`,
-`validation`, and, where the benchmark has a final holdout stage, `locked`.
+Every runner uses the same evaluation-profile names directly: `smoke`,
+`development`, `validation`, and, where the benchmark has a final holdout stage,
+`locked`. Applicable model-backed suites additionally accept the `preflight`
+phase.
 Legacy `standard` and `full` spellings are rejected so command lines, run plans,
 decision provenance, protocol settings, and MLflow artifacts use one vocabulary.
 
@@ -119,6 +242,40 @@ settings, revisions, data checksum, hardware, aggregate metrics, confidence
 intervals, and per-sample results. The engineer chooses what continues; the
 runner never chooses a winner or changes the application configuration.
 
+### Shared MLflow lifecycle
+
+Each benchmark has its own MLflow experiment. A parent represents one fair
+comparison or qualification invocation; each direct child represents one
+candidate. Runs are not nested by extraction/RAG category because that would
+mix unrelated candidate sets and metric contracts in the same experiment.
+
+```text
+EduMind / <Benchmark>
+|- parent: <benchmark>-smoke-cpu-<timestamp>
+|  `- child per smoke candidate
+|- parent: <benchmark>-smoke-cuda-<timestamp>
+|  `- child per smoke candidate
+|- parent: <benchmark>-preflight-<timestamp>
+|  `- child per declared candidate
+|- parent: <benchmark>-development-<timestamp>
+|  `- child per qualified candidate
+|- parent: <benchmark>-validation-<timestamp>
+|  `- child per selected finalist
+`- parent: <benchmark>-locked-<timestamp>
+   `- one selected candidate child
+```
+
+Only applicable phases appear. Vector Database omits CUDA smoke and preflight;
+Generation and Final RAG currently omit preflight. Video may create separate
+frozen-ASR and visual-comparison parents within one phase.
+
+Every parent and child is tagged with the benchmark, profile, concrete phase
+(`smoke-cpu`, `smoke-cuda`, or the authoritative profile), run type, device,
+dataset checksum, protocol checksums, exact qualification identity, and a
+fingerprint of any engineer decisions. The parent stores the complete plan and
+comparison artifacts; a child stores one candidate's executed settings,
+metrics, resources, and per-sample evidence.
+
 Until hardware qualification is complete, every model-backed benchmark
 processes one inference input at a time. Runtimes that expose a batch setting
 use batch size `1`; the remaining document and video paths execute samples
@@ -131,10 +288,13 @@ Authoritative development, validation, and locked comparisons for ASR, embedding
 learned reranking, and generation use the laptop's RTX 3050 through CUDA. Each
 stage freezes one supported 16-bit dtype, keeps the whole active model on that
 GPU, and forbids CPU fallback, CPU/GPU offload, automatic device splitting, and
-quantization. Peak process VRAM must not exceed `3,584 MiB`. CPU or CUDA may be
-used for smoke and debugging, but those results are never selection evidence.
+quantization. Peak process VRAM must not exceed `3,584 MiB`. Smoke executes both
+CPU and CUDA by default, but neither result is selection evidence.
 Document and video parser backends follow their separately recorded lifecycle
 and device contracts because not every parser runtime exposes the same backend.
+Generation and Final RAG are intentionally outside preflight until their
+benchmark designs are finalized; their ordinary runtime resource gates still
+apply. Vector Database is CPU-only and has neither CUDA smoke nor preflight.
 
 When a stage declares paired candidate comparisons, they are analysis artifacts
 rather than new metrics. They are calculated from aligned per-sample results;
@@ -525,14 +685,15 @@ only the engineer-selected architecture finalists
 on unseen image/PDF inputs; native Docling on DOCX
 → engineer selects the complete parser profiles without adding candidates
 
-future locked test, after the runtime routing policy is defined:
-run the one frozen extraction policy once
+locked:
+one PDF validation winner + one image validation winner + native DOCX
+on untouched locked-test inputs -> reporting only, with no further selection
 ```
 
-Within a development or validation comparison, every candidate profile receives the same
-deterministically shuffled eligible samples, one cold measurement, warmups, and
-three measured repetitions. Smoke uses one measured repetition because it is
-only a wiring check.
+Within a development, validation, or locked comparison, every candidate profile
+receives the same deterministically shuffled eligible samples, one cold
+measurement, warmups, and three measured repetitions. Smoke uses one measured
+repetition because it is only a wiring check.
 All scheduled repetitions run even after an earlier repetition fails, and each
 attempt has its own timing/error row. If any measured repetition fails, that
 document's quality output is the empty prediction, Candidate Failure Rate is
@@ -540,25 +701,27 @@ one, and Structured-output Determinism is zero. Throughput counts pages from
 successful attempts but divides by the elapsed time of every measured attempt.
 Development determines both the Standard settings and the parser-architecture
 finalists. Validation confirms only those finalists; it is not the first local
-comparison of Granite Docling or PaddleOCR-VL. The locked test is not used for
-tuning. Runtime routing and the resulting locked-test execution are deliberately
-deferred until these parser results exist; neither is part of the current
-configuration/architecture commands.
+comparison of Granite Docling or PaddleOCR-VL. After validation, the engineer
+records exactly one PDF winner and one image winner. Locked evaluation applies
+those frozen routes to the untouched locked-test split; native DOCX remains the
+only valid DOCX route. The locked result is reporting-only and cannot reopen
+configuration or architecture selection.
 
 ### MLflow result structure
 
-MLflow uses one experiment named `EduMind / extraction`. A document command with
+Document runs use `EduMind / Document`. CPU/CUDA smoke parents and one
+all-candidate preflight parent precede the comparisons below. A document command with
 `--source all` creates three independent **parent runs**, because PDF, image,
 and DOCX execute different valid configuration sets. Each parent is one fair
 comparison; it is not a parser result itself. The standard configuration tree
 is:
 
 ```text
-MLflow experiment: EduMind / extraction
+MLflow experiment: EduMind / Document
 ├── parent: extraction-document-configuration-pdf-<timestamp>
-│   └── 24 child runs: one per PDF extraction profile
+│   └── up to 24 children: one per qualified PDF extraction profile
 ├── parent: extraction-document-configuration-image-<timestamp>
-│   └── 12 child runs: one per unique full-page image profile
+│   └── up to 12 children: one per qualified full-page image profile
 └── parent: extraction-document-configuration-docx-<timestamp>
     └── 1 child run: native Docling ingestion
 ```
@@ -571,7 +734,7 @@ parent validates native Docling because the two visual parsers do not accept
 native DOCX.
 
 ```text
-MLflow experiment: EduMind / extraction
+MLflow experiment: EduMind / Document
 ├── parent: extraction-document-architecture-development-pdf-<timestamp>
 │   ├── child: <selected PDF Docling Standard profile>
 │   ├── child: docling-vlm-granite-258m
@@ -586,11 +749,13 @@ MLflow experiment: EduMind / extraction
 
 The corresponding validation parents use
 `extraction-document-architecture-validation-<source>-<timestamp>` and contain
-only the recorded finalists for that source.
+only the recorded finalists for that source. Locked parents use
+`extraction-document-architecture-locked-<source>-<timestamp>` and contain one
+validation winner for PDF or image, or the fixed native-Docling route for DOCX.
 
 The parent run stores:
 
-- execution profile (`smoke`, `development`, or `validation`), stage, dataset
+- execution profile (`smoke`, `development`, `validation`, or `locked`), stage, dataset
   name and checksum;
 - seed, required metric contract, run fingerprint, Git state, hardware, model
   revisions, dependency locks, and any engineer-decision file;
@@ -930,7 +1095,8 @@ all runnable ASR paths on tiny committed speech and nonspeech fixtures
 → verify loading, transcription, timestamps, scoring, artifacts, and cleanup
 
 development:
-all four ASR profiles on 54 speech clips and development reliability controls
+all hardware-qualified members of the four-profile ASR roster on 54 speech clips
+and development reliability controls
 → engineer reviews MLflow and records finalists
 
 validation:
@@ -942,7 +1108,9 @@ the selected profile once on 18 locked speech clips and locked controls
 → final unbiased ASR report; no further tuning in this benchmark version
 ```
 
-Smoke validates wiring only. Development is where all candidates are compared.
+Smoke validates wiring only. Development is where all candidates that passed
+the exact matching preflight are compared; exclusions remain recorded in the
+parent provenance.
 Validation checks whether the chosen finalists retain their behavior on unseen
 recordings. The locked split is used only after the engineer has selected one
 profile. MLflow records evidence throughout but never advances a candidate or
@@ -973,20 +1141,22 @@ not included in WER because their references contain no speech.
 
 ### MLflow result structure
 
-Audio uses the same MLflow experiment as the other extraction stages:
+Audio uses its own MLflow experiment. Smoke creates separate CPU and CUDA
+parents, and preflight creates one qualification parent before development:
 
 ```text
-MLflow experiment: EduMind / extraction
-├── parent: extraction-audio-smoke-<timestamp>
-│   └── one child per smoke-tested ASR profile
-├── parent: extraction-audio-development-<timestamp>
-│   ├── child: whisper-small-en-control
-│   ├── child: canary-180m
-│   ├── child: parakeet-tdt-0.6b-v2
-│   └── child: moss-transcribe-diarize
-├── parent: extraction-audio-validation-<timestamp>
+MLflow experiment: EduMind / ASR
+├── parent: asr-smoke-cpu-<timestamp>
+│   └── one child per smoke-tested ASR profile on CPU
+├── parent: asr-smoke-cuda-<timestamp>
+│   └── one child per smoke-tested ASR profile on CUDA
+├── parent: audio-preflight-<timestamp>
+│   └── one qualification child per declared ASR profile
+├── parent: asr-development-<timestamp>
+│   └── one child per hardware-qualified ASR profile
+├── parent: asr-validation-<timestamp>
 │   └── one child per engineer-selected finalist
-└── parent: extraction-audio-locked-test-<timestamp>
+└── parent: asr-locked-<timestamp>
     └── one child for the selected ASR profile
 ```
 
@@ -1216,29 +1386,35 @@ retrieval experiment.
 
 ### MLflow result structure
 
-Video uses `EduMind / extraction`. The shared ASR input is recorded first. The
-nine development configurations are then created by three ordered comparisons
+Video uses `EduMind / Video`. Smoke creates separate CPU and CUDA parents, and
+preflight qualifies the frozen-ASR stack and every visual policy before
+development. The shared ASR input is recorded first. The nine development
+configurations are then created by three ordered comparisons
 so the hybrid run can consume the engineer-selected scene threshold:
 
 ```text
-MLflow experiment: EduMind / extraction
-├── parent: extraction-video-input-asr-development-<timestamp>
+MLflow experiment: EduMind / Video
+├── parents: video-frozen-asr-smoke-cpu/cuda-<timestamp>
+├── parents: video-visual-smoke-cpu/cuda-<timestamp>
+├── parent: video-preflight-<timestamp>
+│   └── frozen-ASR qualification plus one child per visual policy
+├── parent: video-frozen-asr-development-<timestamp>
 │   └── child: <selected-asr-profile-across-all-development-videos>
-├── parent: extraction-video-development-fixed-<timestamp>
+├── parent: video-visual-development-fixed-<timestamp>
 │   ├── child: video-fixed-5s
 │   ├── child: video-fixed-10s
 │   └── child: video-fixed-20s
-├── parent: extraction-video-development-scene-<timestamp>
+├── parent: video-visual-development-scene-<timestamp>
 │   ├── child: video-scene-0.30
 │   ├── child: video-scene-0.40
 │   └── child: video-scene-0.50
-├── parent: extraction-video-development-hybrid-<timestamp>
+├── parent: video-visual-development-hybrid-<timestamp>
 │   ├── child: video-hybrid-<selected-threshold>-5s
 │   ├── child: video-hybrid-<selected-threshold>-10s
 │   └── child: video-hybrid-<selected-threshold>-20s
-├── parent: extraction-video-validation-<timestamp>
+├── parent: video-visual-validation-<timestamp>
 │   └── one child per engineer-selected finalist
-└── parent: extraction-video-locked-test-<timestamp>
+└── parent: video-visual-locked-<timestamp>
     └── one child for the selected configuration
 ```
 
@@ -1515,16 +1691,24 @@ and do not enter retrieval-quality aggregates.
 
 ### MLflow result structure
 
-Chunking/embedding uses the RAG experiment and one parent per fair comparison:
+Chunking/embedding uses `EduMind / Chunking–Embedding` and one parent per fair
+comparison. Independent CPU/CUDA smoke parents precede preflight; the final
+reporting-only parent contains exactly one validation winner:
 
 ```text
-MLflow experiment: EduMind / rag
-├── parent: rag-chunking-embedding-smoke-<timestamp>
-│   └── one child per smoke-tested pair
+MLflow experiment: EduMind / Chunking–Embedding
+├── parent: rag-chunking-embedding-smoke-cpu-<timestamp>
+│   └── one child per smoke-tested pair on CPU
+├── parent: rag-chunking-embedding-smoke-cuda-<timestamp>
+│   └── one child per smoke-tested pair on CUDA
+├── parent: chunking-embedding-preflight-<timestamp>
+│   └── one qualification child per declared pair
 ├── parent: rag-chunking-embedding-development-<timestamp>
-│   └── 48 child records: one per planned chunker|embedding pair
-└── parent: rag-chunking-embedding-validation-<timestamp>
-    └── up to three child runs: one per engineer-selected finalist pair
+│   └── up to 48 children: one per hardware-qualified planned pair
+├── parent: rag-chunking-embedding-validation-<timestamp>
+│   └── up to three child runs: one per engineer-selected finalist pair
+└── parent: rag-chunking-embedding-locked-<timestamp>
+    └── one child for the selected pair
 ```
 
 Each parent stores the phase, dataset and checksum, candidate plan, seed,
@@ -1533,8 +1717,7 @@ dependency provenance, hardware, and any engineer-decision file. Its direct
 metrics contain completion counts only: planned, successful, and failed pairs.
 `plan.json`, `provenance.json`, `metric_contract.json`, `leaderboard.parquet`,
 paired comparisons, and `summary.json` are parent artifacts. The chosen pair's
-locked result is logged later with the one complete-system locked-test run, not
-as another component-selection parent.
+locked result remains in this component experiment and cannot reopen selection.
 
 Each child is one planned pair. Its run name is the complete pair identifier,
 `<chunker_id>|<embedding_id>`. Parameters contain the resolved chunker and
@@ -1766,8 +1949,8 @@ incremental fusion-index storage is zero.
 The ideal ranking used to normalize nDCG is derived from the complete frozen
 chunk corpus for each question, never from a candidate's retrieved pool. The
 alpha-nDCG ideal is constructed from the same complete corpus using its frozen
-evidence-unit coverage. Consequently, all 15 candidates are compared against
-the same candidate-independent ideal for a given question.
+evidence-unit coverage. Consequently, every executed candidate is compared
+against the same candidate-independent ideal for a given question.
 
 ### Execution profiles and selection
 
@@ -1776,23 +1959,23 @@ smoke:
 minimal deterministic fixtures → wiring and artifact checks only
 
 development:
-all 15 candidates on the development manifest
+all hardware-qualified members of the 15-candidate roster on the development manifest
 → engineer records up to three complete-stack finalists
 
 validation:
 the finalists on the unseen validation manifest
-+ each finalist's matching <retriever>|none control when not already selected
 → engineer approves up to three retrieval stacks for complete-system testing
 
 locked test:
-the selected stack runs only inside the frozen complete-system evaluation
+exactly one validation winner on the locked component split
 → no further retrieval or reranker tuning
 ```
 
 A complete stack decision includes the frozen chunker, embedding, first-stage
-retriever, and reranker. The extra no-reranker validation controls make
-the reranker's incremental effect interpretable; they are not automatically
-advanced as finalists. No weighted score or automatic winner rule is used.
+retriever, and reranker. When a selected reranker needs its no-reranker owner's
+pool, the runner prepares and verifies that pool as an input; the owner is not
+added as another validation or locked candidate. No weighted score or automatic
+winner rule is used.
 
 ### Metrics and why they are used
 
@@ -1830,27 +2013,36 @@ quality metrics.
 
 ### MLflow result structure
 
-Retrieval/reranking uses one parent for each fair comparison. Every planned
-candidate is a direct child; the development parent therefore has exactly 15 child
-runs. Pools and paired comparisons do not create intermediate or nested runs.
+Retrieval/reranking uses `EduMind / Retrieval–Reranking` and one parent for each
+fair comparison. Every planned
+candidate is a direct child; the development parent therefore has up to 15
+candidate children, with any definitive hardware exclusions retained in
+qualification provenance. Pools and paired comparisons do not create
+intermediate or nested runs.
+Separate CPU/CUDA smoke parents and the preflight parent precede development.
+Validation contains exactly the engineer-selected finalists; a required owner
+pool is an input rather than an extra child. Locked contains exactly one
+validation winner and is reporting-only.
 
 ```text
-MLflow experiment: EduMind / rag
-└── parent: rag-retrieval-reranking-development-<timestamp>
-    ├── dense|none       ─┐
-    ├── dense|gte-modernbert │
-    ├── ...               ├─ 5 Dense children
-    ├── dense|ettin-1b   ─┘
-    ├── bm25|none        ─┐
-    ├── ...               ├─ 5 BM25 children
-    ├── bm25|ettin-1b    ─┘
-    ├── rrf|none         ─┐
-    ├── ...               ├─ 5 RRF children
-    └── rrf|ettin-1b     ─┘
+MLflow experiment: EduMind / Retrieval–Reranking
+├── parent: rag-retrieval-reranking-smoke-cpu-<timestamp>
+├── parent: rag-retrieval-reranking-smoke-cuda-<timestamp>
+├── parent: retrieval-reranking-preflight-<timestamp>
+│   └── one qualification child per declared stack
+├── parent: rag-retrieval-reranking-development-<timestamp>
+│   ├── up to 5 Dense children
+│   ├── up to 5 BM25 children
+│   └── up to 5 RRF children
+├── parent: rag-retrieval-reranking-validation-<timestamp>
+│   └── exactly the engineer-selected finalists
+└── parent: rag-retrieval-reranking-locked-<timestamp>
+    └── one selected stack
 ```
 
 The parent parameters identify the phase, profile, manifest and checksum,
-selected chunker/embedding decision and fingerprint, exact 15-candidate plan,
+selected chunker/embedding decision and fingerprint, the qualified subset of
+the declared 15-candidate plan,
 metric contract, protocol version and checksum, seed, warmups, repetitions,
 model lock, Git/dependency
 provenance, and hardware. Its direct metrics are completion counts only. Parent

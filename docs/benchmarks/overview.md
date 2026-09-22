@@ -47,7 +47,13 @@ silently reselected.
 ## Evidence rules
 
 - `smoke` proves only that a small path executes.
-- `development` compares the stage's registered candidates on development data.
+- One smoke command runs independent CPU and CUDA paths where supported; neither
+  path may fall back to the other device.
+- `preflight` qualifies every declared candidate on the target CUDA hardware.
+  It produces hardware evidence, not quality evidence.
+- `development` compares only candidates qualified by the exact matching
+  preflight. Vector Database, Generation, and Final RAG follow their documented
+  exceptions.
 - `validation` runs explicit engineer-selected finalists on validation data.
 - `locked` runs exactly one frozen selection on locked-test data and is never
   used for tuning.
@@ -62,6 +68,11 @@ silently reselected.
 - No weighted overall score or automatic production promotion is used.
 - Performance results apply to the hardware and software environment recorded
   with that run.
+
+New runs are grouped into one MLflow experiment per benchmark rather than one
+broad extraction or RAG experiment. Each phase has a comparison parent and one
+direct child per candidate; qualification reports and decision fingerprints
+make every transition traceable.
 
 ## Configuration ownership
 

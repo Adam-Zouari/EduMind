@@ -30,8 +30,9 @@ Read the project in this order:
 6. [Pending data review](docs/benchmarks/pending-data-review.md) tracks decisions that require the real, reviewed datasets before results can be trusted.
 
 ```text
-candidate shortlist + reviewed datasets -> component development runs
-    -> finalist validation -> human review -> locked test
+candidate roster + reviewed datasets -> CPU/CUDA smoke -> GPU preflight
+    -> qualified-candidate development -> finalist validation
+    -> human review -> one locked test
     -> explicit application configuration change
 ```
 
@@ -59,7 +60,8 @@ the application does not delete it automatically.
 
 For experiments, the [benchmark runbook](docs/benchmarks/running.md) gives the
 commands in stage order. Smoke fixtures test execution without authoritative
-datasets. Development, validation, and locked comparisons require the reviewed
+datasets, while preflight establishes target-GPU feasibility without ranking
+quality. Development, validation, and locked comparisons require the reviewed
 manifests described in the [dataset guide](docs/benchmarks/datasets.md).
 
 ## Repository layout
