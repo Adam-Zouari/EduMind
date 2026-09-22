@@ -7,6 +7,8 @@ from dataclasses import replace
 
 import numpy as np
 
+from edumind.common.model_placement import inspect_model_placement
+
 from .contracts import EmbeddingSpec
 from .errors import RAGConfigurationError
 from .types import ChunkRecord
@@ -50,6 +52,11 @@ class Embedder:
 
         for device in {self.spec.document_device, self.spec.query_device}:
             self._model(device)
+
+    def placement_report(self, expected_device: str) -> dict[str, object]:
+        return inspect_model_placement(
+            *self._models.values(), expected_device=expected_device, strict=True
+        )
 
     def input_token_counts(self, texts: Sequence[str], *, role: str) -> list[int]:
         """Count complete model inputs without allowing tokenizer truncation."""

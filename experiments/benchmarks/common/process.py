@@ -8,6 +8,7 @@ import random
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict
 from pathlib import Path
@@ -22,6 +23,24 @@ from experiments.benchmarks.common.contracts import (
     DatasetManifest,
     SampleResult,
 )
+from experiments.benchmarks.common.resources import ResourceMonitor
+
+
+class WorkerResourceLimitError(RuntimeError):
+    """A worker was stopped after crossing an enforced hardware limit."""
+
+    def __init__(self, peak_vram_mb: float, limit_mb: float, samples) -> None:
+        super().__init__(
+            f"worker exceeded the {limit_mb:.0f} MiB VRAM limit "
+            f"(observed {peak_vram_mb:.1f} MiB)"
+        )
+        self.peak_vram_mb = peak_vram_mb
+        self.limit_mb = limit_mb
+        self.samples = tuple(dict(row) for row in samples)
+
+
+class WorkerMeasurementError(RuntimeError):
+    """A worker could not be qualified because resource telemetry was unavailable."""
 
 
 def worker_environment(device: str) -> dict[str, str]:
@@ -40,6 +59,8 @@ def run_json_worker(
     prefix: str,
     error_label: str,
     temporary_root: Path | None = None,
+    vram_limit_mb: float | None = None,
+    require_vram_measurement: bool = False,
 ) -> dict[str, object]:
     module = ".".join(
         script.resolve().relative_to(PROJECT_ROOT.resolve()).with_suffix("").parts
@@ -51,23 +72,122 @@ def run_json_worker(
         input_path = directory / "input.json"
         output_path = directory / "output.json"
         atomic_write_json(input_path, dict(payload))
-        completed = subprocess.run(
-            [sys.executable, "-m", module, str(input_path), str(output_path)],
-            cwd=PROJECT_ROOT,
-            env=worker_environment(device),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if completed.returncode or not output_path.is_file():
-            detail = (
-                completed.stderr or completed.stdout or "no worker output"
-            ).strip()
+        command = [sys.executable, "-m", module, str(input_path), str(output_path)]
+        supervision: dict[str, object] | None = None
+        if vram_limit_mb is None and not require_vram_measurement:
+            completed = subprocess.run(
+                command,
+                cwd=PROJECT_ROOT,
+                env=worker_environment(device),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            stdout, stderr, returncode = (
+                completed.stdout,
+                completed.stderr,
+                completed.returncode,
+            )
+        else:
+            process = subprocess.Popen(
+                command,
+                cwd=PROJECT_ROOT,
+                env=worker_environment(device),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            monitor = ResourceMonitor(require_vram=True)
+            exceeded: tuple[float, tuple[dict[str, object], ...]] | None = None
+            try:
+                with monitor:
+                    while process.poll() is None:
+                        monitor.sample_now()
+                        peak = monitor.peak_vram_mb
+                        if (
+                            vram_limit_mb is not None
+                            and peak is not None
+                            and peak > vram_limit_mb
+                        ):
+                            exceeded = (peak, tuple(monitor.samples()))
+                            _terminate_process_tree(process.pid)
+                            break
+                        time.sleep(min(0.05, monitor.interval_seconds))
+            except RuntimeError as exc:
+                _terminate_process_tree(process.pid)
+                process.communicate()
+                raise WorkerMeasurementError(str(exc)) from exc
+            except BaseException:
+                _terminate_process_tree(process.pid)
+                process.communicate()
+                raise
+            final_peak = monitor.peak_vram_mb
+            if (
+                exceeded is None
+                and vram_limit_mb is not None
+                and final_peak is not None
+                and final_peak > vram_limit_mb
+            ):
+                exceeded = (final_peak, tuple(monitor.samples()))
+            stdout, stderr = process.communicate()
+            returncode = process.returncode
+            if exceeded is not None:
+                raise WorkerResourceLimitError(exceeded[0], vram_limit_mb, exceeded[1])
+            try:
+                resource_metrics = monitor.metrics()
+            except RuntimeError as exc:
+                supervision = {
+                    "vram_measurement_method": "unavailable",
+                    "measurement_error": str(exc),
+                    "resource_samples": monitor.samples(),
+                }
+            else:
+                supervision = {
+                    **resource_metrics,
+                    "vram_measurement_method": monitor.vram_measurement_method,
+                    "resource_samples": monitor.samples(),
+                }
+        if returncode or not output_path.is_file():
+            detail = (stderr or stdout or "no worker output").strip()
             raise RuntimeError(f"{error_label} failed: {detail[-4000:]}")
         result = json.loads(output_path.read_text(encoding="utf-8"))
         if not isinstance(result, dict):
             raise RuntimeError(f"{error_label} returned a non-object result")
+        if supervision is not None:
+            result["_worker_supervision"] = supervision
         return result
+
+
+def _terminate_process_tree(pid: int) -> None:
+    try:
+        import psutil
+
+        root = psutil.Process(pid)
+        children = root.children(recursive=True)
+        for process in reversed(children):
+            try:
+                process.terminate()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        try:
+            root.terminate()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+        _, alive = psutil.wait_procs([*children, root], timeout=2)
+        for process in alive:
+            try:
+                process.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+    except (ImportError, OSError):
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True,
+                check=False,
+            )
+        except OSError:
+            pass
 
 
 def json_worker_main(

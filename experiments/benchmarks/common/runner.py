@@ -36,7 +36,7 @@ from .protocol import ProtocolMetadata
 from .provenance import git_provenance, hardware_summary
 from .resources import ResourceMonitor
 from .statistics import aggregate_samples
-from .tracking import tracker
+from .tracking import benchmark_experiment, benchmark_name, tracker
 
 Evaluator = Callable[
     ...,
@@ -163,13 +163,52 @@ def run_benchmark(
         path = directory / f"{name}_protocol.json"
         atomic_write_json(path, protocol.artifact_payload())
         protocol_artifacts[name] = path
-    tracking = tracker(disabled=no_mlflow, experiment=f"EduMind / {plan.suite}")
+    identity = benchmark_name(plan.suite, plan.stage)
+    tracking = tracker(
+        disabled=no_mlflow,
+        experiment=benchmark_experiment(plan.suite, plan.stage),
+    )
     run_fingerprint = stable_hash({"plan": plan_payload, "provenance": provenance})
+    decision_fingerprint = (
+        stable_hash(
+            {
+                name: value["sha256"]
+                for name, value in provenance["engineer_decisions"].items()
+            }
+        )
+        if provenance["engineer_decisions"]
+        else ""
+    )
+    phase = (
+        f"smoke-{plan.settings.get('device')}"
+        if plan.profile == "smoke"
+        else plan.profile
+    )
     results: list[CandidateResult] = []
     order = list(plan.candidates)
     if shuffle_candidates:
         random.Random(plan.seed).shuffle(order)
     with tracking.run(run_name) as mlflow_run_id:
+        device = str(plan.settings.get("device", "not-applicable"))
+        tracking.tags(
+            {
+                "benchmark": identity,
+                "profile": plan.profile,
+                "phase": phase,
+                "run_type": "quality-comparison",
+                "device": device,
+                "dataset_checksum": dataset_checksum,
+                "qualification.run_id": plan.settings.get("preflight_run_id", ""),
+                "qualification.fingerprint": plan.settings.get(
+                    "preflight_fingerprint", ""
+                ),
+                "decision.fingerprint": decision_fingerprint,
+                **{
+                    f"protocol.{name}.checksum": protocol.checksum
+                    for name, protocol in protocol_values.items()
+                },
+            }
+        )
         tracking.parameters(
             {
                 "profile": plan.profile,
@@ -242,6 +281,8 @@ def run_benchmark(
                     operational_maximums,
                     protocol_values,
                     confidence_level,
+                    dataset_checksum,
+                    decision_fingerprint,
                 )
             )
 
@@ -410,6 +451,8 @@ def _run_candidate(
     operational_maximums,
     protocols,
     confidence_level,
+    dataset_checksum,
+    decision_fingerprint,
 ) -> CandidateResult:
     samples: list[SampleResult] = []
     metrics: dict[str, float | None] = {}
@@ -437,6 +480,10 @@ def _run_candidate(
         else {}
     )
     candidate_parameters.update(protocol_parameters)
+    execution_parameters = (
+        {"execution_settings": dict(plan.settings)} if plan.settings else {}
+    )
+    candidate_parameters.update(execution_parameters)
     with tracking.run(candidate, nested=True) as child_run_id:
 
         def evaluate():
@@ -451,10 +498,43 @@ def _run_candidate(
                 {
                     "candidate": candidate,
                     "profile": plan.profile,
+                    **(
+                        {
+                            "execution_settings": json.dumps(
+                                plan.settings, sort_keys=True
+                            )
+                        }
+                        if plan.settings
+                        else {}
+                    ),
                     **{
                         f"protocol.{name}.version": protocol.version
                         for name, protocol in protocols.items()
                     },
+                    **{
+                        f"protocol.{name}.checksum": protocol.checksum
+                        for name, protocol in protocols.items()
+                    },
+                }
+            )
+            tracking.tags(
+                {
+                    "benchmark": benchmark_name(plan.suite, plan.stage),
+                    "profile": plan.profile,
+                    "phase": (
+                        f"smoke-{plan.settings.get('device')}"
+                        if plan.profile == "smoke"
+                        else plan.profile
+                    ),
+                    "run_type": "quality-candidate",
+                    "device": str(plan.settings.get("device", "not-applicable")),
+                    "candidate": candidate,
+                    "dataset_checksum": dataset_checksum,
+                    "qualification.run_id": plan.settings.get("preflight_run_id", ""),
+                    "qualification.fingerprint": plan.settings.get(
+                        "preflight_fingerprint", ""
+                    ),
+                    "decision.fingerprint": decision_fingerprint,
                     **{
                         f"protocol.{name}.checksum": protocol.checksum
                         for name, protocol in protocols.items()
@@ -501,10 +581,10 @@ def _run_candidate(
             if len(evaluated) >= 4:
                 candidate_parameters = {
                     **dict(evaluated[3]),
-                    **protocol_parameters,
+                    **candidate_parameters,
                 }
-                candidate_parameters.update(resource_parameters)
-                tracking.parameters(candidate_parameters)
+            candidate_parameters.update(resource_parameters)
+            tracking.parameters(candidate_parameters)
             candidate_intervals = dict(evaluated[4]) if len(evaluated) >= 5 else {}
             artifact_tables = dict(evaluated[5]) if len(evaluated) >= 6 else {}
             if resource_artifact_name and resource_rows:
@@ -581,6 +661,7 @@ def _run_candidate(
                 **exc.parameters,
                 **resource_parameters,
                 **protocol_parameters,
+                **execution_parameters,
             }
             artifact_payloads = dict(exc.artifacts)
             if resource_artifact_name and resource_rows:

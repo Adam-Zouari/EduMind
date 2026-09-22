@@ -10,6 +10,42 @@ from typing import Protocol
 
 DEFAULT_TRACKING_URI = "sqlite:///mlflow.db"
 
+EXPERIMENT_NAMES = {
+    "document": "EduMind / Document",
+    "audio": "EduMind / ASR",
+    "video": "EduMind / Video",
+    "chunking-embedding": "EduMind / Chunking–Embedding",
+    "retrieval-reranking": "EduMind / Retrieval–Reranking",
+    "generation": "EduMind / Generation",
+    "final": "EduMind / Final RAG",
+    "vectordb": "EduMind / Vector Database",
+}
+
+
+def benchmark_name(suite: str, stage: str) -> str:
+    """Return the stable benchmark identity used for MLflow grouping."""
+
+    if suite == "vectordb-server-v4":
+        return "vectordb"
+    for prefix, name in (
+        ("document-", "document"),
+        ("audio-", "audio"),
+        ("video-", "video"),
+        ("chunking-embedding", "chunking-embedding"),
+        ("retrieval-reranking", "retrieval-reranking"),
+        ("generation", "generation"),
+        ("final", "final"),
+        ("extraction-confirmation", "final"),
+    ):
+        if stage.startswith(prefix):
+            return name
+    return suite
+
+
+def benchmark_experiment(suite: str, stage: str) -> str:
+    identity = benchmark_name(suite, stage)
+    return EXPERIMENT_NAMES.get(identity, f"EduMind / {identity}")
+
 
 class Tracker(Protocol):
     @contextmanager

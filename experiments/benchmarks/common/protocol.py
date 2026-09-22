@@ -21,6 +21,15 @@ class ExecutionProfile:
     dtype: str
     batch_size: int
     hardware_required: bool
+    devices: tuple[str, ...] = ()
+    device_dtypes: Mapping[str, str] | None = None
+
+    def dtype_for(self, device: str) -> str:
+        return (
+            str(self.device_dtypes[device])
+            if self.device_dtypes and device in self.device_dtypes
+            else self.dtype
+        )
 
 
 @dataclass(frozen=True)
@@ -106,19 +115,43 @@ def execution_profiles(
 
 
 def execution_profile(value: object, label: str) -> ExecutionProfile:
-    payload = strict_object(
-        value,
-        label,
-        {
-            "warmups",
-            "repetitions",
-            "bootstrap_resamples",
-            "device",
-            "dtype",
-            "batch_size",
-            "hardware_required",
-        },
+    raw = mapping(value, label)
+    required = {
+        "warmups",
+        "repetitions",
+        "bootstrap_resamples",
+        "device",
+        "dtype",
+        "batch_size",
+        "hardware_required",
+    }
+    missing = sorted(required - set(raw))
+    unknown = sorted(set(raw) - required - {"devices", "device_dtypes"})
+    if missing or unknown:
+        details = []
+        if missing:
+            details.append("missing " + ", ".join(missing))
+        if unknown:
+            details.append("unknown " + ", ".join(unknown))
+        raise ValueError(f"{label}: {'; '.join(details)}")
+    payload = raw
+    devices = tuple(
+        choice(item, f"{label}.devices[{index}]", {"cpu", "cuda"})
+        for index, item in enumerate(
+            sequence(payload.get("devices", []), f"{label}.devices")
+        )
     )
+    if devices and len(set(devices)) != len(devices):
+        raise ValueError(f"{label}.devices must be unique")
+    raw_dtypes = mapping(payload.get("device_dtypes", {}), f"{label}.device_dtypes")
+    device_dtypes = {
+        choice(device, f"{label}.device_dtypes device", {"cpu", "cuda"}): choice(
+            dtype,
+            f"{label}.device_dtypes.{device}",
+            {"float32", "float16", "bfloat16", "auto"},
+        )
+        for device, dtype in raw_dtypes.items()
+    }
     profile = ExecutionProfile(
         warmups=integer(payload["warmups"], f"{label}.warmups", minimum=0),
         repetitions=integer(payload["repetitions"], f"{label}.repetitions", minimum=1),
@@ -137,9 +170,20 @@ def execution_profile(value: object, label: str) -> ExecutionProfile:
         hardware_required=boolean(
             payload["hardware_required"], f"{label}.hardware_required"
         ),
+        devices=devices,
+        device_dtypes=device_dtypes or None,
     )
     if profile.hardware_required and profile.device != "cuda":
         raise ValueError(f"{label} hardware-required profile must use CUDA")
+    if profile.devices and profile.device not in profile.devices:
+        raise ValueError(f"{label}.device must be included in {label}.devices")
+    if device_dtypes:
+        if set(device_dtypes) != set(profile.devices):
+            raise ValueError(
+                f"{label}.device_dtypes must define every declared device exactly"
+            )
+        if profile.dtype_for(profile.device) != profile.dtype:
+            raise ValueError(f"{label}.dtype must match the primary device dtype")
     return profile
 
 

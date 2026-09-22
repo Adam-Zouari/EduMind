@@ -131,6 +131,17 @@ class ResourceMonitor:
         return [dict(row) for row in self._samples]
 
     @property
+    def peak_vram_mb(self) -> float | None:
+        if not self._vram_sampled:
+            return None
+        return self._peak_vram_bytes / (1024**2)
+
+    def sample_now(self) -> None:
+        """Capture an observation immediately for a supervising process."""
+
+        self._sample()
+
+    @property
     def vram_measurement_method(self) -> str:
         if self._process_vram_sampled:
             return "nvml-process-tree"

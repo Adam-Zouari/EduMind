@@ -518,6 +518,7 @@ def test_protocol_identity_and_resolved_settings_are_recorded_for_parent_and_chi
             self.active: list[str] = []
             self.parameter_calls: list[tuple[str, dict[str, object]]] = []
             self.artifacts: list[tuple[str, Path, str | None]] = []
+            self.tag_calls: list[tuple[str, dict[str, object]]] = []
 
         @contextmanager
         def run(self, name: str, *, nested: bool = False):
@@ -535,7 +536,7 @@ def test_protocol_identity_and_resolved_settings_are_recorded_for_parent_and_chi
             del values
 
         def tags(self, values) -> None:
-            del values
+            self.tag_calls.append((self.active[-1], dict(values)))
 
         def artifact(self, path, artifact_path=None) -> None:
             self.artifacts.append((self.active[-1], Path(path), artifact_path))
@@ -546,6 +547,8 @@ def test_protocol_identity_and_resolved_settings_are_recorded_for_parent_and_chi
     protocol = load_generation_protocol()
     tracking = RecordingTracker()
     monkeypatch.setattr(benchmark_runner, "tracker", lambda **_kwargs: tracking)
+    decision = tmp_path / "decision.json"
+    decision.write_text("{}", encoding="utf-8")
     result = run_benchmark(
         _plan("candidate"),
         lambda _candidate: (
@@ -557,6 +560,7 @@ def test_protocol_identity_and_resolved_settings_are_recorded_for_parent_and_chi
         primary_metric="quality",
         artifact_root=tmp_path,
         protocols={"generation": protocol.meta},
+        decision_files={"shortlist": decision},
     )
 
     protocol_artifact = json.loads(
@@ -582,3 +586,11 @@ def test_protocol_identity_and_resolved_settings_are_recorded_for_parent_and_chi
         and artifact_path == "inputs/protocols/generation"
         for _run_name, path, artifact_path in tracking.artifacts
     )
+    assert len(tracking.tag_calls) >= 2
+    parent_tags = tracking.tag_calls[0][1]
+    child_tags = tracking.tag_calls[1][1]
+    assert parent_tags["phase"] == child_tags["phase"] == "development"
+    assert parent_tags["run_type"] == "quality-comparison"
+    assert child_tags["run_type"] == "quality-candidate"
+    assert parent_tags["decision.fingerprint"]
+    assert parent_tags["decision.fingerprint"] == child_tags["decision.fingerprint"]
