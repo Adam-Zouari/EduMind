@@ -1,5 +1,5 @@
 schema_version: 1
-protocol_version: vector-database-v1
+protocol_version: vector-database-v2
 seed: 42
 
 workloads:
@@ -80,6 +80,7 @@ profiles:
     dtype: float32
     batch_size: 1
     hardware_required: false
+    devices: [cpu]
   development:
     warmups: 2
     repetitions: 3

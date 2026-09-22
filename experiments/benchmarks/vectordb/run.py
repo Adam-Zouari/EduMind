@@ -11,7 +11,10 @@ import numpy as np
 
 from edumind.common.artifacts import sha256_file, stable_hash
 from edumind.common.paths import PROJECT_ROOT
-from experiments.benchmarks.common.arguments import resolved_candidates
+from experiments.benchmarks.common.arguments import (
+    default_decision_path,
+    resolved_candidates,
+)
 from experiments.benchmarks.common.contracts import BenchmarkPlan, SampleResult
 from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.runner import run_benchmark
@@ -74,10 +77,16 @@ def main() -> int:
     protocol = load_protocol(arguments.protocol)
     chunking_protocol = load_chunking_protocol(arguments.chunking_protocol)
     execution = protocol.profile(arguments.profile)
+    shortlist = arguments.shortlist or default_decision_path(
+        "vector-database", arguments.profile
+    )
+    embedding_selection = arguments.embedding_selection
+    if arguments.profile == "validation" and embedding_selection is None:
+        embedding_selection = default_decision_path("chunking-embedding", "locked")
     candidates = resolved_candidates(
         tuple(protocol.upsert_batch_sizes),
         arguments.profile,
-        arguments.shortlist,
+        shortlist,
         expected_source=("vectordb-server-v4", "dense-ann", "development"),
         maximum=protocol.shortlist_limit,
     )
@@ -89,13 +98,13 @@ def main() -> int:
     revisions = image_lock()
     workloads = _workloads(
         arguments.profile,
-        arguments.embedding_selection,
+        embedding_selection,
         protocol,
         chunking_protocol,
     )
     dataset_name = "+".join(name for name, _ in workloads)
-    if arguments.embedding_selection is not None:
-        dataset_name += f"@{sha256_file(arguments.embedding_selection)[:12]}"
+    if embedding_selection is not None:
+        dataset_name += f"@{sha256_file(embedding_selection)[:12]}"
     plan = BenchmarkPlan(
         "vectordb-server-v4",
         "dense-ann",
@@ -106,6 +115,7 @@ def main() -> int:
         repetitions=execution.repetitions,
         bootstrap_resamples=execution.bootstrap_resamples,
         warmups=execution.warmups,
+        settings={"device": "cpu", "dtype": execution.dtype},
     )
 
     def evaluate(candidate: str):
@@ -273,8 +283,8 @@ def main() -> int:
         decision_files={
             name: path
             for name, path in {
-                "shortlist": arguments.shortlist,
-                "embedding": arguments.embedding_selection,
+                "shortlist": shortlist,
+                "embedding": embedding_selection,
             }.items()
             if path is not None
         },

@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 
 from edumind.common.paths import PROJECT_ROOT
+from experiments.benchmarks.common.arguments import default_decision_path
 from experiments.benchmarks.common.contracts import BenchmarkPlan, SampleResult
 from experiments.benchmarks.common.datasets import load_manifest
 from experiments.benchmarks.common.decisions import load_engineer_decision
@@ -56,9 +57,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Compare complete retrieval on DB finalists"
     )
-    parser.add_argument("--database-selection", type=Path, required=True)
-    parser.add_argument("--embedding-selection", type=Path, required=True)
-    parser.add_argument("--retrieval-selection", type=Path, required=True)
+    parser.add_argument("--database-selection", type=Path)
+    parser.add_argument("--embedding-selection", type=Path)
+    parser.add_argument("--retrieval-selection", type=Path)
     parser.add_argument(
         "--profile",
         choices=("development", "validation"),
@@ -75,6 +76,18 @@ def main() -> int:
     )
     parser.add_argument("--no-mlflow", action="store_true")
     arguments = parser.parse_args()
+    arguments.database_selection = (
+        arguments.database_selection
+        or default_decision_path("vector-database", "locked")
+    )
+    arguments.embedding_selection = (
+        arguments.embedding_selection
+        or default_decision_path("chunking-embedding", "locked")
+    )
+    arguments.retrieval_selection = (
+        arguments.retrieval_selection
+        or default_decision_path("retrieval-reranking", "locked")
+    )
     vector_protocol = load_vector_protocol(arguments.protocol)
     retrieval_protocol = load_retrieval_protocol(arguments.retrieval_protocol)
     chunking_protocol = load_chunking_protocol(arguments.chunking_protocol)
