@@ -19,10 +19,12 @@ from experiments.benchmarks.common.protocol import (
     number,
     sequence,
     strict_object,
+)
+from experiments.benchmarks.common.protocol import (
     validate_execution as validate_protocol_execution,
 )
-from .profiles import RERANKER_MODELS
 
+from .profiles import RERANKER_MODELS
 
 DEFAULT_PROTOCOL_PATH = Path(__file__).with_name("protocol.yaml")
 
@@ -193,9 +195,7 @@ def protocol_from_mapping(
     )
     bm25_k1 = number(bm25["k1"], "retrieval.bm25.k1", minimum=0, minimum_exclusive=True)
     bm25_b = number(bm25["b"], "retrieval.bm25.b", minimum=0, maximum=1)
-    bm25_epsilon = number(
-        bm25["epsilon"], "retrieval.bm25.epsilon", minimum=0
-    )
+    bm25_epsilon = number(bm25["epsilon"], "retrieval.bm25.epsilon", minimum=0)
 
     dense = strict_object(
         retrieval["dense"],
@@ -229,7 +229,9 @@ def protocol_from_mapping(
     if len(raw_weights) != 2:
         raise ValueError("RRF requires exactly dense and BM25 weights")
     rrf_weights = tuple(
-        number(weight, f"retrieval.rrf.weights[{index}]", minimum=0, minimum_exclusive=True)
+        number(
+            weight, f"retrieval.rrf.weights[{index}]", minimum=0, minimum_exclusive=True
+        )
         for index, weight in enumerate(raw_weights)
     )
 
@@ -274,9 +276,7 @@ def protocol_from_mapping(
         for alias in sorted(expected_aliases)
     }
 
-    quality = strict_object(
-        root["quality"], "quality", {"cutoffs", "alpha_ndcg_alpha"}
-    )
+    quality = strict_object(root["quality"], "quality", {"cutoffs", "alpha_ndcg_alpha"})
     cutoffs = tuple(
         integer(value, f"quality.cutoffs[{index}]", minimum=1)
         for index, value in enumerate(sequence(quality["cutoffs"], "quality.cutoffs"))
@@ -312,9 +312,7 @@ def protocol_from_mapping(
         maximum_exclusive=True,
     )
 
-    selection = strict_object(
-        root["selection"], "selection", {"maximum_finalists"}
-    )
+    selection = strict_object(root["selection"], "selection", {"maximum_finalists"})
     maximum_finalists = integer(
         selection["maximum_finalists"],
         "selection.maximum_finalists",

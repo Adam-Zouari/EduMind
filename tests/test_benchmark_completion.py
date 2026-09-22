@@ -10,20 +10,19 @@ from types import SimpleNamespace
 
 import pytest
 
+import experiments.benchmarks.common.runner as benchmark_runner
+from experiments.benchmarks.common import process as benchmark_process
 from experiments.benchmarks.common.contracts import (
     BenchmarkPlan,
     CandidateExecutionError,
     SampleResult,
 )
 from experiments.benchmarks.common.decisions import load_engineer_decision
-from experiments.benchmarks.common import process as benchmark_process
 from experiments.benchmarks.common.runner import run_benchmark
-import experiments.benchmarks.common.runner as benchmark_runner
 from experiments.benchmarks.extraction.document import runner as document_runner
 from experiments.benchmarks.rag.generation.protocol import (
     load_protocol as load_generation_protocol,
 )
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -41,13 +40,19 @@ def test_worker_launcher_uses_repository_module(
     monkeypatch.setattr(benchmark_process.subprocess, "run", fake_run)
     script = ROOT / "experiments/benchmarks/extraction/audio/worker.py"
     result = benchmark_process.run_json_worker(
-        script, {}, device="cpu", prefix="worker-test-", error_label="test",
+        script,
+        {},
+        device="cpu",
+        prefix="worker-test-",
+        error_label="test",
         temporary_root=tmp_path,
     )
     assert result == {"status": "success"}
     command, options = launched[0]
     assert command[:3] == [
-        sys.executable, "-m", "experiments.benchmarks.extraction.audio.worker"
+        sys.executable,
+        "-m",
+        "experiments.benchmarks.extraction.audio.worker",
     ]
     assert options["cwd"] == ROOT
 
@@ -63,11 +68,16 @@ def test_document_cold_worker_launches_as_module(
 
     monkeypatch.setenv("TEMP", str(tmp_path))
     monkeypatch.setattr(document_runner.subprocess, "run", fake_run)
-    protocol = SimpleNamespace(meta=SimpleNamespace(worker_payload=lambda: {}))
-    assert document_runner._cold_latency("candidate", {"id": "sample"}, {}, {}, protocol) >= 0
+    protocol = SimpleNamespace(meta=SimpleNamespace(worker_payload=dict))
+    assert (
+        document_runner._cold_latency("candidate", {"id": "sample"}, {}, {}, protocol)
+        >= 0
+    )
     command, options = launched[0]
     assert command[:3] == [
-        sys.executable, "-m", "experiments.benchmarks.extraction.document.cold_worker"
+        sys.executable,
+        "-m",
+        "experiments.benchmarks.extraction.document.cold_worker",
     ]
     assert options["cwd"] == ROOT
 
@@ -92,7 +102,10 @@ def test_document_cold_worker_launches_as_module(
 def test_benchmark_entrypoint_runs_as_module(module: str) -> None:
     completed = subprocess.run(
         [sys.executable, "-m", module, "--help"],
-        cwd=ROOT, capture_output=True, text=True,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert completed.returncode == 0, completed.stderr
     assert "usage:" in completed.stdout.lower()
@@ -111,12 +124,15 @@ def test_rag_entrypoint_import_does_not_parse_arguments(module: str) -> None:
         [
             sys.executable,
             "-c",
-            "import importlib, sys; sys.argv = ['test', '--unexpected']; "
-            f"importlib.import_module({module!r})",
+            (
+                "import importlib, sys; sys.argv = ['test', '--unexpected']; "
+                f"importlib.import_module({module!r})"
+            ),
         ],
         cwd=ROOT,
         capture_output=True,
         text=True,
+        check=False,
     )
     assert completed.returncode == 0, completed.stderr
 
@@ -130,7 +146,11 @@ def test_rag_entrypoint_import_does_not_parse_arguments(module: str) -> None:
 )
 def test_rag_workers_import_as_modules(module: str) -> None:
     completed = subprocess.run(
-        [sys.executable, "-m", module], cwd=ROOT, capture_output=True, text=True
+        [sys.executable, "-m", module],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert completed.returncode != 0
     assert "usage:" in completed.stderr.lower()
@@ -236,11 +256,16 @@ def test_bad_score_is_complete_and_runner_makes_no_selection(tmp_path: Path) -> 
     assert "authoritative" not in summary
 
 
-def test_missing_required_metric_fails_candidate_but_keeps_samples(tmp_path: Path) -> None:
+def test_missing_required_metric_fails_candidate_but_keeps_samples(
+    tmp_path: Path,
+) -> None:
     result = _run(
         tmp_path,
         _plan("incomplete"),
-        lambda _candidate: ([SampleResult("sample-1", {}, 0.01)], {"p95_latency_seconds": 0.01}),
+        lambda _candidate: (
+            [SampleResult("sample-1", {}, 0.01)],
+            {"p95_latency_seconds": 0.01},
+        ),
     )
 
     assert result.complete is False
@@ -261,7 +286,9 @@ def test_different_sample_sets_make_comparison_incomplete(tmp_path: Path) -> Non
 
     assert all(candidate.status == "success" for candidate in result.candidates)
     assert result.complete is False
-    assert any("different sample set" in problem for problem in result.completion_problems)
+    assert any(
+        "different sample set" in problem for problem in result.completion_problems
+    )
 
 
 def test_input_limit_failure_is_audited_and_fails_parent(
@@ -307,10 +334,7 @@ def test_failed_candidate_preserves_empty_audit_table(tmp_path: Path) -> None:
 
     assert result.candidates[0].status == "failed"
     assert (
-        result.artifact_directory
-        / "candidates"
-        / "failed"
-        / "query_metrics.parquet"
+        result.artifact_directory / "candidates" / "failed" / "query_metrics.parquet"
     ).is_file()
 
 
@@ -391,7 +415,10 @@ def test_engineer_decision_requires_a_complete_non_smoke_run(tmp_path: Path) -> 
     result = _run(
         tmp_path,
         _plan("chosen", "other"),
-        lambda candidate: ([SampleResult("sample", {"quality": float(candidate == "chosen")}, 0.01)], {"p95_latency_seconds": 0.01}),
+        lambda candidate: (
+            [SampleResult("sample", {"quality": float(candidate == "chosen")}, 0.01)],
+            {"p95_latency_seconds": 0.01},
+        ),
     )
     decision_path = tmp_path / "decision.json"
     decision_path.write_text(

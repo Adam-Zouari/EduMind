@@ -11,7 +11,13 @@ from edumind.common.config import load_settings
 
 from .contracts import IndexManifest
 from .errors import IndexCompatibilityError, MetadataFilterError, RAGConfigurationError
-from .types import ChunkRecord, MetadataScalar, RetrievalHit, VectorStoreSettings, is_metadata_scalar
+from .types import (
+    ChunkRecord,
+    MetadataScalar,
+    RetrievalHit,
+    VectorStoreSettings,
+    is_metadata_scalar,
+)
 
 RAW_METADATA = "__raw_metadata"
 SOURCE_ID = "__source_id"
@@ -39,7 +45,9 @@ class VectorStore:
                 configured.distance_metric,
             )
         if settings.distance_metric not in {"cosine", "dot"}:
-            raise RAGConfigurationError(f"Unsupported vector distance: {settings.distance_metric}")
+            raise RAGConfigurationError(
+                f"Unsupported vector distance: {settings.distance_metric}"
+            )
         endpoint = urlparse(settings.endpoint)
         if not endpoint.hostname or not endpoint.port:
             raise RAGConfigurationError("Chroma endpoint requires a host and port")
@@ -86,7 +94,8 @@ class VectorStore:
         if any(chunk.source_id != source_id for chunk in chunks):
             raise ValueError("Every chunk must belong to the document being replaced")
         previous: Any = self.collection.get(
-            where={SOURCE_ID: source_id}, include=["documents", "metadatas", "embeddings"]
+            where={SOURCE_ID: source_id},
+            include=["documents", "metadatas", "embeddings"],
         )
         previous_ids = list(previous.get("ids") or [])
         self.collection.delete(where={SOURCE_ID: source_id})
@@ -146,7 +155,7 @@ class VectorStore:
     def health_check(self) -> bool:
         try:
             return bool(self.client.heartbeat())
-        except Exception:
+        except Exception:  # noqa: BLE001 - heartbeat failures mean unavailable
             return False
 
     def reset_collection(self) -> None:
@@ -187,7 +196,9 @@ class VectorStore:
         metadata: dict[str, MetadataScalar] = dict(chunk.filter_metadata)
         metadata.update(
             {
-                RAW_METADATA: json.dumps(chunk.metadata, ensure_ascii=False, default=str),
+                RAW_METADATA: json.dumps(
+                    chunk.metadata, ensure_ascii=False, default=str
+                ),
                 SOURCE_ID: chunk.source_id,
                 CHUNK_INDEX: chunk.chunk_index,
                 TOTAL_CHUNKS: chunk.total_chunks,
@@ -209,8 +220,18 @@ class VectorStore:
             result = {}
         if not isinstance(result, dict):
             result = {}
-        reserved = {RAW_METADATA, SOURCE_ID, CHUNK_INDEX, TOTAL_CHUNKS, START, END, TOKEN_COUNT}
-        result.update({key: value for key, value in metadata.items() if key not in reserved})
+        reserved = {
+            RAW_METADATA,
+            SOURCE_ID,
+            CHUNK_INDEX,
+            TOTAL_CHUNKS,
+            START,
+            END,
+            TOKEN_COUNT,
+        }
+        result.update(
+            {key: value for key, value in metadata.items() if key not in reserved}
+        )
         result.update(
             {
                 "source_id": metadata.get(SOURCE_ID),
@@ -233,7 +254,9 @@ class VectorStore:
         return validated
 
     @staticmethod
-    def _chroma_where(filters: Mapping[str, MetadataScalar]) -> dict[str, object] | None:
+    def _chroma_where(
+        filters: Mapping[str, MetadataScalar],
+    ) -> dict[str, object] | None:
         clauses = [{key: value} for key, value in sorted(filters.items())]
         if not clauses:
             return None
@@ -244,7 +267,9 @@ def _load_chromadb():
     try:
         import chromadb
     except ModuleNotFoundError as exc:
-        raise RAGConfigurationError("Install the application dependencies to use Chroma") from exc
+        raise RAGConfigurationError(
+            "Install the application dependencies to use Chroma"
+        ) from exc
     return chromadb
 
 

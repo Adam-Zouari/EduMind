@@ -10,9 +10,11 @@ from typing import Protocol
 
 import numpy as np
 
+from experiments.benchmarks.common.contracts import SampleResult
 from experiments.benchmarks.common.datasets import EvidenceUnit, evidence_units
 from experiments.benchmarks.common.metrics import ndcg_at_k, paired_bootstrap_interval
-from experiments.benchmarks.common.contracts import SampleResult
+
+
 class RankedChunk(Protocol):
     identifier: str
     document_id: str
@@ -173,7 +175,9 @@ def aggregate_quality(
 ) -> tuple[dict[str, float], dict[str, dict[str, float]]]:
     """Macro-average questions within documents, then documents within the corpus."""
 
-    names = sorted(set().union(*(sample.metrics for sample in samples))) if samples else []
+    names = (
+        sorted(set().union(*(sample.metrics for sample in samples))) if samples else []
+    )
     aggregates: dict[str, float] = {}
     intervals: dict[str, dict[str, float]] = {}
     for name in names:
@@ -235,8 +239,8 @@ def latency_intervals(
             for position in selected
             for latency in by_document[documents[int(position)]]
         ]
-        for quantile in draws:
-            draws[quantile].append(float(np.quantile(values, quantile)))
+        for quantile, estimates in draws.items():
+            estimates.append(float(np.quantile(values, quantile)))
     all_values = [sample.latency_seconds * 1000.0 for sample in samples]
     alpha = (1.0 - confidence) / 2.0
     return {

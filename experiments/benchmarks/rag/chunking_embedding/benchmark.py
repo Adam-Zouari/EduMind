@@ -18,8 +18,6 @@ from experiments.benchmarks.common.contracts import (
     SampleResult,
 )
 from experiments.benchmarks.common.datasets import answerable_questions, evidence_units
-from experiments.benchmarks.common.provenance import package_versions
-from experiments.benchmarks.common.protocol import validate_execution
 from experiments.benchmarks.common.process import (
     benchmark_objects_from_payload,
     candidate_execution_payload,
@@ -28,6 +26,8 @@ from experiments.benchmarks.common.process import (
     seed_deterministically,
     successful_execution_payload,
 )
+from experiments.benchmarks.common.protocol import validate_execution
+from experiments.benchmarks.common.provenance import package_versions
 from experiments.benchmarks.rag.evaluation import (
     InputCompatibilityError,
     build_index,
@@ -43,7 +43,6 @@ from .metrics import (
 )
 from .profiles import embedding_spec, split_candidate
 from .protocol import ChunkingEmbeddingProtocol, protocol_from_settings
-
 
 OPERATIONAL_DIRECTIONS = {
     "operational.corpus_build_seconds": "min",
@@ -166,12 +165,14 @@ def evaluate_candidate(
                         "error": None,
                     }
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - record per-attempt failures
                 latency = time.perf_counter() - started
                 latencies.append(latency)
                 error = f"{type(exc).__name__}: {exc}"
                 failed_query_ids.add(str(question["id"]))
-                failures.append(f"{question['id']} repetition {repetition + 1}: {error}")
+                failures.append(
+                    f"{question['id']} repetition {repetition + 1}: {error}"
+                )
                 timing_rows.append(
                     {
                         "question_id": str(question["id"]),
@@ -252,7 +253,9 @@ def evaluate_candidate(
     chunk_tokens = np.asarray([chunk.tokens for chunk in index.chunks], dtype=float)
     vector_bytes = int(index.vectors.nbytes) if index.vectors is not None else 0
     expected_vector_bytes = (
-        len(index.chunks) * index.embedding_spec.dimension * np.dtype(np.float32).itemsize
+        len(index.chunks)
+        * index.embedding_spec.dimension
+        * np.dtype(np.float32).itemsize
     )
     if vector_bytes != expected_vector_bytes:
         raise RuntimeError(
@@ -466,7 +469,7 @@ def execute_payload(payload: dict[str, object]) -> dict[str, object]:
         }
     except CandidateExecutionError as exc:
         return candidate_execution_payload(exc)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - worker reports candidate failure
         chunker_name, embedding_name = split_candidate(candidate)
         error = f"{type(exc).__name__}: {exc}"
         parameters = _parameters(
@@ -563,9 +566,7 @@ def _parameters(
         "model_cache_manifest_sha256": entry.get("model_cache_manifest_sha256"),
         "tokenizer_revision": entry.get("revision"),
         "tokenizer_path": entry.get("model_path"),
-        "tokenizer_cache_manifest_sha256": entry.get(
-            "model_cache_manifest_sha256"
-        ),
+        "tokenizer_cache_manifest_sha256": entry.get("model_cache_manifest_sha256"),
         "query_prefix": embedding_contract.get("query_prefix", ""),
         "document_prefix": embedding_contract.get("document_prefix", ""),
         "query_prompt_name": embedding_contract.get("query_prompt_name"),

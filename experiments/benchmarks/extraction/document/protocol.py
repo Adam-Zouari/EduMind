@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from itertools import product
 from pathlib import Path
 
-from experiments.benchmarks.extraction.document.profiles import DOCUMENT_LOCK_CANDIDATES
 from experiments.benchmarks.common.protocol import (
     ProtocolMetadata,
     boolean,
@@ -22,7 +21,7 @@ from experiments.benchmarks.common.protocol import (
     strict_object,
     string,
 )
-
+from experiments.benchmarks.extraction.document.profiles import DOCUMENT_LOCK_CANDIDATES
 
 DEFAULT_PROTOCOL_PATH = Path(__file__).with_name("protocol.yaml")
 
@@ -66,7 +65,9 @@ class DocumentProtocol:
             return
         expected = {"ocr", "mode", "table", "formula"}
         if set(factors) != expected:
-            raise ValueError("Document configuration candidates require all four factors")
+            raise ValueError(
+                "Document configuration candidates require all four factors"
+            )
         allowed = {
             "ocr": set(self.ocr_engines),
             "mode": set(self.ocr_modes),
@@ -79,7 +80,9 @@ class DocumentProtocol:
                     f"Document candidate {name}={factors[name]!r} is outside protocol.yaml"
                 )
 
-    def configuration_candidates(self, profile: str, *, image: bool = False) -> tuple[str, ...]:
+    def configuration_candidates(
+        self, profile: str, *, image: bool = False
+    ) -> tuple[str, ...]:
         if profile == "smoke":
             rows = (self.smoke_configuration,)
         else:
@@ -144,11 +147,19 @@ def protocol_from_mapping(
     factors = strict_object(
         root["candidate_factors"],
         "candidate_factors",
-        {"ocr_engines", "ocr_modes", "table_modes", "formula_enrichment", "smoke_configuration"},
+        {
+            "ocr_engines",
+            "ocr_modes",
+            "table_modes",
+            "formula_enrichment",
+            "smoke_configuration",
+        },
     )
     ocr_engines = _strings(factors["ocr_engines"], "candidate_factors.ocr_engines")
     if set(ocr_engines) != {"rapidocr", "tesseract", "easyocr"}:
-        raise ValueError("Document protocol must declare the three reviewed OCR engines")
+        raise ValueError(
+            "Document protocol must declare the three reviewed OCR engines"
+        )
     ocr_modes = _strings(factors["ocr_modes"], "candidate_factors.ocr_modes")
     if set(ocr_modes) != {"pdf_aware_layout_regions", "full_page"}:
         raise ValueError("Document protocol must declare both reviewed OCR modes")
@@ -157,7 +168,9 @@ def protocol_from_mapping(
         raise ValueError("Document protocol must declare both TableFormer modes")
     formulas = tuple(
         boolean(value, f"candidate_factors.formula_enrichment[{index}]")
-        for index, value in enumerate(sequence(factors["formula_enrichment"], "formula_enrichment"))
+        for index, value in enumerate(
+            sequence(factors["formula_enrichment"], "formula_enrichment")
+        )
     )
     if len(formulas) != 2 or set(formulas) != {False, True}:
         raise ValueError("Document formula factor must contain false and true")
@@ -170,7 +183,9 @@ def protocol_from_mapping(
         "ocr_engine": choice(smoke["ocr_engine"], "smoke.ocr_engine", set(ocr_engines)),
         "ocr_mode": choice(smoke["ocr_mode"], "smoke.ocr_mode", set(ocr_modes)),
         "table_mode": choice(smoke["table_mode"], "smoke.table_mode", set(table_modes)),
-        "formula_enrichment": boolean(smoke["formula_enrichment"], "smoke.formula_enrichment"),
+        "formula_enrichment": boolean(
+            smoke["formula_enrichment"], "smoke.formula_enrichment"
+        ),
     }
     parser = strict_object(
         root["parser"],
@@ -188,8 +203,15 @@ def protocol_from_mapping(
     )
     if choice(parser["language"], "parser.language", {"english"}) != "english":
         raise AssertionError
-    number(parser["image_scale"], "parser.image_scale", minimum=0, minimum_exclusive=True)
-    for name in ("do_ocr", "do_table_structure", "do_cell_matching", "do_code_enrichment"):
+    number(
+        parser["image_scale"], "parser.image_scale", minimum=0, minimum_exclusive=True
+    )
+    for name in (
+        "do_ocr",
+        "do_table_structure",
+        "do_cell_matching",
+        "do_code_enrichment",
+    ):
         boolean(parser[name], f"parser.{name}")
     granite = strict_object(parser["granite"], "parser.granite", {"load_in_8bit"})
     boolean(granite["load_in_8bit"], "parser.granite.load_in_8bit")
@@ -197,26 +219,54 @@ def protocol_from_mapping(
         parser["paddle"], "parser.paddle", {"pipeline_version", "recognition_backend"}
     )
     choice(paddle["pipeline_version"], "parser.paddle.pipeline_version", {"v1.6"})
-    choice(paddle["recognition_backend"], "parser.paddle.recognition_backend", {"native"})
-    matching = strict_object(
-        root["matching"], "matching", {"element_threshold", "duplicate_content_threshold"}
+    choice(
+        paddle["recognition_backend"], "parser.paddle.recognition_backend", {"native"}
     )
-    element_threshold = number(matching["element_threshold"], "matching.element_threshold", minimum=0, maximum=1)
-    duplicate_threshold = number(matching["duplicate_content_threshold"], "matching.duplicate_content_threshold", minimum=0, maximum=1)
-    datasets = strict_object(root["datasets"], "datasets", {"development", "validation"})
+    matching = strict_object(
+        root["matching"],
+        "matching",
+        {"element_threshold", "duplicate_content_threshold"},
+    )
+    element_threshold = number(
+        matching["element_threshold"],
+        "matching.element_threshold",
+        minimum=0,
+        maximum=1,
+    )
+    duplicate_threshold = number(
+        matching["duplicate_content_threshold"],
+        "matching.duplicate_content_threshold",
+        minimum=0,
+        maximum=1,
+    )
+    datasets = strict_object(
+        root["datasets"], "datasets", {"development", "validation"}
+    )
     sample_counts = {
         split: _counts(datasets[split], f"datasets.{split}")
         for split in ("development", "validation")
     }
     statistics = strict_object(root["statistics"], "statistics", {"confidence_level"})
     confidence = number(
-        statistics["confidence_level"], "statistics.confidence_level", minimum=0, maximum=1,
-        minimum_exclusive=True, maximum_exclusive=True,
+        statistics["confidence_level"],
+        "statistics.confidence_level",
+        minimum=0,
+        maximum=1,
+        minimum_exclusive=True,
+        maximum_exclusive=True,
     )
     evaluators = strict_object(root["evaluators"], "evaluators", {"timeout_seconds"})
-    timeout = integer(evaluators["timeout_seconds"], "evaluators.timeout_seconds", minimum=1)
-    selection = strict_object(root["selection"], "selection", {"maximum_architecture_finalists"})
-    maximum_finalists = integer(selection["maximum_architecture_finalists"], "selection.maximum_architecture_finalists", minimum=1)
+    timeout = integer(
+        evaluators["timeout_seconds"], "evaluators.timeout_seconds", minimum=1
+    )
+    selection = strict_object(
+        root["selection"], "selection", {"maximum_architecture_finalists"}
+    )
+    maximum_finalists = integer(
+        selection["maximum_architecture_finalists"],
+        "selection.maximum_architecture_finalists",
+        minimum=1,
+    )
     candidate_aliases = set(DOCUMENT_LOCK_CANDIDATES)
     raw_devices = strict_object(
         root["backend_devices"],
@@ -227,7 +277,9 @@ def protocol_from_mapping(
     for name in raw_devices:
         values = tuple(
             choice(value, f"backend_devices.{name}[{index}]", {"cpu", "cuda"})
-            for index, value in enumerate(sequence(raw_devices[name], f"backend_devices.{name}"))
+            for index, value in enumerate(
+                sequence(raw_devices[name], f"backend_devices.{name}")
+            )
         )
         if not values or len(values) != len(set(values)):
             raise ValueError(
@@ -267,7 +319,10 @@ def protocol_from_worker(value: object) -> DocumentProtocol:
 
 
 def _strings(value: object, label: str) -> tuple[str, ...]:
-    values = tuple(string(item, f"{label}[{index}]") for index, item in enumerate(sequence(value, label)))
+    values = tuple(
+        string(item, f"{label}[{index}]")
+        for index, item in enumerate(sequence(value, label))
+    )
     if not values or len(values) != len(set(values)):
         raise ValueError(f"{label} must contain unique values")
     return values
@@ -275,4 +330,6 @@ def _strings(value: object, label: str) -> tuple[str, ...]:
 
 def _counts(value: object, label: str) -> dict[str, int]:
     payload = strict_object(value, label, {"image", "pdf", "docx"})
-    return {name: integer(payload[name], f"{label}.{name}", minimum=1) for name in payload}
+    return {
+        name: integer(payload[name], f"{label}.{name}", minimum=1) for name in payload
+    }

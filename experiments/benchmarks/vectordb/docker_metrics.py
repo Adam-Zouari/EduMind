@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import re
 import json
+import re
 import subprocess
 import threading
 
@@ -101,6 +101,7 @@ class DockerMonitor:
                 capture_output=True,
                 text=True,
                 timeout=self.stats_timeout_seconds,
+                check=False,
             )
             if process.returncode == 0 and process.stdout.strip():
                 value = _bytes(process.stdout.split("/")[0].strip())
@@ -116,10 +117,18 @@ def _storage_bytes(
 ) -> int | None:
     try:
         process = subprocess.run(
-            ["docker", "exec", CONTAINERS[candidate], "du", "-sb", DATA_PATHS[candidate]],
+            [
+                "docker",
+                "exec",
+                CONTAINERS[candidate],
+                "du",
+                "-sb",
+                DATA_PATHS[candidate],
+            ],
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
+            check=False,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
@@ -153,10 +162,19 @@ def _helper_storage_bytes(candidate: str, *, timeout_seconds: float) -> int | No
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
+            check=False,
         )
-    except (FileNotFoundError, KeyError, OSError, json.JSONDecodeError, subprocess.TimeoutExpired):
+    except (
+        FileNotFoundError,
+        KeyError,
+        OSError,
+        json.JSONDecodeError,
+        subprocess.TimeoutExpired,
+    ):
         return None
-    match = re.match(r"(\d+)", process.stdout.strip()) if process.returncode == 0 else None
+    match = (
+        re.match(r"(\d+)", process.stdout.strip()) if process.returncode == 0 else None
+    )
     return int(match.group(1)) * 1024 if match else None
 
 
@@ -179,7 +197,11 @@ def verify_image(
             text=True,
             timeout=timeout_seconds,
         ).stdout.strip()
-    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+    except (
+        FileNotFoundError,
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+    ) as exc:
         raise RuntimeError(
             f"Cannot verify the pinned Docker image for {candidate}; prepare and start "
             "the vector benchmark servers first"
@@ -215,5 +237,13 @@ def _bytes(value: str) -> int | None:
     match = re.fullmatch(r"([0-9.]+)([KMG]i?B|B)", value)
     if not match:
         return None
-    factors = {"B": 1, "KB": 1000, "MB": 1000**2, "GB": 1000**3, "KiB": 1024, "MiB": 1024**2, "GiB": 1024**3}
+    factors = {
+        "B": 1,
+        "KB": 1000,
+        "MB": 1000**2,
+        "GB": 1000**3,
+        "KiB": 1024,
+        "MiB": 1024**2,
+        "GiB": 1024**3,
+    }
     return int(float(match.group(1)) * factors[match.group(2)])

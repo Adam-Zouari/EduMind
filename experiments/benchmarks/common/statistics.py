@@ -16,7 +16,9 @@ def aggregate_samples(
     confidence: float = 0.95,
 ) -> tuple[dict[str, float], dict[str, dict[str, float]]]:
     metric_names = (
-        sorted(set().union(*(sample.metrics.keys() for sample in samples))) if samples else []
+        sorted(set().union(*(sample.metrics.keys() for sample in samples)))
+        if samples
+        else []
     )
     metrics: dict[str, float] = {}
     intervals: dict[str, dict[str, float]] = {}

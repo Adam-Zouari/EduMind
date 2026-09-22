@@ -121,9 +121,7 @@ def execution_profile(value: object, label: str) -> ExecutionProfile:
     )
     profile = ExecutionProfile(
         warmups=integer(payload["warmups"], f"{label}.warmups", minimum=0),
-        repetitions=integer(
-            payload["repetitions"], f"{label}.repetitions", minimum=1
-        ),
+        repetitions=integer(payload["repetitions"], f"{label}.repetitions", minimum=1),
         bootstrap_resamples=integer(
             payload["bootstrap_resamples"],
             f"{label}.bootstrap_resamples",
@@ -135,9 +133,7 @@ def execution_profile(value: object, label: str) -> ExecutionProfile:
             f"{label}.dtype",
             {"float32", "float16", "bfloat16", "auto"},
         ),
-        batch_size=integer(
-            payload["batch_size"], f"{label}.batch_size", minimum=1
-        ),
+        batch_size=integer(payload["batch_size"], f"{label}.batch_size", minimum=1),
         hardware_required=boolean(
             payload["hardware_required"], f"{label}.hardware_required"
         ),
@@ -271,7 +267,9 @@ def number(
     return result
 
 
-def increasing_integers(value: object, label: str, *, minimum: int = 1) -> tuple[int, ...]:
+def increasing_integers(
+    value: object, label: str, *, minimum: int = 1
+) -> tuple[int, ...]:
     values = tuple(
         integer(item, f"{label}[{index}]", minimum=minimum)
         for index, item in enumerate(sequence(value, label))

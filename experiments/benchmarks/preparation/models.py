@@ -12,10 +12,14 @@ from collections.abc import Mapping, Sequence
 from importlib.metadata import version
 from pathlib import Path
 
-from edumind.common.artifacts import atomic_write_json, atomic_write_text, sha256_file, stable_hash
+from edumind.common.artifacts import (
+    atomic_write_json,
+    atomic_write_text,
+    sha256_file,
+    stable_hash,
+)
 from edumind.extraction.extractors.document import DOCLING_VERSION
 from edumind.rag.contracts import PRODUCTION_EMBEDDING_MODEL
-
 from experiments.benchmarks.common.selection import SelectionEntry, selection_entries
 
 MODEL_COMPONENTS = frozenset(
@@ -75,7 +79,9 @@ def prepare_selected_models(
     entries = {entry.candidate: entry for entry in selection_entries()}
     unknown = sorted(set(selected) - set(entries))
     if unknown:
-        raise ValueError(f"Candidates are not included in model selection: {', '.join(unknown)}")
+        raise ValueError(
+            f"Candidates are not included in model selection: {', '.join(unknown)}"
+        )
     cache_directory = cache_directory.expanduser().resolve()
     if dry_run:
         print(json.dumps(preparation_plan(selected, docling_components), indent=2))
@@ -144,7 +150,9 @@ def prepare_selected_models(
 
 def selected_model_names(components: frozenset[str]) -> tuple[str, ...]:
     return tuple(
-        entry.candidate for entry in selection_entries() if entry.component in components
+        entry.candidate
+        for entry in selection_entries()
+        if entry.component in components
     )
 
 
@@ -246,8 +254,10 @@ def load_selected_model_lock(
             expected = snapshot_specs(approved[candidate])
             actual = [(str(entry.get("model", "")), str(entry["revision"]), "primary")]
             submodels = entry.get("submodels", [])
-            if submodels and isinstance(submodels, Sequence) and not isinstance(
-                submodels, (str, bytes)
+            if (
+                submodels
+                and isinstance(submodels, Sequence)
+                and not isinstance(submodels, (str, bytes))
             ):
                 actual = [
                     (
@@ -274,9 +284,10 @@ def load_selected_model_lock(
         submodels = entry.get("submodels", [])
         if isinstance(submodels, Sequence) and not isinstance(submodels, (str, bytes)):
             for submodel in submodels:
-                if isinstance(submodel, Mapping) and not Path(
-                    str(submodel.get("model_path", ""))
-                ).exists():
+                if (
+                    isinstance(submodel, Mapping)
+                    and not Path(str(submodel.get("model_path", ""))).exists()
+                ):
                     raise RuntimeError(
                         f"Prepared submodel path no longer exists: {submodel.get('model_path')}"
                     )
@@ -295,7 +306,9 @@ def load_selected_model_lock(
         result[candidate] = entry
     missing = sorted(requested - set(result))
     if missing:
-        raise RuntimeError("Model lock lacks requested candidates: " + ", ".join(missing))
+        raise RuntimeError(
+            "Model lock lacks requested candidates: " + ", ".join(missing)
+        )
     return result
 
 
@@ -315,7 +328,9 @@ def snapshot_specs(entry: SelectionEntry) -> tuple[tuple[str, str, str], ...]:
             if item.startswith("model@")
         )
     if ";" in revision:
-        raise ValueError(f"Unsupported composite revision for {entry.candidate}: {revision}")
+        raise ValueError(
+            f"Unsupported composite revision for {entry.candidate}: {revision}"
+        )
     return ((entry.candidate, revision, "primary"),)
 
 
@@ -348,7 +363,9 @@ def _prepare_docling_standard(
 ) -> None:
     installed = version("docling")
     if installed != DOCLING_VERSION:
-        raise RuntimeError(f"Docling {DOCLING_VERSION} is required, but {installed} is installed")
+        raise RuntimeError(
+            f"Docling {DOCLING_VERSION} is required, but {installed} is installed"
+        )
     docling_directory = cache_directory / "docling-standard"
     downloadable = [
         component
@@ -358,7 +375,9 @@ def _prepare_docling_standard(
     cli_name = "docling-tools.exe" if os.name == "nt" else "docling-tools"
     cli_path = Path(sys.executable).resolve().parent / cli_name
     if not cli_path.is_file():
-        raise RuntimeError(f"The pinned Docling CLI is missing beside Python: {cli_path}")
+        raise RuntimeError(
+            f"The pinned Docling CLI is missing beside Python: {cli_path}"
+        )
     command = [str(cli_path), "models", "download", *downloadable]
     command.extend(["--output-dir", str(docling_directory)])
     subprocess.run(command, check=True)
@@ -377,7 +396,9 @@ def _prepare_docling_standard(
             progress=True,
         )
     if not docling_directory.is_dir() or not any(docling_directory.rglob("*")):
-        raise RuntimeError("Docling model preparation produced an empty artifact directory")
+        raise RuntimeError(
+            "Docling model preparation produced an empty artifact directory"
+        )
     system_components = _prepare_system_components(components)
     _merge_model_lock(
         output_path,
@@ -471,7 +492,9 @@ def _prepare_tiktoken(cache_directory: Path) -> None:
     try:
         import tiktoken
     except ModuleNotFoundError as exc:
-        raise RuntimeError("tiktoken is required; install the application lock") from exc
+        raise RuntimeError(
+            "tiktoken is required; install the application lock"
+        ) from exc
     cache_directory.mkdir(parents=True, exist_ok=True)
     os.environ["TIKTOKEN_CACHE_DIR"] = str(cache_directory)
     tiktoken.get_encoding("cl100k_base").encode("EduMind preparation check")
@@ -493,7 +516,9 @@ def _directory_manifest_hash(directory: Path) -> str:
                 "size": path.stat().st_size,
                 "sha256": sha256_file(path),
             }
-            for path in sorted(files, key=lambda value: value.relative_to(directory).as_posix())
+            for path in sorted(
+                files, key=lambda value: value.relative_to(directory).as_posix()
+            )
         ]
     )
 
@@ -524,7 +549,9 @@ def _prepare_system_components(components: Sequence[str]) -> dict[str, object]:
     languages = subprocess.run(
         [executable, "--list-langs"], check=True, capture_output=True, text=True
     )
-    available = [value.strip() for value in languages.stdout.splitlines()[1:] if value.strip()]
+    available = [
+        value.strip() for value in languages.stdout.splitlines()[1:] if value.strip()
+    ]
     if "eng" not in available:
         raise RuntimeError("The document benchmark requires Tesseract English data")
     match = re.search(r'in\s+"([^"]+)"', languages.stdout.splitlines()[0])

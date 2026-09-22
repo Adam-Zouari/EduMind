@@ -57,6 +57,7 @@ def run_json_worker(
             env=worker_environment(device),
             capture_output=True,
             text=True,
+            check=False,
         )
         if completed.returncode or not output_path.is_file():
             detail = (
@@ -120,9 +121,7 @@ def benchmark_objects_from_payload(
     manifest = DatasetManifest(
         **{
             **manifest_payload,
-            "samples": tuple(
-                dict(row) for row in manifest_payload.get("samples", [])
-            ),
+            "samples": tuple(dict(row) for row in manifest_payload.get("samples", [])),
         }
     )
     plan_payload = payload_mapping(payload["plan"])

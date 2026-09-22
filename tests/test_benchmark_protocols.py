@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
+from experiments.benchmarks.common.runner import _protocol_confidence_level
 from experiments.benchmarks.extraction.audio.protocol import (
     load_protocol as load_audio_protocol,
 )
@@ -26,10 +27,10 @@ from experiments.benchmarks.rag.chunking_embedding.strategies import (
 from experiments.benchmarks.rag.final.protocol import (
     load_protocol as load_final_protocol,
 )
+from experiments.benchmarks.rag.generation.evaluate import _questions
 from experiments.benchmarks.rag.generation.protocol import (
     load_protocol as load_generation_protocol,
 )
-from experiments.benchmarks.rag.generation.evaluate import _questions
 from experiments.benchmarks.rag.retrieval_reranking.protocol import (
     load_protocol as load_retrieval_protocol,
 )
@@ -37,8 +38,6 @@ from experiments.benchmarks.rag.retrieval_reranking.run import main as retrieval
 from experiments.benchmarks.vectordb.protocol import (
     load_protocol as load_vector_protocol,
 )
-from experiments.benchmarks.common.runner import _protocol_confidence_level
-
 
 ROOT = Path(__file__).resolve().parents[1]
 PROTOCOL_CASES = (
@@ -155,7 +154,9 @@ def test_every_protocol_rejects_missing_unknown_and_nonfinite_fields(
 
 def test_document_audio_and_video_behavior_comes_from_protocol(tmp_path) -> None:
     document_root = deepcopy(load_document_protocol().meta.resolved)
-    document_root["candidate_factors"]["smoke_configuration"]["ocr_engine"] = "tesseract"
+    document_root["candidate_factors"]["smoke_configuration"]["ocr_engine"] = (
+        "tesseract"
+    )
     document_root["parser"]["image_scale"] = 2.5
     document = load_document_protocol(
         _write_protocol(tmp_path, "document-behavior", document_root)
@@ -203,9 +204,9 @@ def test_rag_and_vector_behavior_comes_from_protocol(tmp_path) -> None:
     chunking = load_chunking_protocol(
         _write_protocol(tmp_path, "chunking-behavior", chunk_root)
     )
-    chunks = build_chunking_strategy(
-        "token-256-32", protocol=chunking
-    ).split("one two three four five six seven eight nine ten eleven twelve")
+    chunks = build_chunking_strategy("token-256-32", protocol=chunking).split(
+        "one two three four five six seven eight nine ten eleven twelve"
+    )
     assert chunking.quality_cutoffs == (2, 4)
     assert chunking.audit_depth == 7
     assert len(chunks) > 1 and chunks[0][2] <= 8
@@ -244,7 +245,9 @@ def test_rag_and_vector_behavior_comes_from_protocol(tmp_path) -> None:
     vector_root["adapters"]["upsert_batch_sizes"]["chroma"] = 17
     vector_root["adapters"]["qdrant_indexing_threshold"] = 2
     vector_root["statistics"]["confidence_level"] = 0.9
-    vector = load_vector_protocol(_write_protocol(tmp_path, "vector-behavior", vector_root))
+    vector = load_vector_protocol(
+        _write_protocol(tmp_path, "vector-behavior", vector_root)
+    )
     assert vector.workloads["smoke"][0]["size"] == 321
     assert vector.concurrency_levels("development", "development-100k-d1024") == (
         1,
@@ -298,10 +301,20 @@ def test_retrieval_uses_the_supplied_chunking_smoke_pair(tmp_path, monkeypatch) 
         check_model_selection,
     )
     with pytest.raises(RuntimeError, match="supplied smoke pair reached model lock"):
-        retrieval_main(["--chunking-protocol", str(chunk_path), "--profile", "smoke", "--no-mlflow"])
+        retrieval_main(
+            [
+                "--chunking-protocol",
+                str(chunk_path),
+                "--profile",
+                "smoke",
+                "--no-mlflow",
+            ]
+        )
 
 
-def test_candidate_rosters_live_in_protocols_or_supported_adapters(tmp_path: Path) -> None:
+def test_candidate_rosters_live_in_protocols_or_supported_adapters(
+    tmp_path: Path,
+) -> None:
     assert not list((ROOT / "experiments/benchmarks").rglob("candidates.yaml"))
 
     audio = load_audio_protocol()
@@ -317,14 +330,21 @@ def test_candidate_rosters_live_in_protocols_or_supported_adapters(tmp_path: Pat
     assert len(chunking.development_candidates) == 48
     assert chunking.smoke_pair == "token-256-32|Alibaba-NLP/gte-modernbert-base"
     assert chunking.smoke_pair in chunking.development_candidates
-    assert "chunking_embedding_candidate" not in load_retrieval_protocol().meta.resolved["smoke_fixture"]
+    assert (
+        "chunking_embedding_candidate"
+        not in load_retrieval_protocol().meta.resolved["smoke_fixture"]
+    )
     bad_chunking = deepcopy(chunking.meta.resolved)
     bad_chunking["smoke_pair"] = "missing|model"
     with pytest.raises(ValueError, match="smoke_pair"):
-        load_chunking_protocol(_write_protocol(tmp_path, "chunking-smoke", bad_chunking))
+        load_chunking_protocol(
+            _write_protocol(tmp_path, "chunking-smoke", bad_chunking)
+        )
 
     generation = load_generation_protocol()
     bad_generation = deepcopy(generation.meta.resolved)
     bad_generation["models"]["unsupported"] = "other/model"
     with pytest.raises(ValueError, match="supported generator"):
-        load_generation_protocol(_write_protocol(tmp_path, "generation-model", bad_generation))
+        load_generation_protocol(
+            _write_protocol(tmp_path, "generation-model", bad_generation)
+        )

@@ -5,8 +5,9 @@ from __future__ import annotations
 from edumind.extraction import SourceKind
 from edumind.extraction.extractors.document import DoclingExtractor
 from edumind.extraction.registry import ExtractorRegistration, ExtractorRegistry
-
-from experiments.benchmarks.extraction.document.adapters import ExperimentalDocumentExtractor
+from experiments.benchmarks.extraction.document.adapters import (
+    ExperimentalDocumentExtractor,
+)
 
 
 def build_experiment_registry() -> ExtractorRegistry:
@@ -20,7 +21,9 @@ def build_experiment_registry() -> ExtractorRegistry:
         ExtractorRegistration(
             "docling-vlm-granite-258m",
             frozenset({SourceKind.IMAGE, SourceKind.PDF}),
-            lambda: ExperimentalDocumentExtractor("docling-vlm-granite-258m", "from-lock"),
+            lambda: ExperimentalDocumentExtractor(
+                "docling-vlm-granite-258m", "from-lock"
+            ),
         ),
         ExtractorRegistration(
             "paddleocr-vl-1.6",

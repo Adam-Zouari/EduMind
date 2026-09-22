@@ -4,13 +4,14 @@ import re
 from pathlib import Path
 from urllib.parse import unquote
 
-
 ROOT = Path(__file__).resolve().parents[1]
 LINK = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 
 
 def _documentation_files() -> list[Path]:
-    root_pages = [ROOT / name for name in ("README.md", "CONTRIBUTING.md", "CHANGELOG.md")]
+    root_pages = [
+        ROOT / name for name in ("README.md", "CONTRIBUTING.md", "CHANGELOG.md")
+    ]
     return root_pages + sorted((ROOT / "docs").rglob("*.md"))
 
 

@@ -43,7 +43,10 @@ class Qdrant:
         )
         for field in ("source_id", "scope_50", "scope_10", "scope_1", "scope_01"):
             self.client.create_payload_index(
-                self.config.collection, field, self.models.PayloadSchemaType.KEYWORD, wait=True
+                self.config.collection,
+                field,
+                self.models.PayloadSchemaType.KEYWORD,
+                wait=True,
             )
 
     def upsert(self, records: Sequence[Record]) -> None:
@@ -56,7 +59,11 @@ class Qdrant:
                     self.models.PointStruct(
                         id=str(_uuid(row.identifier)),
                         vector=list(row.vector),
-                        payload={"edumind_id": row.identifier, "text": row.text, **dict(row.metadata)},
+                        payload={
+                            "edumind_id": row.identifier,
+                            "text": row.text,
+                            **dict(row.metadata),
+                        },
                     )
                     for row in rows
                 ],
@@ -68,7 +75,9 @@ class Qdrant:
         if filters:
             query_filter = self.models.Filter(
                 must=[
-                    self.models.FieldCondition(key=key, match=self.models.MatchValue(value=value))
+                    self.models.FieldCondition(
+                        key=key, match=self.models.MatchValue(value=value)
+                    )
                     for key, value in sorted(filters.items())
                 ]
             )
@@ -77,7 +86,9 @@ class Qdrant:
             query=list(vector),
             query_filter=query_filter,
             limit=limit,
-            search_params=self.models.SearchParams(hnsw_ef=self.config.ef_search, exact=False),
+            search_params=self.models.SearchParams(
+                hnsw_ef=self.config.ef_search, exact=False
+            ),
             with_payload=True,
         )
         hits = []
@@ -92,15 +103,25 @@ class Qdrant:
         if identifiers:
             self.client.delete(
                 self.config.collection,
-                self.models.PointIdsList(points=[str(_uuid(value)) for value in identifiers]),
+                self.models.PointIdsList(
+                    points=[str(_uuid(value)) for value in identifiers]
+                ),
                 wait=True,
             )
 
     def delete_document(self, source_id: str) -> int:
         condition = self.models.Filter(
-            must=[self.models.FieldCondition(key="source_id", match=self.models.MatchValue(value=source_id))]
+            must=[
+                self.models.FieldCondition(
+                    key="source_id", match=self.models.MatchValue(value=source_id)
+                )
+            ]
         )
-        count = int(self.client.count(self.config.collection, count_filter=condition, exact=True).count)
+        count = int(
+            self.client.count(
+                self.config.collection, count_filter=condition, exact=True
+            ).count
+        )
         self.client.delete(
             self.config.collection,
             self.models.FilterSelector(filter=condition),
@@ -119,9 +140,16 @@ class Qdrant:
             points = int(info.points_count or 0)
             indexed = int(info.indexed_vectors_count or 0)
             if "green" in status and (not points or indexed >= points):
-                return {"type": "hnsw", "status": status, "indexed": indexed, "points": points}
+                return {
+                    "type": "hnsw",
+                    "status": status,
+                    "indexed": indexed,
+                    "points": points,
+                }
             if time.monotonic() >= deadline:
-                raise RuntimeError(f"Qdrant HNSW was not ready: {indexed}/{points}, {status}")
+                raise RuntimeError(
+                    f"Qdrant HNSW was not ready: {indexed}/{points}, {status}"
+                )
             time.sleep(self.config.index_readiness_poll_seconds)
 
     def close(self) -> None:

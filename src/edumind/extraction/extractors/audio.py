@@ -8,7 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..contracts import ExtractedDocument, ExtractionRequest, ExtractionWarning, SourceKind
+from ..contracts import (
+    ExtractedDocument,
+    ExtractionRequest,
+    ExtractionWarning,
+    SourceKind,
+)
 from ..errors import ExtractionBackendError, MissingDependencyError
 from .base import build_document
 
@@ -28,7 +33,9 @@ class WhisperExtractor:
     def __init__(self, _revision: str) -> None:
         self._runtime: Any | None = None
 
-    def extract(self, request: ExtractionRequest, kind: SourceKind) -> ExtractedDocument:
+    def extract(
+        self, request: ExtractionRequest, kind: SourceKind
+    ) -> ExtractedDocument:
         if request.profile is None:
             raise ValueError("Resolved extraction profile is required")
         started = time.perf_counter()
@@ -106,18 +113,22 @@ def load_whisper_runtime(
         import torch
         from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
     except ModuleNotFoundError as exc:
-        raise MissingDependencyError("Transformers ASR dependencies are required") from exc
+        raise MissingDependencyError(
+            "Transformers ASR dependencies are required"
+        ) from exc
     torch_dtype = (
         getattr(torch, dtype)
         if dtype is not None
         else (torch.float16 if device == "cuda" else torch.float32)
     )
-    model = AutoModelForSpeechSeq2Seq.from_pretrained(
-        str(model_path), dtype=torch_dtype, local_files_only=True
-    ).to(device).eval()
-    processor = AutoProcessor.from_pretrained(
-        str(model_path), local_files_only=True
+    model = (
+        AutoModelForSpeechSeq2Seq.from_pretrained(
+            str(model_path), dtype=torch_dtype, local_files_only=True
+        )
+        .to(device)
+        .eval()
     )
+    processor = AutoProcessor.from_pretrained(str(model_path), local_files_only=True)
     runtime = pipeline(
         "automatic-speech-recognition",
         model=model,
@@ -151,10 +162,13 @@ def transcribe_whisper(
             stamp = chunk.get("timestamp")
             start: float | None = None
             end: float | None = None
-            if isinstance(stamp, Sequence) and not isinstance(stamp, (str, bytes)):
-                if len(stamp) == 2:
-                    start = _optional_float(stamp[0])
-                    end = _optional_float(stamp[1])
+            if (
+                isinstance(stamp, Sequence)
+                and not isinstance(stamp, (str, bytes))
+                and len(stamp) == 2
+            ):
+                start = _optional_float(stamp[0])
+                end = _optional_float(stamp[1])
             segments.append(
                 {
                     "text": str(chunk.get("text", "")).strip(),
@@ -171,7 +185,9 @@ def _assert_whisper_device(model: object, expected: str) -> None:
     except (AttributeError, StopIteration, TypeError) as exc:
         raise RuntimeError("Whisper model does not expose its device") from exc
     if observed != expected:
-        raise RuntimeError(f"Whisper used {observed} instead of the requested {expected} device")
+        raise RuntimeError(
+            f"Whisper used {observed} instead of the requested {expected} device"
+        )
 
 
 def _optional_float(value: object) -> float | None:

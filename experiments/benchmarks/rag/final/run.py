@@ -1,33 +1,50 @@
-from pathlib import Path
 import json
-from edumind.common.paths import PROJECT_ROOT
+from pathlib import Path
+
 from edumind.common.artifacts import atomic_write_json
+from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.arguments import parser
 from experiments.benchmarks.common.contracts import BenchmarkPlan
-from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
+from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.runner import run_benchmark
-from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
+from experiments.benchmarks.preparation.models import (
+    load_selected_model_lock,
+    model_revisions,
+)
 from experiments.benchmarks.rag.chunking_embedding.protocol import (
     DEFAULT_PROTOCOL_PATH as DEFAULT_CHUNKING_PROTOCOL_PATH,
+)
+from experiments.benchmarks.rag.chunking_embedding.protocol import (
     load_protocol as load_chunking_protocol,
 )
-from experiments.benchmarks.rag.evaluation import build_index, retrieval_quality_directions
-from experiments.benchmarks.rag.generation.evaluate import GENERATION_DIRECTIONS, evaluate_candidate
-from experiments.benchmarks.rag.generation.protocol import (
-    DEFAULT_PROTOCOL_PATH as DEFAULT_GENERATION_PROTOCOL_PATH,
-    load_protocol as load_generation_protocol,
+from experiments.benchmarks.rag.evaluation import (
+    build_index,
+    retrieval_quality_directions,
 )
-from experiments.benchmarks.rag.retrieval_reranking.protocol import (
-    DEFAULT_PROTOCOL_PATH as DEFAULT_RETRIEVAL_PROTOCOL_PATH,
-    load_protocol as load_retrieval_protocol,
-)
-from experiments.benchmarks.rag.retrieval_reranking.profiles import parse_candidate
 from experiments.benchmarks.rag.final.protocol import (
     DEFAULT_PROTOCOL_PATH as DEFAULT_FINAL_PROTOCOL_PATH,
+)
+from experiments.benchmarks.rag.final.protocol import (
     load_protocol as load_final_protocol,
 )
-
+from experiments.benchmarks.rag.generation.evaluate import (
+    GENERATION_DIRECTIONS,
+    evaluate_candidate,
+)
+from experiments.benchmarks.rag.generation.protocol import (
+    DEFAULT_PROTOCOL_PATH as DEFAULT_GENERATION_PROTOCOL_PATH,
+)
+from experiments.benchmarks.rag.generation.protocol import (
+    load_protocol as load_generation_protocol,
+)
+from experiments.benchmarks.rag.retrieval_reranking.profiles import parse_candidate
+from experiments.benchmarks.rag.retrieval_reranking.protocol import (
+    DEFAULT_PROTOCOL_PATH as DEFAULT_RETRIEVAL_PROTOCOL_PATH,
+)
+from experiments.benchmarks.rag.retrieval_reranking.protocol import (
+    load_protocol as load_retrieval_protocol,
+)
 
 if __name__ == "__main__":
     argument_parser = parser(
@@ -44,18 +61,31 @@ if __name__ == "__main__":
     argument_parser.add_argument(
         "--dtype", choices=("float32", "float16", "bfloat16", "auto")
     )
-    argument_parser.add_argument("--final-protocol", type=Path, default=DEFAULT_FINAL_PROTOCOL_PATH)
-    argument_parser.add_argument("--generation-protocol", type=Path, default=DEFAULT_GENERATION_PROTOCOL_PATH)
-    argument_parser.add_argument("--retrieval-protocol", type=Path, default=DEFAULT_RETRIEVAL_PROTOCOL_PATH)
-    argument_parser.add_argument("--chunking-protocol", type=Path, default=DEFAULT_CHUNKING_PROTOCOL_PATH)
+    argument_parser.add_argument(
+        "--final-protocol", type=Path, default=DEFAULT_FINAL_PROTOCOL_PATH
+    )
+    argument_parser.add_argument(
+        "--generation-protocol", type=Path, default=DEFAULT_GENERATION_PROTOCOL_PATH
+    )
+    argument_parser.add_argument(
+        "--retrieval-protocol", type=Path, default=DEFAULT_RETRIEVAL_PROTOCOL_PATH
+    )
+    argument_parser.add_argument(
+        "--chunking-protocol", type=Path, default=DEFAULT_CHUNKING_PROTOCOL_PATH
+    )
     arguments = argument_parser.parse_args()
     final_protocol = load_final_protocol(arguments.final_protocol)
     generation_protocol = load_generation_protocol(arguments.generation_protocol)
     retrieval_protocol = load_retrieval_protocol(arguments.retrieval_protocol)
     chunking_protocol = load_chunking_protocol(arguments.chunking_protocol)
     execution = final_protocol.profile(arguments.profile)
-    if arguments.profile in {"smoke", "development"} and arguments.shortlist is not None:
-        argument_parser.error(f"{arguments.profile} final RAG does not accept --shortlist")
+    if (
+        arguments.profile in {"smoke", "development"}
+        and arguments.shortlist is not None
+    ):
+        argument_parser.error(
+            f"{arguments.profile} final RAG does not accept --shortlist"
+        )
     if arguments.profile in {"validation", "locked"} and arguments.shortlist is None:
         argument_parser.error(
             f"{arguments.profile} final RAG requires --shortlist DECISION_JSON"
@@ -86,7 +116,10 @@ if __name__ == "__main__":
         )
     device = arguments.device or execution.device
     dtype = arguments.dtype or execution.dtype
-    if execution.hardware_required and (device, dtype) != (execution.device, execution.dtype):
+    if execution.hardware_required and (device, dtype) != (
+        execution.device,
+        execution.dtype,
+    ):
         argument_parser.error(
             f"{arguments.profile} final RAG requires --device {execution.device} "
             f"--dtype {execution.dtype}"
@@ -133,7 +166,9 @@ if __name__ == "__main__":
         raise AssertionError(f"Unhandled Final RAG profile: {arguments.profile}")
     if arguments.profile == "development":
         if not arguments.retrieval_selection or not arguments.generation_selection:
-            raise ValueError("Provide both --retrieval-selection and --generation-selection")
+            raise ValueError(
+                "Provide both --retrieval-selection and --generation-selection"
+            )
         retrieval_decision = load_engineer_decision(
             arguments.retrieval_selection,
             maximum=final_protocol.maximum_retrieval_finalists,
@@ -149,7 +184,9 @@ if __name__ == "__main__":
             .get("chunker_embedding", "")
         )
         if selected_pair not in chunking_protocol.development_candidates:
-            raise ValueError("Final RAG chunking/embedding selection is not in the supplied protocol")
+            raise ValueError(
+                "Final RAG chunking/embedding selection is not in the supplied protocol"
+            )
         generators = load_engineer_decision(
             arguments.generation_selection,
             maximum=final_protocol.maximum_generation_finalists,
@@ -162,7 +199,9 @@ if __name__ == "__main__":
             for top_k in final_protocol.top_k
         )
     if arguments.profile == "locked" and len(candidates) != 1:
-        raise ValueError("Locked-test evaluation requires exactly one approved final candidate")
+        raise ValueError(
+            "Locked-test evaluation requires exactly one approved final candidate"
+        )
     if len(candidates) > final_protocol.maximum_final_systems:
         raise ValueError(
             "Final RAG candidate matrix exceeds protocol maximum_final_systems"
@@ -189,7 +228,9 @@ if __name__ == "__main__":
                 f"{final_protocol.required_judgment_count}-judgment review"
             )
         if candidates[0] not in review.get("candidates", {}):
-            raise ValueError("The locked-test candidate was not one of the reviewed systems")
+            raise ValueError(
+                "The locked-test candidate was not one of the reviewed systems"
+            )
         if locked_marker.exists():
             raise ValueError(
                 f"Locked test {final_protocol.locked_marker_version} was already consumed; "
@@ -201,7 +242,9 @@ if __name__ == "__main__":
         chunker, embedding, retrieval, generator, top_k_value = candidate.split("@@", 4)
         chunking_protocol.strategy(chunker)
         if embedding not in chunking_protocol.embedding_models:
-            raise ValueError(f"Final RAG embedding model is not in the supplied protocol: {embedding}")
+            raise ValueError(
+                f"Final RAG embedding model is not in the supplied protocol: {embedding}"
+            )
         parsed_retrieval = parse_candidate(retrieval)
         generator_model = generation_protocol.model_id(generator)
         if int(top_k_value.removeprefix("top_k=")) not in final_protocol.top_k:
@@ -289,7 +332,12 @@ if __name__ == "__main__":
         },
         no_mlflow=arguments.no_mlflow,
     )
-    print(json.dumps({"run_id": result.run_id, "artifacts": str(result.artifact_directory)}, indent=2))
+    print(
+        json.dumps(
+            {"run_id": result.run_id, "artifacts": str(result.artifact_directory)},
+            indent=2,
+        )
+    )
     if arguments.profile == "locked" and result.complete:
         atomic_write_json(
             locked_marker,

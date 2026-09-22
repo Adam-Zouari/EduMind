@@ -9,10 +9,9 @@ from dataclasses import dataclass, replace
 import numpy as np
 
 from edumind.common.artifacts import stable_hash
-from edumind.rag.embedder import Embedder
 from edumind.rag.contracts import EmbeddingSpec
+from edumind.rag.embedder import Embedder
 from edumind.rag.tokenizers import OffsetTokenizer, TiktokenOffsetTokenizer
-
 from experiments.benchmarks.common.datasets import EvidenceInterval, evidence_units
 from experiments.benchmarks.common.metrics import (
     average_precision_at_k,
@@ -22,13 +21,15 @@ from experiments.benchmarks.common.metrics import (
     ndcg_at_k,
     precision_at_k,
     recall_at_k,
-    relevance_grades,
     reciprocal_rank,
+    relevance_grades,
 )
 from experiments.benchmarks.rag.chunking_embedding.profiles import embedding_spec
-from experiments.benchmarks.rag.chunking_embedding.strategies import build_chunking_strategy
 from experiments.benchmarks.rag.chunking_embedding.protocol import (
     ChunkingEmbeddingProtocol,
+)
+from experiments.benchmarks.rag.chunking_embedding.strategies import (
+    build_chunking_strategy,
 )
 from experiments.benchmarks.rag.methods import BM25, Reranker, reciprocal_rank_fusion
 from experiments.benchmarks.rag.retrieval_reranking.protocol import RetrievalProtocol
@@ -116,7 +117,9 @@ def build_index(
         started = time.perf_counter()
         try:
             if embedder is None:
-                raise RuntimeError("Model-input validation requires an embedding runtime")
+                raise RuntimeError(
+                    "Model-input validation requires an embedding runtime"
+                )
             return _model_input_counts(
                 embedder,
                 texts,
@@ -147,9 +150,7 @@ def build_index(
                     input_preflight_seconds
                 ),
                 "chunking_contract": _chunking_contract(chunker),
-                "resolved_document_input": embedder.input_configuration(
-                    "document"
-                ),
+                "resolved_document_input": embedder.input_configuration("document"),
                 "resolved_query_input": embedder.input_configuration("query"),
             }
             raise InputCompatibilityError(
@@ -171,9 +172,7 @@ def build_index(
                     for name, value in vars(spec).items()
                     if name != "local_path"
                 },
-                "model_cache_manifest_sha256": entry.get(
-                    "model_cache_manifest_sha256"
-                ),
+                "model_cache_manifest_sha256": entry.get("model_cache_manifest_sha256"),
                 "dtype": dtype,
                 "batch_size": embedder.batch_size if embedder is not None else None,
             }
@@ -259,7 +258,8 @@ def build_index(
                 "model_tokens": chunk.model_tokens,
             }
             for chunk in chunks
-            if chunk.model_tokens is not None and chunk.model_tokens > spec.maximum_length
+            if chunk.model_tokens is not None
+            and chunk.model_tokens > spec.maximum_length
         ]
         offending_queries = [
             {
@@ -338,8 +338,7 @@ def rank(
         if index.bm25 is None:
             raise RuntimeError("This index was built without BM25")
         base = [
-            identifier
-            for identifier, _ in index.bm25.rank(query, protocol.pool_size)
+            identifier for identifier, _ in index.bm25.rank(query, protocol.pool_size)
         ]
         if reranker is None:
             return base
@@ -362,8 +361,7 @@ def rank(
         if index.bm25 is None:
             raise RuntimeError("This index was built without BM25")
         lexical = [
-            identifier
-            for identifier, _ in index.bm25.rank(query, protocol.pool_size)
+            identifier for identifier, _ in index.bm25.rank(query, protocol.pool_size)
         ]
         base = reciprocal_rank_fusion(
             [dense, lexical],
@@ -395,7 +393,9 @@ def dense_rank_with_scores(
     query_vector = np.asarray(index.embedder.embed_query(query), dtype=np.float32)
     if query_vector.ndim != 1:
         raise RuntimeError("Query embedding must be one-dimensional")
-    _validate_vectors(query_vector.reshape(1, -1), 1, index.embedding_spec.dimension, "query")
+    _validate_vectors(
+        query_vector.reshape(1, -1), 1, index.embedding_spec.dimension, "query"
+    )
     query_norm = float(np.linalg.norm(query_vector))
     scores = index.vectors @ (query_vector / query_norm)
     positions = np.arange(len(scores))
@@ -461,9 +461,7 @@ def retrieval_metrics(
     question, selected, all_chunks, _tokenizer, *, cutoffs: Sequence[int]
 ) -> tuple[dict[str, float], int]:
     evidence = [
-        interval
-        for unit in evidence_units(question)
-        for interval in unit.intervals
+        interval for unit in evidence_units(question) for interval in unit.intervals
     ]
     all_grades = [_grade(chunk, evidence) for chunk in all_chunks]
     grades = [_grade(chunk, evidence) for chunk in selected]
@@ -481,12 +479,16 @@ def retrieval_metrics(
                 f"precision_at_{cutoff}": precision_at_k(grades, cutoff),
                 f"recall_at_{cutoff}": recall_at_k(grades, relevant_total, cutoff),
                 f"hit_rate_at_{cutoff}": hit_rate_at_k(grades, cutoff),
-                f"context_precision_at_{cutoff}": context_precision_at_k(grades, cutoff),
+                f"context_precision_at_{cutoff}": context_precision_at_k(
+                    grades, cutoff
+                ),
                 f"context_recall_at_{cutoff}": context_recall(gold, intervals),
             }
         )
         if cutoff > 1:
-            metrics[f"map_at_{cutoff}"] = average_precision_at_k(grades, relevant_total, cutoff)
+            metrics[f"map_at_{cutoff}"] = average_precision_at_k(
+                grades, relevant_total, cutoff
+            )
             metrics[f"ndcg_at_{cutoff}"] = ndcg_at_k(grades, cutoff, all_grades)
     return metrics, sum(chunk.tokens for chunk in selected)
 

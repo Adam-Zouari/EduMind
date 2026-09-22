@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 import subprocess
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 from edumind.common.artifacts import atomic_write_json
 from edumind.common.paths import PROJECT_ROOT
@@ -86,7 +86,9 @@ def score_official_metrics(
                 timeout=timeout_seconds,
             )
         except FileNotFoundError as exc:
-            raise RuntimeError("Docker is required for official OmniDocBench scoring") from exc
+            raise RuntimeError(
+                "Docker is required for official OmniDocBench scoring"
+            ) from exc
         except subprocess.CalledProcessError as exc:
             detail = (exc.stderr or exc.stdout or "no container output").strip()
             raise RuntimeError(f"OmniDocBench scorer failed: {detail[-3000:]}") from exc
@@ -98,7 +100,9 @@ def score_official_metrics(
         if not output.is_file():
             raise RuntimeError(
                 "OmniDocBench scorer produced no result: "
-                + (completed.stderr or completed.stdout or "no container output")[-1000:]
+                + (completed.stderr or completed.stdout or "no container output")[
+                    -1000:
+                ]
             )
         result = json.loads(output.read_text(encoding="utf-8"))
     tables = [tuple(map(float, values)) for values in result.get("tables", [])]
@@ -122,7 +126,9 @@ def official_image_digest() -> str:
     if "@sha256:" not in digest:
         raise RuntimeError("The OmniDocBench Docker image lock has no immutable digest")
     if payload.get("source_revision") != OMNIDOCBENCH_REVISION:
-        raise RuntimeError("The OmniDocBench image lock targets a different source revision")
+        raise RuntimeError(
+            "The OmniDocBench image lock targets a different source revision"
+        )
     return digest
 
 

@@ -12,15 +12,18 @@ from pathlib import Path
 import numpy as np
 
 from edumind.extraction import ExtractionProfile, ExtractionRequest, SourceKind
-from experiments.benchmarks.common.resources import ResourceMonitor
+from experiments.benchmarks.common.process import json_worker_main
 from experiments.benchmarks.common.provenance import package_versions
-from experiments.benchmarks.extraction.registry import build_experiment_registry
+from experiments.benchmarks.common.resources import ResourceMonitor
 from experiments.benchmarks.extraction.document.profiles import parse_document_profile
 from experiments.benchmarks.extraction.document.protocol import (
     protocol_from_worker as document_protocol_from_worker,
 )
-from experiments.benchmarks.common.process import json_worker_main
-from experiments.benchmarks.extraction.video.candidates import frame_command, parse_candidate
+from experiments.benchmarks.extraction.registry import build_experiment_registry
+from experiments.benchmarks.extraction.video.candidates import (
+    frame_command,
+    parse_candidate,
+)
 from experiments.benchmarks.extraction.video.metrics import (
     aggregate_quality,
     bootstrap_quality,
@@ -47,13 +50,20 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
         **document_protocol.parser_options(image_engine),
         **image_profile.options,
     }
-    if any(image_options.get(name) != value for name, value in expected_image_options.items()):
-        raise ValueError("Visual worker image options differ from the document protocol")
+    if any(
+        image_options.get(name) != value
+        for name, value in expected_image_options.items()
+    ):
+        raise ValueError(
+            "Visual worker image options differ from the document protocol"
+        )
     extractor = build_experiment_registry().create(image_engine, SourceKind.IMAGE)
     timing_rows: list[dict[str, object]] = []
     sample_rows: list[dict[str, object]] = []
     ffmpeg_commands: list[dict[str, object]] = []
-    monitor = ResourceMonitor(require_vram=device == "cuda", report_zero_vram=device == "cpu")
+    monitor = ResourceMonitor(
+        require_vram=device == "cuda", report_zero_vram=device == "cpu"
+    )
     with tempfile.TemporaryDirectory(prefix="edumind-video-visual-") as raw_temp:
         temporary = Path(raw_temp)
         try:
@@ -63,7 +73,11 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
                 )
                 ffmpeg_commands.append({"phase": "cold", "command": cold_command})
                 request = _image_request(
-                    cold_frames[0][0], image_engine, image_revision, device, image_options
+                    cold_frames[0][0],
+                    image_engine,
+                    image_revision,
+                    device,
+                    image_options,
                 )
                 initializer = getattr(extractor, "initialize_image_pipeline", None)
                 if not callable(initializer):
@@ -121,7 +135,9 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
                                 "command": command,
                             }
                         )
-                    quality_predictions, quality_latency, quality_frame_count = outputs[0]
+                    quality_predictions, quality_latency, quality_frame_count = outputs[
+                        0
+                    ]
                     row = score_video(
                         item,
                         quality_predictions,
@@ -244,9 +260,7 @@ def _process_video(
     return predictions, command, len(frames)
 
 
-def _bootstrap_operational(
-    rows, timings, estimates, *, resamples, seed, confidence
-):
+def _bootstrap_operational(rows, timings, estimates, *, resamples, seed, confidence):
     if not resamples or len(rows) < 2:
         return {}
     by_sample: dict[str, list[dict[str, object]]] = {}
@@ -263,12 +277,17 @@ def _bootstrap_operational(
     for _ in range(resamples):
         sampled = [rows[index] for index in rng.integers(0, len(rows), len(rows))]
         sampled_timings = [
-            timing
-            for row in sampled
-            for timing in by_sample[str(row["sample_id"])]
+            timing for row in sampled for timing in by_sample[str(row["sample_id"])]
         ]
         per_video = [
-            float(np.median([float(value["latency_seconds"]) for value in by_sample[str(row["sample_id"])] ]))
+            float(
+                np.median(
+                    [
+                        float(value["latency_seconds"])
+                        for value in by_sample[str(row["sample_id"])]
+                    ]
+                )
+            )
             for row in sampled
         ]
         draws["visual_real_time_factor"].append(

@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import pytest
 
+from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.datasets import (
     DatasetValidationError,
     assert_no_split_leakage,
@@ -11,7 +12,6 @@ from experiments.benchmarks.common.datasets import (
     require_manifest_split,
 )
 from experiments.benchmarks.preparation.fixtures import _write_minimal_docx
-from edumind.common.paths import PROJECT_ROOT
 
 
 def test_smoke_dataset_has_thirty_documents_24_questions_and_exact_offsets() -> None:
@@ -22,7 +22,9 @@ def test_smoke_dataset_has_thirty_documents_24_questions_and_exact_offsets() -> 
 
 def test_manifest_checksum_tampering_is_detected(tmp_path) -> None:
     source = PROJECT_ROOT / "data/benchmarks/rag/smoke.json"
-    content = source.read_text(encoding="utf-8").replace("chemical energy", "changed", 1)
+    content = source.read_text(encoding="utf-8").replace(
+        "chemical energy", "changed", 1
+    )
     path = tmp_path / "tampered.json"
     path.write_text(content, encoding="utf-8")
     with pytest.raises(DatasetValidationError, match="checksum"):
@@ -32,7 +34,9 @@ def test_manifest_checksum_tampering_is_detected(tmp_path) -> None:
 def test_manifest_split_must_match_the_requested_profile() -> None:
     manifest = load_manifest(PROJECT_ROOT / "data/benchmarks/rag/smoke.json")
     require_manifest_split(manifest, "smoke", "smoke")
-    with pytest.raises(DatasetValidationError, match="Profile development requires split"):
+    with pytest.raises(
+        DatasetValidationError, match="Profile development requires split"
+    ):
         require_manifest_split(manifest, "development", {"dev", "development"})
 
 

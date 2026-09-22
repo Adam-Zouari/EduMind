@@ -8,17 +8,24 @@ import pytest
 from edumind.common.config import ConfigurationError, load_settings
 from edumind.extraction.pipeline import LOCK_CANDIDATE_BY_ENGINE
 from edumind.rag.contracts import EMBEDDING_SPECS, PRODUCTION_EMBEDDING_MODEL
-from experiments.benchmarks.common.selection import included_candidates, selection_entries
+from experiments.benchmarks.common.selection import (
+    included_candidates,
+    selection_entries,
+)
+from experiments.benchmarks.extraction.audio.protocol import (
+    load_protocol as load_audio_protocol,
+)
+from experiments.benchmarks.extraction.document.profiles import DOCUMENT_LOCK_CANDIDATES
 from experiments.benchmarks.preparation.models import (
     APP_CANDIDATES,
     DOCLING_BENCHMARK_COMPONENTS,
     EMBEDDING_COMPONENTS,
-    INFERENCE_SNAPSHOT_IGNORE_PATTERNS,
     EXTRACTION_COMPONENTS,
+    INFERENCE_SNAPSHOT_IGNORE_PATTERNS,
     MODEL_COMPONENTS,
     RAG_COMPONENTS,
-    preparation_plan,
     load_selected_model_lock,
+    preparation_plan,
     selected_model_names,
     snapshot_ignore_patterns,
     snapshot_specs,
@@ -26,11 +33,16 @@ from experiments.benchmarks.preparation.models import (
 from experiments.benchmarks.rag.chunking_embedding.profiles import (
     EXPERIMENTAL_EMBEDDING_SPECS,
 )
-from experiments.benchmarks.rag.chunking_embedding.protocol import load_protocol as load_chunking_protocol
-from experiments.benchmarks.rag.generation.protocol import load_protocol as load_generation_protocol
-from experiments.benchmarks.rag.retrieval_reranking.profiles import development_candidates
-from experiments.benchmarks.extraction.audio.protocol import load_protocol as load_audio_protocol
-from experiments.benchmarks.extraction.document.profiles import DOCUMENT_LOCK_CANDIDATES
+from experiments.benchmarks.rag.chunking_embedding.protocol import (
+    load_protocol as load_chunking_protocol,
+)
+from experiments.benchmarks.rag.generation.protocol import (
+    load_protocol as load_generation_protocol,
+)
+from experiments.benchmarks.rag.retrieval_reranking.profiles import (
+    development_candidates,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -46,9 +58,7 @@ def test_selection_history_counts_and_keys_are_preserved() -> None:
         "exclude": 43,
     }
     gte = next(
-        row
-        for row in rows
-        if row["candidate"] == "Alibaba-NLP/gte-modernbert-base"
+        row for row in rows if row["candidate"] == "Alibaba-NLP/gte-modernbert-base"
     )
     assert gte["purpose"] == "control"
     assert gte["decision"] == "include"
@@ -56,9 +66,7 @@ def test_selection_history_counts_and_keys_are_preserved() -> None:
     assert gte["public_benchmark"] == "BEIR (15)"
     assert gte["public_metric"] == "Avg nDCG@10"
     assert gte["public_score"] == "55.33"
-    assert gte["candidate_revision"] == (
-        "e7f32e3c00f91d699e8c43b53106206bcc72bb22"
-    )
+    assert gte["candidate_revision"] == ("e7f32e3c00f91d699e8c43b53106206bcc72bb22")
     assert gte["license"] == "Apache-2.0"
     assert gte["reviewed_date"] == "2026-09-12"
 
@@ -66,7 +74,9 @@ def test_selection_history_counts_and_keys_are_preserved() -> None:
 def test_executable_model_registries_match_approved_selection() -> None:
     approved_embeddings = set(included_candidates("embedding"))
     assert set(EMBEDDING_SPECS) == {PRODUCTION_EMBEDDING_MODEL}
-    assert set(EMBEDDING_SPECS) | set(EXPERIMENTAL_EMBEDDING_SPECS) == approved_embeddings
+    assert (
+        set(EMBEDDING_SPECS) | set(EXPERIMENTAL_EMBEDDING_SPECS) == approved_embeddings
+    )
     assert all(
         spec.revision == "from-lock"
         for spec in [*EMBEDDING_SPECS.values(), *EXPERIMENTAL_EMBEDDING_SPECS.values()]
@@ -111,9 +121,7 @@ def test_embedding_documentation_matches_executable_registry() -> None:
     model_selection = (ROOT / "docs/benchmarks/model-selection.md").read_text(
         encoding="utf-8"
     )
-    methodology = (ROOT / "docs/benchmarks/methodology.md").read_text(
-        encoding="utf-8"
-    )
+    methodology = (ROOT / "docs/benchmarks/methodology.md").read_text(encoding="utf-8")
     metrics = (ROOT / "docs/benchmarks/metrics.md").read_text(encoding="utf-8")
 
     assert all(candidate in model_selection for candidate in selected)
@@ -227,13 +235,16 @@ def test_document_stage_requests_only_its_candidate_models(monkeypatch) -> None:
         return {}
 
     monkeypatch.setattr(benchmark, "load_selected_model_lock", capture)
-    assert benchmark._model_lock(
-        (
-            "docling-standard-native|ocr=rapidocr|mode=full_page|table=fast|formula=off",
-            "docling-vlm-granite-258m",
-            "docling-vlm-granite-258m",
+    assert (
+        benchmark._model_lock(
+            (
+                "docling-standard-native|ocr=rapidocr|mode=full_page|table=fast|formula=off",
+                "docling-vlm-granite-258m",
+                "docling-vlm-granite-258m",
+            )
         )
-    ) == {}
+        == {}
+    )
     assert requested == (
         "docling-standard",
         "ibm-granite/granite-docling-258M",
@@ -244,7 +255,9 @@ def test_schema_three_model_lock_verifies_the_complete_cache_manifest(tmp_path) 
     from experiments.benchmarks.preparation.models import _directory_manifest_hash
 
     entry = next(
-        item for item in selection_entries() if item.candidate == "openai/whisper-small.en"
+        item
+        for item in selection_entries()
+        if item.candidate == "openai/whisper-small.en"
     )
     repository, revision, _ = snapshot_specs(entry)[0]
     model_path = tmp_path / "model"
@@ -262,7 +275,9 @@ def test_schema_three_model_lock_verifies_the_complete_cache_manifest(tmp_path) 
                         "revision": revision,
                         "selection_revision": entry.revision,
                         "model_path": str(model_path),
-                        "model_cache_manifest_sha256": _directory_manifest_hash(model_path),
+                        "model_cache_manifest_sha256": _directory_manifest_hash(
+                            model_path
+                        ),
                     }
                 },
             }
@@ -277,7 +292,9 @@ def test_schema_three_model_lock_verifies_the_complete_cache_manifest(tmp_path) 
 
 def test_torch_and_torchaudio_lock_versions_match() -> None:
     pins = {}
-    for line in (ROOT / "requirements/app.lock").read_text(encoding="utf-8").splitlines():
+    for line in (
+        (ROOT / "requirements/app.lock").read_text(encoding="utf-8").splitlines()
+    ):
         if "==" in line and not line.startswith("#"):
             name, value = line.split("==", 1)
             pins[name.casefold()] = value

@@ -3,19 +3,28 @@
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
-from pathlib import Path
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
 import numpy as np
 
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.contracts import BenchmarkPlan, SampleResult
-from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.datasets import load_manifest
+from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.runner import run_benchmark
-from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
+from experiments.benchmarks.preparation.models import (
+    load_selected_model_lock,
+    model_revisions,
+)
+from experiments.benchmarks.rag.chunking_embedding.protocol import (
+    DEFAULT_PROTOCOL_PATH as DEFAULT_CHUNKING_PROTOCOL_PATH,
+)
+from experiments.benchmarks.rag.chunking_embedding.protocol import (
+    load_protocol as load_chunking_protocol,
+)
 from experiments.benchmarks.rag.evaluation import (
     build_index,
     reranker_for,
@@ -23,12 +32,10 @@ from experiments.benchmarks.rag.evaluation import (
     retrieval_quality_directions,
 )
 from experiments.benchmarks.rag.methods import reciprocal_rank_fusion
-from experiments.benchmarks.rag.chunking_embedding.protocol import (
-    DEFAULT_PROTOCOL_PATH as DEFAULT_CHUNKING_PROTOCOL_PATH,
-    load_protocol as load_chunking_protocol,
-)
 from experiments.benchmarks.rag.retrieval_reranking.protocol import (
     DEFAULT_PROTOCOL_PATH as DEFAULT_RETRIEVAL_PROTOCOL_PATH,
+)
+from experiments.benchmarks.rag.retrieval_reranking.protocol import (
     load_protocol as load_retrieval_protocol,
 )
 from experiments.benchmarks.vectordb.adapters import Config, Record, create
@@ -36,13 +43,19 @@ from experiments.benchmarks.vectordb.conformance import _finish_index
 from experiments.benchmarks.vectordb.docker_metrics import image_lock, verify_image
 from experiments.benchmarks.vectordb.protocol import (
     DEFAULT_PROTOCOL_PATH as DEFAULT_VECTOR_PROTOCOL_PATH,
+)
+from experiments.benchmarks.vectordb.protocol import (
     VectorDatabaseProtocol,
+)
+from experiments.benchmarks.vectordb.protocol import (
     load_protocol as load_vector_protocol,
 )
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Compare complete retrieval on DB finalists")
+    parser = argparse.ArgumentParser(
+        description="Compare complete retrieval on DB finalists"
+    )
     parser.add_argument("--database-selection", type=Path, required=True)
     parser.add_argument("--embedding-selection", type=Path, required=True)
     parser.add_argument("--retrieval-selection", type=Path, required=True)
@@ -54,8 +67,12 @@ def main() -> int:
     parser.add_argument("--device", choices=("cpu", "cuda"))
     parser.add_argument("--dtype", choices=("float32", "float16", "bfloat16"))
     parser.add_argument("--protocol", type=Path, default=DEFAULT_VECTOR_PROTOCOL_PATH)
-    parser.add_argument("--retrieval-protocol", type=Path, default=DEFAULT_RETRIEVAL_PROTOCOL_PATH)
-    parser.add_argument("--chunking-protocol", type=Path, default=DEFAULT_CHUNKING_PROTOCOL_PATH)
+    parser.add_argument(
+        "--retrieval-protocol", type=Path, default=DEFAULT_RETRIEVAL_PROTOCOL_PATH
+    )
+    parser.add_argument(
+        "--chunking-protocol", type=Path, default=DEFAULT_CHUNKING_PROTOCOL_PATH
+    )
     parser.add_argument("--no-mlflow", action="store_true")
     arguments = parser.parse_args()
     vector_protocol = load_vector_protocol(arguments.protocol)
@@ -80,15 +97,13 @@ def main() -> int:
         expected_source=("vectordb-server-v4", "dense-ann", "validation"),
     )
     database_payload = _payload(database_decision.source_summary)
-    embedding = _single_selection(
-        arguments.embedding_selection, "chunking-embedding"
-    )
-    retrieval = _single_selection(
-        arguments.retrieval_selection, "retrieval-reranking"
-    )
+    embedding = _single_selection(arguments.embedding_selection, "chunking-embedding")
+    retrieval = _single_selection(arguments.retrieval_selection, "retrieval-reranking")
     candidates = database_decision.selected_candidates
     chunker_name, embedding_name = embedding.split("|", 1)
-    manifest = load_manifest(PROJECT_ROOT / "data/benchmarks/rag/rag-selection-validation.json")
+    manifest = load_manifest(
+        PROJECT_ROOT / "data/benchmarks/rag/rag-selection-validation.json"
+    )
     model_lock = load_selected_model_lock(
         PROJECT_ROOT / "data/benchmarks/models/selected.json"
     )
@@ -169,11 +184,13 @@ def main() -> int:
             _finish_index(adapter)
             adapter.index_info()
             samples, latencies = [], []
-            questions = list(
+            questions = [
                 row
                 for row in manifest.samples
-                if row.get("kind") == "question" and row.get("answerable") and row.get("evidence")
-            )
+                if row.get("kind") == "question"
+                and row.get("answerable")
+                and row.get("evidence")
+            ]
 
             def retrieve(question):
                 query = str(question["question"])
@@ -181,7 +198,9 @@ def main() -> int:
                 query_vector = index.embedder.embed_query(query)
                 dense = [
                     by_id[hit.identifier]
-                    for hit in adapter.search(query_vector, retrieval_protocol.pool_size)
+                    for hit in adapter.search(
+                        query_vector, retrieval_protocol.pool_size
+                    )
                 ]
                 lexical = [
                     position
@@ -212,7 +231,11 @@ def main() -> int:
                     order = [order[position] for position in local]
                 return order, time.perf_counter() - started
 
-            questions = questions[: int(vector_protocol.workloads["validation"]["selected_real_query_limit"])]
+            questions = questions[
+                : int(
+                    vector_protocol.workloads["validation"]["selected_real_query_limit"]
+                )
+            ]
             for question in questions[: plan.warmups]:
                 retrieve(question)
             for question in questions:
@@ -235,7 +258,12 @@ def main() -> int:
                 )
                 metrics["determinism"] = float(all(value == order for value in orders))
                 samples.append(
-                    SampleResult(str(question["id"]), metrics, latency, {"retrieved_tokens": tokens})
+                    SampleResult(
+                        str(question["id"]),
+                        metrics,
+                        latency,
+                        {"retrieved_tokens": tokens},
+                    )
                 )
             operational = {
                 "p50_latency_seconds": float(np.median(latencies)),
@@ -255,11 +283,13 @@ def main() -> int:
                     for future in as_completed(futures):
                         try:
                             concurrent_latencies.append(future.result()[1])
-                        except Exception:
+                        except Exception:  # noqa: BLE001 - count failed requests
                             errors += 1
                 elapsed = time.perf_counter() - started
                 count = len(questions) * plan.repetitions
-                operational[f"throughput_concurrency_{concurrency}_qps"] = count / max(elapsed, 1e-9)
+                operational[f"throughput_concurrency_{concurrency}_qps"] = count / max(
+                    elapsed, 1e-9
+                )
                 operational[f"error_rate_concurrency_{concurrency}"] = errors / count
                 if concurrent_latencies:
                     operational[f"p95_concurrency_{concurrency}_seconds"] = float(
@@ -268,11 +298,16 @@ def main() -> int:
                     operational[f"p99_concurrency_{concurrency}_seconds"] = float(
                         np.quantile(concurrent_latencies, 0.99)
                     )
-            return samples, operational, {
-                "target_concurrency_success": float(
-                        operational[f"error_rate_concurrency_{concurrency_values[-1]}"] == 0.0
-                )
-            }
+            return (
+                samples,
+                operational,
+                {
+                    "target_concurrency_success": float(
+                        operational[f"error_rate_concurrency_{concurrency_values[-1]}"]
+                        == 0.0
+                    )
+                },
+            )
         finally:
             adapter.close()
 
@@ -300,7 +335,12 @@ def main() -> int:
         },
         no_mlflow=arguments.no_mlflow,
     )
-    print(json.dumps({"run_id": result.run_id, "artifacts": str(result.artifact_directory)}, indent=2))
+    print(
+        json.dumps(
+            {"run_id": result.run_id, "artifacts": str(result.artifact_directory)},
+            indent=2,
+        )
+    )
     return 0 if result.complete else 2
 
 

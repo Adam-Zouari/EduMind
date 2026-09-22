@@ -31,7 +31,9 @@ def clustered(
     settings: SyntheticSettings,
 ) -> Corpus:
     random = np.random.default_rng(seed + size + dimension)
-    centroids = random.normal(size=(settings.centroid_count, dimension)).astype(np.float32)
+    centroids = random.normal(size=(settings.centroid_count, dimension)).astype(
+        np.float32
+    )
     centroids /= np.linalg.norm(centroids, axis=1, keepdims=True)
     assignments = random.integers(0, len(centroids), size=size)
     vectors = centroids[assignments] + random.normal(
@@ -43,7 +45,9 @@ def clustered(
         vectors[-duplicate_count:] = vectors[:duplicate_count] + random.normal(
             0, settings.near_duplicate_noise, size=(duplicate_count, dimension)
         ).astype(np.float32)
-        vectors[-duplicate_count:] /= np.linalg.norm(vectors[-duplicate_count:], axis=1, keepdims=True)
+        vectors[-duplicate_count:] /= np.linalg.norm(
+            vectors[-duplicate_count:], axis=1, keepdims=True
+        )
     query_indices = random.choice(size, size=min(queries, size), replace=False)
     query_vectors = vectors[query_indices] + random.normal(
         0, settings.query_noise, size=(len(query_indices), dimension)
@@ -108,7 +112,10 @@ def exact_ids(
             [
                 index
                 for index in indices
-                if all(corpus.metadata[int(index)].get(key) == str(value) for key, value in filters.items())
+                if all(
+                    corpus.metadata[int(index)].get(key) == str(value)
+                    for key, value in filters.items()
+                )
             ]
         )
     if not len(indices):
@@ -125,4 +132,6 @@ def recall(hits: Sequence[Hit], expected: Sequence[str], limit: int) -> float:
     expected_set = set(expected[:limit])
     if not expected_set:
         return float(not hits)
-    return len({hit.identifier for hit in hits[:limit]} & expected_set) / len(expected_set)
+    return len({hit.identifier for hit in hits[:limit]} & expected_set) / len(
+        expected_set
+    )

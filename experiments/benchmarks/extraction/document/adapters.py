@@ -17,7 +17,10 @@ from edumind.extraction.contracts import (
 )
 from edumind.extraction.errors import ExtractionBackendError, MissingDependencyError
 from edumind.extraction.extractors.document import DOCLING_VERSION, required_directory
-from edumind.extraction.structured import build_docling_document, build_structured_document
+from edumind.extraction.structured import (
+    build_docling_document,
+    build_structured_document,
+)
 
 
 class ExperimentalDocumentExtractor:
@@ -31,7 +34,9 @@ class ExperimentalDocumentExtractor:
         self.revision = revision
         self._runtimes: dict[str, Any] = {}
 
-    def extract(self, request: ExtractionRequest, kind: SourceKind) -> ExtractedDocument:
+    def extract(
+        self, request: ExtractionRequest, kind: SourceKind
+    ) -> ExtractedDocument:
         if request.profile is None:
             raise ValueError("Resolved extraction profile is required")
         started = time.perf_counter()
@@ -143,7 +148,9 @@ class ExperimentalDocumentExtractor:
             payload = payload() if callable(payload) else payload or {}
             blocks = _paddle_blocks(payload, warnings=warnings)
             if not blocks:
-                raise RuntimeError("PaddleOCR-VL result contains no native parsing blocks")
+                raise RuntimeError(
+                    "PaddleOCR-VL result contains no native parsing blocks"
+                )
             elements.extend(blocks)
         if not elements:
             raise RuntimeError("PaddleOCR-VL-1.6 produced no pages")
@@ -160,8 +167,8 @@ class ExperimentalDocumentExtractor:
             # On Windows, Paddle adds DLL search paths whose shared-library names
             # conflict with PyTorch. PaddleX imports ModelScope (and therefore
             # PyTorch), so load PyTorch's DLLs before importing Paddle.
-            import torch
             import paddle
+            import torch
             from paddleocr import PaddleOCRVL
         except (ImportError, ModuleNotFoundError) as exc:
             raise MissingDependencyError("PaddleX OCR extras are required") from exc
@@ -178,7 +185,9 @@ class ExperimentalDocumentExtractor:
                 pipeline_version=str(request.options["pipeline_version"]),
                 vl_rec_backend=str(request.options["recognition_backend"]),
                 vl_rec_model_dir=str(model_path),
-                device="gpu" if request.profile and request.profile.device == "cuda" else "cpu",
+                device="gpu"
+                if request.profile and request.profile.device == "cuda"
+                else "cpu",
             )
         return self._runtimes[key]
 
@@ -237,8 +246,15 @@ def _paddle_blocks(
                     fallback = _plain_html_text(native_content)
                     rows = [[fallback]] if fallback else [[]]
                     cells = (
-                        [{"text": fallback, "row": 0, "column": 0,
-                          "row_span": 1, "column_span": 1}]
+                        [
+                            {
+                                "text": fallback,
+                                "row": 0,
+                                "column": 0,
+                                "row_span": 1,
+                                "column_span": 1,
+                            }
+                        ]
                         if fallback
                         else []
                     )
@@ -251,14 +267,18 @@ def _paddle_blocks(
                             )
                         )
                 text = "\n".join("\t".join(cell for cell in row) for row in rows)
-                structured.update({"rows": rows, "cells": cells, "html": native_content})
+                structured.update(
+                    {"rows": rows, "cells": cells, "html": native_content}
+                )
             elif kind == "formula":
                 # Formula text is an exact LaTeX payload, not prose.
                 structured["latex"] = native_content
             result.append(
                 {
                     "text": text,
-                    "element_id": str(raw.get("block_id", f"page-{page_number}-{index}")),
+                    "element_id": str(
+                        raw.get("block_id", f"page-{page_number}-{index}")
+                    ),
                     "page_number": page_number,
                     "bounding_box": _paddle_box(raw.get("block_bbox"), page_size),
                     "kind": kind,
@@ -376,7 +396,12 @@ def _paddle_box(
         return values
     if page_size and page_size[0] > 0 and page_size[1] > 0:
         width, height = page_size
-        normalized = [values[0] / width, values[1] / height, values[2] / width, values[3] / height]
+        normalized = [
+            values[0] / width,
+            values[1] / height,
+            values[2] / width,
+            values[3] / height,
+        ]
         if all(0.0 <= item <= 1.0 for item in normalized):
             return normalized
     return None

@@ -45,5 +45,7 @@ class ExtractionCache:
     def put(self, request: ExtractionRequest, document: ExtractedDocument) -> Path:
         path = self.directory / f"{self.key(request)}.json"
         with local_file_lock(path.with_suffix(".lock")):
-            atomic_write_json(path, {"schema": CACHE_SCHEMA, "document": document.to_dict()})
+            atomic_write_json(
+                path, {"schema": CACHE_SCHEMA, "document": document.to_dict()}
+            )
         return path

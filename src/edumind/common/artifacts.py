@@ -21,7 +21,9 @@ def sha256_file(path: Path, *, block_size: int = 1024 * 1024) -> str:
 
 
 def stable_hash(payload: object) -> str:
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()
+    encoded = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), default=str
+    ).encode()
     return hashlib.sha256(encoded).hexdigest()
 
 

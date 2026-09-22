@@ -7,14 +7,17 @@ import time
 import wave
 from pathlib import Path
 
+from experiments.benchmarks.common.process import json_worker_main
 from experiments.benchmarks.common.resources import ResourceMonitor
 from experiments.benchmarks.extraction.audio.adapters import build_runtime
-from experiments.benchmarks.extraction.audio.evaluate import align_sequences, normalize_transcript
+from experiments.benchmarks.extraction.audio.evaluate import (
+    align_sequences,
+    normalize_transcript,
+)
 from experiments.benchmarks.extraction.audio.protocol import (
     protocol_from_worker as audio_protocol_from_worker,
 )
 from experiments.benchmarks.extraction.media import decode_canonical_audio
-from experiments.benchmarks.common.process import json_worker_main
 from experiments.benchmarks.extraction.video.metrics import stitch_text
 from experiments.benchmarks.extraction.video.protocol import protocol_from_worker
 
@@ -37,7 +40,9 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
     length = float(payload["window_length_seconds"])
     overlap = float(payload["overlap_seconds"])
     maximum_overlap = int(payload["maximum_overlap_tokens"])
-    monitor = ResourceMonitor(require_vram=device == "cuda", report_zero_vram=device == "cpu")
+    monitor = ResourceMonitor(
+        require_vram=device == "cuda", report_zero_vram=device == "cpu"
+    )
     videos: list[dict[str, object]] = []
     commands: list[dict[str, object]] = []
     total_latency = 0.0
@@ -99,7 +104,9 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
                                 "command": command,
                             }
                         )
-                    for window_index, start in enumerate(_window_starts(duration, length, overlap)):
+                    for window_index, start in enumerate(
+                        _window_starts(duration, length, overlap)
+                    ):
                         window_duration = min(length, duration - start)
                         window_path = _slice_wav(
                             decoded_audio[sample_id],
@@ -108,7 +115,9 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
                             duration=window_duration,
                             sample_rate_hz=int(audio_protocol.audio["sample_rate_hz"]),
                             channels=int(audio_protocol.audio["channels"]),
-                            sample_width_bytes=int(audio_protocol.audio["sample_width_bytes"]),
+                            sample_width_bytes=int(
+                                audio_protocol.audio["sample_width_bytes"]
+                            ),
                         )
                         started = time.perf_counter()
                         output = runtime.transcribe(window_path)
@@ -151,7 +160,9 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
                                 "warnings": list(output.warnings),
                             }
                         )
-                    expected = normalize_transcript(str(item.get("reference_transcript", "")))
+                    expected = normalize_transcript(
+                        str(item.get("reference_transcript", ""))
+                    )
                     observed = normalize_transcript(transcript)
                     alignment = align_sequences(expected.split(), observed.split())
                     reference_words += len(expected.split())
@@ -189,7 +200,9 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
             "total_latency_seconds": total_latency,
             "cold_model_load_seconds": cold_load_seconds,
             "peak_process_tree_ram_mb": float(resources["peak_process_tree_ram_mb"]),
-            "peak_vram_mb": 0.0 if device == "cpu" else float(resources["peak_vram_mb"]),
+            "peak_vram_mb": 0.0
+            if device == "cpu"
+            else float(resources["peak_vram_mb"]),
         },
         "parameters": {
             **runtime.parameters(),

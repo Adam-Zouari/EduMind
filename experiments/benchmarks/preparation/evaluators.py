@@ -20,7 +20,9 @@ def prepare_evaluators(root: Path, *, dry_run: bool = False) -> list[Path]:
     image_lock = destination / OMNIDOCBENCH_IMAGE_LOCK
     if dry_run:
         print(f"clone {OMNIDOCBENCH_URL}@{OMNIDOCBENCH_REVISION} -> {destination}")
-        print(f"pull {OMNIDOCBENCH_IMAGE} and record its immutable digest -> {image_lock}")
+        print(
+            f"pull {OMNIDOCBENCH_IMAGE} and record its immutable digest -> {image_lock}"
+        )
         return [destination, image_lock]
     revision_file = destination / ".edumind-revision"
     source_ready = (
@@ -44,7 +46,14 @@ def prepare_evaluators(root: Path, *, dry_run: bool = False) -> list[Path]:
                 check=True,
             )
             subprocess.run(
-                ["git", "-C", str(temporary), "checkout", "--detach", OMNIDOCBENCH_REVISION],
+                [
+                    "git",
+                    "-C",
+                    str(temporary),
+                    "checkout",
+                    "--detach",
+                    OMNIDOCBENCH_REVISION,
+                ],
                 check=True,
             )
             (temporary / ".edumind-revision").write_text(
@@ -73,10 +82,14 @@ def prepare_evaluators(root: Path, *, dry_run: bool = False) -> list[Path]:
                 text=True,
             )
         except FileNotFoundError as exc:
-            raise RuntimeError("Docker is required to prepare OmniDocBench scoring") from exc
+            raise RuntimeError(
+                "Docker is required to prepare OmniDocBench scoring"
+            ) from exc
         digest = inspected.stdout.strip()
         if "@sha256:" not in digest:
-            raise RuntimeError("Docker did not return an immutable OmniDocBench image digest")
+            raise RuntimeError(
+                "Docker did not return an immutable OmniDocBench image digest"
+            )
         atomic_write_json(
             image_lock,
             {
@@ -105,6 +118,11 @@ def _image_available(image_lock: Path) -> bool:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-    except (FileNotFoundError, KeyError, json.JSONDecodeError, subprocess.CalledProcessError):
+    except (
+        FileNotFoundError,
+        KeyError,
+        json.JSONDecodeError,
+        subprocess.CalledProcessError,
+    ):
         return False
     return "@sha256:" in digest

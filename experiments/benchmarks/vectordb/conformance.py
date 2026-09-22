@@ -10,8 +10,8 @@ from pathlib import Path
 import numpy as np
 
 from .adapters import Adapter, Config, Record, create
-from .workload import clustered, records
 from .protocol import VectorDatabaseProtocol
+from .workload import clustered, records
 
 
 def check(
@@ -57,7 +57,14 @@ def check(
     flags["duplicate_id_correctness"] = float(adapter.count() == original_count)
     deleted = adapter.delete_document("doc-0")
     adapter.upsert(
-        [Record("replacement-0", corpus.vectors[0], "replacement", {**corpus.metadata[0], "source_id": "doc-0"})]
+        [
+            Record(
+                "replacement-0",
+                corpus.vectors[0],
+                "replacement",
+                {**corpus.metadata[0], "source_id": "doc-0"},
+            )
+        ]
     )
     replacement_hits = adapter.search(
         corpus.vectors[0],
@@ -107,16 +114,17 @@ def _compound(
     return float(
         bool(hits)
         and all(
-            all(str(hit.metadata.get(name)) == "0" for name in filters)
-            for hit in hits
+            all(str(hit.metadata.get(name)) == "0" for name in filters) for hit in hits
         )
     )
 
 
 def _dimension_rejection(adapter: Adapter, config: Config) -> float:
     try:
-        adapter.upsert([Record("bad-dimension", [0.0] * (config.dimension + 1), "bad", {})])
-    except Exception:
+        adapter.upsert(
+            [Record("bad-dimension", [0.0] * (config.dimension + 1), "bad", {})]
+        )
+    except Exception:  # noqa: BLE001 - any rejected dimension passes this gate
         return 1.0
     return 0.0
 
@@ -152,7 +160,7 @@ def _wait_for_adapter(
             adapter = create(name, config)
             if adapter.health():
                 return adapter
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - retry arbitrary adapter startup failures
             error = exc
         if adapter is not None:
             adapter.close()
@@ -160,4 +168,4 @@ def _wait_for_adapter(
     raise RuntimeError(f"{name} was not ready after restart: {error}")
 
 
-__all__ = ["check", "_finish_index"]
+__all__ = ["_finish_index", "check"]

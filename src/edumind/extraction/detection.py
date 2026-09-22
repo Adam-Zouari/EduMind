@@ -31,7 +31,9 @@ EXTENSION_KIND = {
 }
 
 
-def classify_source(path: Path, mime_type: str | None = None) -> tuple[SourceKind, str | None]:
+def classify_source(
+    path: Path, mime_type: str | None = None
+) -> tuple[SourceKind, str | None]:
     guessed_mime = mime_type or mimetypes.guess_type(path.name)[0]
     kind = EXTENSION_KIND.get(path.suffix.lower())
     if kind is None and guessed_mime:

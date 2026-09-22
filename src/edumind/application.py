@@ -37,6 +37,7 @@ class DocumentProcessResult:
     timings: Mapping[str, float]
     warnings: tuple[str, ...] = ()
 
+
 @dataclass(frozen=True)
 class PipelineQueryResult:
     query: str
@@ -58,7 +59,9 @@ class EduMindPipeline:
         rag: RAGPipeline | None = None,
         config_path: str | None = None,
     ) -> None:
-        settings = load_settings(config_path) if extraction is None or rag is None else None
+        settings = (
+            load_settings(config_path) if extraction is None or rag is None else None
+        )
         self.extraction = extraction or ExtractionPipeline(settings)
         self.rag = rag or RAGPipeline(settings=settings, use_llm=use_llm)
         self.generation_required = use_llm
@@ -75,16 +78,22 @@ class EduMindPipeline:
         started = time.perf_counter()
         self._emit(progress, PipelineStage.CLASSIFYING, "Classifying source", 0.05)
         extraction_started = time.perf_counter()
-        self._emit(progress, PipelineStage.EXTRACTING, "Extracting source content", 0.15)
+        self._emit(
+            progress, PipelineStage.EXTRACTING, "Extracting source content", 0.15
+        )
         document = self.extraction.extract(file_path, profile=profile)
         if source_name is not None:
             logical_name = Path(source_name).name
-            document = replace(document, source_name=logical_name, source_path=logical_name)
+            document = replace(
+                document, source_name=logical_name, source_path=logical_name
+            )
         extraction_seconds = time.perf_counter() - extraction_started
         ingest_report = None
         indexing_seconds = 0.0
         if ingest:
-            self._emit(progress, PipelineStage.INDEXING, "Indexing normalized content", 0.65)
+            self._emit(
+                progress, PipelineStage.INDEXING, "Indexing normalized content", 0.65
+            )
             indexing_started = time.perf_counter()
             ingest_report = self.rag.ingest_document(document)
             indexing_seconds = time.perf_counter() - indexing_started
@@ -112,8 +121,12 @@ class EduMindPipeline:
         started = time.perf_counter()
         self._emit(progress, PipelineStage.RETRIEVING, "Retrieving evidence", 0.2)
         if generate_answer:
-            self._emit(progress, PipelineStage.GENERATING, "Generating cited answer", 0.55)
-            answer = self.rag.generate_answer(query, top_k=top_k, filter_metadata=filters)
+            self._emit(
+                progress, PipelineStage.GENERATING, "Generating cited answer", 0.55
+            )
+            answer = self.rag.generate_answer(
+                query, top_k=top_k, filter_metadata=filters
+            )
             hits = tuple(answer.sources)
             timings = {
                 "retrieval_seconds": answer.retrieval_seconds,
@@ -166,7 +179,10 @@ class EduMindPipeline:
 
     @staticmethod
     def _emit(
-        callback: ProgressCallback | None, stage: PipelineStage, message: str, value: float
+        callback: ProgressCallback | None,
+        stage: PipelineStage,
+        message: str,
+        value: float,
     ) -> None:
         if callback:
             callback(ProgressEvent(stage, message, value))

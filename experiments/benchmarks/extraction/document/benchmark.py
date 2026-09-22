@@ -175,9 +175,7 @@ def run(
     )
 
 
-def extract_once(
-    candidate, item, model_lock, component_options, pipeline, *, protocol
-):
+def extract_once(candidate, item, model_lock, component_options, pipeline, *, protocol):
     started = time.perf_counter()
     kind = SourceKind(str(item["kind"]))
     document_profile = parse_document_profile(candidate)

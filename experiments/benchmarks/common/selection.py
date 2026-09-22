@@ -56,7 +56,9 @@ def selection_entries(path: Path = SELECTION_PATH) -> tuple[SelectionEntry, ...]
                 continue
             revision = row["candidate_revision"].strip()
             if not revision:
-                raise ValueError(f"Included candidate has no pinned revision: {candidate}")
+                raise ValueError(
+                    f"Included candidate has no pinned revision: {candidate}"
+                )
             entries.append(
                 SelectionEntry(
                     component=component,

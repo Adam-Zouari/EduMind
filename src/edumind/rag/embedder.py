@@ -56,7 +56,9 @@ class Embedder:
 
         if role not in {"query", "document"}:
             raise ValueError("Embedding input role must be query or document")
-        device = self.spec.query_device if role == "query" else self.spec.document_device
+        device = (
+            self.spec.query_device if role == "query" else self.spec.document_device
+        )
         model = self._model(device)
         prepared = self._prepared_texts(texts, role)
         prompt_name, prompt = self._resolved_prompt(model, role)
@@ -67,9 +69,7 @@ class Embedder:
                     [text],
                     prompt=prompt or None,
                     task=role if self.spec.interface == "query-document" else None,
-                    processing_kwargs={
-                        "text": {"padding": False, "truncation": False}
-                    },
+                    processing_kwargs={"text": {"padding": False, "truncation": False}},
                 )
             except Exception as exc:
                 raise RAGConfigurationError(
@@ -94,9 +94,13 @@ class Embedder:
 
         if role not in {"query", "document"}:
             raise ValueError("Embedding input role must be query or document")
-        device = self.spec.query_device if role == "query" else self.spec.document_device
+        device = (
+            self.spec.query_device if role == "query" else self.spec.document_device
+        )
         prompt_name, prompt = self._resolved_prompt(self._model(device), role)
-        prefix = self.spec.query_prefix if role == "query" else self.spec.document_prefix
+        prefix = (
+            self.spec.query_prefix if role == "query" else self.spec.document_prefix
+        )
         return {
             "interface": self.spec.interface,
             "prefix": prefix,
@@ -202,7 +206,9 @@ class Embedder:
     def _prepared_texts(self, texts: Sequence[str], role: str) -> list[str]:
         if self.spec.interface == "query-document":
             return list(texts)
-        prefix = self.spec.query_prefix if role == "query" else self.spec.document_prefix
+        prefix = (
+            self.spec.query_prefix if role == "query" else self.spec.document_prefix
+        )
         return [prefix + text for text in texts]
 
     def _resolved_prompt(self, model, role: str) -> tuple[str | None, str]:
@@ -213,7 +219,9 @@ class Embedder:
         )
         prompts = getattr(model, "prompts", {})
         if prompt_name is None and self.spec.interface == "query-document":
-            candidates = ("query",) if role == "query" else ("document", "passage", "corpus")
+            candidates = (
+                ("query",) if role == "query" else ("document", "passage", "corpus")
+            )
             prompt_name = next((name for name in candidates if name in prompts), None)
         if prompt_name is None:
             prompt_name = getattr(model, "default_prompt_name", None)

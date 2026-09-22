@@ -14,7 +14,9 @@ def normalize_text(text: str, profile: str) -> str:
         return text
     if profile not in {"minimal", "conservative"}:
         raise ValueError(f"Unknown normalization profile: {profile}")
-    normalized = unicodedata.normalize("NFC", text).replace("\r\n", "\n").replace("\r", "\n")
+    normalized = (
+        unicodedata.normalize("NFC", text).replace("\r\n", "\n").replace("\r", "\n")
+    )
     normalized = normalized.replace("\u0000", "").replace("\u00ad", "")
     if profile == "conservative":
         normalized = re.sub(r"(?<=\w)-\n(?=\w)", "", normalized)
@@ -26,7 +28,9 @@ def normalize_text(text: str, profile: str) -> str:
 
 def normalize_document(document: ExtractedDocument, profile: str) -> ExtractedDocument:
     if profile == "none":
-        return replace(document, profile=replace(document.profile, normalization=profile))
+        return replace(
+            document, profile=replace(document.profile, normalization=profile)
+        )
     source_segments = document.segments or (
         ExtractedSegment(text=document.text, start=0, end=len(document.text)),
     )
@@ -45,7 +49,9 @@ def normalize_document(document: ExtractedDocument, profile: str) -> ExtractedDo
         pieces.append(text)
         offset += len(text)
         structured = dict(original.structured_content)
-        if original.kind is SegmentKind.TABLE and isinstance(structured.get("rows"), (list, tuple)):
+        if original.kind is SegmentKind.TABLE and isinstance(
+            structured.get("rows"), (list, tuple)
+        ):
             structured["rows"] = [
                 [normalize_text(str(cell), profile) for cell in row]
                 for row in structured["rows"]

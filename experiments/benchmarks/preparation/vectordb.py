@@ -23,7 +23,14 @@ def prepare_vectordb(output_path: Path) -> Path:
     for name, image in VECTOR_IMAGES.items():
         subprocess.run(["docker", "pull", image], check=True)
         process = subprocess.run(
-            ["docker", "image", "inspect", image, "--format", "{{index .RepoDigests 0}}"],
+            [
+                "docker",
+                "image",
+                "inspect",
+                image,
+                "--format",
+                "{{index .RepoDigests 0}}",
+            ],
             check=True,
             capture_output=True,
             text=True,
@@ -42,11 +49,13 @@ def prepare_vectordb(output_path: Path) -> Path:
             "psycopg-pool",
         )
     }
-    atomic_write_json(output_path, {"schema_version": 1, "images": resolved, "clients": packages})
+    atomic_write_json(
+        output_path, {"schema_version": 1, "images": resolved, "clients": packages}
+    )
     environment = output_path.parents[3] / "experiments/benchmarks/vectordb/.env"
     atomic_write_text(
         environment,
-        "\n".join(f"{name.upper()}_IMAGE={image}" for name, image in resolved.items()) + "\n",
+        "\n".join(f"{name.upper()}_IMAGE={image}" for name, image in resolved.items())
+        + "\n",
     )
     return output_path
-

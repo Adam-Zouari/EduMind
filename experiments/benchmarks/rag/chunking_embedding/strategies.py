@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from itertools import pairwise
 
 from edumind.common.artifacts import stable_hash
 from edumind.rag.contracts import ChunkingStrategy
@@ -36,7 +37,8 @@ class SentenceChunkingStrategy:
         if not text.strip():
             return []
         sentence_spans = [
-            (match.start(), match.end()) for match in re.finditer(r"[^.!?\n]+(?:[.!?]+|\n|$)", text)
+            (match.start(), match.end())
+            for match in re.finditer(r"[^.!?\n]+(?:[.!?]+|\n|$)", text)
         ]
         if not sentence_spans:
             return []
@@ -134,7 +136,9 @@ class SemanticChunkingStrategy:
 
         if not text.strip():
             return []
-        spans = [(m.start(), m.end()) for m in re.finditer(r"[^.!?\n]+(?:[.!?]+|\n|$)", text)]
+        spans = [
+            (m.start(), m.end()) for m in re.finditer(r"[^.!?\n]+(?:[.!?]+|\n|$)", text)
+        ]
         if len(spans) < 2:
             return self._bounded(text, 0, len(text))
         sentences = [text[start:end] for start, end in spans]
@@ -204,15 +208,21 @@ class SectionAwareChunkingStrategy:
     def split(self, text: str) -> list[tuple[int, int, int]]:
         if not text.strip():
             return []
-        headings = [match.start() for match in re.finditer(r"(?m)^#{1,6}[ \t]+\S", text)]
+        headings = [
+            match.start() for match in re.finditer(r"(?m)^#{1,6}[ \t]+\S", text)
+        ]
         boundaries = sorted({0, *headings, len(text)})
         if len(boundaries) == 2:
-            return _token_spans(text, 0, len(text), self.tokenizer, self.size, self.overlap)
+            return _token_spans(
+                text, 0, len(text), self.tokenizer, self.size, self.overlap
+            )
         chunks: list[tuple[int, int, int]] = []
-        for start, end in zip(boundaries, boundaries[1:]):
+        for start, end in pairwise(boundaries):
             if text[start:end].strip():
                 chunks.extend(
-                    _token_spans(text, start, end, self.tokenizer, self.size, self.overlap)
+                    _token_spans(
+                        text, start, end, self.tokenizer, self.size, self.overlap
+                    )
                 )
         return chunks
 
@@ -243,7 +253,9 @@ class StructureAwareChunkingStrategy:
         if not text.strip():
             return []
         protected = _structured_spans(text)
-        headings = [match.start() for match in re.finditer(r"(?m)^#{1,6}[ \t]+\S", text)]
+        headings = [
+            match.start() for match in re.finditer(r"(?m)^#{1,6}[ \t]+\S", text)
+        ]
         boundaries = sorted(
             {
                 0,
@@ -254,7 +266,7 @@ class StructureAwareChunkingStrategy:
         )
         units = [
             (start, end)
-            for start, end in zip(boundaries, boundaries[1:])
+            for start, end in pairwise(boundaries)
             if text[start:end].strip()
         ]
         chunks: list[tuple[int, int, int]] = []
@@ -333,8 +345,7 @@ def _token_spans(
 
 def _structured_spans(text: str) -> list[tuple[int, int]]:
     formulas = [
-        match.span()
-        for match in re.finditer(r"(?s)\$\$.*?\$\$|\\\[.*?\\\]", text)
+        match.span() for match in re.finditer(r"(?s)\$\$.*?\$\$|\\\[.*?\\\]", text)
     ]
     tables = []
     for match in re.finditer(r"(?m)(?:^[^\n]*\|[^\n]*(?:\n|$)){2,}", text):
@@ -379,7 +390,10 @@ def _split_structured_unit(
     group_end = 0
     for line in lines:
         proposed_end = line.end()
-        if group_end > group_start and tokenizer.count(block[group_start:proposed_end]) > size:
+        if (
+            group_end > group_start
+            and tokenizer.count(block[group_start:proposed_end]) > size
+        ):
             absolute_start, absolute_end = start + group_start, start + group_end
             result.extend(
                 _bounded_span(
@@ -472,5 +486,3 @@ def build_chunking_strategy(
             str(settings["parser"]),
         )
     raise ValueError(f"Unknown chunking strategy: {name}")
-
-

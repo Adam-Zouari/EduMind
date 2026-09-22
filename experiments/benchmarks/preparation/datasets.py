@@ -12,7 +12,6 @@ import requests
 
 from edumind.common.artifacts import atomic_write_json, sha256_file
 from edumind.extraction.normalization import normalize_text
-
 from experiments.benchmarks.common.datasets import (
     assert_no_split_leakage,
     load_manifest,
@@ -28,7 +27,9 @@ def prepare_qasper(output_directory: Path, *, seed: int = 42) -> list[Path]:
     try:
         from datasets import load_dataset
     except ModuleNotFoundError as exc:
-        raise RuntimeError("datasets is required; install requirements/benchmarks.lock") from exc
+        raise RuntimeError(
+            "datasets is required; install requirements/benchmarks.lock"
+        ) from exc
     dataset = load_dataset(QASPER_DATASET, "qasper", revision=QASPER_REVISION)
     plans = (
         ("dev", "train", 100),
@@ -112,7 +113,9 @@ def prepare_rag_selection_manifest(
         raise ValueError(
             "Structured RAG manifests require at least 10 answerable questions with "
             "verified spans for each structural evidence type; received "
-            + ", ".join(f"{name}={count}" for name, count in sorted(insufficient.items()))
+            + ", ".join(
+                f"{name}={count}" for name, count in sorted(insufficient.items())
+            )
         )
     combined = [*qasper.samples, *structured.samples]
     identifiers = [str(sample.get("id", "")) for sample in combined]
@@ -160,8 +163,15 @@ def prepare_public_assets(plan_path: Path, output_directory: Path) -> list[Path]
         filename = Path(str(asset.get("filename", ""))).name
         expected = str(asset.get("sha256", "")).casefold()
         license_name = str(asset.get("license", ""))
-        if not url.startswith("https://") or not filename or len(expected) != 64 or not license_name:
-            raise ValueError("Asset entries require HTTPS URL, filename, SHA-256, and license")
+        if (
+            not url.startswith("https://")
+            or not filename
+            or len(expected) != 64
+            or not license_name
+        ):
+            raise ValueError(
+                "Asset entries require HTTPS URL, filename, SHA-256, and license"
+            )
         destination = output_directory / filename
         temporary = destination.with_suffix(destination.suffix + ".partial")
         try:
@@ -184,7 +194,9 @@ def _stratified_papers(
     papers: Sequence[Mapping[str, Any]], count: int, seed: int
 ) -> list[Mapping[str, Any]]:
     if len(papers) < count:
-        raise ValueError(f"Requested {count} papers from a split containing {len(papers)}")
+        raise ValueError(
+            f"Requested {count} papers from a split containing {len(papers)}"
+        )
     buckets: dict[tuple[int, bool], list[Mapping[str, Any]]] = {}
     for paper in papers:
         qas = _records(paper.get("qas", []))
@@ -223,7 +235,9 @@ def _qasper_samples(papers: Sequence[Mapping[str, Any]]) -> list[dict[str, objec
             }
         )
         for qa in _records(paper.get("qas", [])):
-            answers, evidence, answer_type, answerable = _answers_and_evidence(qa, text, paper_id)
+            answers, evidence, answer_type, answerable = _answers_and_evidence(
+                qa, text, paper_id
+            )
             samples.append(
                 {
                     "id": str(qa.get("question_id", "")),
@@ -251,7 +265,9 @@ def _paper_text(paper: Mapping[str, Any]) -> str:
         if section_name:
             blocks.append(f"## {section_name}")
         paragraphs = section.get("paragraphs", [])
-        if isinstance(paragraphs, Sequence) and not isinstance(paragraphs, (str, bytes)):
+        if isinstance(paragraphs, Sequence) and not isinstance(
+            paragraphs, (str, bytes)
+        ):
             blocks.extend(str(paragraph) for paragraph in paragraphs)
     return normalize_text(
         "\n\n".join(block for block in blocks if block.strip()), "conservative"
@@ -277,8 +293,12 @@ def _answers_and_evidence(
                 accepted.append(value)
                 answer_type = current_type
                 answerable = True
-            raw_evidence = answer.get("highlighted_evidence") or answer.get("evidence") or []
-            if isinstance(raw_evidence, Sequence) and not isinstance(raw_evidence, (str, bytes)):
+            raw_evidence = (
+                answer.get("highlighted_evidence") or answer.get("evidence") or []
+            )
+            if isinstance(raw_evidence, Sequence) and not isinstance(
+                raw_evidence, (str, bytes)
+            ):
                 for evidence_text in raw_evidence:
                     normalized = normalize_text(str(evidence_text), "conservative")
                     if not normalized or normalized.startswith("FLOAT SELECTED"):

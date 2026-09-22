@@ -19,6 +19,7 @@ from experiments.benchmarks.common.metrics import (
     precision_recall_f1,
     word_error_rate,
 )
+
 from .official_metrics import score_official_metrics, validate_official_runtime
 
 METRIC_DIRECTIONS = {
@@ -121,7 +122,9 @@ class DocumentEvaluation:
     counts: dict[str, tuple[int, int, int]] = field(default_factory=dict)
     table_content_scores: list[tuple[float, float, float]] = field(default_factory=list)
     table_pairs: list[tuple[str, str]] = field(default_factory=list)
-    table_scores: list[tuple[float, float, float, float, float]] = field(default_factory=list)
+    table_scores: list[tuple[float, float, float, float, float]] = field(
+        default_factory=list
+    )
     formula_pairs: list[tuple[str, str]] = field(default_factory=list)
     formula_scores: list[float] = field(default_factory=list)
 
@@ -157,7 +160,9 @@ def validate_reference(
     if raw_capabilities is not None:
         _validate_capability_list(raw_capabilities, item.get("id"))
     if "text" in reference.capabilities and not reference.text.strip():
-        raise ValueError(f"Document sample {item.get('id')} has no verified reference text")
+        raise ValueError(
+            f"Document sample {item.get('id')} has no verified reference text"
+        )
     if authoritative and not item.get("reference_path"):
         raise ValueError(
             f"Authoritative document sample {item.get('id')} requires reference_path"
@@ -166,7 +171,10 @@ def validate_reference(
     if "pages" in reference.capabilities and not reference.pages:
         raise ValueError(f"Visual sample {item.get('id')} requires verified page text")
     layout_capabilities = {
-        "reading_order", "layout_boxes", "element_types", "hierarchy"
+        "reading_order",
+        "layout_boxes",
+        "element_types",
+        "hierarchy",
     }
     if reference.capabilities & layout_capabilities and not reference.elements:
         raise ValueError(
@@ -179,7 +187,9 @@ def validate_reference(
                 f"Document sample {item.get('id')} with table annotations must set has_table"
             )
         table_elements = [
-            element for element in reference.elements if element.kind is SegmentKind.TABLE
+            element
+            for element in reference.elements
+            if element.kind is SegmentKind.TABLE
         ]
         if table_presence and not table_elements:
             raise ValueError(
@@ -190,9 +200,7 @@ def validate_reference(
                 f"Document sample {item.get('id')} sets has_table:false with table references"
             )
         missing_table_html = [
-            element.element_id
-            for element in table_elements
-            if not element.html
+            element.element_id for element in table_elements if not element.html
         ]
         if missing_table_html:
             raise ValueError(
@@ -206,7 +214,9 @@ def validate_reference(
                 f"Document sample {item.get('id')} with formula annotations must set has_formula"
             )
         formula_elements = [
-            element for element in reference.elements if element.kind is SegmentKind.FORMULA
+            element
+            for element in reference.elements
+            if element.kind is SegmentKind.FORMULA
         ]
         if formula_presence and not formula_elements:
             raise ValueError(
@@ -217,9 +227,7 @@ def validate_reference(
                 f"Document sample {item.get('id')} sets has_formula:false with formula references"
             )
         missing_formula_latex = [
-            element.element_id
-            for element in formula_elements
-            if not element.latex
+            element.element_id for element in formula_elements if not element.latex
         ]
         if missing_formula_latex:
             raise ValueError(
@@ -297,7 +305,9 @@ def apply_official_metrics(
             official = table_results[table_offset : table_offset + table_count]
             record.table_scores = [
                 (*content, teds, teds_s)
-                for content, (teds, teds_s) in zip(record.table_content_scores, official)
+                for content, (teds, teds_s) in zip(
+                    record.table_content_scores, official
+                )
             ]
             record.metrics["tables.teds"] = float(
                 np.mean([value[3] for value in record.table_scores])
@@ -398,7 +408,9 @@ def score_document(
             )
         )
         if "reading_order" in reference.capabilities:
-            reading_order = _reading_order(matches, layout_references, layout_predictions)
+            reading_order = _reading_order(
+                matches, layout_references, layout_predictions
+            )
             if reading_order is not None:
                 result.metrics["text.reading_order_accuracy"] = reading_order
 
@@ -448,7 +460,9 @@ def aggregate_evaluations(
     tail = (1.0 - confidence) / 2.0
     group_names = sorted(set().union(*(record.groups for record in records)))
     for group in (None, *group_names):
-        selected = [record for record in records if group is None or group in record.groups]
+        selected = [
+            record for record in records if group is None or group in record.groups
+        ]
         if not selected:
             continue
         estimates = _aggregate_group(selected)
@@ -463,7 +477,10 @@ def aggregate_evaluations(
             rng = np.random.default_rng(seed)
             draws: dict[str, list[float]] = {name: [] for name in estimates}
             for _ in range(resamples):
-                sample = [selected[index] for index in rng.integers(0, len(selected), len(selected))]
+                sample = [
+                    selected[index]
+                    for index in rng.integers(0, len(selected), len(selected))
+                ]
                 values = _aggregate_group(sample)
                 for name in estimates:
                     if name in values:
@@ -498,14 +515,18 @@ def _reference_from_mapping(payload: Mapping[str, object]) -> ReferenceDocument:
                 pages[index] = _canonical(str(value))
     raw_elements = payload.get("elements", payload.get("reference_elements", []))
     elements: list[ReferenceElement] = []
-    if isinstance(raw_elements, Sequence) and not isinstance(raw_elements, (str, bytes)):
+    if isinstance(raw_elements, Sequence) and not isinstance(
+        raw_elements, (str, bytes)
+    ):
         for index, value in enumerate(raw_elements):
             if not isinstance(value, Mapping):
                 continue
             kind = _kind(value.get("kind", "text"))
             elements.append(
                 ReferenceElement(
-                    element_id=str(value.get("id", value.get("element_id", f"ref-{index}"))),
+                    element_id=str(
+                        value.get("id", value.get("element_id", f"ref-{index}"))
+                    ),
                     kind=kind,
                     text=_canonical(str(value.get("text", ""))),
                     order=int(value.get("order", index)),
@@ -552,13 +573,17 @@ def _page_metrics(
         if segment.page_number is None or not segment.text.strip():
             continue
         predicted_pages.setdefault(segment.page_number, "")
-        predicted_pages[segment.page_number] += ("\n" if predicted_pages[segment.page_number] else "") + segment.text
+        predicted_pages[segment.page_number] += (
+            "\n" if predicted_pages[segment.page_number] else ""
+        ) + segment.text
     page_ids = sorted(set(reference.pages) | set(predicted_pages))
     page_f1 = {
         page: _content_f1(reference.pages.get(page, ""), predicted_pages.get(page, ""))
         for page in page_ids
     }
-    coverage = sum(page_f1.get(page, 0.0) > 0.0 for page in reference.pages) / len(reference.pages)
+    coverage = sum(page_f1.get(page, 0.0) > 0.0 for page in reference.pages) / len(
+        reference.pages
+    )
     predicted_texts = [value for value in predicted_pages.values() if value.strip()]
     reference_texts = [value for value in reference.pages.values() if value.strip()]
     duplicates = _unsupported_near_duplicates(
@@ -566,7 +591,9 @@ def _page_metrics(
     )
     result = {
         "pages.page_coverage": coverage,
-        "pages.page_content_f1": float(np.mean(list(page_f1.values()))) if page_f1 else 0.0,
+        "pages.page_content_f1": float(np.mean(list(page_f1.values())))
+        if page_f1
+        else 0.0,
     }
     if predicted_pages:
         result["pages.duplicate_page_rate"] = duplicates / len(predicted_pages)
@@ -603,7 +630,11 @@ def _unsupported_near_duplicates(
 def _layout_metrics(
     references, predictions, matches, *, capabilities: frozenset[str]
 ) -> dict[str, float]:
-    tp, fp, fn = len(matches), len(predictions) - len(matches), len(references) - len(matches)
+    tp, fp, fn = (
+        len(matches),
+        len(predictions) - len(matches),
+        len(references) - len(matches),
+    )
     precision, recall, f1 = precision_recall_f1(tp, fp, fn)
     result = {
         "layout.element_precision": precision,
@@ -612,7 +643,8 @@ def _layout_metrics(
     }
     if matches and "element_types" in capabilities:
         result["layout.element_type_accuracy"] = sum(
-            references[left].kind is predictions[right].kind for left, right, _ in matches
+            references[left].kind is predictions[right].kind
+            for left, right, _ in matches
         ) / len(matches)
     if matches and "hierarchy" in capabilities:
         hierarchy = []
@@ -628,7 +660,8 @@ def _layout_metrics(
             predicted_level = _optional_int(prediction.metadata.get("hierarchy_level"))
             parent_correct = (
                 reference.parent_id is None
-                or reference_to_prediction.get(reference.parent_id) == prediction.parent_id
+                or reference_to_prediction.get(reference.parent_id)
+                == prediction.parent_id
             )
             level_correct = (
                 reference.hierarchy_level is None
@@ -638,7 +671,11 @@ def _layout_metrics(
         if hierarchy:
             result["layout.hierarchy_accuracy"] = float(np.mean(hierarchy))
     if matches and "layout_boxes" in capabilities:
-        boxes = [score for left, right, score in matches if references[left].bounding_box and predictions[right].bounding_box]
+        boxes = [
+            score
+            for left, right, score in matches
+            if references[left].bounding_box and predictions[right].bounding_box
+        ]
         if boxes:
             result["layout.mean_bounding_box_iou"] = float(np.mean(boxes))
     return result
@@ -647,15 +684,15 @@ def _layout_metrics(
 def _score_structured_kind(
     result, reference, predicted, target, source_kind, matching_threshold
 ) -> None:
-    references = tuple(element for element in reference.elements if element.kind is target)
+    references = tuple(
+        element for element in reference.elements if element.kind is target
+    )
     predictions = tuple(segment for segment in predicted if segment.kind is target)
     annotation_key = "tables" if target is SegmentKind.TABLE else "formulas"
     # This function is reached only when the explicit capability is present.
     # Keep a count row even for a verified negative stored in a reference file so
     # false positives contribute to pooled detection metrics.
-    result.counts[annotation_key] = (
-        0, len(predictions), len(references)
-    )
+    result.counts[annotation_key] = (0, len(predictions), len(references))
     if not references and not predictions:
         return
     matches = _match_elements(
@@ -665,7 +702,9 @@ def _score_structured_kind(
         threshold=matching_threshold,
     )
     result.counts[annotation_key] = (
-        len(matches), len(predictions) - len(matches), len(references) - len(matches)
+        len(matches),
+        len(predictions) - len(matches),
+        len(references) - len(matches),
     )
     precision, recall, f1 = precision_recall_f1(*result.counts[annotation_key])
     result.metrics.update(
@@ -678,7 +717,9 @@ def _score_structured_kind(
     by_reference = {left: right for left, right, _ in matches}
     if target is SegmentKind.TABLE and references:
         for index, item in enumerate(references):
-            prediction = predictions[by_reference[index]] if index in by_reference else None
+            prediction = (
+                predictions[by_reference[index]] if index in by_reference else None
+            )
             content = _content_scores(item.text, prediction.text if prediction else "")
             result.table_content_scores.append(content)
             result.table_pairs.append((item.html or "", _table_html(prediction)))
@@ -692,7 +733,9 @@ def _score_structured_kind(
             )
     if target is SegmentKind.FORMULA and references:
         for index, item in enumerate(references):
-            prediction = predictions[by_reference[index]] if index in by_reference else None
+            prediction = (
+                predictions[by_reference[index]] if index in by_reference else None
+            )
             result.formula_pairs.append(
                 (item.latex or item.text, _formula_latex(prediction))
             )
@@ -701,20 +744,36 @@ def _score_structured_kind(
 def _aggregate_group(records: Sequence[DocumentEvaluation]) -> dict[str, float]:
     names = sorted(set().union(*(record.metrics for record in records)))
     values = {
-        name: float(np.mean([record.metrics[name] for record in records if name in record.metrics]))
+        name: float(
+            np.mean(
+                [record.metrics[name] for record in records if name in record.metrics]
+            )
+        )
         for name in names
     }
     for category in ("layout", "tables", "formulas"):
-        counts = [record.counts[category] for record in records if category in record.counts]
+        counts = [
+            record.counts[category] for record in records if category in record.counts
+        ]
         if not counts:
             continue
         tp, fp, fn = (sum(value[index] for value in counts) for index in range(3))
         if tp + fp + fn == 0:
             continue
         precision, recall, f1 = precision_recall_f1(tp, fp, fn)
-        values[f"{category}.detection_precision" if category != "layout" else "layout.element_precision"] = precision
-        values[f"{category}.detection_recall" if category != "layout" else "layout.element_recall"] = recall
-        values[f"{category}.detection_f1" if category != "layout" else "layout.element_f1"] = f1
+        values[
+            f"{category}.detection_precision"
+            if category != "layout"
+            else "layout.element_precision"
+        ] = precision
+        values[
+            f"{category}.detection_recall"
+            if category != "layout"
+            else "layout.element_recall"
+        ] = recall
+        values[
+            f"{category}.detection_f1" if category != "layout" else "layout.element_f1"
+        ] = f1
     table_scores = [score for record in records for score in record.table_scores]
     if table_scores:
         for name, index in (
@@ -728,7 +787,9 @@ def _aggregate_group(records: Sequence[DocumentEvaluation]) -> dict[str, float]:
     formula_scores = [score for record in records for score in record.formula_scores]
     if formula_scores:
         values["formulas.recognition_similarity"] = float(np.mean(formula_scores))
-        values["formulas.exact_match"] = float(np.mean([value == 1.0 for value in formula_scores]))
+        values["formulas.exact_match"] = float(
+            np.mean([value == 1.0 for value in formula_scores])
+        )
     return values
 
 
@@ -758,7 +819,9 @@ def _match_elements(
     try:
         from scipy.optimize import linear_sum_assignment
     except ModuleNotFoundError as exc:
-        raise RuntimeError("scipy is required for one-to-one document-element matching") from exc
+        raise RuntimeError(
+            "scipy is required for one-to-one document-element matching"
+        ) from exc
     rows, columns = linear_sum_assignment(-scores)
     return [
         (int(left), int(right), float(scores[left, right]))
@@ -776,7 +839,9 @@ def _reading_order(matches, references, predictions) -> float | None:
     for left in range(len(ordered)):
         for right in range(left + 1, len(ordered)):
             total += 1
-            correct += (predictions[ordered[left][1]].order or 0) < (predictions[ordered[right][1]].order or 0)
+            correct += (predictions[ordered[left][1]].order or 0) < (
+                predictions[ordered[right][1]].order or 0
+            )
     return correct / total
 
 
@@ -830,7 +895,9 @@ def _duplicate_content_rate(reference: str, prediction: str) -> float | None:
         return None
     predicted_counts = Counter(predicted)
     extra = predicted_counts - Counter(normalized_tokens(reference))
-    repeated = sum(count for token, count in extra.items() if predicted_counts[token] > 1)
+    repeated = sum(
+        count for token, count in extra.items() if predicted_counts[token] > 1
+    )
     return repeated / len(predicted)
 
 
@@ -887,7 +954,11 @@ def _kind(value: object) -> SegmentKind:
 
 
 def _box(value: object) -> tuple[float, float, float, float] | None:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)) or len(value) != 4:
+    if (
+        not isinstance(value, Sequence)
+        or isinstance(value, (str, bytes))
+        or len(value) != 4
+    ):
         return None
     result = tuple(float(item) for item in value)
     if not all(0.0 <= item <= 1.0 for item in result):
@@ -951,9 +1022,15 @@ def _infer_capabilities(payload, text, pages, elements) -> frozenset[str]:
         for element in elements
     ):
         capabilities.add("hierarchy")
-    if any(element.kind is SegmentKind.TABLE for element in elements) or "has_table" in payload:
+    if (
+        any(element.kind is SegmentKind.TABLE for element in elements)
+        or "has_table" in payload
+    ):
         capabilities.add("tables")
-    if any(element.kind is SegmentKind.FORMULA for element in elements) or "has_formula" in payload:
+    if (
+        any(element.kind is SegmentKind.FORMULA for element in elements)
+        or "has_formula" in payload
+    ):
         capabilities.add("formulas")
     return frozenset(capabilities)
 

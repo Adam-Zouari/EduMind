@@ -8,6 +8,7 @@ from typing import Protocol, runtime_checkable
 
 from edumind.common.artifacts import stable_hash
 
+
 @dataclass(frozen=True)
 class EmbeddingSpec:
     model_name: str

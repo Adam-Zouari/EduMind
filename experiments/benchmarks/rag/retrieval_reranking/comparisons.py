@@ -17,7 +17,6 @@ from .metrics import paired_document_interval
 from .profiles import RETRIEVERS, parse_candidate
 from .protocol import RetrievalProtocol, protocol_from_settings
 
-
 RERANKER_OPERATIONAL = frozenset(
     {
         "operational.full_stack_latency_ms_p50",
@@ -293,9 +292,7 @@ def _allowed_metrics(
 
 
 def _rows_for_pairs(
-    pairs: Sequence[
-        tuple[CandidateResult, CandidateResult, Mapping[str, object]]
-    ],
+    pairs: Sequence[tuple[CandidateResult, CandidateResult, Mapping[str, object]]],
     allowed: set[str],
     directions: Mapping[str, str],
     plan: BenchmarkPlan,
@@ -304,7 +301,9 @@ def _rows_for_pairs(
     rows = []
     for baseline, candidate, identity in pairs:
         baseline_values, candidate_values = _values(baseline), _values(candidate)
-        for metric in sorted(allowed & baseline_values.keys() & candidate_values.keys()):
+        for metric in sorted(
+            allowed & baseline_values.keys() & candidate_values.keys()
+        ):
             rows.append(
                 {
                     **identity,
@@ -399,12 +398,12 @@ def _values(result: CandidateResult) -> dict[str, float]:
             for name, value in result.metrics.items()
             if value is not None
         },
-        **{f"operational.{name}": float(value) for name, value in result.operational.items()},
+        **{
+            f"operational.{name}": float(value)
+            for name, value in result.operational.items()
+        },
     }
-    if (
-        "storage.required_index_bytes" not in values
-        and "storage.index_bytes" in values
-    ):
+    if "storage.required_index_bytes" not in values and "storage.index_bytes" in values:
         values["storage.required_index_bytes"] = values["storage.index_bytes"]
     return values
 
@@ -467,10 +466,7 @@ def _write_mirrors(
     except AssertionError as exc:
         raise RuntimeError(f"{stem} Parquet/CSV content differs: {exc}") from exc
     logical_rows = [
-        {
-            name: _json_value(value)
-            for name, value in row.items()
-        }
+        {name: _json_value(value) for name, value in row.items()}
         for row in parquet.to_dict(orient="records")
     ]
     return (parquet_path, csv_path), {

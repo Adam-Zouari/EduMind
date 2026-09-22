@@ -49,18 +49,22 @@ def main(input_path: Path, output_path: Path) -> None:
                 result["formulas"].append(0.0)
                 continue
             identifier = hashlib.sha256(
-                f"{reference}\0{prediction}".encode("utf-8")
+                f"{reference}\0{prediction}".encode()
             ).hexdigest()[:16]
             metrics = evaluator.evaluate(reference, prediction, identifier)
             if metrics.get("cdm_eval_error"):
-                raise RuntimeError(f"CDM evaluation failed: {metrics['cdm_eval_error']}")
+                raise RuntimeError(
+                    f"CDM evaluation failed: {metrics['cdm_eval_error']}"
+                )
             result["formulas"].append(float(metrics["F1_score"]))
 
     output_path.write_text(json.dumps(result), encoding="utf-8")
 
 
 def _html(value: str) -> str:
-    return value if "<body" in value.casefold() else f"<html><body>{value}</body></html>"
+    return (
+        value if "<body" in value.casefold() else f"<html><body>{value}</body></html>"
+    )
 
 
 if __name__ == "__main__":

@@ -10,15 +10,16 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from edumind.common.artifacts import atomic_write_json, sha256_file
-
 from experiments.benchmarks.common.datasets import manifest_content_checksum
+from experiments.benchmarks.extraction.audio.protocol import (
+    AudioProtocol,
+)
+from experiments.benchmarks.extraction.audio.protocol import (
+    load_protocol as load_audio_protocol,
+)
 from experiments.benchmarks.extraction.media import (
     canonical_wav_duration,
     media_duration,
-)
-from experiments.benchmarks.extraction.audio.protocol import (
-    AudioProtocol,
-    load_protocol as load_audio_protocol,
 )
 
 
@@ -35,9 +36,7 @@ def prepare_smoke_fixtures(root: Path, *, modality: str = "all") -> Path:
     if modality in {"all", "audio", "video"}:
         _require_ffmpeg_flite()
     audio_protocol = (
-        load_audio_protocol()
-        if modality in {"all", "audio", "video"}
-        else None
+        load_audio_protocol() if modality in {"all", "audio", "video"} else None
     )
     manifest_path = root / "data/benchmarks/extraction/smoke.json"
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -181,7 +180,9 @@ def _require_ffmpeg_flite() -> None:
             text=True,
         )
     except (FileNotFoundError, subprocess.CalledProcessError) as exc:
-        raise RuntimeError("FFmpeg is required to regenerate audio/video smoke fixtures") from exc
+        raise RuntimeError(
+            "FFmpeg is required to regenerate audio/video smoke fixtures"
+        ) from exc
     if " flite " not in completed.stdout:
         raise RuntimeError(
             "This FFmpeg build lacks the optional flite filter required to regenerate "
@@ -189,9 +190,7 @@ def _require_ffmpeg_flite() -> None:
         )
 
 
-def _synthesize_speech(
-    text: str, destination: Path, protocol: AudioProtocol
-) -> None:
+def _synthesize_speech(text: str, destination: Path, protocol: AudioProtocol) -> None:
     escaped = text.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
     subprocess.run(
         [
@@ -231,9 +230,7 @@ def _prepare_audio_reliability(root: Path, protocol: AudioProtocol) -> None:
     atomic_write_json(manifest_path, payload)
 
 
-def _write_pcm(
-    destination: Path, *, noise: bool, protocol: AudioProtocol
-) -> None:
+def _write_pcm(destination: Path, *, noise: bool, protocol: AudioProtocol) -> None:
     sample_rate = int(protocol.audio["sample_rate_hz"])
     channels = int(protocol.audio["channels"])
     sample_width = int(protocol.audio["sample_width_bytes"])

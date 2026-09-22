@@ -8,7 +8,10 @@ from pathlib import Path
 from experiments.benchmarks.common.arguments import parser
 from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.extraction.document.benchmark import run
-from experiments.benchmarks.extraction.document.protocol import DEFAULT_PROTOCOL_PATH, load_protocol
+from experiments.benchmarks.extraction.document.protocol import (
+    DEFAULT_PROTOCOL_PATH,
+    load_protocol,
+)
 
 
 def main(directory: Path) -> int:
@@ -61,9 +64,7 @@ def _document_main(arguments, directory: Path) -> int:
     )
     results = []
     for source in sources:
-        candidates, decisions = _document_candidates(
-            source, arguments, protocol
-        )
+        candidates, decisions = _document_candidates(source, arguments, protocol)
         results.append(
             (
                 source,

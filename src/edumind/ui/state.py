@@ -47,7 +47,9 @@ class DocumentRecord:
             checksum=str(payload.get("checksum", "")),
             filename=str(payload.get("filename", "")),
             status=DocumentStatus(str(payload.get("status", "failed"))),
-            source_kind=str(payload["source_kind"]) if payload.get("source_kind") else None,
+            source_kind=str(payload["source_kind"])
+            if payload.get("source_kind")
+            else None,
             characters=_int_value(payload.get("characters")),
             chunks=_int_value(payload.get("chunks")),
             timings=timings,

@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-
 DOCUMENT_LOCK_CANDIDATES = {
     "docling-standard": "docling-standard",
     "docling-vlm-granite-258m": "ibm-granite/granite-docling-258M",

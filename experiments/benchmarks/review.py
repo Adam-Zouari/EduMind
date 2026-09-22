@@ -6,11 +6,11 @@ import argparse
 import json
 from pathlib import Path
 
-from experiments.benchmarks.rag.final.review import export_review, import_review
 from experiments.benchmarks.rag.final.protocol import (
     DEFAULT_PROTOCOL_PATH,
     load_protocol,
 )
+from experiments.benchmarks.rag.final.review import export_review, import_review
 
 
 def main() -> int:

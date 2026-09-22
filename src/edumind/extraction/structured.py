@@ -188,7 +188,9 @@ def _docling_provenance(
     converted: list[dict[str, object]] = []
     for value in getattr(item, "prov", []) or []:
         page_number = int(getattr(value, "page_no", 0)) or None
-        box = _normalized_docling_box(getattr(value, "bbox", None), page_number, document)
+        box = _normalized_docling_box(
+            getattr(value, "bbox", None), page_number, document
+        )
         converted.append(
             {
                 "page_number": page_number,
@@ -256,7 +258,11 @@ def _coerce_kind(value: object) -> SegmentKind:
 
 
 def _bounding_box(value: object) -> BoundingBox | None:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)) or len(value) != 4:
+    if (
+        not isinstance(value, Sequence)
+        or isinstance(value, (str, bytes))
+        or len(value) != 4
+    ):
         return None
     return tuple(float(item) for item in value)  # type: ignore[return-value]
 

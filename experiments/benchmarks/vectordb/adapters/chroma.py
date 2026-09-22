@@ -45,7 +45,9 @@ class Chroma:
         except NotFoundError:
             pass
         except Exception as exc:
-            raise InvalidIndexState("Chroma could not delete the previous collection") from exc
+            raise InvalidIndexState(
+                "Chroma could not delete the previous collection"
+            ) from exc
         self.collection = self.client.create_collection(
             self.config.collection,
             metadata={"hnsw:space": "cosine"},
@@ -73,7 +75,13 @@ class Chroma:
 
     def search(self, vector, limit, filters=None) -> list[Hit]:
         clauses = [{key: value} for key, value in sorted((filters or {}).items())]
-        where = None if not clauses else clauses[0] if len(clauses) == 1 else {"$and": clauses}
+        where = (
+            None
+            if not clauses
+            else clauses[0]
+            if len(clauses) == 1
+            else {"$and": clauses}
+        )
         result = self._collection().query(
             query_embeddings=[list(vector)],
             n_results=limit,
@@ -105,7 +113,9 @@ class Chroma:
         if not isinstance(value, Mapping):
             value = getattr(self._collection(), "configuration_json", None)
         if not isinstance(value, Mapping):
-            raise InvalidIndexState("Chroma did not report its collection configuration")
+            raise InvalidIndexState(
+                "Chroma did not report its collection configuration"
+            )
         hnsw = value.get("hnsw")
         if not isinstance(hnsw, Mapping):
             raise InvalidIndexState("Chroma did not report an HNSW index")

@@ -16,11 +16,16 @@ from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.contracts import BenchmarkPlan, SampleResult
 from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
 from experiments.benchmarks.common.decisions import load_engineer_decision
+from experiments.benchmarks.common.process import run_json_worker
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.extraction.audio.adapters import profiles as audio_profiles
 from experiments.benchmarks.extraction.audio.protocol import (
     DEFAULT_PROTOCOL_PATH as DEFAULT_AUDIO_PROTOCOL_PATH,
+)
+from experiments.benchmarks.extraction.audio.protocol import (
     AudioProtocol,
+)
+from experiments.benchmarks.extraction.audio.protocol import (
     load_protocol as load_audio_protocol,
 )
 from experiments.benchmarks.extraction.document.profiles import (
@@ -29,12 +34,17 @@ from experiments.benchmarks.extraction.document.profiles import (
 )
 from experiments.benchmarks.extraction.document.protocol import (
     DEFAULT_PROTOCOL_PATH as DEFAULT_DOCUMENT_PROTOCOL_PATH,
+)
+from experiments.benchmarks.extraction.document.protocol import (
     DocumentProtocol,
+)
+from experiments.benchmarks.extraction.document.protocol import (
     load_protocol as load_document_protocol,
 )
-from experiments.benchmarks.extraction.document.runner import validate_prepared_components
+from experiments.benchmarks.extraction.document.runner import (
+    validate_prepared_components,
+)
 from experiments.benchmarks.extraction.media import ffmpeg_version, media_duration
-from experiments.benchmarks.common.process import run_json_worker
 from experiments.benchmarks.extraction.video.candidates import (
     all_candidates,
     fixed_candidates,
@@ -60,6 +70,8 @@ PROFILE_STAGE = {
     "validation": "video-validation",
     "locked": "video-locked-test",
 }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Benchmark visual video extraction")
     parser.add_argument(
@@ -68,7 +80,9 @@ def main() -> int:
         default="smoke",
     )
     parser.add_argument(
-        "--phase", choices=("frozen-asr", "fixed", "scene", "hybrid", "all"), default="all"
+        "--phase",
+        choices=("frozen-asr", "fixed", "scene", "hybrid", "all"),
+        default="all",
     )
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--protocol", type=Path, default=DEFAULT_PROTOCOL_PATH)
@@ -82,7 +96,9 @@ def main() -> int:
     parser.add_argument("--shortlist", type=Path)
     parser.add_argument("--document-selection", type=Path)
     parser.add_argument("--audio-selection", type=Path)
-    parser.add_argument("--image-candidate", help="Smoke-only selected document profile")
+    parser.add_argument(
+        "--image-candidate", help="Smoke-only selected document profile"
+    )
     parser.add_argument("--audio-candidate", help="Smoke-only selected ASR profile")
     parser.add_argument("--device", choices=("cpu", "cuda"))
     parser.add_argument("--no-mlflow", action="store_true")
@@ -353,7 +369,9 @@ def run_visual_benchmark(
         required_metrics=tuple(all_directions),
         paired_metrics=(),
         revisions={
-            "image_parser": str(entry.get("selection_revision", entry.get("revision", ""))),
+            "image_parser": str(
+                entry.get("selection_revision", entry.get("revision", ""))
+            ),
             "ffmpeg": ffmpeg_version,
             "frozen_asr": frozen_asr_checksum,
         },
@@ -440,7 +458,11 @@ def _record_frozen_asr(
             sample_results.append(
                 SampleResult(
                     str(row["sample_id"]),
-                    ({"word_error_rate": errors / reference_count} if reference_count else {}),
+                    (
+                        {"word_error_rate": errors / reference_count}
+                        if reference_count
+                        else {}
+                    ),
                     float(row["latency_seconds"]),
                     {"window_count": len(row["windows"])},
                 )
@@ -470,9 +492,7 @@ def _record_frozen_asr(
                 "model_revision": artifact["model_revision"],
                 "selection_revision": artifact["selection_revision"],
                 "model_path": artifact["model_path"],
-                "model_cache_manifest_sha256": artifact[
-                    "model_cache_manifest_sha256"
-                ],
+                "model_cache_manifest_sha256": artifact["model_cache_manifest_sha256"],
                 "submodels": artifact.get("submodels", []),
                 "protocol_checksum": protocol.meta.checksum,
                 "frozen_asr_checksum": artifact_checksum,
@@ -489,7 +509,10 @@ def _record_frozen_asr(
         primary_metric=("word_error_rate", "real_time_factor"),
         required_metrics=tuple(directions_map),
         paired_metrics=(),
-        revisions={candidate: str(artifact["selection_revision"]), "ffmpeg": artifact["ffmpeg_version"]},
+        revisions={
+            candidate: str(artifact["selection_revision"]),
+            "ffmpeg": artifact["ffmpeg_version"],
+        },
         decision_files={"audio": audio_decision},
         input_artifacts={
             "manifest": manifest_path,
@@ -542,9 +565,7 @@ def _candidates(arguments, protocol: VideoProtocol):
             arguments.shortlist,
             exact=1 if arguments.profile == "locked" else None,
             maximum=(
-                1
-                if arguments.profile == "locked"
-                else protocol.maximum_finalists
+                1 if arguments.profile == "locked" else protocol.maximum_finalists
             ),
             expected_source=(
                 "extraction",
@@ -619,9 +640,7 @@ def _validate_manifest(items, profile: str, protocol: VideoProtocol) -> None:
         raise ValueError("Video manifest contains no video samples")
     expected = protocol.video_counts[profile]
     if len(items) != expected:
-        raise ValueError(
-            f"Video {profile} requires exactly {expected} samples"
-        )
+        raise ValueError(f"Video {profile} requires exactly {expected} samples")
     for item in items:
         missing = [
             name
@@ -662,9 +681,11 @@ def _validate_manifest(items, profile: str, protocol: VideoProtocol) -> None:
                 f"Video sample {item.get('id')} duration differs from the asset by more than "
                 f"{protocol.manifest_duration_tolerance_seconds}s"
             )
-        if not isinstance(item["visual_occurrences"], Sequence) or isinstance(
-            item["visual_occurrences"], (str, bytes)
-        ) or not item["visual_occurrences"]:
+        if (
+            not isinstance(item["visual_occurrences"], Sequence)
+            or isinstance(item["visual_occurrences"], (str, bytes))
+            or not item["visual_occurrences"]
+        ):
             raise ValueError(f"Video sample {item.get('id')} has malformed occurrences")
         visual_text = item["reference_visual_text"]
         if isinstance(visual_text, str):
@@ -676,14 +697,23 @@ def _validate_manifest(items, profile: str, protocol: VideoProtocol) -> None:
         else:
             has_visual_text = False
         if not has_visual_text:
-            raise ValueError(f"Video sample {item.get('id')} has no verified visual text")
+            raise ValueError(
+                f"Video sample {item.get('id')} has no verified visual text"
+            )
         for occurrence in item["visual_occurrences"]:
-            if not isinstance(occurrence, dict) or not str(occurrence.get("text", "")).strip():
-                raise ValueError(f"Video sample {item.get('id')} has a malformed occurrence")
+            if (
+                not isinstance(occurrence, dict)
+                or not str(occurrence.get("text", "")).strip()
+            ):
+                raise ValueError(
+                    f"Video sample {item.get('id')} has a malformed occurrence"
+                )
             start = float(occurrence.get("start", -1))
             end = float(occurrence.get("end", -1))
             if start < 0 or end < start or end > duration + 1e-6:
-                raise ValueError(f"Video sample {item.get('id')} has invalid occurrence bounds")
+                raise ValueError(
+                    f"Video sample {item.get('id')} has invalid occurrence bounds"
+                )
 
 
 def _manifest(profile: str) -> Path:

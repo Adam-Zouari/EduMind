@@ -3,10 +3,17 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from types import SimpleNamespace
+from typing import ClassVar
 
 import numpy as np
 import pytest
 
+from edumind.rag.contracts import EmbeddingSpec
+from edumind.rag.embedder import Embedder
+from edumind.rag.errors import RAGConfigurationError
+from edumind.rag.text_chunker import TokenChunkingStrategy
+from edumind.rag.tokenizers import TiktokenOffsetTokenizer
+from edumind.rag.types import RetrievalHit
 from experiments.benchmarks.common.contracts import (
     BenchmarkPlan,
     DatasetManifest,
@@ -16,6 +23,7 @@ from experiments.benchmarks.common.datasets import (
     DatasetValidationError,
     validate_evidence,
 )
+from experiments.benchmarks.preparation.datasets import _answers_and_evidence
 from experiments.benchmarks.rag.chunking_embedding import benchmark
 from experiments.benchmarks.rag.chunking_embedding.metrics import (
     aggregate_quality,
@@ -26,6 +34,8 @@ from experiments.benchmarks.rag.chunking_embedding.metrics import (
 from experiments.benchmarks.rag.chunking_embedding.profiles import embedding_spec
 from experiments.benchmarks.rag.chunking_embedding.protocol import (
     load_protocol as default_chunking_protocol,
+)
+from experiments.benchmarks.rag.chunking_embedding.protocol import (
     protocol_from_mapping as chunking_protocol_from_mapping,
 )
 from experiments.benchmarks.rag.chunking_embedding.strategies import (
@@ -41,14 +51,6 @@ from experiments.benchmarks.rag.evaluation import (
     dense_rank_with_scores,
     retrieval_metrics,
 )
-from experiments.benchmarks.preparation.datasets import _answers_and_evidence
-from edumind.rag.contracts import EmbeddingSpec
-from edumind.rag.embedder import Embedder
-from edumind.rag.errors import RAGConfigurationError
-from edumind.rag.text_chunker import TokenChunkingStrategy
-from edumind.rag.tokenizers import TiktokenOffsetTokenizer
-from edumind.rag.types import RetrievalHit
-
 
 CHUNKING_PROTOCOL = default_chunking_protocol()
 
@@ -152,7 +154,9 @@ def test_alpha_ndcg_penalizes_duplicate_evidence_before_novel_evidence() -> None
     assert 0.0 <= duplicate_first < novel_first <= 1.0
 
 
-def test_quality_uses_three_and_five_cutoffs_and_alpha_requires_multiple_units() -> None:
+def test_quality_uses_three_and_five_cutoffs_and_alpha_requires_multiple_units() -> (
+    None
+):
     question = {
         "id": "q1",
         "document_id": "doc",
@@ -233,9 +237,7 @@ def test_single_unit_questions_omit_alpha_ndcg_and_its_metric_contract() -> None
         ],
     }
     multi_evidence = replace(manifest, samples=tuple(rows))
-    multi_directions, _ = benchmark.directions_for(
-        multi_evidence, CHUNKING_PROTOCOL
-    )
+    multi_directions, _ = benchmark.directions_for(multi_evidence, CHUNKING_PROTOCOL)
     assert "quality.overall.alpha_ndcg_at_3" in multi_directions
     assert "quality.text.alpha_ndcg_at_5" in multi_directions
 
@@ -280,7 +282,9 @@ def test_retrieval_metrics_use_complete_units_and_evaluation_tokens() -> None:
         alpha=0.5,
     )
     assert complete_score.metrics["evidence_unit_recall_at_5"] == 1.0
-    assert complete_score.metrics["evidence_token_precision_at_5"] == pytest.approx(2 / 3)
+    assert complete_score.metrics["evidence_token_precision_at_5"] == pytest.approx(
+        2 / 3
+    )
     assert complete_score.matches[0]["first_rank"] == 1
 
 
@@ -361,9 +365,24 @@ def test_exact_cosine_ranking_uses_stable_corpus_order_for_ties() -> None:
 
 def test_quality_aggregation_uses_documents_as_statistical_units() -> None:
     samples = [
-        SampleResult("q1", {"quality.overall.alpha_ndcg_at_5": 1.0}, 0.1, {"document_id": "a", "evidence_type": "text"}),
-        SampleResult("q2", {"quality.overall.alpha_ndcg_at_5": 1.0}, 0.1, {"document_id": "a", "evidence_type": "text"}),
-        SampleResult("q3", {"quality.overall.alpha_ndcg_at_5": 0.0}, 0.1, {"document_id": "b", "evidence_type": "text"}),
+        SampleResult(
+            "q1",
+            {"quality.overall.alpha_ndcg_at_5": 1.0},
+            0.1,
+            {"document_id": "a", "evidence_type": "text"},
+        ),
+        SampleResult(
+            "q2",
+            {"quality.overall.alpha_ndcg_at_5": 1.0},
+            0.1,
+            {"document_id": "a", "evidence_type": "text"},
+        ),
+        SampleResult(
+            "q3",
+            {"quality.overall.alpha_ndcg_at_5": 0.0},
+            0.1,
+            {"document_id": "b", "evidence_type": "text"},
+        ),
     ]
     aggregate, intervals = aggregate_quality(
         samples, resamples=100, seed=42, confidence=0.95
@@ -401,7 +420,10 @@ def test_sentence_transformer_preflight_uses_resolved_role_prompt(monkeypatch) -
     calls = []
 
     class Model:
-        prompts = {"query": "query: ", "document": "passage: "}
+        prompts: ClassVar[dict[str, str]] = {
+            "query": "query: ",
+            "document": "passage: ",
+        }
         default_prompt_name = None
 
         def preprocess(self, inputs, **options):
@@ -462,16 +484,18 @@ def test_embedding_runtime_rejects_contract_above_prepared_model_limit(
 
 
 def test_octen_profiles_use_saved_query_and_document_prompts() -> None:
-    assert embedding_spec(
-        "Octen/Octen-Embedding-0.6B", revision="rev", local_path="path"
-    ).interface == "query-document"
+    assert (
+        embedding_spec(
+            "Octen/Octen-Embedding-0.6B", revision="rev", local_path="path"
+        ).interface
+        == "query-document"
+    )
 
 
 def test_all_chunking_strategies_return_exact_nonempty_source_spans() -> None:
     text = (
         "# Section\n\nFirst sentence. Second sentence.\n\n"
-        "| Header | Value |\n|---|---|\n| alpha | 1 |\n\n$$x^2$$\n"
-        + "token " * 600
+        "| Header | Value |\n|---|---|\n| alpha | 1 |\n\n$$x^2$$\n" + "token " * 600
     )
     names = (
         "recursive-character",
@@ -630,8 +654,20 @@ def test_rag_evidence_requires_stable_units_and_valid_mixed_types() -> None:
                     **base.samples[1],
                     "evidence_type": "mixed",
                     "evidence": [
-                        {"id": "a", "evidence_type": "text", "document_id": "doc", "start": 0, "end": 5},
-                        {"id": "b", "evidence_type": "formula", "document_id": "doc", "start": 6, "end": 10},
+                        {
+                            "id": "a",
+                            "evidence_type": "text",
+                            "document_id": "doc",
+                            "start": 0,
+                            "end": 5,
+                        },
+                        {
+                            "id": "b",
+                            "evidence_type": "formula",
+                            "document_id": "doc",
+                            "start": 6,
+                            "end": 10,
+                        },
                     ],
                 },
             ),
@@ -689,7 +725,7 @@ def test_rag_evidence_requires_stable_units_and_valid_mixed_types() -> None:
 
 
 def test_build_index_rejects_model_inputs_before_embedding(monkeypatch) -> None:
-    import experiments.benchmarks.rag.evaluation as evaluation
+    from experiments.benchmarks.rag import evaluation
 
     class Embedder:
         batch_size = 1
@@ -717,7 +753,9 @@ def test_build_index_rejects_model_inputs_before_embedding(monkeypatch) -> None:
         def split(text):
             return [(0, len(text), 1)]
 
-    monkeypatch.setattr(evaluation, "TiktokenOffsetTokenizer", lambda *_: WordTokenizer())
+    monkeypatch.setattr(
+        evaluation, "TiktokenOffsetTokenizer", lambda *_: WordTokenizer()
+    )
     monkeypatch.setattr(
         evaluation,
         "embedding_spec",
@@ -728,9 +766,7 @@ def test_build_index_rejects_model_inputs_before_embedding(monkeypatch) -> None:
             fingerprint="embedding-fingerprint",
         ),
     )
-    monkeypatch.setattr(
-        evaluation, "Embedder", lambda _spec, **_kwargs: Embedder()
-    )
+    monkeypatch.setattr(evaluation, "Embedder", lambda _spec, **_kwargs: Embedder())
     monkeypatch.setattr(
         evaluation, "build_chunking_strategy", lambda *_args, **_kwargs: Strategy()
     )
@@ -752,7 +788,7 @@ def test_build_index_rejects_model_inputs_before_embedding(monkeypatch) -> None:
 def test_cl100k_boundaries_send_canonical_text_not_token_ids_to_embedder(
     monkeypatch,
 ) -> None:
-    import experiments.benchmarks.rag.evaluation as evaluation
+    from experiments.benchmarks.rag import evaluation
 
     embedded_inputs: list[tuple[str, ...]] = []
 
@@ -789,7 +825,9 @@ def test_cl100k_boundaries_send_canonical_text_not_token_ids_to_embedder(
             fingerprint="embedding-fingerprint",
         ),
     )
-    monkeypatch.setattr(evaluation, "Embedder", lambda _spec, **_kwargs: NativeEmbedder())
+    monkeypatch.setattr(
+        evaluation, "Embedder", lambda _spec, **_kwargs: NativeEmbedder()
+    )
     monkeypatch.setattr(
         evaluation,
         "build_chunking_strategy",
@@ -873,9 +911,7 @@ def test_worker_marks_oversized_input_as_failed_with_reason_code(monkeypatch) ->
         {
             "candidate": candidate,
             "manifest": _manifest().__dict__,
-            "model_lock": {
-                embedding_name: {"revision": "rev", "model_path": "path"}
-            },
+            "model_lock": {embedding_name: {"revision": "rev", "model_path": "path"}},
             "plan": plan.__dict__,
             "device": "cpu",
             "dtype": "float32",
@@ -910,7 +946,9 @@ def test_candidate_emits_new_metrics_and_auditable_top_twenty(monkeypatch) -> No
     monkeypatch.setattr(
         benchmark,
         "dense_rank_with_scores",
-        lambda *_args, **_kwargs: [(position, 1.0 - position / 100) for position in range(20)],
+        lambda *_args, **_kwargs: [
+            (position, 1.0 - position / 100) for position in range(20)
+        ],
     )
     plan = BenchmarkPlan(
         "rag",
@@ -938,10 +976,7 @@ def test_candidate_emits_new_metrics_and_auditable_top_twenty(monkeypatch) -> No
     assert aggregate["quality.overall.evidence_unit_recall_at_5"] == 1.0
     assert "quality.overall.alpha_ndcg_at_3" not in aggregate
     assert (
-        aggregate[
-            "validity.quality.overall.alpha_ndcg_eligible_question_count"
-        ]
-        == 0.0
+        aggregate["validity.quality.overall.alpha_ndcg_eligible_question_count"] == 0.0
     )
     assert aggregate["workload.embedding_matrix_bytes"] == 25 * 2 * 4
     assert operational["corpus_build_source_tokens_per_second"] == 1.0
@@ -1034,6 +1069,7 @@ def test_worker_serializes_unexpected_python_failures_with_validation_report(
         bootstrap_resamples=0,
         settings=_protocol_settings(warmups=0),
     )
+
     def fail(*_args, **_kwargs):
         raise RuntimeError("injected")
 

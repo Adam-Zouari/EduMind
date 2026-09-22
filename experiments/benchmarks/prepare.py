@@ -12,8 +12,8 @@ from experiments.benchmarks.preparation.datasets import (
     prepare_qasper,
     prepare_rag_selection_manifest,
 )
-from experiments.benchmarks.preparation.fixtures import prepare_smoke_fixtures
 from experiments.benchmarks.preparation.evaluators import prepare_evaluators
+from experiments.benchmarks.preparation.fixtures import prepare_smoke_fixtures
 from experiments.benchmarks.preparation.models import (
     DOCLING_BENCHMARK_COMPONENTS,
     EMBEDDING_COMPONENTS,
@@ -27,8 +27,11 @@ from experiments.benchmarks.preparation.models import (
 )
 from experiments.benchmarks.preparation.vectordb import prepare_vectordb
 
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Explicit EduMind benchmark preparation")
+    parser = argparse.ArgumentParser(
+        description="Explicit EduMind benchmark preparation"
+    )
     parser.add_argument(
         "target",
         nargs="?",
@@ -46,8 +49,12 @@ def main() -> int:
             "evaluators",
         ),
     )
-    parser.add_argument("--list", action="store_true", help="List approved model downloads")
-    parser.add_argument("--dry-run", action="store_true", help="Print without downloading")
+    parser.add_argument(
+        "--list", action="store_true", help="List approved model downloads"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Print without downloading"
+    )
     parser.add_argument("--plan", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--qasper-manifest", type=Path)
@@ -89,7 +96,11 @@ def main() -> int:
     elif arguments.target == "qasper":
         outputs = prepare_qasper(arguments.output or root / "data/benchmarks/rag")
     elif arguments.target == "rag-selection":
-        if not arguments.qasper_manifest or not arguments.structured_manifest or not arguments.output:
+        if (
+            not arguments.qasper_manifest
+            or not arguments.structured_manifest
+            or not arguments.output
+        ):
             parser.error(
                 "rag-selection requires --qasper-manifest, --structured-manifest, and --output"
             )
@@ -123,7 +134,9 @@ def main() -> int:
         for candidate in selected:
             entry = entries.get(candidate)
             if entry is None:
-                parser.error(f"{candidate} is not an included model-selection candidate")
+                parser.error(
+                    f"{candidate} is not an included model-selection candidate"
+                )
             if entry.component not in components:
                 parser.error(f"{candidate} is not part of {arguments.target}")
         outputs = [
@@ -136,7 +149,10 @@ def main() -> int:
                     if arguments.target in {"extraction-models", "all-models"}
                     and (
                         not arguments.candidate
-                        or any(entries[name].component == "document_extraction" for name in selected)
+                        or any(
+                            entries[name].component == "document_extraction"
+                            for name in selected
+                        )
                     )
                     else ()
                 ),

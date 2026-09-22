@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from edumind.extraction.video_policy import KeyframePolicy, frame_command as policy_command
+from edumind.extraction.video_policy import KeyframePolicy
+from edumind.extraction.video_policy import frame_command as policy_command
 from experiments.benchmarks.extraction.video.protocol import VideoProtocol
 
 
@@ -76,7 +77,10 @@ def parse_candidate(value: str, protocol: VideoProtocol) -> VideoCandidate:
                 )
         if len(parts) == 3 and parts[:2] == ["video", "scene"]:
             threshold = float(parts[2])
-            if threshold in protocol.scene_thresholds and parts[2] == f"{threshold:.2f}":
+            if (
+                threshold in protocol.scene_thresholds
+                and parts[2] == f"{threshold:.2f}"
+            ):
                 return VideoCandidate(
                     value,
                     "scene",

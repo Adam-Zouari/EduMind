@@ -10,9 +10,9 @@ from pathlib import Path
 
 from edumind.common.artifacts import atomic_write_json, sha256_file, stable_hash
 from edumind.common.paths import PROJECT_ROOT
+from experiments.benchmarks.common.process import run_json_worker
 from experiments.benchmarks.extraction.audio.adapters import profiles
 from experiments.benchmarks.extraction.audio.protocol import AudioProtocol
-from experiments.benchmarks.common.process import run_json_worker
 from experiments.benchmarks.extraction.video.protocol import VideoProtocol
 from experiments.benchmarks.preparation.models import load_selected_model_lock
 
@@ -117,7 +117,9 @@ def load_frozen_asr_artifact(
     videos = payload.get("videos")
     if not isinstance(videos, list):
         raise ValueError("Frozen ASR artifact lacks per-video outputs")
-    observed = [str(item.get("sample_id", "")) for item in videos if isinstance(item, Mapping)]
+    observed = [
+        str(item.get("sample_id", "")) for item in videos if isinstance(item, Mapping)
+    ]
     if sorted(observed) != sorted(sample_ids) or len(observed) != len(set(observed)):
         raise ValueError("Frozen ASR artifact video IDs do not match the manifest")
     required = {
@@ -155,8 +157,14 @@ def load_frozen_asr_artifact(
         transcript = str(video.get("transcript", "")).strip()
         segments = video.get("segments")
         windows = video.get("windows")
-        if not isinstance(segments, list) or not isinstance(windows, list) or not windows:
-            raise ValueError("Frozen ASR artifact lacks timestamp segments or window records")
+        if (
+            not isinstance(segments, list)
+            or not isinstance(windows, list)
+            or not windows
+        ):
+            raise ValueError(
+                "Frozen ASR artifact lacks timestamp segments or window records"
+            )
         if transcript and not segments:
             raise ValueError("Frozen ASR lexical transcript lacks timestamp segments")
         if not transcript and segments:
@@ -168,8 +176,13 @@ def load_frozen_asr_artifact(
         previous = -1.0
         duration = float(video.get("duration_seconds", -1))
         for segment in segments:
-            if not isinstance(segment, Mapping) or not str(segment.get("text", "")).strip():
-                raise ValueError("Frozen ASR artifact contains a malformed timestamp segment")
+            if (
+                not isinstance(segment, Mapping)
+                or not str(segment.get("text", "")).strip()
+            ):
+                raise ValueError(
+                    "Frozen ASR artifact contains a malformed timestamp segment"
+                )
             start, end = float(segment.get("start", -1)), float(segment.get("end", -1))
             if (
                 start < previous
@@ -177,6 +190,8 @@ def load_frozen_asr_artifact(
                 or end <= start
                 or end > duration + timestamp_tolerance_seconds
             ):
-                raise ValueError("Frozen ASR artifact contains invalid timestamp boundaries")
+                raise ValueError(
+                    "Frozen ASR artifact contains invalid timestamp boundaries"
+                )
             previous = start
     return dict(payload), sha256_file(path)

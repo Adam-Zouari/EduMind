@@ -7,8 +7,7 @@ import threading
 import time
 from pathlib import Path
 from types import TracebackType
-from typing import Any
-
+from typing import Any, Self
 
 _GPU_FLOOR_LOCK = threading.Lock()
 _GPU_FLOOR_BYTES: dict[int, int] = {}
@@ -63,7 +62,7 @@ class ResourceMonitor:
         self._started_at = 0.0
         self._samples: list[dict[str, object]] = []
 
-    def __enter__(self) -> ResourceMonitor:
+    def __enter__(self) -> Self:
         self._started_at = time.perf_counter()
         try:
             import pynvml
@@ -107,7 +106,7 @@ class ResourceMonitor:
         if self._pynvml is not None:
             try:
                 self._pynvml.nvmlShutdown()
-            except Exception:  # pragma: no cover - driver-specific cleanup
+            except Exception:  # noqa: BLE001, S110 - cleanup must not mask results
                 pass
 
     def metrics(self) -> dict[str, float]:
@@ -180,7 +179,7 @@ class ResourceMonitor:
                         processes.extend(
                             self._pynvml.nvmlDeviceGetGraphicsRunningProcesses(handle)
                         )
-                    except Exception:
+                    except Exception:  # noqa: BLE001, S110 - process listing is optional
                         pass
                     by_pid = {int(process.pid): process for process in processes}
                     selected = [
@@ -204,7 +203,7 @@ class ResourceMonitor:
                         if delta:
                             self._device_delta_vram_sampled = True
                             sampled_vram += delta
-                except Exception:  # a required CUDA run is rejected by metrics()
+                except Exception:  # noqa: BLE001, S112 - metrics() rejects missing CUDA samples
                     continue
             if self._vram_sampled:
                 self._peak_vram_bytes = max(self._peak_vram_bytes, sampled_vram)

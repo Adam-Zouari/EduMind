@@ -24,7 +24,9 @@ def parser(
             type=Path,
             help="engineer decision JSON selecting candidates from a completed run",
         )
-    result.add_argument("--no-mlflow", action="store_true", help="Debug without MLflow logging")
+    result.add_argument(
+        "--no-mlflow", action="store_true", help="Debug without MLflow logging"
+    )
     return result
 
 
@@ -54,5 +56,7 @@ def resolved_candidates(
     ).selected_candidates
     unknown = sorted(set(selected) - set(declared))
     if unknown:
-        raise ValueError("Decision selects unsupported candidates: " + ", ".join(unknown))
+        raise ValueError(
+            "Decision selects unsupported candidates: " + ", ".join(unknown)
+        )
     return selected

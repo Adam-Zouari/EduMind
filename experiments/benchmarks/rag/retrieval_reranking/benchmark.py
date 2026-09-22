@@ -60,7 +60,6 @@ from .metrics import (
 from .profiles import RetrievalCandidate, parse_candidate
 from .protocol import RetrievalProtocol, protocol_from_settings
 
-
 WORKER = Path(__file__).with_name("worker.py")
 
 
@@ -100,9 +99,7 @@ def evaluate_candidate(
         raise RuntimeError("Retrieval/reranking requires answerable questions")
 
     initialization_started = (
-        worker_started_at
-        if worker_started_at is not None
-        else time.perf_counter()
+        worker_started_at if worker_started_at is not None else time.perf_counter()
     )
     index = build_index(
         manifest,
@@ -124,16 +121,12 @@ def evaluate_candidate(
             "Retrieval smoke fixture must produce exactly "
             f"{protocol.smoke_expected_chunk_count} chunks, got {len(index.chunks)}"
         )
-    reranker = _reranker(
-        candidate, model_lock, protocol, device=device, dtype=dtype
-    )
+    reranker = _reranker(candidate, model_lock, protocol, device=device, dtype=dtype)
     if reranker is not None:
         reranker.prepare()
     initialization_elapsed = time.perf_counter() - initialization_started
     preflight_seconds = float(
-        index.preflight.get(
-            "input_preflight_seconds_excluded_from_corpus_build", 0.0
-        )
+        index.preflight.get("input_preflight_seconds_excluded_from_corpus_build", 0.0)
     )
     cold_initialization_seconds = max(
         0.0,
@@ -247,16 +240,14 @@ def evaluate_candidate(
                         "error": None,
                     }
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - record per-attempt failures
                 full_seconds = time.perf_counter() - full_started
                 if "non-finite" in str(exc).casefold():
                     nonfinite_score_count += 1
                 repetition_orders.append(None)
                 failed_query_ids.add(question_id)
                 error = f"{type(exc).__name__}: {exc}"
-                failures.append(
-                    f"{question_id} repetition {repetition + 1}: {error}"
-                )
+                failures.append(f"{question_id} repetition {repetition + 1}: {error}")
                 timing_rows.append(
                     {
                         "question_id": question_id,
@@ -313,9 +304,7 @@ def evaluate_candidate(
         )
         actual_pool_sizes.append(len(first_pool))
         for cutoff in protocol.quality_cutoffs:
-            retrieved_by_cutoff[cutoff].append(
-                retrieved_tokens(final_chunks, cutoff)
-            )
+            retrieved_by_cutoff[cutoff].append(retrieved_tokens(final_chunks, cutoff))
         query_rows.append(
             {
                 "question_id": question_id,
@@ -445,8 +434,10 @@ def evaluate_candidate(
         operational["index_build_seconds"] = index.corpus_build_seconds
 
     index_build = _index_build_artifact(index, candidate)
-    pool_checksum = stable_hash(owner_pool_rows) if reranker is None else str(
-        pool_metadata["pool_checksum"]
+    pool_checksum = (
+        stable_hash(owner_pool_rows)
+        if reranker is None
+        else str(pool_metadata["pool_checksum"])
     )
     parameters = _parameters(
         candidate,
@@ -471,7 +462,9 @@ def evaluate_candidate(
             f"repeated top-{protocol.pool_size} rankings did not agree exactly"
         )
     if pool_mismatches:
-        validation_errors.append("live first-stage output did not match the frozen pool")
+        validation_errors.append(
+            "live first-stage output did not match the frozen pool"
+        )
     if permutation_failures:
         validation_errors.append("reranker output was not an exact pool permutation")
     validation_errors.extend(
@@ -570,10 +563,8 @@ def execute_payload(payload: dict[str, object]) -> dict[str, object]:
         return candidate_execution_payload(exc)
     except InputCompatibilityError as exc:
         return _unexpected_failure(candidate, manifest, str(exc), preflight=exc.report)
-    except Exception as exc:
-        return _unexpected_failure(
-            candidate, manifest, f"{type(exc).__name__}: {exc}"
-        )
+    except Exception as exc:  # noqa: BLE001 - worker reports candidate failure
+        return _unexpected_failure(candidate, manifest, f"{type(exc).__name__}: {exc}")
     return successful_execution_payload(evaluated)
 
 
@@ -596,7 +587,9 @@ def _first_stage(
         protocol.pool_size,
         protocol.rrf_constant,
         weights=protocol.rrf_weights,
-        tie_keys={position: chunk.identifier for position, chunk in enumerate(index.chunks)},
+        tie_keys={
+            position: chunk.identifier for position, chunk in enumerate(index.chunks)
+        },
     )
 
 
@@ -649,7 +642,9 @@ def _load_frozen_pool(
     owner_run_id = str(frozen_pool.get("owner_run_id", ""))
     if not owner_run_id:
         raise ValueError("Frozen pool does not identify its owner run")
-    positions = {chunk.identifier: position for position, chunk in enumerate(index.chunks)}
+    positions = {
+        chunk.identifier: position for position, chunk in enumerate(index.chunks)
+    }
     by_question: dict[str, list[tuple[int, float]]] = {}
     for row in normalized_rows:
         chunk_id = str(row.get("chunk_id", ""))
@@ -719,9 +714,7 @@ def _require_same_pool(
     expected: Sequence[tuple[int, float]],
     question_id: str,
 ) -> None:
-    if [position for position, _ in observed] != [
-        position for position, _ in expected
-    ]:
+    if [position for position, _ in observed] != [position for position, _ in expected]:
         raise ValueError(f"First-stage pool mismatch for {question_id}")
 
 
@@ -803,9 +796,7 @@ def _candidate_contract_errors(
     if missing_metrics:
         errors.append("missing candidate metrics: " + ", ".join(missing_metrics))
     if missing_operational:
-        errors.append(
-            "missing operational metrics: " + ", ".join(missing_operational)
-        )
+        errors.append("missing operational metrics: " + ", ".join(missing_operational))
     return errors
 
 
@@ -836,9 +827,7 @@ def _index_build_artifact(
         "dense_index_bytes": (
             int(index.vectors.nbytes) if index.vectors is not None else 0
         ),
-        "bm25_index_bytes": (
-            index.bm25.storage_bytes if index.bm25 is not None else 0
-        ),
+        "bm25_index_bytes": (index.bm25.storage_bytes if index.bm25 is not None else 0),
         "rrf_incremental_index_bytes": 0 if candidate.retriever == "rrf" else None,
     }
 
@@ -936,9 +925,7 @@ def _parameters(
                 "rrf_constant": protocol.rrf_constant,
                 "rrf_union": "stable-chunk-id",
                 "rrf_limit": protocol.pool_size,
-                "rrf_tie_break": (
-                    "best-source-rank,combined-source-rank,chunk-id"
-                ),
+                "rrf_tie_break": ("best-source-rank,combined-source-rank,chunk-id"),
             }
         )
     if reranker is not None and reranker_entry is not None:

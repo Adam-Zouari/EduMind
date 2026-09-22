@@ -5,11 +5,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from hashlib import sha256
-from typing import TypeAlias, TypeGuard
+from typing import TypeGuard
 
-MetadataScalar: TypeAlias = str | int | float | bool
-RawMetadata: TypeAlias = dict[str, object]
-FilterMetadata: TypeAlias = dict[str, MetadataScalar]
+type MetadataScalar = str | int | float | bool
+type RawMetadata = dict[str, object]
+type FilterMetadata = dict[str, MetadataScalar]
 
 
 def is_metadata_scalar(value: object) -> TypeGuard[MetadataScalar]:
@@ -23,7 +23,9 @@ def sanitize_filter_metadata(
     format_type: str | None = None,
     file_path: str | None = None,
 ) -> FilterMetadata:
-    sanitized = {key: value for key, value in metadata.items() if is_metadata_scalar(value)}
+    sanitized = {
+        key: value for key, value in metadata.items() if is_metadata_scalar(value)
+    }
     if source:
         sanitized.setdefault("source", source)
     if format_type:

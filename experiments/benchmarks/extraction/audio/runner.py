@@ -17,23 +17,23 @@ from experiments.benchmarks.common.datasets import (
     require_manifest_split,
 )
 from experiments.benchmarks.common.decisions import load_engineer_decision
+from experiments.benchmarks.common.process import run_json_worker
 from experiments.benchmarks.common.runner import run_benchmark
-from experiments.benchmarks.extraction.audio.protocol import (
-    DEFAULT_PROTOCOL_PATH,
-    AudioProtocol,
-    load_protocol,
-)
 from experiments.benchmarks.extraction.audio.evaluate import (
     METRIC_DIRECTIONS,
     PRIMARY_METRICS,
     normalize_transcript,
+)
+from experiments.benchmarks.extraction.audio.protocol import (
+    DEFAULT_PROTOCOL_PATH,
+    AudioProtocol,
+    load_protocol,
 )
 from experiments.benchmarks.extraction.media import (
     canonical_wav_duration,
     decode_canonical_audio,
     ffmpeg_version,
 )
-from experiments.benchmarks.common.process import run_json_worker
 from experiments.benchmarks.preparation.models import load_selected_model_lock
 
 PROFILE_STAGE = {
@@ -42,6 +42,8 @@ PROFILE_STAGE = {
     "validation": "audio-validation",
     "locked": "audio-locked-test",
 }
+
+
 def main(directory: Path) -> int:
     parser = argparse.ArgumentParser(description="Benchmark English audio extraction")
     parser.add_argument(
@@ -52,7 +54,9 @@ def main(directory: Path) -> int:
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--reliability-manifest", type=Path)
     parser.add_argument(
-        "--shortlist", type=Path, help="engineer decision selecting finalists or one ASR"
+        "--shortlist",
+        type=Path,
+        help="engineer decision selecting finalists or one ASR",
     )
     parser.add_argument("--device", choices=("cpu", "cuda"))
     parser.add_argument("--protocol", type=Path, default=DEFAULT_PROTOCOL_PATH)
@@ -77,7 +81,11 @@ def main(directory: Path) -> int:
     )
     print(
         json.dumps(
-            {"run_id": result.run_id, "complete": result.complete, "artifacts": str(result.artifact_directory)},
+            {
+                "run_id": result.run_id,
+                "complete": result.complete,
+                "artifacts": str(result.artifact_directory),
+            },
             indent=2,
         )
     )
@@ -225,7 +233,11 @@ def run(
             )
 
         revisions = {
-            candidate: str(model_lock[protocol.candidate(candidate).model_id].get("selection_revision", ""))
+            candidate: str(
+                model_lock[protocol.candidate(candidate).model_id].get(
+                    "selection_revision", ""
+                )
+            )
             for candidate in candidates
         }
         return run_benchmark(
@@ -308,7 +320,9 @@ def _canonicalize(
         source = PROJECT_ROOT / str(item["source_path"])
         expected = str(item.get("asset_sha256", ""))
         if not source.is_file() or not expected or sha256_file(source) != expected:
-            raise ValueError(f"Missing or invalid audio asset for {item.get('id')}: {source}")
+            raise ValueError(
+                f"Missing or invalid audio asset for {item.get('id')}: {source}"
+            )
         destination = directory / f"{index:04d}.wav"
         command = decode_canonical_audio(
             source,
@@ -350,7 +364,9 @@ def _validate_manifest_rows(
 ) -> None:
     required_count = protocol.speech_counts[profile]
     if len(speech) != required_count:
-        raise ValueError(f"ASR {profile} requires exactly {required_count} speech clips")
+        raise ValueError(
+            f"ASR {profile} requires exactly {required_count} speech clips"
+        )
     authoritative = profile != "smoke"
     observed_conditions: set[str] = set()
     expected_split = {
@@ -384,7 +400,9 @@ def _validate_manifest_rows(
                 if not item.get(field)
             )
         if missing:
-            raise ValueError(f"ASR speech sample {item.get('id')} lacks: {', '.join(missing)}")
+            raise ValueError(
+                f"ASR speech sample {item.get('id')} lacks: {', '.join(missing)}"
+            )
         if authoritative and item["split"] != expected_split:
             raise ValueError(
                 f"ASR speech sample {item['id']} belongs to {item['split']}, not {expected_split}"
@@ -439,12 +457,19 @@ def _validate_manifest_rows(
     )
     if not required_kinds <= kinds:
         raise ValueError(
-            "ASR reliability controls lack: " + ", ".join(sorted(required_kinds - kinds))
+            "ASR reliability controls lack: "
+            + ", ".join(sorted(required_kinds - kinds))
         )
     for item in controls:
         missing = [
             field
-            for field in ("id", "source_path", "asset_sha256", "nonspeech_kind", "split")
+            for field in (
+                "id",
+                "source_path",
+                "asset_sha256",
+                "nonspeech_kind",
+                "split",
+            )
             if not item.get(field)
         ]
         if authoritative:
@@ -458,13 +483,19 @@ def _validate_manifest_rows(
                 f"Nonspeech control {item.get('id')} lacks: {', '.join(missing)}"
             )
         if item.get("reference") not in {"", None}:
-            raise ValueError(f"Nonspeech control {item.get('id')} must have an empty reference")
+            raise ValueError(
+                f"Nonspeech control {item.get('id')} must have an empty reference"
+            )
         duration = float(item.get("duration_seconds", 0))
-        if duration <= 0 or duration > float(protocol.audio["maximum_duration_seconds"]):
+        if duration <= 0 or duration > float(
+            protocol.audio["maximum_duration_seconds"]
+        ):
             raise ValueError(f"Nonspeech control {item.get('id')} has invalid duration")
 
 
-def _validate_reliability_split_isolation(samples: Sequence[Mapping[str, object]]) -> None:
+def _validate_reliability_split_isolation(
+    samples: Sequence[Mapping[str, object]],
+) -> None:
     seen_ids: dict[str, str] = {}
     seen_assets: dict[str, tuple[str, str]] = {}
     for item in samples:
@@ -496,17 +527,27 @@ def _validate_reliability_split_isolation(samples: Sequence[Mapping[str, object]
 
 def _validate_reference_segments(item: Mapping[str, object], duration: float) -> None:
     segments = item.get("reference_segments")
-    if not isinstance(segments, Sequence) or isinstance(segments, (str, bytes)) or not segments:
-        raise ValueError(f"ASR speech sample {item['id']} lacks timed reference segments")
+    if (
+        not isinstance(segments, Sequence)
+        or isinstance(segments, (str, bytes))
+        or not segments
+    ):
+        raise ValueError(
+            f"ASR speech sample {item['id']} lacks timed reference segments"
+        )
     previous_end = 0.0
     segment_texts: list[str] = []
     for segment in segments:
         if not isinstance(segment, Mapping) or not str(segment.get("text", "")).strip():
-            raise ValueError(f"ASR speech sample {item['id']} has a malformed reference segment")
+            raise ValueError(
+                f"ASR speech sample {item['id']} has a malformed reference segment"
+            )
         segment_texts.append(str(segment["text"]))
         start, end = float(segment.get("start", -1)), float(segment.get("end", -1))
         if start < previous_end or end <= start or end > duration + 1e-6:
-            raise ValueError(f"ASR speech sample {item['id']} has invalid segment boundaries")
+            raise ValueError(
+                f"ASR speech sample {item['id']} has invalid segment boundaries"
+            )
         previous_end = end
     if normalize_transcript(" ".join(segment_texts)) != normalize_transcript(
         str(item.get("reference", ""))
@@ -550,7 +591,9 @@ def _candidates(
 ) -> tuple[str, ...]:
     if profile in {"smoke", "development"}:
         if shortlist is not None:
-            raise ValueError(f"ASR {profile} runs the complete configured candidate list")
+            raise ValueError(
+                f"ASR {profile} runs the complete configured candidate list"
+            )
         return tuple(protocol.candidates)
     if shortlist is None:
         raise ValueError(f"ASR {profile} requires --shortlist DECISION_JSON")
@@ -577,5 +620,9 @@ def _speech_manifest(profile: str) -> Path:
 
 
 def _reliability_manifest(profile: str) -> Path:
-    name = "audio-reliability-smoke.json" if profile == "smoke" else "audio-reliability.json"
+    name = (
+        "audio-reliability-smoke.json"
+        if profile == "smoke"
+        else "audio-reliability.json"
+    )
     return PROJECT_ROOT / "data/benchmarks/extraction" / name

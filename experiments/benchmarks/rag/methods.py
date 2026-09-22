@@ -10,6 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
+
 class BM25:
     def __init__(
         self,
@@ -40,7 +41,9 @@ class BM25:
 
     def rank(self, query: str, limit: int) -> list[tuple[int, float]]:
         scores = self.model.get_scores(_tokens(query))
-        return sorted(enumerate(map(float, scores)), key=lambda row: (-row[1], row[0]))[:limit]
+        return sorted(enumerate(map(float, scores)), key=lambda row: (-row[1], row[0]))[
+            :limit
+        ]
 
 
 def reciprocal_rank_fusion(
@@ -94,7 +97,10 @@ def reciprocal_rank_fusion_with_scores(
             (tie_keys or {}).get(identifier, str(identifier)),
         )
 
-    return [(identifier, scores[identifier]) for identifier in sorted(scores, key=key)[:limit]]
+    return [
+        (identifier, scores[identifier])
+        for identifier in sorted(scores, key=key)[:limit]
+    ]
 
 
 class Reranker:
@@ -144,7 +150,11 @@ class Reranker:
                 model_kwargs={"torch_dtype": dtype},
             )
             parameter = next(self.model.model.parameters(), None)
-            if parameter is not None and self.device == "cuda" and parameter.device.type != "cuda":
+            if (
+                parameter is not None
+                and self.device == "cuda"
+                and parameter.device.type != "cuda"
+            ):
                 raise RuntimeError("Reranker silently fell back from CUDA")
 
     def input_token_counts(self, query: str, documents: Sequence[str]) -> list[int]:

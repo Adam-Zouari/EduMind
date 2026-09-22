@@ -18,10 +18,10 @@ from ..contracts import (
     SourceKind,
 )
 from ..errors import ExtractionBackendError
+from ..video_policy import KeyframePolicy, frame_command
 from .audio import WhisperExtractor
 from .base import build_document
 from .document import DoclingExtractor
-from ..video_policy import KeyframePolicy, frame_command
 
 
 class VideoExtractor:
@@ -48,7 +48,9 @@ class VideoExtractor:
         self._audio_extractors: dict[str, Extractor] = {}
         self._image_extractors: dict[str, Extractor] = {}
 
-    def extract(self, request: ExtractionRequest, kind: SourceKind) -> ExtractedDocument:
+    def extract(
+        self, request: ExtractionRequest, kind: SourceKind
+    ) -> ExtractedDocument:
         if request.profile is None:
             raise ValueError("Resolved extraction profile is required")
         started = time.perf_counter()
@@ -103,14 +105,18 @@ class VideoExtractor:
                     request.source_path, directory, keyframe_policy
                 )
                 visual_segments: list[tuple[str, float | None]] = []
-                image_engine = str(request.options.get("image_engine", "docling-standard"))
+                image_engine = str(
+                    request.options.get("image_engine", "docling-standard")
+                )
                 image_revision = str(request.options.get("image_revision", "from-lock"))
                 image_profile = replace(
                     request.profile,
                     engine=image_engine,
                     engine_revision=image_revision,
                     preprocessing=str(
-                        request.options.get("image_preprocessing", request.profile.preprocessing)
+                        request.options.get(
+                            "image_preprocessing", request.profile.preprocessing
+                        )
                     ),
                     routing="video-keyframe",
                 )
@@ -134,15 +140,22 @@ class VideoExtractor:
                         profile=image_profile,
                         options=image_options,
                     )
-                    text = image_extractor.extract(image_request, SourceKind.IMAGE).text.strip()
+                    text = image_extractor.extract(
+                        image_request, SourceKind.IMAGE
+                    ).text.strip()
                     if text:
                         visual_segments.append((text, timestamp))
         except Exception as exc:
-            raise ExtractionBackendError("Video extraction failed", detail=str(exc)) from exc
+            raise ExtractionBackendError(
+                "Video extraction failed", detail=str(exc)
+            ) from exc
 
-        texts = [segment.text for segment in audio.segments] + [item[0] for item in visual_segments]
+        texts = [segment.text for segment in audio.segments] + [
+            item[0] for item in visual_segments
+        ]
         timestamps = [
-            (segment.timestamp_start, segment.timestamp_end) for segment in audio.segments
+            (segment.timestamp_start, segment.timestamp_end)
+            for segment in audio.segments
         ] + [(timestamp, timestamp) for _, timestamp in visual_segments]
         separators = [
             " " if index < len(audio.segments) else "\n"
@@ -189,11 +202,15 @@ class VideoExtractor:
         )
         timestamps = [
             float(value)
-            for value in re.findall(r"showinfo.*?pts_time:([0-9]+(?:\.[0-9]+)?)", process.stderr)
+            for value in re.findall(
+                r"showinfo.*?pts_time:([0-9]+(?:\.[0-9]+)?)", process.stderr
+            )
         ]
         frames = sorted(directory.glob("frame-*.png"))
         if len(timestamps) != len(frames):
-            raise RuntimeError("FFmpeg keyframe timestamps did not match extracted frames")
+            raise RuntimeError(
+                "FFmpeg keyframe timestamps did not match extracted frames"
+            )
         return list(zip(frames, timestamps, strict=True))
 
     def _keyframe_policy(self, options) -> KeyframePolicy:
@@ -202,9 +219,7 @@ class VideoExtractor:
             interval_seconds=float(
                 options.get("fixed_interval_seconds", self.fixed_interval_seconds)
             ),
-            scene_threshold=float(
-                options.get("scene_threshold", self.scene_threshold)
-            ),
+            scene_threshold=float(options.get("scene_threshold", self.scene_threshold)),
             maximum_gap_seconds=float(
                 options.get(
                     "maximum_hybrid_gap_seconds",
@@ -216,7 +231,8 @@ class VideoExtractor:
     @staticmethod
     def _run_ffmpeg(arguments: list[str]) -> None:
         subprocess.run(
-            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *arguments], check=True
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *arguments],
+            check=True,
         )
 
 

@@ -7,6 +7,8 @@ from dataclasses import asdict
 from edumind.rag.contracts import (
     EMBEDDING_SPECS,
     EmbeddingSpec,
+)
+from edumind.rag.contracts import (
     embedding_spec as production_embedding_spec,
 )
 
@@ -110,7 +112,9 @@ def embedding_spec(
     try:
         spec = EXPERIMENTAL_EMBEDDING_SPECS[name]
     except KeyError as exc:
-        raise ValueError(f"No experimental embedding contract for model: {name}") from exc
+        raise ValueError(
+            f"No experimental embedding contract for model: {name}"
+        ) from exc
     return EmbeddingSpec(
         **{
             **asdict(spec),

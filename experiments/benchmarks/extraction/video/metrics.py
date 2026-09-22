@@ -13,7 +13,6 @@ from experiments.benchmarks.common.metrics import (
     precision_recall_f1,
 )
 
-
 QUALITY_DIRECTIONS = {
     "visual_content_precision": "max",
     "visual_content_recall": "max",

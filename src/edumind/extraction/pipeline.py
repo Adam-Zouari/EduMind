@@ -11,7 +11,12 @@ from edumind.common.config import Settings, load_settings
 from edumind.common.models import load_model_lock, require_model
 
 from .cache import ExtractionCache
-from .contracts import ExtractedDocument, ExtractionProfile, ExtractionRequest, SourceKind
+from .contracts import (
+    ExtractedDocument,
+    ExtractionProfile,
+    ExtractionRequest,
+    SourceKind,
+)
 from .detection import classify_source
 from .normalization import normalize_document
 from .registry import ExtractorRegistration, ExtractorRegistry
@@ -116,7 +121,9 @@ class ExtractionPipeline:
     """Classify, route, extract, normalize, and cache one source."""
 
     def __init__(
-        self, settings: Settings | None = None, registry: ExtractorRegistry | None = None
+        self,
+        settings: Settings | None = None,
+        registry: ExtractorRegistry | None = None,
     ) -> None:
         self.settings = settings or load_settings()
         self.registry = registry or build_default_registry(self.settings)
@@ -134,9 +141,13 @@ class ExtractionPipeline:
     ) -> ExtractedDocument:
         if isinstance(source, ExtractionRequest):
             request = source
-            kind, resolved_mime = classify_source(request.source_path, request.mime_type)
+            kind, resolved_mime = classify_source(
+                request.source_path, request.mime_type
+            )
             kind = request.source_kind or kind
-            resolved_profile = profile or request.profile or DEFAULT_PROFILE_BY_KIND[kind]
+            resolved_profile = (
+                profile or request.profile or DEFAULT_PROFILE_BY_KIND[kind]
+            )
             resolved_profile, prepared_options = self._prepare_profile(resolved_profile)
             request = replace(
                 request,
@@ -166,7 +177,9 @@ class ExtractionPipeline:
                     **dict(options or {}),
                 },
             )
-        should_cache = self.settings.extraction.cache_enabled if use_cache is None else use_cache
+        should_cache = (
+            self.settings.extraction.cache_enabled if use_cache is None else use_cache
+        )
         if should_cache and (cached := self.cache.get(request)) is not None:
             return cached
         started = time.perf_counter()
@@ -190,7 +203,7 @@ class ExtractionPipeline:
         for kind, profile in DEFAULT_PROFILE_BY_KIND.items():
             try:
                 self._prepare_profile(profile)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - readiness reports adapter failures
                 errors[kind.value] = str(exc)
         return {"ready": not errors, "errors": errors}
 
@@ -211,7 +224,9 @@ class ExtractionPipeline:
                 "image_model_path"
             ):
                 return profile, {}
-            audio_engine = str(profile.options.get("audio_candidate", "whisper-small-en-control"))
+            audio_engine = str(
+                profile.options.get("audio_candidate", "whisper-small-en-control")
+            )
             image_engine = str(profile.options.get("image_engine", "docling-standard"))
             audio = require_model(models, LOCK_CANDIDATE_BY_ENGINE[audio_engine])
             image = require_model(models, LOCK_CANDIDATE_BY_ENGINE[image_engine])

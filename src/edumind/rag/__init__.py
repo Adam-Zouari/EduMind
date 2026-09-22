@@ -18,6 +18,6 @@ __all__ = [
     "IndexManifest",
     "IngestDocument",
     "IngestReport",
-    "RetrievalHit",
     "RAGPipeline",
+    "RetrievalHit",
 ]

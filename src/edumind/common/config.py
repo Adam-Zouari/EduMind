@@ -104,7 +104,9 @@ def default_config_path() -> Path:
 
 def load_yaml_config(config_path: str | Path | None = None) -> dict[str, Any]:
     load_dotenv(override=False)
-    path = Path(config_path or os.getenv("EDUMIND_CONFIG") or default_config_path()).expanduser()
+    path = Path(
+        config_path or os.getenv("EDUMIND_CONFIG") or default_config_path()
+    ).expanduser()
     if not path.is_absolute():
         path = (Path.cwd() / path).resolve()
     if not path.is_file():
@@ -182,9 +184,7 @@ def _path(value: object) -> Path:
     return path if path.is_absolute() else (Path.cwd() / path).resolve()
 
 
-def _number(
-    section: Mapping[str, object], key: str, *, minimum: float = 0.0
-) -> float:
+def _number(section: Mapping[str, object], key: str, *, minimum: float = 0.0) -> float:
     value = section[key]
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ConfigurationError(f"'{key}' must be numeric")
@@ -213,7 +213,12 @@ def _string(section: Mapping[str, object], key: str) -> str:
 
 def _build(raw: Mapping[str, object]) -> Settings:
     sections = {
-        "models", "extraction", "embedding", "chunking", "vector", "retrieval",
+        "models",
+        "extraction",
+        "embedding",
+        "chunking",
+        "vector",
+        "retrieval",
         "generation",
     }
     missing = sections - raw.keys()
@@ -225,30 +230,54 @@ def _build(raw: Mapping[str, object]) -> Settings:
         )
     models = _section(raw, "models", {"lock_path"})
     extraction = _section(
-        raw, "extraction",
+        raw,
+        "extraction",
         {"cache_enabled", "cache_directory", "maximum_upload_bytes", "video"},
     )
     video = _section(
-        extraction, "video",
-        {"keyframe_strategy", "fixed_interval_seconds", "scene_threshold", "maximum_hybrid_gap_seconds"},
+        extraction,
+        "video",
+        {
+            "keyframe_strategy",
+            "fixed_interval_seconds",
+            "scene_threshold",
+            "maximum_hybrid_gap_seconds",
+        },
     )
     embedding = _section(
-        raw, "embedding", {"model_name", "indexing_device", "query_device", "batch_size"},
+        raw,
+        "embedding",
+        {"model_name", "indexing_device", "query_device", "batch_size"},
     )
     chunking = _section(
-        raw, "chunking", {"strategy", "chunk_size", "chunk_overlap", "tokenizer"},
+        raw,
+        "chunking",
+        {"strategy", "chunk_size", "chunk_overlap", "tokenizer"},
     )
     vector = _section(
-        raw, "vector", {"backend", "endpoint", "collection_name", "distance_metric"},
+        raw,
+        "vector",
+        {"backend", "endpoint", "collection_name", "distance_metric"},
     )
     retrieval = _section(
-        raw, "retrieval", {"strategy", "top_k", "candidate_k", "context_token_budget"},
+        raw,
+        "retrieval",
+        {"strategy", "top_k", "candidate_k", "context_token_budget"},
     )
     generation = _section(
-        raw, "generation",
+        raw,
+        "generation",
         {
-            "model_name", "device", "dtype", "reasoning", "temperature", "do_sample",
-            "seed", "context_tokens", "maximum_answer_tokens", "streamer_timeout_seconds",
+            "model_name",
+            "device",
+            "dtype",
+            "reasoning",
+            "temperature",
+            "do_sample",
+            "seed",
+            "context_tokens",
+            "maximum_answer_tokens",
+            "streamer_timeout_seconds",
         },
     )
 
@@ -267,7 +296,9 @@ def _build(raw: Mapping[str, object]) -> Settings:
         raise ConfigurationError("chunk_overlap must be smaller than chunk_size")
     chunking_strategy = _string(chunking, "strategy")
     if chunking_strategy != "token":
-        raise ConfigurationError("The provisional application supports only token chunking")
+        raise ConfigurationError(
+            "The provisional application supports only token chunking"
+        )
     chunking_tokenizer = _string(chunking, "tokenizer")
     if chunking_tokenizer != "cl100k_base":
         raise ConfigurationError(
@@ -281,7 +312,9 @@ def _build(raw: Mapping[str, object]) -> Settings:
 
     backend = _string(vector, "backend")
     if backend != "chroma-server":
-        raise ConfigurationError("The provisional application supports only 'chroma-server'")
+        raise ConfigurationError(
+            "The provisional application supports only 'chroma-server'"
+        )
     endpoint = _string(vector, "endpoint")
     try:
         parsed = urlparse(endpoint)
@@ -289,10 +322,14 @@ def _build(raw: Mapping[str, object]) -> Settings:
     except ValueError as exc:
         raise ConfigurationError("vector.endpoint is not a valid HTTP URL") from exc
     if parsed.scheme not in {"http", "https"} or not parsed.hostname or not valid_port:
-        raise ConfigurationError("vector.endpoint must be an HTTP URL with an explicit port")
+        raise ConfigurationError(
+            "vector.endpoint must be an HTTP URL with an explicit port"
+        )
     strategy = _string(retrieval, "strategy")
     if strategy != "dense":
-        raise ConfigurationError("The provisional application supports only dense retrieval")
+        raise ConfigurationError(
+            "The provisional application supports only dense retrieval"
+        )
     distance = _string(vector, "distance_metric")
     if distance not in {"cosine", "dot"}:
         raise ConfigurationError("Unsupported vector distance metric")
@@ -301,12 +338,12 @@ def _build(raw: Mapping[str, object]) -> Settings:
         raise ConfigurationError("generation.device must be 'cpu' or 'cuda'")
     generation_dtype = _string(generation, "dtype")
     if generation_dtype != "auto":
-        raise ConfigurationError("generation.dtype must be 'auto' for native checkpoints")
+        raise ConfigurationError(
+            "generation.dtype must be 'auto' for native checkpoints"
+        )
 
     return Settings(
-        models=ModelSettings(
-            lock_path=_path(models["lock_path"])
-        ),
+        models=ModelSettings(lock_path=_path(models["lock_path"])),
         extraction=ExtractionSettings(
             cache_enabled=_boolean(extraction, "cache_enabled"),
             cache_directory=_path(extraction["cache_directory"]),

@@ -142,11 +142,14 @@ def test_video_occurrence_matching_minimizes_raw_detection_delay() -> None:
 
 def test_video_window_stitching_and_bounds_are_deterministic() -> None:
     assert _window_starts(65.0, 30.0, 2.0) == [0.0, 28.0, 56.0]
-    assert stitch_text(
-        "alpha beta gamma",
-        "beta gamma delta",
-        maximum_overlap_tokens=8,
-    ) == "alpha beta gamma delta"
+    assert (
+        stitch_text(
+            "alpha beta gamma",
+            "beta gamma delta",
+            maximum_overlap_tokens=8,
+        )
+        == "alpha beta gamma delta"
+    )
     stitched = _stitch_segments(
         [{"text": "alpha beta", "start": 0.0, "end": 2.0}],
         [{"text": "beta gamma", "start": 1.0, "end": 3.0}],
@@ -215,8 +218,8 @@ def test_frozen_asr_artifact_is_reused_only_for_matching_protocol(tmp_path) -> N
             "artifact_type": "FrozenASRArtifact",
             "run_id": "asr-run",
             "manifest_checksum": "manifest",
-                "protocol_checksum": "protocol",
-                "audio_protocol_checksum": "audio-protocol",
+            "protocol_checksum": "protocol",
+            "audio_protocol_checksum": "audio-protocol",
             "model_decision_fingerprint": "decision",
             "audio_candidate": "asr",
             "model_path": "model",
@@ -269,9 +272,7 @@ def test_frozen_asr_artifact_is_reused_only_for_matching_protocol(tmp_path) -> N
 
 
 def test_video_profiles_validate_candidate_sources() -> None:
-    smoke = SimpleNamespace(
-        profile="smoke", phase="all", shortlist=None
-    )
+    smoke = SimpleNamespace(profile="smoke", phase="all", shortlist=None)
     candidates, decisions = _candidates(smoke, VIDEO_PROTOCOL)
     assert candidates == all_candidates(VIDEO_PROTOCOL, 0.40)
     assert decisions == {}
@@ -280,9 +281,7 @@ def test_video_profiles_validate_candidate_sources() -> None:
     )
     with pytest.raises(ValueError, match="selected_scene_threshold"):
         _candidates(development_hybrid, VIDEO_PROTOCOL)
-    locked = SimpleNamespace(
-        profile="locked", phase="all", shortlist=None
-    )
+    locked = SimpleNamespace(profile="locked", phase="all", shortlist=None)
     with pytest.raises(ValueError, match="shortlist"):
         _candidates(locked, VIDEO_PROTOCOL)
 
@@ -302,9 +301,9 @@ def test_application_video_defaults_and_request_overrides_use_shared_selector() 
     from edumind.extraction.pipeline import build_default_registry
     from edumind.extraction.video_policy import frame_command as application_command
 
-    configured = build_default_registry(load_settings(ROOT / "config/base.yaml")).create(
-        "video-hybrid", SourceKind.VIDEO
-    )
+    configured = build_default_registry(
+        load_settings(ROOT / "config/base.yaml")
+    ).create("video-hybrid", SourceKind.VIDEO)
     configured_policy = configured._keyframe_policy({})
     assert configured_policy.strategy == "hybrid"
     assert configured_policy.scene_threshold == 0.35
@@ -348,12 +347,12 @@ def test_visual_worker_uses_current_candidate_temp_root(monkeypatch, tmp_path) -
         return SimpleNamespace(returncode=0, stderr="", stdout="")
 
     monkeypatch.setattr(process.subprocess, "run", fake_run)
-    assert runner._run_visual_worker(
-        "video-fixed-5s", [], device="cpu"
-    ) == {}
+    assert runner._run_visual_worker("video-fixed-5s", [], device="cpu") == {}
 
 
-def test_mocked_visual_phase_runs_through_artifact_writer(monkeypatch, tmp_path) -> None:
+def test_mocked_visual_phase_runs_through_artifact_writer(
+    monkeypatch, tmp_path
+) -> None:
     from experiments.benchmarks.common.runner import run_benchmark as real_run_benchmark
     from experiments.benchmarks.extraction.video import runner
 
@@ -367,13 +366,13 @@ def test_mocked_visual_phase_runs_through_artifact_writer(monkeypatch, tmp_path)
         lambda *_args, **_kwargs: {
             "docling-standard": {
                 "revision": "2.117.0",
-                    "selection_revision": "2.117.0",
-                    "model_path": str(tmp_path),
-                    "model_cache_manifest_sha256": "cache",
-                    "prepared_components": ["layout", "tableformer", "rapidocr"],
-                }
-            },
-        )
+                "selection_revision": "2.117.0",
+                "model_path": str(tmp_path),
+                "model_cache_manifest_sha256": "cache",
+                "prepared_components": ["layout", "tableformer", "rapidocr"],
+            }
+        },
+    )
     monkeypatch.setattr(
         runner,
         "_run_visual_worker",
@@ -426,9 +425,9 @@ def test_mocked_visual_phase_runs_through_artifact_writer(monkeypatch, tmp_path)
         manifest_path=manifest_path,
         manifest_name="smoke",
         manifest_checksum="manifest",
-            protocol=VIDEO_PROTOCOL,
-            audio_protocol=AUDIO_PROTOCOL,
-            document_protocol=DOCUMENT_PROTOCOL,
+        protocol=VIDEO_PROTOCOL,
+        audio_protocol=AUDIO_PROTOCOL,
+        document_protocol=DOCUMENT_PROTOCOL,
         frozen_asr_path=frozen_path,
         frozen_asr={"run_id": "asr"},
         frozen_asr_checksum="frozen",

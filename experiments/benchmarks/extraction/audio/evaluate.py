@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 from collections import Counter
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import cache
 
 import numpy as np
 
@@ -92,7 +92,11 @@ def align_sequences(reference: Sequence[str], prediction: Sequence[str]) -> Alig
             matches.append((left - 1, right - 1))
             left -= 1
             right -= 1
-        elif left and right and distance[left][right] == distance[left - 1][right - 1] + 1:
+        elif (
+            left
+            and right
+            and distance[left][right] == distance[left - 1][right - 1] + 1
+        ):
             substitutions += 1
             left -= 1
             right -= 1
@@ -127,7 +131,9 @@ def score_speech(
     if hypothesis and not predicted_segments:
         raise ValueError("ASR prediction timestamp segments are missing")
     if not hypothesis and predicted_segments:
-        raise ValueError("ASR empty transcript has non-empty lexical timestamp segments")
+        raise ValueError(
+            "ASR empty transcript has non-empty lexical timestamp segments"
+        )
     predictions = _segments(
         predicted_segments, "prediction", allow_empty=not hypothesis
     )
@@ -216,7 +222,9 @@ def aggregate(
     )
     missing = sorted(set(METRIC_DIRECTIONS) - set(metrics))
     if missing:
-        raise ValueError("ASR candidate did not produce required metrics: " + ", ".join(missing))
+        raise ValueError(
+            "ASR candidate did not produce required metrics: " + ", ".join(missing)
+        )
     intervals = (
         _bootstrap(
             speech,
@@ -263,7 +271,9 @@ def _aggregate_rows(speech, nonspeech, timing_rows) -> dict[str, float | None]:
         raise ValueError("ASR aggregation requires measured timing rows")
     per_clip: dict[str, list[float]] = {}
     for row in timing_rows:
-        per_clip.setdefault(str(row["sample_id"]), []).append(float(row["latency_seconds"]))
+        per_clip.setdefault(str(row["sample_id"]), []).append(
+            float(row["latency_seconds"])
+        )
     medians = [float(np.median(values)) for values in per_clip.values()]
     measured_seconds = sum(float(row["latency_seconds"]) for row in timing_rows)
     measured_audio_seconds = sum(float(row["duration_seconds"]) for row in timing_rows)
@@ -284,9 +294,7 @@ def _aggregate_rows(speech, nonspeech, timing_rows) -> dict[str, float | None]:
             nonspeech, "nonspeech_false_transcription"
         )
         / len(nonspeech),
-        "repeat_transcript_agreement_rate": _sum(
-            speech, "repeat_transcript_agreement"
-        )
+        "repeat_transcript_agreement_rate": _sum(speech, "repeat_transcript_agreement")
         / len(speech),
         "real_time_factor": measured_seconds / measured_audio_seconds,
         "p50_warm_clip_latency_seconds": float(np.quantile(medians, 0.50)),
@@ -303,9 +311,12 @@ def _bootstrap(
     rng = np.random.default_rng(seed)
     estimates = {name: [] for name in INTERVAL_METRICS}
     for _ in range(resamples):
-        sampled_speech = [speech[index] for index in rng.integers(0, len(speech), len(speech))]
+        sampled_speech = [
+            speech[index] for index in rng.integers(0, len(speech), len(speech))
+        ]
         sampled_nonspeech = [
-            nonspeech[index] for index in rng.integers(0, len(nonspeech), len(nonspeech))
+            nonspeech[index]
+            for index in rng.integers(0, len(nonspeech), len(nonspeech))
         ]
         sampled_timings = []
         sampled_speech_with_ids = []
@@ -321,10 +332,10 @@ def _bootstrap(
             sampled_nonspeech,
             sampled_timings,
         )
-        for name in estimates:
+        for name, samples in estimates.items():
             value = values[name]
             if value is not None:
-                estimates[name].append(value)
+                samples.append(value)
     result = {}
     alpha = (1.0 - confidence) / 2.0
     for name, values in estimates.items():
@@ -405,7 +416,7 @@ def _ordered_span_matches(reference_segments, predicted_segments, *, threshold: 
                     spans.append((start, end, similarity))
         eligible[reference_index] = spans
 
-    @lru_cache(maxsize=None)
+    @cache
     def solve(reference_index: int, minimum_prediction: int):
         if reference_index >= len(reference_segments):
             return (0.0, 0, ())

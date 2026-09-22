@@ -36,7 +36,12 @@ class Weaviate:
         return bool(self.client.is_ready())
 
     def reset(self) -> None:
-        from weaviate.classes.config import Configure, DataType, Property, VectorDistances
+        from weaviate.classes.config import (
+            Configure,
+            DataType,
+            Property,
+            VectorDistances,
+        )
 
         if self.client.collections.exists(self.config.collection):
             self.client.collections.delete(self.config.collection)
@@ -78,11 +83,17 @@ class Weaviate:
             for row in records:
                 batch.add_object(
                     uuid=_uuid(row.identifier),
-                    properties={"edumind_id": row.identifier, "text": row.text, **dict(row.metadata)},
+                    properties={
+                        "edumind_id": row.identifier,
+                        "text": row.text,
+                        **dict(row.metadata),
+                    },
                     vector=list(row.vector),
                 )
         if collection.batch.failed_objects:
-            raise RuntimeError(f"Weaviate rejected {len(collection.batch.failed_objects)} records")
+            raise RuntimeError(
+                f"Weaviate rejected {len(collection.batch.failed_objects)} records"
+            )
 
     def search(self, vector, limit, filters=None) -> list[Hit]:
         from weaviate.classes.query import MetadataQuery
@@ -98,7 +109,9 @@ class Weaviate:
             properties = dict(row.properties or {})
             identifier = str(properties.pop("edumind_id", row.uuid))
             properties.pop("text", None)
-            hits.append(Hit(identifier, 1.0 - float(row.metadata.distance or 0.0), properties))
+            hits.append(
+                Hit(identifier, 1.0 - float(row.metadata.distance or 0.0), properties)
+            )
         return hits
 
     def delete(self, identifiers: Sequence[str]) -> None:
@@ -138,7 +151,9 @@ def _filter(filters: Mapping[str, object]):
         return None
     from weaviate.classes.query import Filter
 
-    clauses = [Filter.by_property(key).equal(value) for key, value in sorted(filters.items())]
+    clauses = [
+        Filter.by_property(key).equal(value) for key, value in sorted(filters.items())
+    ]
     result = clauses[0]
     for clause in clauses[1:]:
         result = result & clause

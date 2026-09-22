@@ -29,19 +29,27 @@ def build_document(
     seconds: float = 0.0,
 ) -> ExtractedDocument:
     if not isinstance(separators, str) and len(separators) != max(0, len(texts) - 1):
-        raise ValueError("Segment separators must contain one value between each text segment")
+        raise ValueError(
+            "Segment separators must contain one value between each text segment"
+        )
     pieces: list[str] = []
     segments: list[ExtractedSegment] = []
     offset = 0
     for index, text in enumerate(texts):
         if pieces:
-            separator = separators if isinstance(separators, str) else separators[index - 1]
+            separator = (
+                separators if isinstance(separators, str) else separators[index - 1]
+            )
             pieces.append(separator)
             offset += len(separator)
         start = offset
         pieces.append(text)
         offset += len(text)
-        time_range = timestamps[index] if timestamps and index < len(timestamps) else (None, None)
+        time_range = (
+            timestamps[index]
+            if timestamps and index < len(timestamps)
+            else (None, None)
+        )
         page = pages[index] if pages and index < len(pages) else None
         segments.append(
             ExtractedSegment(

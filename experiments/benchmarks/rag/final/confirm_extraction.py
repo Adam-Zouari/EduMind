@@ -11,25 +11,42 @@ from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.contracts import BenchmarkPlan
 from experiments.benchmarks.common.datasets import load_manifest
 from experiments.benchmarks.common.runner import run_benchmark
-from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
-from experiments.benchmarks.rag.evaluation import build_index, retrieval_quality_directions
+from experiments.benchmarks.preparation.models import (
+    load_selected_model_lock,
+    model_revisions,
+)
 from experiments.benchmarks.rag.chunking_embedding.protocol import (
     DEFAULT_PROTOCOL_PATH as DEFAULT_CHUNKING_PROTOCOL_PATH,
+)
+from experiments.benchmarks.rag.chunking_embedding.protocol import (
     load_protocol as load_chunking_protocol,
 )
-from experiments.benchmarks.rag.generation.evaluate import GENERATION_DIRECTIONS, evaluate_candidate
-from experiments.benchmarks.rag.generation.protocol import (
-    DEFAULT_PROTOCOL_PATH as DEFAULT_GENERATION_PROTOCOL_PATH,
-    load_protocol as load_generation_protocol,
+from experiments.benchmarks.rag.evaluation import (
+    build_index,
+    retrieval_quality_directions,
 )
-from experiments.benchmarks.rag.retrieval_reranking.protocol import (
-    DEFAULT_PROTOCOL_PATH as DEFAULT_RETRIEVAL_PROTOCOL_PATH,
-    load_protocol as load_retrieval_protocol,
-)
-from experiments.benchmarks.rag.retrieval_reranking.profiles import parse_candidate
 from experiments.benchmarks.rag.final.protocol import (
     DEFAULT_PROTOCOL_PATH as DEFAULT_FINAL_PROTOCOL_PATH,
+)
+from experiments.benchmarks.rag.final.protocol import (
     load_protocol as load_final_protocol,
+)
+from experiments.benchmarks.rag.generation.evaluate import (
+    GENERATION_DIRECTIONS,
+    evaluate_candidate,
+)
+from experiments.benchmarks.rag.generation.protocol import (
+    DEFAULT_PROTOCOL_PATH as DEFAULT_GENERATION_PROTOCOL_PATH,
+)
+from experiments.benchmarks.rag.generation.protocol import (
+    load_protocol as load_generation_protocol,
+)
+from experiments.benchmarks.rag.retrieval_reranking.profiles import parse_candidate
+from experiments.benchmarks.rag.retrieval_reranking.protocol import (
+    DEFAULT_PROTOCOL_PATH as DEFAULT_RETRIEVAL_PROTOCOL_PATH,
+)
+from experiments.benchmarks.rag.retrieval_reranking.protocol import (
+    load_protocol as load_retrieval_protocol,
 )
 
 
@@ -49,10 +66,18 @@ def main() -> int:
     parser.add_argument(
         "--dtype", choices=("float32", "float16", "bfloat16", "auto"), required=True
     )
-    parser.add_argument("--final-protocol", type=Path, default=DEFAULT_FINAL_PROTOCOL_PATH)
-    parser.add_argument("--generation-protocol", type=Path, default=DEFAULT_GENERATION_PROTOCOL_PATH)
-    parser.add_argument("--retrieval-protocol", type=Path, default=DEFAULT_RETRIEVAL_PROTOCOL_PATH)
-    parser.add_argument("--chunking-protocol", type=Path, default=DEFAULT_CHUNKING_PROTOCOL_PATH)
+    parser.add_argument(
+        "--final-protocol", type=Path, default=DEFAULT_FINAL_PROTOCOL_PATH
+    )
+    parser.add_argument(
+        "--generation-protocol", type=Path, default=DEFAULT_GENERATION_PROTOCOL_PATH
+    )
+    parser.add_argument(
+        "--retrieval-protocol", type=Path, default=DEFAULT_RETRIEVAL_PROTOCOL_PATH
+    )
+    parser.add_argument(
+        "--chunking-protocol", type=Path, default=DEFAULT_CHUNKING_PROTOCOL_PATH
+    )
     arguments = parser.parse_args()
 
     final_protocol = load_final_protocol(arguments.final_protocol)
@@ -72,7 +97,9 @@ def main() -> int:
     reference = load_manifest(arguments.reference_manifest)
     extracted = load_manifest(arguments.extracted_manifest)
     _validate_pair(reference.samples, extracted.samples)
-    chunker, embedding, retrieval, generator, top_k_value = arguments.candidate.split("@@", 4)
+    chunker, embedding, retrieval, generator, top_k_value = arguments.candidate.split(
+        "@@", 4
+    )
     top_k = int(top_k_value.removeprefix("top_k="))
     if top_k not in final_protocol.top_k:
         raise ValueError(f"top_k must be one of {final_protocol.top_k}")

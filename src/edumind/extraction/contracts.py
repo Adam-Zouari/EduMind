@@ -6,11 +6,11 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Protocol, TypeAlias, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from edumind.common.artifacts import sha256_file, stable_hash
 
-BoundingBox: TypeAlias = tuple[float, float, float, float]
+type BoundingBox = tuple[float, float, float, float]
 
 
 class SourceKind(str, Enum):
@@ -117,17 +117,25 @@ class ExtractedSegment:
         if self.start < 0 or self.end < self.start:
             raise ValueError("Segment offsets must satisfy 0 <= start <= end")
         if self.end - self.start != len(self.text):
-            raise ValueError("Segment offsets must be half-open offsets for segment text")
-        if self.timestamp_start is not None and self.timestamp_end is not None:
-            if self.timestamp_end < self.timestamp_start:
-                raise ValueError("Segment timestamps are reversed")
+            raise ValueError(
+                "Segment offsets must be half-open offsets for segment text"
+            )
+        if (
+            self.timestamp_start is not None
+            and self.timestamp_end is not None
+            and self.timestamp_end < self.timestamp_start
+        ):
+            raise ValueError("Segment timestamps are reversed")
         if self.kind is SegmentKind.TABLE and self.structured_content:
             rows = self.structured_content.get("rows")
             if not isinstance(rows, (list, tuple)):
                 raise ValueError("Structured table segments require a rows sequence")
-        if self.kind is SegmentKind.FORMULA and self.structured_content:
-            if not isinstance(self.structured_content.get("latex"), str):
-                raise ValueError("Structured formula segments require a LaTeX string")
+        if (
+            self.kind is SegmentKind.FORMULA
+            and self.structured_content
+            and not isinstance(self.structured_content.get("latex"), str)
+        ):
+            raise ValueError("Structured formula segments require a LaTeX string")
 
 
 @dataclass(frozen=True)
@@ -172,7 +180,9 @@ class ExtractedDocument:
         raw_metadata = payload.get("metadata", {})
         metadata = dict(raw_metadata) if isinstance(raw_metadata, Mapping) else {}
         raw_seconds = payload.get("extraction_seconds", 0.0)
-        seconds = float(raw_seconds) if isinstance(raw_seconds, (str, int, float)) else 0.0
+        seconds = (
+            float(raw_seconds) if isinstance(raw_seconds, (str, int, float)) else 0.0
+        )
         return cls(
             source_name=str(payload.get("source_name", "")),
             source_path=str(payload.get("source_path", "")),
@@ -181,7 +191,9 @@ class ExtractedDocument:
             mime_type=str(payload["mime_type"]) if payload.get("mime_type") else None,
             text=str(payload.get("text", "")),
             segments=tuple(
-                _segment_from_dict(item) for item in raw_segments if isinstance(item, Mapping)
+                _segment_from_dict(item)
+                for item in raw_segments
+                if isinstance(item, Mapping)
             ),
             profile=profile,
             metadata=metadata,
@@ -203,7 +215,9 @@ class Extractor(Protocol):
     revision: str
     supported_kinds: frozenset[SourceKind]
 
-    def extract(self, request: ExtractionRequest, kind: SourceKind) -> ExtractedDocument:
+    def extract(
+        self, request: ExtractionRequest, kind: SourceKind
+    ) -> ExtractedDocument:
         """Extract a document or raise a structured extraction error."""
 
 
@@ -211,7 +225,9 @@ def _segment_from_dict(payload: Mapping[str, object]) -> ExtractedSegment:
     values = dict(payload)
     values["kind"] = SegmentKind(str(values.get("kind", SegmentKind.TEXT.value)))
     structured = values.get("structured_content", {})
-    values["structured_content"] = dict(structured) if isinstance(structured, Mapping) else {}
+    values["structured_content"] = (
+        dict(structured) if isinstance(structured, Mapping) else {}
+    )
     metadata = values.get("metadata", {})
     values["metadata"] = dict(metadata) if isinstance(metadata, Mapping) else {}
     bounding_box = values.get("bounding_box")

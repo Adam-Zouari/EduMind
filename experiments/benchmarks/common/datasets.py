@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 
 from .contracts import DatasetManifest
@@ -59,11 +60,15 @@ def load_manifest(path: str | Path, *, verify_checksum: bool = True) -> DatasetM
     }
     missing = required - payload.keys()
     if missing:
-        raise DatasetValidationError(f"Manifest is missing fields: {', '.join(sorted(missing))}")
+        raise DatasetValidationError(
+            f"Manifest is missing fields: {', '.join(sorted(missing))}"
+        )
     samples = payload["samples"]
     if not isinstance(samples, list) or not samples:
         raise DatasetValidationError("Manifest must contain at least one sample")
-    ids = [str(sample.get("id", "")) for sample in samples if isinstance(sample, Mapping)]
+    ids = [
+        str(sample.get("id", "")) for sample in samples if isinstance(sample, Mapping)
+    ]
     if not all(ids) or len(ids) != len(set(ids)):
         raise DatasetValidationError("Sample IDs must be present and unique")
     manifest = DatasetManifest(
@@ -192,9 +197,11 @@ def validate_evidence(manifest: DatasetManifest) -> None:
                     f"Evidence unit {unit.identifier} does not belong to question "
                     f"document {document_id}"
                 )
-            coordinates = [(interval.start, interval.end) for interval in unit.intervals]
+            coordinates = [
+                (interval.start, interval.end) for interval in unit.intervals
+            ]
             if coordinates != sorted(coordinates) or any(
-                left[1] > right[0] for left, right in zip(coordinates, coordinates[1:])
+                left[1] > right[0] for left, right in pairwise(coordinates)
             ):
                 raise DatasetValidationError(
                     f"Evidence unit {unit.identifier} intervals must be ordered and non-overlapping"
@@ -326,7 +333,9 @@ def assert_no_split_leakage(manifests: Sequence[DatasetManifest]) -> None:
                         )
                     seen[value] = label
                 if not family:
-                    raise DatasetValidationError(f"ASR {label} has an empty document family")
+                    raise DatasetValidationError(
+                        f"ASR {label} has an empty document family"
+                    )
                 previous_family = seen_audio_families.get(family)
                 if previous_family is not None and previous_family[0] != manifest.split:
                     raise DatasetValidationError(
@@ -354,7 +363,9 @@ def assert_no_split_leakage(manifests: Sequence[DatasetManifest]) -> None:
             }
             for previous, previous_shingles in seen_documents:
                 union = shingles | previous_shingles
-                similarity = len(shingles & previous_shingles) / len(union) if union else 1.0
+                similarity = (
+                    len(shingles & previous_shingles) / len(union) if union else 1.0
+                )
                 if similarity >= 0.85:
                     raise DatasetValidationError(
                         f"Near-duplicate document leakage between {previous} and "

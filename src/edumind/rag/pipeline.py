@@ -12,13 +12,19 @@ from edumind.common.models import load_model_lock, require_model
 from edumind.extraction import ExtractedDocument
 
 from .contracts import GenerationProfile, IndexManifest, embedding_spec
-from .ingest_normalization import normalize_ingest_document
 from .embedder import Embedder
 from .errors import RAGConfigurationError
+from .ingest_normalization import normalize_ingest_document
 from .llm_generator import HuggingFaceGenerator
 from .text_chunker import TextChunker, TokenChunkingStrategy
 from .tokenizers import OffsetTokenizer, TiktokenOffsetTokenizer
-from .types import AnswerResult, IngestDocument, IngestReport, RetrievalHit, VectorStoreSettings
+from .types import (
+    AnswerResult,
+    IngestDocument,
+    IngestReport,
+    RetrievalHit,
+    VectorStoreSettings,
+)
 from .vector_store import VectorStore
 
 
@@ -123,7 +129,8 @@ class RAGPipeline:
         )
 
     def ingest_documents(
-        self, documents: Sequence[IngestDocument | Mapping[str, object] | ExtractedDocument]
+        self,
+        documents: Sequence[IngestDocument | Mapping[str, object] | ExtractedDocument],
     ) -> list[IngestReport]:
         return [self.ingest_document(document) for document in documents]
 
@@ -142,7 +149,9 @@ class RAGPipeline:
             top_k=self.settings.retrieval.candidate_k,
             filter_metadata=filter_metadata,
         )
-        return self._pack_hits(candidates, limit, self.settings.retrieval.context_token_budget)
+        return self._pack_hits(
+            candidates, limit, self.settings.retrieval.context_token_budget
+        )
 
     def _pack_hits(
         self, candidates: Sequence[RetrievalHit], limit: int, token_budget: int
@@ -185,7 +194,9 @@ class RAGPipeline:
         system_prompt: str | None = None,
     ) -> AnswerResult:
         if self.llm_generator is None:
-            raise ValueError("LLM generator not initialized. Use RAGPipeline(use_llm=True).")
+            raise ValueError(
+                "LLM generator not initialized. Use RAGPipeline(use_llm=True)."
+            )
         retrieval_started = time.perf_counter()
         results = self.query(query, top_k=top_k, filter_metadata=filter_metadata)
         retrieval_seconds = time.perf_counter() - retrieval_started
@@ -204,7 +215,9 @@ class RAGPipeline:
         )
         generation_seconds = time.perf_counter() - generation_started
         warnings = (
-            () if _citations_valid(answer, len(results)) else ("missing_or_invalid_citations",)
+            ()
+            if _citations_valid(answer, len(results))
+            else ("missing_or_invalid_citations",)
         )
         return AnswerResult(
             answer,
@@ -219,18 +232,21 @@ class RAGPipeline:
 
     def get_stats(self) -> dict[str, object]:
         manifest = self.vector_store.load_index_manifest()
-        embedding_ready = bool(self.embedding_spec.local_path) and Path(
-            str(self.embedding_spec.local_path)
-        ).is_dir()
+        embedding_ready = (
+            bool(self.embedding_spec.local_path)
+            and Path(str(self.embedding_spec.local_path)).is_dir()
+        )
         vector_ready = self.vector_store.health_check()
         total_chunks: int | None = None
         if vector_ready:
             try:
                 total_chunks = self.vector_store.get_collection_count()
-            except Exception:
+            except Exception:  # noqa: BLE001 - report unavailable vector service
                 vector_ready = False
         generation_ready = (
-            self.llm_generator.health_check() if self.llm_generator is not None else False
+            self.llm_generator.health_check()
+            if self.llm_generator is not None
+            else False
         )
         problems = []
         if not embedding_ready:
@@ -292,4 +308,8 @@ def _citations_valid(answer: str, context_count: int) -> bool:
 
     citations = [int(value) for value in re.findall(r"\[(\d+)\]", answer)]
     refusal = "don't have enough evidence" in answer.lower()
-    return refusal or bool(citations) and all(1 <= value <= context_count for value in citations)
+    return (
+        refusal
+        or bool(citations)
+        and all(1 <= value <= context_count for value in citations)
+    )

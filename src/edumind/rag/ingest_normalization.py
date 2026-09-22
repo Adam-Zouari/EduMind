@@ -13,9 +13,15 @@ def normalize_ingest_document(document: Mapping[str, object]) -> IngestDocument:
         raise ValueError("Cannot ingest an empty document")
     metadata_value = document.get("metadata", {})
     metadata = dict(metadata_value) if isinstance(metadata_value, Mapping) else {}
-    source = str(document.get("source") or metadata.get("source") or "uploaded-document")
-    file_path = str(document.get("file_path") or metadata.get("source_path") or "") or None
-    format_type = str(document.get("format_type") or metadata.get("source_kind") or "") or None
+    source = str(
+        document.get("source") or metadata.get("source") or "uploaded-document"
+    )
+    file_path = (
+        str(document.get("file_path") or metadata.get("source_path") or "") or None
+    )
+    format_type = (
+        str(document.get("format_type") or metadata.get("source_kind") or "") or None
+    )
     source_id = str(
         document.get("source_id")
         or build_source_id(
@@ -29,11 +35,16 @@ def normalize_ingest_document(document: Mapping[str, object]) -> IngestDocument:
     supplied_filters = document.get("filter_metadata")
     filters = (
         sanitize_filter_metadata(
-            supplied_filters, source=source, format_type=format_type, file_path=file_path
+            supplied_filters,
+            source=source,
+            format_type=format_type,
+            file_path=file_path,
         )
         if isinstance(supplied_filters, Mapping)
         else sanitize_filter_metadata(
             metadata, source=source, format_type=format_type, file_path=file_path
         )
     )
-    return IngestDocument(text, source_id, source, format_type, file_path, metadata, filters)
+    return IngestDocument(
+        text, source_id, source, format_type, file_path, metadata, filters
+    )

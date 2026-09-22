@@ -9,7 +9,7 @@ import pytest
 
 from edumind.common.artifacts import stable_hash
 from edumind.common.paths import PROJECT_ROOT
-from edumind.rag.contracts import EmbeddingSpec, PRODUCTION_EMBEDDING_MODEL
+from edumind.rag.contracts import PRODUCTION_EMBEDDING_MODEL, EmbeddingSpec
 from edumind.rag.tokenizers import TiktokenOffsetTokenizer
 from experiments.benchmarks.common.contracts import (
     BenchmarkPlan,
@@ -19,21 +19,27 @@ from experiments.benchmarks.common.contracts import (
     SampleResult,
 )
 from experiments.benchmarks.common.datasets import load_manifest
+from experiments.benchmarks.rag.chunking_embedding.protocol import (
+    load_protocol as default_chunking_protocol,
+)
+from experiments.benchmarks.rag.chunking_embedding.protocol import (
+    protocol_from_mapping as chunking_protocol_from_mapping,
+)
 from experiments.benchmarks.rag.chunking_embedding.strategies import (
     build_chunking_strategy,
 )
-from experiments.benchmarks.rag.chunking_embedding.protocol import (
-    load_protocol as default_chunking_protocol,
-    protocol_from_mapping as chunking_protocol_from_mapping,
-)
 from experiments.benchmarks.rag.evaluation import Chunk, ExactIndex
-from experiments.benchmarks.rag.retrieval_reranking import benchmark as retrieval_benchmark
 from experiments.benchmarks.rag.methods import reciprocal_rank_fusion_with_scores
+from experiments.benchmarks.rag.retrieval_reranking import (
+    benchmark as retrieval_benchmark,
+)
 from experiments.benchmarks.rag.retrieval_reranking.benchmark import (
     _require_permutation,
     evaluate_candidate,
 )
-from experiments.benchmarks.rag.retrieval_reranking.comparisons import parent_artifact_builder
+from experiments.benchmarks.rag.retrieval_reranking.comparisons import (
+    parent_artifact_builder,
+)
 from experiments.benchmarks.rag.retrieval_reranking.metrics import (
     directions_for,
     pool_evidence_unit_recall,
@@ -46,10 +52,11 @@ from experiments.benchmarks.rag.retrieval_reranking.profiles import (
 )
 from experiments.benchmarks.rag.retrieval_reranking.protocol import (
     load_protocol as default_protocol,
+)
+from experiments.benchmarks.rag.retrieval_reranking.protocol import (
     protocol_from_mapping,
     protocol_from_settings,
 )
-
 
 RETRIEVAL_CANDIDATES = owner_first(development_candidates())
 
@@ -190,6 +197,7 @@ def test_bm25_freezes_documented_parameters(monkeypatch: pytest.MonkeyPatch) -> 
             observed.update(kwargs)
 
     import rank_bm25
+
     from experiments.benchmarks.rag import methods
 
     monkeypatch.setattr(rank_bm25, "BM25Okapi", FixtureBM25)
@@ -262,9 +270,7 @@ def test_protocol_drives_cutoff_and_pool_metric_names() -> None:
     directions, _ = directions_for(_fixture_manifest(), protocol)
     assert "quality.overall.ndcg_at_2" in directions
     assert "quality.overall.ndcg_at_3" not in directions
-    assert protocol.pool_recall_metric == (
-        "diagnostic.pool_evidence_unit_recall_at_4"
-    )
+    assert protocol.pool_recall_metric == ("diagnostic.pool_evidence_unit_recall_at_4")
 
 
 class _FixtureTokenizer:
@@ -310,8 +316,7 @@ class _FixtureReranker:
     ) -> list[tuple[int, float]]:
         del query, validate_inputs
         return [
-            (position, float(position))
-            for position in reversed(range(len(documents)))
+            (position, float(position)) for position in reversed(range(len(documents)))
         ]
 
 
@@ -388,10 +393,14 @@ def _fixture_index() -> ExactIndex:
     )
 
 
-def test_owner_pool_is_reused_by_every_reranker_child(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_owner_pool_is_reused_by_every_reranker_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     manifest = _fixture_manifest()
     index = _fixture_index()
-    monkeypatch.setattr(retrieval_benchmark, "build_index", lambda *_args, **_kwargs: index)
+    monkeypatch.setattr(
+        retrieval_benchmark, "build_index", lambda *_args, **_kwargs: index
+    )
     model_lock = {
         PRODUCTION_EMBEDDING_MODEL: {
             "revision": "revision",
@@ -419,7 +428,7 @@ def test_owner_pool_is_reused_by_every_reranker_child(monkeypatch: pytest.Monkey
             warmups=0,
             repetitions=2,
             bootstrap_resamples=0,
-            chunker_embedding=f"token-256-32|{PRODUCTION_EMBEDDING_MODEL}"
+            chunker_embedding=f"token-256-32|{PRODUCTION_EMBEDDING_MODEL}",
         ),
     )
     owner = evaluate_candidate(
@@ -475,7 +484,9 @@ def test_owner_pool_is_reused_by_every_reranker_child(monkeypatch: pytest.Monkey
     assert len(child[5]["timings"]) == 2
 
 
-def test_measured_failure_keeps_every_timing_row(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_measured_failure_keeps_every_timing_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     manifest = _fixture_manifest()
     index = _fixture_index()
     calls = 0
@@ -488,7 +499,9 @@ def test_measured_failure_keeps_every_timing_row(monkeypatch: pytest.MonkeyPatch
         return [(position, float(limit - position)) for position in range(limit)]
 
     monkeypatch.setattr(index.bm25, "rank", rank)
-    monkeypatch.setattr(retrieval_benchmark, "build_index", lambda *_args, **_kwargs: index)
+    monkeypatch.setattr(
+        retrieval_benchmark, "build_index", lambda *_args, **_kwargs: index
+    )
     plan = BenchmarkPlan(
         "rag",
         "retrieval-reranking",
@@ -504,7 +517,7 @@ def test_measured_failure_keeps_every_timing_row(monkeypatch: pytest.MonkeyPatch
             warmups=0,
             repetitions=3,
             bootstrap_resamples=0,
-            chunker_embedding=f"token-256-32|{PRODUCTION_EMBEDDING_MODEL}"
+            chunker_embedding=f"token-256-32|{PRODUCTION_EMBEDDING_MODEL}",
         ),
     )
     with pytest.raises(CandidateExecutionError) as captured:
@@ -550,21 +563,21 @@ def test_parent_comparisons_are_separated_and_csv_matches_parquet(
         parsed = parse_candidate(candidate)
         value = 0.5 + position / 100.0
         samples = (
-                SampleResult(
-                    "q1",
-                    {
-                        "quality.overall.ndcg_at_3": value,
-                        "diagnostic.pool_evidence_unit_recall_at_20": value,
-                    },
+            SampleResult(
+                "q1",
+                {
+                    "quality.overall.ndcg_at_3": value,
+                    "diagnostic.pool_evidence_unit_recall_at_20": value,
+                },
                 0.01,
                 {"document_id": "d1", "evidence_type": "text"},
             ),
-                SampleResult(
-                    "q2",
-                    {
-                        "quality.overall.ndcg_at_3": value + 0.01,
-                        "diagnostic.pool_evidence_unit_recall_at_20": value + 0.01,
-                    },
+            SampleResult(
+                "q2",
+                {
+                    "quality.overall.ndcg_at_3": value + 0.01,
+                    "diagnostic.pool_evidence_unit_recall_at_20": value + 0.01,
+                },
                 0.02,
                 {"document_id": "d2", "evidence_type": "text"},
             ),
@@ -616,12 +629,12 @@ def test_parent_comparisons_are_separated_and_csv_matches_parquet(
             requested_finalists=[
                 "dense|ettin-150m",
                 "bm25|ettin-400m",
-            ]
+            ],
         ),
     )
-    paths = parent_artifact_builder(
-        pools, directions, compare_finalists=True
-    )(tmp_path, results, plan)
+    paths = parent_artifact_builder(pools, directions, compare_finalists=True)(
+        tmp_path, results, plan
+    )
     assert {path.name for path in paths} == {
         "reranker_comparisons.parquet",
         "reranker_comparisons.csv",
@@ -633,23 +646,22 @@ def test_parent_comparisons_are_separated_and_csv_matches_parquet(
     }
     reranker = pd.read_parquet(tmp_path / "reranker_comparisons.parquet")
     retriever = pd.read_parquet(tmp_path / "retriever_comparisons.parquet")
-    assert reranker[
-        ["baseline_candidate", "candidate"]
-    ].drop_duplicates().shape[0] == 12
-    assert retriever[
-        ["baseline_candidate", "candidate"]
-    ].drop_duplicates().shape[0] == 3
+    assert (
+        reranker[["baseline_candidate", "candidate"]].drop_duplicates().shape[0] == 12
+    )
+    assert (
+        retriever[["baseline_candidate", "candidate"]].drop_duplicates().shape[0] == 3
+    )
     pool_recall = retriever[
-        retriever["metric_name"]
-        == "diagnostic.pool_evidence_unit_recall_at_20"
+        retriever["metric_name"] == "diagnostic.pool_evidence_unit_recall_at_20"
     ]
     assert pool_recall["evidence_slice"].eq("overall").all()
     assert pool_recall["cutoff"].eq(20).all()
     assert pool_recall["ci_status"].eq("available").all()
     finalists = pd.read_parquet(tmp_path / "finalist_comparisons.parquet")
-    assert finalists[
-        ["baseline_candidate", "candidate"]
-    ].drop_duplicates().shape[0] == 1
+    assert (
+        finalists[["baseline_candidate", "candidate"]].drop_duplicates().shape[0] == 1
+    )
     workload = reranker[
         reranker["metric_name"] == "workload.retrieved_tokens_at_3_mean"
     ]

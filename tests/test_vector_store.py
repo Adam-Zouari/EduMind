@@ -2,9 +2,9 @@ from types import SimpleNamespace
 
 import pytest
 
+import edumind.rag.vector_store as vector_store_module
 from edumind.rag.errors import RAGConfigurationError
 from edumind.rag.vector_store import VectorStore
-import edumind.rag.vector_store as vector_store_module
 
 
 class NotFoundError(Exception):

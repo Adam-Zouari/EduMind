@@ -1,22 +1,32 @@
-from pathlib import Path
 import json
+from pathlib import Path
 
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.arguments import parser, resolved_candidates
 from experiments.benchmarks.common.contracts import BenchmarkPlan
 from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
 from experiments.benchmarks.common.runner import run_benchmark
-from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
-from experiments.benchmarks.rag.generation.evaluate import GENERATION_DIRECTIONS, evaluate_candidate
+from experiments.benchmarks.preparation.models import (
+    load_selected_model_lock,
+    model_revisions,
+)
+from experiments.benchmarks.rag.generation.evaluate import (
+    GENERATION_DIRECTIONS,
+    evaluate_candidate,
+)
 from experiments.benchmarks.rag.generation.protocol import (
     DEFAULT_PROTOCOL_PATH,
     load_protocol,
 )
 
 if __name__ == "__main__":
-    argument_parser = parser("Benchmark direct Hugging Face generation on frozen contexts")
+    argument_parser = parser(
+        "Benchmark direct Hugging Face generation on frozen contexts"
+    )
     argument_parser.add_argument(
-        "--device", choices=("cpu", "cuda"), help="Whole-model device shared by every candidate"
+        "--device",
+        choices=("cpu", "cuda"),
+        help="Whole-model device shared by every candidate",
     )
     argument_parser.add_argument(
         "--dtype", choices=("float32", "float16", "bfloat16", "auto")
@@ -31,7 +41,10 @@ if __name__ == "__main__":
         )
     device = arguments.device or execution.device
     dtype = arguments.dtype or execution.dtype
-    if execution.hardware_required and (device, dtype) != (execution.device, execution.dtype):
+    if execution.hardware_required and (device, dtype) != (
+        execution.device,
+        execution.dtype,
+    ):
         argument_parser.error(
             f"{arguments.profile} generation requires --device {execution.device} "
             f"--dtype {execution.dtype}"
@@ -107,7 +120,9 @@ if __name__ == "__main__":
         directions=GENERATION_DIRECTIONS,
         primary_metric="citation_f1",
         revisions=revisions,
-        decision_files={"shortlist": arguments.shortlist} if arguments.shortlist else None,
+        decision_files={"shortlist": arguments.shortlist}
+        if arguments.shortlist
+        else None,
         input_artifacts={"manifest": manifest_path},
         protocols={"generation": protocol.meta},
         no_mlflow=arguments.no_mlflow,
@@ -117,5 +132,10 @@ if __name__ == "__main__":
             else None
         ),
     )
-    print(json.dumps({"run_id": result.run_id, "artifacts": str(result.artifact_directory)}, indent=2))
+    print(
+        json.dumps(
+            {"run_id": result.run_id, "artifacts": str(result.artifact_directory)},
+            indent=2,
+        )
+    )
     raise SystemExit(0 if result.complete else 2)

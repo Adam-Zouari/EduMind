@@ -14,7 +14,6 @@ from experiments.benchmarks.rag.chunking_embedding.metrics import (
 )
 from experiments.benchmarks.rag.retrieval_reranking.protocol import RetrievalProtocol
 
-
 OPERATIONAL_DIRECTIONS = {
     "operational.full_stack_latency_ms_p50": "min",
     "operational.full_stack_latency_ms_p95": "min",
@@ -86,9 +85,7 @@ def directions_for(
             "alpha_ndcg_eligible_document_count",
         )
     }
-    sample_counts = {
-        f"{metric}.sample_count": "descriptive" for metric in quality
-    }
+    sample_counts = {f"{metric}.sample_count": "descriptive" for metric in quality}
     directions = {
         **quality,
         **sample_counts,
@@ -155,7 +152,7 @@ def pool_evidence_unit_recall(
 
 
 def retrieved_tokens(chunks: Sequence[object], cutoff: int) -> int:
-    return sum(int(getattr(chunk, "tokens")) for chunk in chunks[:cutoff])
+    return sum(int(chunk.tokens) for chunk in chunks[:cutoff])
 
 
 def latency_summary(samples: Sequence[SampleResult]) -> dict[str, float]:
@@ -198,14 +195,12 @@ def latency_intervals(
     if len(documents) < minimum_documents:
         return {}
     families = {
-        "full_stack": {
-            str(sample.metadata["document_id"]): [] for sample in samples
-        },
-        "first_stage": {
-            str(sample.metadata["document_id"]): [] for sample in samples
-        },
+        "full_stack": {str(sample.metadata["document_id"]): [] for sample in samples},
+        "first_stage": {str(sample.metadata["document_id"]): [] for sample in samples},
     }
-    if any(sample.metadata.get("reranker_latency_ms") is not None for sample in samples):
+    if any(
+        sample.metadata.get("reranker_latency_ms") is not None for sample in samples
+    ):
         families["reranker"] = {
             str(sample.metadata["document_id"]): [] for sample in samples
         }
@@ -232,10 +227,8 @@ def latency_intervals(
                 for position in selected
                 for value in by_document[documents[int(position)]]
             ]
-            for percentile in draws:
-                draws[percentile].append(
-                    float(np.quantile(values, percentile / 100.0))
-                )
+            for percentile, estimates in draws.items():
+                estimates.append(float(np.quantile(values, percentile / 100.0)))
         for percentile, estimates in draws.items():
             key = f"operational.{family}_latency_ms_p{percentile}"
             result[key] = {

@@ -40,5 +40,7 @@ class ExtractorRegistry:
 
     def names(self, kind: SourceKind | None = None) -> list[str]:
         return sorted(
-            name for name, item in self._registrations.items() if kind is None or kind in item.kinds
+            name
+            for name, item in self._registrations.items()
+            if kind is None or kind in item.kinds
         )

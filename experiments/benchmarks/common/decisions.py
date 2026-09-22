@@ -81,7 +81,9 @@ def load_engineer_decision(
         or not all(isinstance(value, str) and value for value in selected)
         or len(set(selected)) != len(selected)
     ):
-        raise ValueError(f"{path} selected_candidates must be a non-empty unique string list")
+        raise ValueError(
+            f"{path} selected_candidates must be a non-empty unique string list"
+        )
     if exact is not None and len(selected) != exact:
         raise ValueError(f"{path} must select exactly {exact} candidate(s)")
     if len(selected) < minimum:

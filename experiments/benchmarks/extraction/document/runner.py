@@ -70,7 +70,7 @@ def evaluate_candidate(
                         "error": None,
                     }
                 )
-            except Exception as exc:  # failed inputs remain explicit sample rows
+            except Exception as exc:  # noqa: BLE001 - retain failed sample rows
                 failures.append(exc)
                 failed_latency = time.perf_counter() - started
                 latencies.append(failed_latency)
@@ -90,9 +90,7 @@ def evaluate_candidate(
         measured_seconds += sum(latencies)
         # Successful attempts still contribute processed pages even when a different
         # repetition failed and quality is deliberately replaced by an empty output.
-        successful_page_counts = [
-            _processed_pages(item, value) for value in documents
-        ]
+        successful_page_counts = [_processed_pages(item, value) for value in documents]
         if successful_latencies:
             complete_latency = float(np.median(successful_latencies))
             document_latencies.append(complete_latency)
@@ -170,9 +168,15 @@ def evaluate_candidate(
     if page_latencies:
         operational.update(
             {
-                "p50_warm_latency_per_page_seconds": float(np.quantile(page_latencies, 0.50)),
-                "p95_warm_latency_per_page_seconds": float(np.quantile(page_latencies, 0.95)),
-                "batch_pages_per_minute": 60.0 * successful_pages / max(measured_seconds, 1e-9),
+                "p50_warm_latency_per_page_seconds": float(
+                    np.quantile(page_latencies, 0.50)
+                ),
+                "p95_warm_latency_per_page_seconds": float(
+                    np.quantile(page_latencies, 0.95)
+                ),
+                "batch_pages_per_minute": 60.0
+                * successful_pages
+                / max(measured_seconds, 1e-9),
             }
         )
     if resamples:
@@ -245,10 +249,7 @@ def evaluate_candidate(
         ),
     }
     parameters.update(
-        {
-            f"parser.{name}": value
-            for name, value in executed_parser_options.items()
-        }
+        {f"parser.{name}": value for name, value in executed_parser_options.items()}
     )
     if engine == "paddleocr-vl-1.6":
         parameters.update(
@@ -318,27 +319,34 @@ def validate_prepared_components(candidate, lock_entry, protocol) -> None:
 def directions_for(references, available):
     names = {
         "reliability.empty_output_rate",
-        "reliability.structured_output_determinism", "reliability.candidate_failure_rate",
+        "reliability.structured_output_determinism",
+        "reliability.candidate_failure_rate",
         "operational.first_item_latency_seconds",
         "operational.p50_complete_document_latency_seconds",
         "operational.p95_complete_document_latency_seconds",
-        "operational.peak_process_tree_ram_mb", "operational.peak_vram_mb",
+        "operational.peak_process_tree_ram_mb",
+        "operational.peak_vram_mb",
         "operational.peak_temporary_disk_mb",
     }
     capabilities = set().union(*(reference.capabilities for reference in references))
     if "text" in capabilities:
         names.update(
             {
-                "text.content_precision", "text.content_recall", "text.content_f1",
-                "text.character_error_rate", "text.word_error_rate",
+                "text.content_precision",
+                "text.content_recall",
+                "text.content_f1",
+                "text.character_error_rate",
+                "text.word_error_rate",
                 "reliability.duplicate_content_rate",
             }
         )
     if "pages" in capabilities:
         names.update(
             {
-                "pages.page_coverage", "pages.page_content_f1",
-                "pages.page_attribution_accuracy", "pages.duplicate_page_rate",
+                "pages.page_coverage",
+                "pages.page_content_f1",
+                "pages.page_attribution_accuracy",
+                "pages.duplicate_page_rate",
                 "operational.p50_warm_latency_per_page_seconds",
                 "operational.p95_warm_latency_per_page_seconds",
                 "operational.batch_pages_per_minute",
@@ -347,7 +355,9 @@ def directions_for(references, available):
     if capabilities & {"reading_order", "layout_boxes", "element_types", "hierarchy"}:
         names.update(
             {
-                "layout.element_precision", "layout.element_recall", "layout.element_f1",
+                "layout.element_precision",
+                "layout.element_recall",
+                "layout.element_f1",
             }
         )
     if "reading_order" in capabilities:
@@ -380,27 +390,39 @@ def directions_for(references, available):
         for reference in references
     )
     if "formulas" in capabilities and has_formula_references:
-        names.update(name for name in available if name.startswith("formulas.detection_"))
+        names.update(
+            name for name in available if name.startswith("formulas.detection_")
+        )
         names.update({"formulas.recognition_similarity", "formulas.exact_match"})
     return {name: available[name] for name in available if name in names}
 
 
 def primary_metrics(directions):
     preferred = (
-        "text.content_f1", "text.reading_order_accuracy", "pages.page_content_f1",
-        "layout.element_f1", "layout.element_type_accuracy", "layout.hierarchy_accuracy",
-        "tables.detection_f1", "tables.content_f1", "tables.teds",
-        "formulas.detection_f1", "formulas.exact_match",
+        "text.content_f1",
+        "text.reading_order_accuracy",
+        "pages.page_content_f1",
+        "layout.element_f1",
+        "layout.element_type_accuracy",
+        "layout.hierarchy_accuracy",
+        "tables.detection_f1",
+        "tables.content_f1",
+        "tables.teds",
+        "formulas.detection_f1",
+        "formulas.exact_match",
     )
     return tuple(name for name in preferred if name in directions)
 
 
 def required_metrics(directions):
     conditional = {
-        "text.reading_order_accuracy", "pages.duplicate_page_rate",
+        "text.reading_order_accuracy",
+        "pages.duplicate_page_rate",
         "pages.page_attribution_accuracy",
-        "layout.element_type_accuracy", "layout.hierarchy_accuracy",
-        "layout.mean_bounding_box_iou", "reliability.duplicate_content_rate",
+        "layout.element_type_accuracy",
+        "layout.hierarchy_accuracy",
+        "layout.mean_bounding_box_iou",
+        "reliability.duplicate_content_rate",
         "operational.peak_vram_mb",
     }
     return tuple(name for name in directions if name not in conditional)
@@ -408,9 +430,14 @@ def required_metrics(directions):
 
 def paired_metrics(directions):
     pooled = {
-        "layout.element_precision", "layout.element_recall", "layout.element_f1",
-        "tables.detection_precision", "tables.detection_recall", "tables.detection_f1",
-        "formulas.detection_precision", "formulas.detection_recall",
+        "layout.element_precision",
+        "layout.element_recall",
+        "layout.element_f1",
+        "tables.detection_precision",
+        "tables.detection_recall",
+        "tables.detection_f1",
+        "formulas.detection_precision",
+        "formulas.detection_recall",
         "formulas.detection_f1",
     }
     return tuple(
@@ -451,7 +478,9 @@ def _cold_latency(candidate, item, model_lock, component_options, protocol):
             )
         except subprocess.CalledProcessError as exc:
             detail = (exc.stderr or exc.stdout or "no worker output").strip()
-            raise RuntimeError(f"Fresh document worker failed: {detail[-2000:]}") from exc
+            raise RuntimeError(
+                f"Fresh document worker failed: {detail[-2000:]}"
+            ) from exc
     finally:
         payload_path.unlink(missing_ok=True)
     if "EDUMIND_FIRST_ITEM_COMPLETE" not in completed.stdout:
@@ -459,9 +488,7 @@ def _cold_latency(candidate, item, model_lock, component_options, protocol):
     return time.perf_counter() - started
 
 
-def _latency_intervals(
-    document_values, page_values, resamples, seed, confidence
-):
+def _latency_intervals(document_values, page_values, resamples, seed, confidence):
     result = {}
     rng = np.random.default_rng(seed)
     tail = (1.0 - confidence) / 2.0
@@ -475,8 +502,8 @@ def _latency_intervals(
         draws = {0.50: [], 0.95: []}
         for _ in range(resamples):
             sample = observed[rng.integers(0, len(observed), len(observed))]
-            for quantile in draws:
-                draws[quantile].append(float(np.quantile(sample, quantile)))
+            for quantile, estimates in draws.items():
+                estimates.append(float(np.quantile(sample, quantile)))
         for quantile, estimates in draws.items():
             result[f"operational.p{int(quantile * 100)}_{suffix}"] = {
                 "estimate": float(np.quantile(observed, quantile)),
@@ -493,6 +520,14 @@ def _processed_pages(item, document):
     if item.get("kind") == "image":
         return 1
     count = document.metadata.get("page_count", 0)
-    return int(count) if count else len(
-        {segment.page_number for segment in document.segments if segment.page_number}
+    return (
+        int(count)
+        if count
+        else len(
+            {
+                segment.page_number
+                for segment in document.segments
+                if segment.page_number
+            }
+        )
     )

@@ -11,7 +11,6 @@ from edumind.common.config import ConfigurationError, load_settings
 from edumind.rag.errors import RAGConfigurationError
 from edumind.rag.pipeline import RAGPipeline
 
-
 ROOT = Path(__file__).resolve().parents[1]
 BASE = ROOT / "config/base.yaml"
 

@@ -23,7 +23,9 @@ class DoclingExtractor:
         self.revision = revision
         self._runtimes: dict[str, Any] = {}
 
-    def extract(self, request: ExtractionRequest, kind: SourceKind) -> ExtractedDocument:
+    def extract(
+        self, request: ExtractionRequest, kind: SourceKind
+    ) -> ExtractedDocument:
         if request.profile is None:
             raise ValueError("Resolved extraction profile is required")
         started = time.perf_counter()
@@ -47,9 +49,7 @@ class DoclingExtractor:
             seconds=time.perf_counter() - started,
         )
 
-    def _convert(
-        self, request: ExtractionRequest, kind: SourceKind
-    ) -> Any:
+    def _convert(self, request: ExtractionRequest, kind: SourceKind) -> Any:
         converter, _ = self._converter(request, kind)
         return converter.convert(str(request.source_path)).document
 
@@ -77,7 +77,9 @@ class DoclingExtractor:
                 PdfFormatOption,
             )
         except (ImportError, ModuleNotFoundError) as exc:
-            raise MissingDependencyError(f"Docling {DOCLING_VERSION} is required") from exc
+            raise MissingDependencyError(
+                f"Docling {DOCLING_VERSION} is required"
+            ) from exc
         installed = version("docling")
         if installed != DOCLING_VERSION:
             raise MissingDependencyError(

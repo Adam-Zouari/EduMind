@@ -46,7 +46,7 @@ class AppController:
                 checksum,
                 safe_name,
                 DocumentStatus.FAILED,
-                error=f"Upload exceeds the configured {maximum / (1024 ** 2):.0f} MiB limit.",
+                error=f"Upload exceeds the configured {maximum / (1024**2):.0f} MiB limit.",
             )
             records[checksum] = record.to_dict()
             return record, True
@@ -95,7 +95,9 @@ class AppController:
         return self.pipeline.readiness()
 
     @staticmethod
-    def _record(checksum: str, filename: str, result: DocumentProcessResult) -> DocumentRecord:
+    def _record(
+        checksum: str, filename: str, result: DocumentProcessResult
+    ) -> DocumentRecord:
         ingest = result.ingest
         return DocumentRecord(
             checksum,
@@ -116,7 +118,12 @@ def safe_error(exc: Exception) -> str:
         return exc.public_message
     if isinstance(
         exc,
-        (ConfigurationError, ModelPreparationError, ModelLoadError, RAGConfigurationError),
+        (
+            ConfigurationError,
+            ModelPreparationError,
+            ModelLoadError,
+            RAGConfigurationError,
+        ),
     ):
         return str(exc)
     if isinstance(exc, FileNotFoundError) and "prepare.py app-models" in str(exc):

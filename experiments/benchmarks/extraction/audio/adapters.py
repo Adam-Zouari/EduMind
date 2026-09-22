@@ -191,13 +191,15 @@ class NemoRuntime(BaseRuntime):
 
     def load(self) -> None:
         try:
-            import torch
             import nemo.collections.asr as nemo_asr
+            import torch
         except ModuleNotFoundError as exc:
             raise MissingDependencyError("NVIDIA NeMo ASR is required") from exc
         checkpoints = sorted(self.model_path.glob("*.nemo"))
         if not checkpoints:
-            raise FileNotFoundError(f"No pinned .nemo checkpoint exists under {self.model_path}")
+            raise FileNotFoundError(
+                f"No pinned .nemo checkpoint exists under {self.model_path}"
+            )
         self._runtime = nemo_asr.models.ASRModel.restore_from(
             restore_path=str(checkpoints[0]), map_location=self.device
         )
@@ -245,7 +247,9 @@ class MossRuntime(BaseRuntime):
     def load(self) -> None:
         try:
             import torch
-            from moss_transcribe_diarize.attention import load_model_with_attention_fallback
+            from moss_transcribe_diarize.attention import (
+                load_model_with_attention_fallback,
+            )
             from transformers import AutoProcessor
         except ModuleNotFoundError as exc:
             raise MissingDependencyError(
@@ -303,7 +307,9 @@ class MossRuntime(BaseRuntime):
             dtype=dtype,
             attention_report=attention_report,
         )
-        raw = str(result.get("text", "")) if isinstance(result, Mapping) else str(result)
+        raw = (
+            str(result.get("text", "")) if isinstance(result, Mapping) else str(result)
+        )
         parsed = parse_transcript(raw)
         segments = tuple(
             {
@@ -314,12 +320,16 @@ class MossRuntime(BaseRuntime):
             for segment in parsed
             if str(getattr(segment, "text", "")).strip()
         )
-        return Transcript(" ".join(str(item["text"]) for item in segments) or raw.strip(), segments)
+        return Transcript(
+            " ".join(str(item["text"]) for item in segments) or raw.strip(), segments
+        )
 
 
 def _nemo_segment(item: Mapping[str, object]) -> dict[str, object]:
     return {
-        "text": str(item.get("segment", item.get("word", item.get("text", "")))).strip(),
+        "text": str(
+            item.get("segment", item.get("word", item.get("text", "")))
+        ).strip(),
         "start": float(item.get("start", -1)),
         "end": float(item.get("end", -1)),
     }
@@ -365,4 +375,6 @@ def _runtime_version(backend: str) -> str:
     try:
         return version(distribution)
     except PackageNotFoundError as exc:
-        raise RuntimeError(f"Cannot identify installed ASR runtime {distribution}") from exc
+        raise RuntimeError(
+            f"Cannot identify installed ASR runtime {distribution}"
+        ) from exc

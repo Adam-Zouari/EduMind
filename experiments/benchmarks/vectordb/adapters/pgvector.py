@@ -66,15 +66,14 @@ class PgVector:
             for row in records
         ]
         for start in range(0, len(rows), self.config.upsert_batch_size):
-            with self.pool.connection() as connection:
-                with connection.cursor() as cursor:
-                    cursor.executemany(
-                        "INSERT INTO edumind_benchmark (id, embedding, text, metadata) "
-                        "VALUES (%s, %s::vector, %s, %s::jsonb) "
-                        "ON CONFLICT (id) DO UPDATE SET embedding=excluded.embedding, "
-                        "text=excluded.text, metadata=excluded.metadata",
-                        rows[start : start + self.config.upsert_batch_size],
-                    )
+            with self.pool.connection() as connection, connection.cursor() as cursor:
+                cursor.executemany(
+                    "INSERT INTO edumind_benchmark (id, embedding, text, metadata) "
+                    "VALUES (%s, %s::vector, %s, %s::jsonb) "
+                    "ON CONFLICT (id) DO UPDATE SET embedding=excluded.embedding, "
+                    "text=excluded.text, metadata=excluded.metadata",
+                    rows[start : start + self.config.upsert_batch_size],
+                )
 
     def search(self, vector, limit, filters=None) -> list[Hit]:
         clauses = []
@@ -84,24 +83,24 @@ class PgVector:
             parameters.append(json.dumps({key: value}))
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         parameters.extend([_vector(vector), limit])
-        with self.pool.connection() as connection:
-            with connection.transaction():
-                connection.execute(f"SET LOCAL hnsw.ef_search = {self.config.ef_search}")
-                if filters:
-                    connection.execute("SET LOCAL hnsw.iterative_scan = 'strict_order'")
-                connection.execute("SET LOCAL enable_seqscan = off")
-                rows = connection.execute(
-                    "SELECT id, metadata, 1 - (embedding <=> %s::vector) AS score "
-                    f"FROM edumind_benchmark{where} ORDER BY embedding <=> %s::vector LIMIT %s",
-                    tuple(parameters),
-                ).fetchall()
+        with self.pool.connection() as connection, connection.transaction():
+            connection.execute(f"SET LOCAL hnsw.ef_search = {self.config.ef_search}")
+            if filters:
+                connection.execute("SET LOCAL hnsw.iterative_scan = 'strict_order'")
+            connection.execute("SET LOCAL enable_seqscan = off")
+            rows = connection.execute(
+                "SELECT id, metadata, 1 - (embedding <=> %s::vector) AS score "
+                f"FROM edumind_benchmark{where} ORDER BY embedding <=> %s::vector LIMIT %s",
+                tuple(parameters),
+            ).fetchall()
         return [Hit(str(row[0]), float(row[2]), row[1]) for row in rows]
 
     def delete(self, identifiers: Sequence[str]) -> None:
         if identifiers:
             with self.pool.connection() as connection:
                 connection.execute(
-                    "DELETE FROM edumind_benchmark WHERE id = ANY(%s)", (list(identifiers),)
+                    "DELETE FROM edumind_benchmark WHERE id = ANY(%s)",
+                    (list(identifiers),),
                 )
 
     def delete_document(self, source_id: str) -> int:
@@ -114,7 +113,11 @@ class PgVector:
 
     def count(self) -> int:
         with self.pool.connection() as connection:
-            return int(connection.execute("SELECT count(*) FROM edumind_benchmark").fetchone()[0])
+            return int(
+                connection.execute("SELECT count(*) FROM edumind_benchmark").fetchone()[
+                    0
+                ]
+            )
 
     def index_info(self) -> Mapping[str, object]:
         with self.pool.connection() as connection:
@@ -124,15 +127,14 @@ class PgVector:
         result = {str(name): str(definition) for name, definition in rows}
         if not any("USING hnsw" in definition for definition in result.values()):
             raise RuntimeError("pgvector did not report HNSW")
-        with self.pool.connection() as connection:
-            with connection.transaction():
-                connection.execute("SET LOCAL enable_seqscan=off")
-                explain = connection.execute(
-                    "EXPLAIN SELECT id FROM edumind_benchmark "
-                    "ORDER BY embedding <=> %s::vector "
-                    f"LIMIT {self.config.index_verification_limit}",
-                    ("[" + ",".join("0" for _ in range(self.config.dimension)) + "]",),
-                ).fetchall()
+        with self.pool.connection() as connection, connection.transaction():
+            connection.execute("SET LOCAL enable_seqscan=off")
+            explain = connection.execute(
+                "EXPLAIN SELECT id FROM edumind_benchmark "
+                "ORDER BY embedding <=> %s::vector "
+                f"LIMIT {self.config.index_verification_limit}",
+                ("[" + ",".join("0" for _ in range(self.config.dimension)) + "]",),
+            ).fetchall()
         if "Index Scan" not in " ".join(str(row[0]) for row in explain):
             raise RuntimeError("PostgreSQL planner did not use the HNSW index")
         return result

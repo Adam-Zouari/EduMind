@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 RETRIEVERS = ("dense", "bm25", "rrf")
 RERANKER_MODELS = {
     "gte-modernbert": "Alibaba-NLP/gte-reranker-modernbert-base",
@@ -16,7 +15,9 @@ RERANKERS = ("none", *RERANKER_MODELS)
 
 
 def development_candidates() -> tuple[str, ...]:
-    return tuple(f"{retriever}|{reranker}" for retriever in RETRIEVERS for reranker in RERANKERS)
+    return tuple(
+        f"{retriever}|{reranker}" for retriever in RETRIEVERS for reranker in RERANKERS
+    )
 
 
 @dataclass(frozen=True)
@@ -65,7 +66,9 @@ def validation_candidates(
         for candidate in parsed
         if candidate.reranker != "none"
     }
-    return owner_first(tuple(candidate for candidate in declared if candidate in requested))
+    return owner_first(
+        tuple(candidate for candidate in declared if candidate in requested)
+    )
 
 
 def required_reranker_models(candidates: tuple[str, ...]) -> tuple[str, ...]:

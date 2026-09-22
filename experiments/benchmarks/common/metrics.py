@@ -48,10 +48,16 @@ def context_recall(gold: Sequence[Interval], retrieved: Sequence[Interval]) -> f
     )
 
 
-def relevance_grades(gold: Sequence[Interval], retrieved: Sequence[Interval]) -> list[float]:
+def relevance_grades(
+    gold: Sequence[Interval], retrieved: Sequence[Interval]
+) -> list[float]:
     merged_gold = merge_intervals(gold)
     return [
-        min(1.0, covered_length(merged_gold, [candidate]) / max(1, candidate[1] - candidate[0]))
+        min(
+            1.0,
+            covered_length(merged_gold, [candidate])
+            / max(1, candidate[1] - candidate[0]),
+        )
         for candidate in retrieved
     ]
 
@@ -63,14 +69,20 @@ def precision_at_k(relevance: Sequence[float], k: int) -> float:
 
 
 def recall_at_k(relevance: Sequence[float], relevant_total: int, k: int) -> float:
-    return sum(score > 0 for score in relevance[:k]) / relevant_total if relevant_total else 0.0
+    return (
+        sum(score > 0 for score in relevance[:k]) / relevant_total
+        if relevant_total
+        else 0.0
+    )
 
 
 def hit_rate_at_k(relevance: Sequence[float], k: int) -> float:
     return float(any(score > 0 for score in relevance[:k]))
 
 
-def average_precision_at_k(relevance: Sequence[float], relevant_total: int, k: int) -> float:
+def average_precision_at_k(
+    relevance: Sequence[float], relevant_total: int, k: int
+) -> float:
     if not relevant_total:
         return 0.0
     hits = 0
@@ -83,7 +95,9 @@ def average_precision_at_k(relevance: Sequence[float], relevant_total: int, k: i
 
 
 def reciprocal_rank(relevance: Sequence[float]) -> float:
-    return next((1.0 / rank for rank, score in enumerate(relevance, start=1) if score > 0), 0.0)
+    return next(
+        (1.0 / rank for rank, score in enumerate(relevance, start=1) if score > 0), 0.0
+    )
 
 
 def ndcg_at_k(
@@ -91,11 +105,14 @@ def ndcg_at_k(
 ) -> float:
     def dcg(values: Sequence[float]) -> float:
         return sum(
-            (2**grade - 1) / math.log2(rank + 1) for rank, grade in enumerate(values, start=1)
+            (2**grade - 1) / math.log2(rank + 1)
+            for rank, grade in enumerate(values, start=1)
         )
 
     observed = dcg(grades[:k])
-    ideal = dcg(sorted(ideal_grades if ideal_grades is not None else grades, reverse=True)[:k])
+    ideal = dcg(
+        sorted(ideal_grades if ideal_grades is not None else grades, reverse=True)[:k]
+    )
     return observed / ideal if ideal else 0.0
 
 
@@ -155,9 +172,9 @@ def normalized_tokens(text: str) -> list[str]:
 
 
 def precision_recall_f1(
-    true_positive: int | float,
-    false_positive: int | float,
-    false_negative: int | float,
+    true_positive: float,
+    false_positive: float,
+    false_negative: float,
 ) -> tuple[float, float, float]:
     """Return the shared count-based PR/F1 arithmetic without defining units."""
 
@@ -197,7 +214,9 @@ def rouge_l(answer: str, reference: str) -> float:
         current = [0]
         for index, other in enumerate(right, start=1):
             current.append(
-                previous[index - 1] + 1 if token == other else max(current[-1], previous[index])
+                previous[index - 1] + 1
+                if token == other
+                else max(current[-1], previous[index])
             )
         previous = current
     lcs = previous[-1]
@@ -211,10 +230,16 @@ def citation_scores(answer: str, supported_context_ids: set[int]) -> dict[str, f
     true_positive = len(cited & supported_context_ids)
     precision = true_positive / len(cited) if cited else 0.0
     recall = (
-        true_positive / len(supported_context_ids) if supported_context_ids else float(not cited)
+        true_positive / len(supported_context_ids)
+        if supported_context_ids
+        else float(not cited)
     )
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
-    return {"citation_precision": precision, "citation_recall": recall, "citation_f1": f1}
+    return {
+        "citation_precision": precision,
+        "citation_recall": recall,
+        "citation_f1": f1,
+    }
 
 
 def balanced_accuracy(labels: Sequence[bool], predictions: Sequence[bool]) -> float:
@@ -224,7 +249,9 @@ def balanced_accuracy(labels: Sequence[bool], predictions: Sequence[bool]) -> fl
     for label in (False, True):
         indices = [index for index, value in enumerate(labels) if value is label]
         if indices:
-            recalls.append(sum(predictions[index] is label for index in indices) / len(indices))
+            recalls.append(
+                sum(predictions[index] is label for index in indices) / len(indices)
+            )
     return float(sum(recalls) / len(recalls)) if recalls else 0.0
 
 
@@ -250,7 +277,9 @@ def paired_bootstrap_interval(
     if right is not None:
         differences = differences - np.asarray(right, dtype=float)
     random_state = np.random.default_rng(seed)
-    indices = random_state.integers(0, len(differences), size=(resamples, len(differences)))
+    indices = random_state.integers(
+        0, len(differences), size=(resamples, len(differences))
+    )
     samples = differences[indices].mean(axis=1)
     alpha = (1.0 - confidence) / 2.0
     return ConfidenceInterval(
@@ -274,7 +303,11 @@ def balanced_accuracy_interval(
         raise ValueError("Labels and predictions must have equal length")
     correct_by_class = [
         np.asarray(
-            [prediction == label for truth, prediction in zip(labels, predictions, strict=True) if truth == label],
+            [
+                prediction == label
+                for truth, prediction in zip(labels, predictions, strict=True)
+                if truth == label
+            ],
             dtype=float,
         )
         for label in (False, True)

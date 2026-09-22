@@ -92,7 +92,11 @@ class HuggingFaceGenerator:
         self, query: str, context: str, system_prompt: str | None
     ) -> GenerationMeasurement:
         load_seconds = self._ensure_loaded()
-        assert self._model is not None and self._tokenizer is not None and self._torch is not None
+        assert (
+            self._model is not None
+            and self._tokenizer is not None
+            and self._torch is not None
+        )
         messages = [
             {"role": "system", "content": system_prompt or DEFAULT_SYSTEM_PROMPT},
             {
@@ -116,7 +120,9 @@ class HuggingFaceGenerator:
                 max_length=self.profile.context_tokens,
             )
         )
-        encoded = {name: value.to(self.profile.device) for name, value in encoded.items()}
+        encoded = {
+            name: value.to(self.profile.device) for name, value in encoded.items()
+        }
         prompt_tokens = int(encoded["input_ids"].shape[-1])
         self._torch.manual_seed(self.profile.seed)
         if self.profile.device.startswith("cuda"):
@@ -146,7 +152,7 @@ class HuggingFaceGenerator:
             try:
                 with self._torch.inference_mode():
                     self._model.generate(**generation_options)
-            except BaseException as exc:
+            except BaseException as exc:  # noqa: BLE001 - unblock the streaming consumer
                 errors.append(exc)
                 streamer.on_finalized_text("", stream_end=True)
 
@@ -273,7 +279,9 @@ class HuggingFaceGenerator:
 
 
 def _visible_answer(text: str) -> tuple[str, str]:
-    reasoning = re.findall(r"<think>(.*?)</think>", text, flags=re.DOTALL | re.IGNORECASE)
+    reasoning = re.findall(
+        r"<think>(.*?)</think>", text, flags=re.DOTALL | re.IGNORECASE
+    )
     visible = re.sub(
         r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE
     ).strip()

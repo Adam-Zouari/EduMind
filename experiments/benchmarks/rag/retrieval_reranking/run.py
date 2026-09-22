@@ -10,8 +10,8 @@ from pathlib import Path
 from edumind.common.artifacts import stable_hash
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.contracts import BenchmarkPlan
-from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
+from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.preparation.models import (
     load_selected_model_lock,
@@ -20,10 +20,16 @@ from experiments.benchmarks.preparation.models import (
 from experiments.benchmarks.rag.chunking_embedding.profiles import split_candidate
 from experiments.benchmarks.rag.chunking_embedding.protocol import (
     DEFAULT_PROTOCOL_PATH as DEFAULT_CHUNKING_PROTOCOL_PATH,
+)
+from experiments.benchmarks.rag.chunking_embedding.protocol import (
     load_protocol as load_chunking_protocol,
 )
-from experiments.benchmarks.rag.retrieval_reranking.benchmark import run_in_fresh_process
-from experiments.benchmarks.rag.retrieval_reranking.comparisons import parent_artifact_builder
+from experiments.benchmarks.rag.retrieval_reranking.benchmark import (
+    run_in_fresh_process,
+)
+from experiments.benchmarks.rag.retrieval_reranking.comparisons import (
+    parent_artifact_builder,
+)
 from experiments.benchmarks.rag.retrieval_reranking.metrics import (
     directions_for,
     primary_metrics,
@@ -98,11 +104,15 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.compare_finalists and arguments.profile != "validation":
         parser.error("--compare-finalists is valid only for validation")
 
-    manifest_path = arguments.manifest or PROJECT_ROOT / {
-        "smoke": "data/benchmarks/rag/smoke.json",
-        "development": "data/benchmarks/rag/rag-selection-dev.json",
-        "validation": "data/benchmarks/rag/rag-selection-validation.json",
-    }[arguments.profile]
+    manifest_path = (
+        arguments.manifest
+        or PROJECT_ROOT
+        / {
+            "smoke": "data/benchmarks/rag/smoke.json",
+            "development": "data/benchmarks/rag/rag-selection-dev.json",
+            "validation": "data/benchmarks/rag/rag-selection-validation.json",
+        }[arguments.profile]
+    )
     manifest = load_manifest(manifest_path)
     require_manifest_split(
         manifest,
@@ -227,7 +237,9 @@ def main(argv: list[str] | None = None) -> int:
             pool_checksum = stable_hash(rows)
             parameters = dict(evaluated[3])
             if parameters.get("pool_checksum") != pool_checksum:
-                raise RuntimeError(f"{candidate_name} returned an inconsistent pool hash")
+                raise RuntimeError(
+                    f"{candidate_name} returned an inconsistent pool hash"
+                )
             pools[candidate_name] = {
                 "owner_candidate": candidate_name,
                 "owner_run_id": str(context["mlflow_run_id"]),

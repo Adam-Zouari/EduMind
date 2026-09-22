@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import os
 import bisect
+import os
 from typing import Protocol
 
 
@@ -51,8 +51,7 @@ class TiktokenOffsetTokenizer:
             byte_end = byte_offset + len(token_bytes)
             start = max(0, bisect.bisect_right(character_bytes, byte_offset) - 1)
             end = min(len(text), bisect.bisect_left(character_bytes, byte_end))
-            if end < start:
-                end = start
+            end = max(end, start)
             spans.append((start, end))
             byte_offset = byte_end
         return spans

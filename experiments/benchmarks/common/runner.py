@@ -31,10 +31,10 @@ from .contracts import (
     CandidateResult,
     SampleResult,
 )
-from .provenance import git_provenance, hardware_summary
-from .protocol import ProtocolMetadata
-from .resources import ResourceMonitor
 from .metrics import paired_bootstrap_interval
+from .protocol import ProtocolMetadata
+from .provenance import git_provenance, hardware_summary
+from .resources import ResourceMonitor
 from .statistics import aggregate_samples
 from .tracking import tracker
 
@@ -57,9 +57,7 @@ Evaluator = Callable[
         Mapping[str, object],
     ],
 ]
-ResourceMonitorOptions = (
-    Mapping[str, object] | Callable[[str], Mapping[str, object]]
-)
+ResourceMonitorOptions = Mapping[str, object] | Callable[[str], Mapping[str, object]]
 
 
 def run_benchmark(
@@ -116,7 +114,9 @@ def run_benchmark(
                 f"Protocol mapping key {name!r} does not match {protocol.name!r}"
             )
         if not protocol.source_path.is_file():
-            raise FileNotFoundError(f"Protocol source is missing: {protocol.source_path}")
+            raise FileNotFoundError(
+                f"Protocol source is missing: {protocol.source_path}"
+            )
     confidence_level = _protocol_confidence_level(protocol_values)
     protocol_provenance = {
         name: {
@@ -189,8 +189,12 @@ def run_benchmark(
                 "git_dirty": provenance["git"].get("dirty"),
                 "git_dirty_hash": provenance["git"].get("dirty_hash"),
                 "hardware": json.dumps(provenance["hardware"], sort_keys=True),
-                "model_revisions": json.dumps(provenance["model_revisions"], sort_keys=True),
-                "dependency_locks": json.dumps(provenance["dependency_locks"], sort_keys=True),
+                "model_revisions": json.dumps(
+                    provenance["model_revisions"], sort_keys=True
+                ),
+                "dependency_locks": json.dumps(
+                    provenance["dependency_locks"], sort_keys=True
+                ),
                 "engineer_decisions": json.dumps(
                     provenance["engineer_decisions"], sort_keys=True
                 ),
@@ -209,7 +213,9 @@ def run_benchmark(
         tracking.artifact(metric_contract_path)
         for name, path in protocol_artifacts.items():
             tracking.artifact(path, "protocols")
-            tracking.artifact(protocol_values[name].source_path, f"inputs/protocols/{name}")
+            tracking.artifact(
+                protocol_values[name].source_path, f"inputs/protocols/{name}"
+            )
         for input_name, input_path in (input_artifacts or {}).items():
             tracking.artifact(input_path, f"inputs/{input_name}")
         for decision_name, decision_path in (decision_files or {}).items():
@@ -260,16 +266,21 @@ def run_benchmark(
                 custom_parent_artifacts = list(
                     parent_artifact_builder(directory, results, plan)
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - incomplete artifacts must be reported
                 problems.append(
-                    "parent artifact validation failed: "
-                    f"{type(exc).__name__}: {exc}"
+                    f"parent artifact validation failed: {type(exc).__name__}: {exc}"
                 )
                 complete = False
         for path in custom_parent_artifacts:
             tracking.artifact(path)
         result = BenchmarkResult(
-            run_id, plan, provenance, tuple(results), complete, tuple(problems), directory
+            run_id,
+            plan,
+            provenance,
+            tuple(results),
+            complete,
+            tuple(problems),
+            directory,
         )
         _finalize_parent_run(
             result,
@@ -298,7 +309,9 @@ def _finalize_parent_run(
     operational_prefix: str,
     write_comparisons: bool,
 ) -> None:
-    successful = [candidate for candidate in result.candidates if candidate.status == "success"]
+    successful = [
+        candidate for candidate in result.candidates if candidate.status == "success"
+    ]
     failed_count = sum(candidate.status == "failed" for candidate in result.candidates)
     summary = {
         "run_id": result.run_id,
@@ -307,12 +320,18 @@ def _finalize_parent_run(
         "plan": asdict(result.plan),
         "metric_contract": metric_contract,
         "provenance": result.provenance,
-        "candidates": [_payload(candidate, include_samples=False) for candidate in result.candidates],
+        "candidates": [
+            _payload(candidate, include_samples=False)
+            for candidate in result.candidates
+        ],
         "paired_comparisons": comparisons,
         "parent_artifacts": [
-            {"name": path.name, "sha256": sha256_file(path)} for path in parent_artifacts
+            {"name": path.name, "sha256": sha256_file(path)}
+            for path in parent_artifacts
         ],
-        "protocols": {name: protocol.artifact_payload() for name, protocol in protocols.items()},
+        "protocols": {
+            name: protocol.artifact_payload() for name, protocol in protocols.items()
+        },
         "complete": result.complete,
         "completion": {
             "planned_candidates": len(result.plan.candidates),
@@ -404,19 +423,22 @@ def _run_candidate(
     resource_rows: list[dict[str, object]] = []
     fingerprint = stable_hash({"run": run_fingerprint, "candidate": candidate})
     protocol_parameters = (
-        {"protocols": {
-            name: {
-                "version": protocol.version,
-                "checksum": protocol.checksum,
-                "resolved": protocol.resolved,
+        {
+            "protocols": {
+                name: {
+                    "version": protocol.version,
+                    "checksum": protocol.checksum,
+                    "resolved": protocol.resolved,
+                }
+                for name, protocol in protocols.items()
             }
-            for name, protocol in protocols.items()
-        }}
+        }
         if protocols
         else {}
     )
     candidate_parameters.update(protocol_parameters)
     with tracking.run(candidate, nested=True) as child_run_id:
+
         def evaluate():
             return (
                 evaluator(candidate, {"mlflow_run_id": child_run_id})
@@ -510,7 +532,9 @@ def _run_candidate(
             else:
                 metrics, intervals = aggregate_samples(
                     samples,
-                    resamples=0 if plan.profile == "smoke" else plan.bootstrap_resamples,
+                    resamples=0
+                    if plan.profile == "smoke"
+                    else plan.bootstrap_resamples,
                     seed=plan.seed,
                     confidence=confidence_level,
                 )
@@ -522,9 +546,7 @@ def _run_candidate(
                 operational_prefix,
                 nullable_metrics,
             )
-            _validate_operational_maximums(
-                operational, operational_maximums or {}
-            )
+            _validate_operational_maximums(operational, operational_maximums or {})
             result = CandidateResult(
                 candidate,
                 "success",
@@ -536,11 +558,11 @@ def _run_candidate(
                 mlflow_run_id=child_run_id,
                 parameters=candidate_parameters,
             )
-            tracking.metrics(_reported_metrics(metrics, operational, operational_prefix, intervals))
-            tracking.parameters({"candidate_status": "success"})
-            tracking.tags(
-                {"benchmark.valid": "true", "validation.status": "passed"}
+            tracking.metrics(
+                _reported_metrics(metrics, operational, operational_prefix, intervals)
             )
+            tracking.parameters({"candidate_status": "success"})
+            tracking.tags({"benchmark.valid": "true", "validation.status": "passed"})
             candidate_path = _write_candidate_result(
                 directory,
                 candidate,
@@ -567,7 +589,7 @@ def _run_candidate(
                 artifact_payloads[sample_artifact_name] = _sample_rows(samples)
             error = str(exc)
             structured_failure = True
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - retain arbitrary candidate failures
             error = f"{type(exc).__name__}: {exc}"
             structured_failure = False
 
@@ -579,10 +601,16 @@ def _run_candidate(
             )
             artifact_names.extend(path.name for path in written.values())
             tracking.parameters(
-                {**candidate_parameters, "candidate_status": "failed", "candidate_error": error}
+                {
+                    **candidate_parameters,
+                    "candidate_status": "failed",
+                    "candidate_error": error,
+                }
             )
         else:
-            tracking.parameters({"candidate_status": "failed", "candidate_error": error})
+            tracking.parameters(
+                {"candidate_status": "failed", "candidate_error": error}
+            )
             if samples:
                 if sample_artifact_path is None:
                     sample_artifact_path = _write_samples(directory, candidate, samples)
@@ -622,7 +650,9 @@ def _sample_rows(samples: list[SampleResult]) -> list[dict[str, object]]:
     ]
 
 
-def _write_samples(directory: Path, candidate: str, samples: list[SampleResult]) -> Path:
+def _write_samples(
+    directory: Path, candidate: str, samples: list[SampleResult]
+) -> Path:
     path = directory / "samples" / f"{_safe(candidate)}.parquet"
     path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(_sample_rows(samples)).to_parquet(path, index=False)
@@ -635,7 +665,9 @@ def _write_table(
     name: str,
     rows: Sequence[Mapping[str, object]],
 ) -> Path:
-    if not name or any(character not in "abcdefghijklmnopqrstuvwxyz0123456789_-" for character in name):
+    if not name or any(
+        character not in "abcdefghijklmnopqrstuvwxyz0123456789_-" for character in name
+    ):
         raise ValueError(f"Invalid candidate artifact table name: {name}")
     path = directory / "candidates" / _safe(candidate) / f"{name}.parquet"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -682,7 +714,9 @@ def _candidate_path(directory: Path, candidate: str, name: str | None) -> Path:
     if name is None:
         return directory / "candidates" / f"{_safe(candidate)}.json"
     if name != "candidate.json":
-        raise ValueError("The supported fixed candidate artifact name is candidate.json")
+        raise ValueError(
+            "The supported fixed candidate artifact name is candidate.json"
+        )
     return directory / "candidates" / _safe(candidate) / name
 
 
@@ -706,12 +740,17 @@ def _write_candidate_result(
 
 def _payload(result: CandidateResult, *, include_samples: bool) -> dict[str, object]:
     payload = asdict(result)
-    payload["samples"] = [asdict(sample) for sample in result.samples] if include_samples else []
+    payload["samples"] = (
+        [asdict(sample) for sample in result.samples] if include_samples else []
+    )
     return payload
 
 
 def _safe(value: str) -> str:
-    return "".join(character if character.isalnum() or character in "-_." else "_" for character in value)
+    return "".join(
+        character if character.isalnum() or character in "-_." else "_"
+        for character in value
+    )
 
 
 def _validate_metric_contract(
@@ -730,14 +769,15 @@ def _validate_metric_contract(
         raise ValueError("A benchmark must declare at least one primary metric")
     missing = [name for name in primary_metrics if name not in directions]
     if missing:
-        raise ValueError("Primary metrics are not required metrics: " + ", ".join(missing))
+        raise ValueError(
+            "Primary metrics are not required metrics: " + ", ".join(missing)
+        )
     invalid_primary = [
         name for name in primary_metrics if directions.get(name) not in {"min", "max"}
     ]
     if invalid_primary:
         raise ValueError(
-            "Primary metrics require min/max directions: "
-            + ", ".join(invalid_primary)
+            "Primary metrics require min/max directions: " + ", ".join(invalid_primary)
         )
 
 
@@ -748,16 +788,25 @@ def _prepare_metric_contract(
     paired_metrics: Sequence[str] | None,
     nullable_metrics: Sequence[str],
 ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], dict[str, object]]:
-    primary = (primary_metric,) if isinstance(primary_metric, str) else tuple(primary_metric)
+    primary = (
+        (primary_metric,) if isinstance(primary_metric, str) else tuple(primary_metric)
+    )
     _validate_metric_contract(directions, primary)
-    required = tuple(required_metrics) if required_metrics is not None else tuple(directions)
+    required = (
+        tuple(required_metrics) if required_metrics is not None else tuple(directions)
+    )
     paired = tuple(paired_metrics) if paired_metrics is not None else tuple(directions)
     unknown_required = sorted(set(required) - set(directions))
     if unknown_required:
-        raise ValueError("Required metrics have no declared direction: " + ", ".join(unknown_required))
+        raise ValueError(
+            "Required metrics have no declared direction: "
+            + ", ".join(unknown_required)
+        )
     unknown_paired = sorted(set(paired) - set(directions))
     if unknown_paired:
-        raise ValueError("Paired metrics have no declared direction: " + ", ".join(unknown_paired))
+        raise ValueError(
+            "Paired metrics have no declared direction: " + ", ".join(unknown_paired)
+        )
     unknown_nullable = sorted(set(nullable_metrics) - set(required))
     if unknown_nullable:
         raise ValueError(
@@ -808,9 +857,13 @@ def _validate_sample_ids(samples: list[SampleResult]) -> None:
     identifiers = [sample.sample_id for sample in samples]
     if any(not identifier for identifier in identifiers):
         raise ValueError("Every sample result must have a non-empty sample_id")
-    duplicates = sorted({value for value in identifiers if identifiers.count(value) > 1})
+    duplicates = sorted(
+        {value for value in identifiers if identifiers.count(value) > 1}
+    )
     if duplicates:
-        raise ValueError(f"Candidate produced duplicate sample IDs: {', '.join(duplicates[:10])}")
+        raise ValueError(
+            f"Candidate produced duplicate sample IDs: {', '.join(duplicates[:10])}"
+        )
 
 
 def _validate_required_metrics(
@@ -834,7 +887,9 @@ def _validate_required_metrics(
         and not _finite_number(values[name])
     ]
     invalid.extend(
-        name for name in required_metrics if name in values and values[name] is None and name not in nullable
+        name
+        for name in required_metrics
+        if name in values and values[name] is None and name not in nullable
     )
     problems = []
     if missing:
@@ -842,11 +897,17 @@ def _validate_required_metrics(
     if invalid:
         problems.append("non-finite: " + ", ".join(invalid))
     if problems:
-        raise ValueError("Required metric contract failed (" + "; ".join(problems) + ")")
+        raise ValueError(
+            "Required metric contract failed (" + "; ".join(problems) + ")"
+        )
 
 
 def _finite_number(value: object) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
 
 
 def _reported_metrics(
@@ -864,14 +925,18 @@ def _reported_metrics(
         },
         **{f"{prefix}{name}": value for name, value in operational.items()},
     }
-    return {name: float(value) for name, value in values.items() if _finite_number(value)}
+    return {
+        name: float(value) for name, value in values.items() if _finite_number(value)
+    }
 
 
 def _completion_problems(results: list[CandidateResult]) -> list[str]:
     problems: list[str] = []
     failed = [result for result in results if result.status == "failed"]
     for result in failed:
-        problems.append(f"candidate {result.candidate} failed: {result.error or 'unknown error'}")
+        problems.append(
+            f"candidate {result.candidate} failed: {result.error or 'unknown error'}"
+        )
 
     successful = [result for result in results if result.status == "success"]
     if successful:
@@ -903,7 +968,9 @@ def _paired_comparisons(
     confidence: float,
 ):
     comparisons = []
-    quality_metrics = [name for name in directions if not name.startswith("operational.")]
+    quality_metrics = [
+        name for name in directions if not name.startswith("operational.")
+    ]
     for left_index, left in enumerate(results):
         left_samples = {sample.sample_id: sample for sample in left.samples}
         for right in results[left_index + 1 :]:
@@ -943,8 +1010,12 @@ def _paired_comparisons(
                                 f"Paired metric {metric} has inconsistent {group_key} "
                                 f"for sample {sample_id}"
                             )
-                        grouped_left.setdefault(left_group, []).append(float(left_value))
-                        grouped_right.setdefault(right_group, []).append(float(right_value))
+                        grouped_left.setdefault(left_group, []).append(
+                            float(left_value)
+                        )
+                        grouped_right.setdefault(right_group, []).append(
+                            float(right_value)
+                        )
                     groups = sorted(grouped_left)
                     left_values = [
                         sum(grouped_left[group]) / len(grouped_left[group])
@@ -971,7 +1042,9 @@ def _paired_comparisons(
                     "paired_samples": len(paired_ids),
                     "paired_resampling_units": paired_units,
                 }
-            comparisons.append({"left": left.candidate, "right": right.candidate, "metrics": metrics})
+            comparisons.append(
+                {"left": left.candidate, "right": right.candidate, "metrics": metrics}
+            )
     return comparisons
 
 

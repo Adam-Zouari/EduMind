@@ -80,7 +80,9 @@ def hardware_summary() -> Mapping[str, object]:
         summary["nvidia_driver"] = str(pynvml.nvmlSystemGetDriverVersion())
         summary["gpus"] = [
             {
-                "name": str(pynvml.nvmlDeviceGetName(pynvml.nvmlDeviceGetHandleByIndex(index))),
+                "name": str(
+                    pynvml.nvmlDeviceGetName(pynvml.nvmlDeviceGetHandleByIndex(index))
+                ),
                 "memory_bytes": int(
                     pynvml.nvmlDeviceGetMemoryInfo(
                         pynvml.nvmlDeviceGetHandleByIndex(index)
@@ -90,7 +92,7 @@ def hardware_summary() -> Mapping[str, object]:
             for index in range(pynvml.nvmlDeviceGetCount())
         ]
         pynvml.nvmlShutdown()
-    except Exception:
+    except Exception:  # noqa: BLE001 - GPU provenance is optional.
         summary["gpus"] = []
     return summary
 

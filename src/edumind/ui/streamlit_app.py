@@ -7,7 +7,6 @@ import logging
 import streamlit as st
 
 from edumind.application import EduMindPipeline, ProgressEvent
-
 from edumind.ui.controller import AppController, safe_error
 
 LOGGER = logging.getLogger(__name__)
@@ -28,7 +27,9 @@ def _render_readiness(controller: AppController) -> None:
     try:
         readiness = controller.readiness()
         if readiness.get("ready"):
-            st.success("Extraction, index, and the local Hugging Face generator are ready.")
+            st.success(
+                "Extraction, index, and the local Hugging Face generator are ready."
+            )
         else:
             st.warning("Runtime preparation is incomplete.")
             for problem in readiness.get("problems", []):
@@ -72,7 +73,9 @@ def _render_upload(controller: AppController) -> None:
                 upload.name, bytes(upload.getbuffer()), _records(), progress=update
             )
             if not processed:
-                st.info(f"{record.filename} was already indexed; duplicate upload skipped.")
+                st.info(
+                    f"{record.filename} was already indexed; duplicate upload skipped."
+                )
             elif record.error:
                 st.error(f"{record.filename}: {record.error}")
             else:
@@ -85,7 +88,9 @@ def _render_upload(controller: AppController) -> None:
 
 
 def _render_query(controller: AppController) -> None:
-    question = st.text_area("Question", placeholder="Ask a question grounded in your documents")
+    question = st.text_area(
+        "Question", placeholder="Ask a question grounded in your documents"
+    )
     top_k = st.select_slider("Maximum evidence blocks", options=[1, 3, 5, 10], value=5)
     if st.button("Answer", disabled=not question.strip()):
         try:
@@ -108,7 +113,9 @@ def _render_query(controller: AppController) -> None:
         for index, hit in enumerate(result.hits, start=1):
             with st.expander(f"[{index}] {hit.source} · page {hit.page}"):
                 st.write(hit.document)
-                st.caption(f"{hit.retrieval_method} · rank {hit.rank} · {hit.token_count} tokens")
+                st.caption(
+                    f"{hit.retrieval_method} · rank {hit.rank} · {hit.token_count} tokens"
+                )
 
 
 def _render_documents(controller: AppController) -> None:
@@ -143,7 +150,9 @@ def main() -> None:
             )
         st.stop()
     _render_readiness(controller)
-    upload_tab, query_tab, documents_tab = st.tabs(["Extract & index", "Ask", "Documents"])
+    upload_tab, query_tab, documents_tab = st.tabs(
+        ["Extract & index", "Ask", "Documents"]
+    )
     with upload_tab:
         _render_upload(controller)
     with query_tab:

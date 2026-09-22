@@ -1,13 +1,16 @@
-from pathlib import Path
 import json
+from pathlib import Path
 
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.arguments import parser
 from experiments.benchmarks.common.contracts import BenchmarkPlan
-from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
+from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.runner import run_benchmark
-from experiments.benchmarks.preparation.models import load_selected_model_lock, model_revisions
+from experiments.benchmarks.preparation.models import (
+    load_selected_model_lock,
+    model_revisions,
+)
 from experiments.benchmarks.rag.chunking_embedding.benchmark import (
     directions_for,
     run_in_fresh_process,
@@ -41,11 +44,15 @@ if __name__ == "__main__":
         else f"data/benchmarks/rag/rag-selection-{'dev' if arguments.profile == 'development' else 'validation'}.json"
     )
     manifest = load_manifest(manifest_path)
-    require_manifest_split(manifest, arguments.profile, {
-        "smoke": {"smoke"},
-        "development": {"dev", "development"},
-        "validation": {"validation"},
-    }[arguments.profile])
+    require_manifest_split(
+        manifest,
+        arguments.profile,
+        {
+            "smoke": {"smoke"},
+            "development": {"dev", "development"},
+            "validation": {"validation"},
+        }[arguments.profile],
+    )
     declared = protocol.development_candidates
     if arguments.profile == "development":
         if arguments.shortlist is not None:
@@ -74,7 +81,9 @@ if __name__ == "__main__":
         if arguments.shortlist is not None:
             raise ValueError("Smoke chunking/embedding does not accept a shortlist")
         candidates = (protocol.smoke_pair,)
-    embedding_names = tuple(sorted({candidate.split("|", 1)[1] for candidate in candidates}))
+    embedding_names = tuple(
+        sorted({candidate.split("|", 1)[1] for candidate in candidates})
+    )
     model_lock_path = PROJECT_ROOT / "data/benchmarks/models/selected.json"
     model_lock = load_selected_model_lock(
         model_lock_path,
@@ -118,13 +127,18 @@ if __name__ == "__main__":
         paired_metrics=tuple(
             metric
             for metric in (
-                *(f"quality.overall.{name}" for name in protocol.primary_quality_metrics),
+                *(
+                    f"quality.overall.{name}"
+                    for name in protocol.primary_quality_metrics
+                ),
                 *(f"quality.overall.{name}" for name in protocol.alpha_ndcg_metrics),
             )
             if metric in directions
         ),
         revisions=revisions,
-        decision_files={"shortlist": arguments.shortlist} if arguments.shortlist else None,
+        decision_files={"shortlist": arguments.shortlist}
+        if arguments.shortlist
+        else None,
         input_artifacts={"manifest": manifest_path, "model_lock": model_lock_path},
         protocols={"chunking_embedding": protocol.meta},
         no_mlflow=arguments.no_mlflow,
@@ -148,5 +162,10 @@ if __name__ == "__main__":
             else None
         ),
     )
-    print(json.dumps({"run_id": result.run_id, "artifacts": str(result.artifact_directory)}, indent=2))
+    print(
+        json.dumps(
+            {"run_id": result.run_id, "artifacts": str(result.artifact_directory)},
+            indent=2,
+        )
+    )
     raise SystemExit(0 if result.complete else 2)

@@ -3,11 +3,11 @@
 from .contracts import (
     ExtractedDocument,
     ExtractedSegment,
-    SegmentKind,
     ExtractionProfile,
     ExtractionRequest,
     ExtractionWarning,
     Extractor,
+    SegmentKind,
     SourceKind,
 )
 from .pipeline import ExtractionPipeline
@@ -15,11 +15,11 @@ from .pipeline import ExtractionPipeline
 __all__ = [
     "ExtractedDocument",
     "ExtractedSegment",
-    "SegmentKind",
     "ExtractionPipeline",
     "ExtractionProfile",
     "ExtractionRequest",
     "ExtractionWarning",
     "Extractor",
+    "SegmentKind",
     "SourceKind",
 ]

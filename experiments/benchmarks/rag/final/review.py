@@ -12,7 +12,6 @@ from pathlib import Path
 import pandas as pd
 
 from edumind.common.artifacts import atomic_write_json, stable_hash
-
 from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.tracking import DEFAULT_TRACKING_URI
 
@@ -48,17 +47,23 @@ def export_review(
     }
     ordered = [by_name[name] for name in decision.selected_candidates]
     if len(ordered) != finalist_count:
-        raise ValueError(f"Human review requires exactly {finalist_count} successful finalists")
+        raise ValueError(
+            f"Human review requires exactly {finalist_count} successful finalists"
+        )
     for candidate in ordered:
         if not candidate.get("samples"):
-            candidate["samples"] = _load_samples(summary_path.parent, str(candidate["candidate"]))
+            candidate["samples"] = _load_samples(
+                summary_path.parent, str(candidate["candidate"])
+            )
     selected_ids = _stratified_ids(ordered[0].get("samples", []), question_count, seed)
     if len(selected_ids) != question_count:
         raise ValueError(f"Human review requires {question_count} distinct questions")
     rows: list[dict[str, object]] = []
     identity_map: dict[str, dict[str, str]] = {}
     for candidate in ordered:
-        samples = {str(sample["sample_id"]): sample for sample in candidate.get("samples", [])}
+        samples = {
+            str(sample["sample_id"]): sample for sample in candidate.get("samples", [])
+        }
         for sample_id in selected_ids:
             sample = samples[sample_id]
             metadata = sample.get("metadata", {})
@@ -108,7 +113,9 @@ def export_review(
     return output_path
 
 
-def import_review(review_path: Path, identity_path: Path | None = None) -> dict[str, object]:
+def import_review(
+    review_path: Path, identity_path: Path | None = None
+) -> dict[str, object]:
     identity_file = identity_path or review_path.with_suffix(".identity.json")
     identity = json.loads(identity_file.read_text(encoding="utf-8"))
     known = identity.get("items", {})
@@ -129,7 +136,9 @@ def import_review(review_path: Path, identity_path: Path | None = None) -> dict[
             raise ValueError(f"Unknown blinded review item: {item_id}")
         candidate = str(known[item_id]["candidate"])
         evidence_type = str(known[item_id].get("evidence_type", "text"))
-        candidate_values = aggregates.setdefault(candidate, {field: [] for field in RUBRIC_FIELDS})
+        candidate_values = aggregates.setdefault(
+            candidate, {field: [] for field in RUBRIC_FIELDS}
+        )
         stratum_values = strata.setdefault(candidate, {}).setdefault(
             evidence_type, {field: [] for field in RUBRIC_FIELDS}
         )
@@ -142,21 +151,24 @@ def import_review(review_path: Path, identity_path: Path | None = None) -> dict[
                 ) from exc
             maximum = 1 if field == "answerability_correct" else 2
             if value < 0 or value > maximum:
-                raise ValueError(f"Review field {field} must be in [0, {maximum}] for {item_id}")
+                raise ValueError(
+                    f"Review field {field} must be in [0, {maximum}] for {item_id}"
+                )
             candidate_values[field].append(float(value))
             stratum_values[field].append(float(value))
     summary = {
         "run_id": identity.get("run_id"),
         "judgment_count": len(rows),
         "candidates": {
-            candidate: {field: sum(values) / len(values) for field, values in fields.items()}
+            candidate: {
+                field: sum(values) / len(values) for field, values in fields.items()
+            }
             for candidate, fields in aggregates.items()
         },
         "strata": {
             candidate: {
                 evidence_type: {
-                    field: sum(values) / len(values)
-                    for field, values in fields.items()
+                    field: sum(values) / len(values) for field, values in fields.items()
                 }
                 for evidence_type, fields in candidate_strata.items()
             }
@@ -170,7 +182,9 @@ def import_review(review_path: Path, identity_path: Path | None = None) -> dict[
     return summary
 
 
-def _stratified_ids(samples: list[dict[str, object]], count: int, seed: int) -> list[str]:
+def _stratified_ids(
+    samples: list[dict[str, object]], count: int, seed: int
+) -> list[str]:
     groups: dict[tuple[str, bool], list[str]] = {}
     for item in samples:
         metadata = item.get("metadata", {})
@@ -199,7 +213,8 @@ def _sample_answerable(sample: dict[str, object]) -> bool:
 
 def _load_samples(run_directory: Path, candidate: str) -> list[dict[str, object]]:
     safe = "".join(
-        character if character.isalnum() or character in "-_." else "_" for character in candidate
+        character if character.isalnum() or character in "-_." else "_"
+        for character in candidate
     )
     path = run_directory / "samples" / f"{safe}.parquet"
     if not path.is_file():

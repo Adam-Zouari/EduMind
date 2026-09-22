@@ -1,33 +1,49 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
 import argparse
 import json
 import statistics
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
 import numpy as np
 
-from edumind.common.paths import PROJECT_ROOT
 from edumind.common.artifacts import sha256_file, stable_hash
+from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.arguments import resolved_candidates
 from experiments.benchmarks.common.contracts import BenchmarkPlan, SampleResult
 from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.runner import run_benchmark
-from experiments.benchmarks.vectordb.adapters import Config, InvalidIndexState, Record, create
+from experiments.benchmarks.rag.chunking_embedding.protocol import (
+    DEFAULT_PROTOCOL_PATH as DEFAULT_CHUNKING_PROTOCOL_PATH,
+)
+from experiments.benchmarks.rag.chunking_embedding.protocol import (
+    load_protocol as load_chunking_protocol,
+)
+from experiments.benchmarks.vectordb.adapters import (
+    Config,
+    InvalidIndexState,
+    Record,
+    create,
+)
 from experiments.benchmarks.vectordb.conformance import _finish_index, check
-from experiments.benchmarks.vectordb.docker_metrics import DockerMonitor, image_lock, verify_image
-from experiments.benchmarks.vectordb.workload import clustered, exact_ids, recall, records
-from experiments.benchmarks.vectordb.workload import Corpus
+from experiments.benchmarks.vectordb.docker_metrics import (
+    DockerMonitor,
+    image_lock,
+    verify_image,
+)
 from experiments.benchmarks.vectordb.protocol import (
     DEFAULT_PROTOCOL_PATH,
     VectorDatabaseProtocol,
     load_protocol,
 )
-from experiments.benchmarks.rag.chunking_embedding.protocol import (
-    DEFAULT_PROTOCOL_PATH as DEFAULT_CHUNKING_PROTOCOL_PATH,
-    load_protocol as load_chunking_protocol,
+from experiments.benchmarks.vectordb.workload import (
+    Corpus,
+    clustered,
+    exact_ids,
+    recall,
+    records,
 )
 
 DIRECTORY = Path(__file__).parent
@@ -35,7 +51,9 @@ COMPOSE = DIRECTORY / "compose.yml"
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Benchmark four real vector database servers")
+    parser = argparse.ArgumentParser(
+        description="Benchmark four real vector database servers"
+    )
     parser.add_argument(
         "--profile",
         choices=("smoke", "development", "validation"),
@@ -116,7 +134,9 @@ def main() -> int:
                 )
                 trial_count = len(trials) + len(unsupported)
                 operational[f"{name}.tuning_trials"] = float(trial_count)
-                operational[f"{name}.unsupported_configurations"] = float(len(unsupported))
+                operational[f"{name}.unsupported_configurations"] = float(
+                    len(unsupported)
+                )
                 for trial_config, trial_recall, trial_p95 in trials:
                     trial_name = (
                         f"{name}.tuning_m{trial_config.m}_"
@@ -133,7 +153,9 @@ def main() -> int:
                     )
                     operational[key] = 1.0
                 operational[f"{name}.selected_m"] = float(config.m)
-                operational[f"{name}.selected_ef_construction"] = float(config.ef_construction)
+                operational[f"{name}.selected_ef_construction"] = float(
+                    config.ef_construction
+                )
                 operational[f"{name}.selected_ef_search"] = float(config.ef_search)
                 selected_configs[name] = {
                     "m": config.m,
@@ -141,9 +163,7 @@ def main() -> int:
                     "ef_search": config.ef_search,
                 }
                 if workload_number == 0:
-                    adapter, conformance = check(
-                        candidate, config, COMPOSE, protocol
-                    )
+                    adapter, conformance = check(candidate, config, COMPOSE, protocol)
                     operational["restart_readiness_seconds"] = float(
                         conformance.pop("restart_readiness_seconds")
                     )
@@ -170,8 +190,12 @@ def main() -> int:
                     )
                     samples.extend(workload_samples)
                     operational[f"{name}.build_seconds"] = build_seconds
-                    operational[f"{name}.build_vectors_per_second"] = size / max(build_seconds, 1e-9)
-                    operational.update({f"{name}.{key}": value for key, value in measured.items()})
+                    operational[f"{name}.build_vectors_per_second"] = size / max(
+                        build_seconds, 1e-9
+                    )
+                    operational.update(
+                        {f"{name}.{key}": value for key, value in measured.items()}
+                    )
                     correctness[f"{name}.target_concurrency_success"] = success
                     incremental = [
                         Record(
@@ -187,40 +211,46 @@ def main() -> int:
                     incremental_started = time.perf_counter()
                     adapter.upsert(incremental)
                     incremental_seconds = time.perf_counter() - incremental_started
-                    operational[f"{name}.incremental_upsert_per_second"] = len(incremental) / max(
-                        incremental_seconds, 1e-9
-                    )
+                    operational[f"{name}.incremental_upsert_per_second"] = len(
+                        incremental
+                    ) / max(incremental_seconds, 1e-9)
                     delete_started = time.perf_counter()
                     adapter.delete([row.identifier for row in incremental])
                     delete_seconds = time.perf_counter() - delete_started
-                    operational[f"{name}.incremental_delete_per_second"] = len(incremental) / max(
-                        delete_seconds, 1e-9
-                    )
+                    operational[f"{name}.incremental_delete_per_second"] = len(
+                        incremental
+                    ) / max(delete_seconds, 1e-9)
                 finally:
                     adapter.close()
         operational.update(docker.metrics())
         correctness["target_concurrency_success"] = min(
-            value for key, value in correctness.items() if key.endswith("target_concurrency_success")
+            value
+            for key, value in correctness.items()
+            if key.endswith("target_concurrency_success")
         )
-        return samples, operational, correctness, {
-            "server": candidate,
-            "selected_hnsw": json.dumps(selected_configs, sort_keys=True),
-        }
+        return (
+            samples,
+            operational,
+            correctness,
+            {
+                "server": candidate,
+                "selected_hnsw": json.dumps(selected_configs, sort_keys=True),
+            },
+        )
 
     result = run_benchmark(
         plan,
         evaluate,
         dataset_checksum=stable_hash(
-            [{"name": name, "fingerprint": corpus.fingerprint} for name, corpus in workloads]
+            [
+                {"name": name, "fingerprint": corpus.fingerprint}
+                for name, corpus in workloads
+            ]
         ),
         directions={
+            **{f"ann_recall_at_{cutoff}": "max" for cutoff in protocol.cutoffs},
             **{
-                f"ann_recall_at_{cutoff}": "max"
-                for cutoff in protocol.cutoffs
-            },
-            **{
-                f"filtered_ann_recall_at_{cutoff}": "max"
-                for cutoff in protocol.cutoffs
+                f"filtered_ann_recall_at_{cutoff}": "max" for cutoff in protocol.cutoffs
             },
             "filter_correctness": "max",
             "empty_filter_correctness": "max",
@@ -254,7 +284,12 @@ def main() -> int:
         },
         no_mlflow=arguments.no_mlflow,
     )
-    print(json.dumps({"run_id": result.run_id, "artifacts": str(result.artifact_directory)}, indent=2))
+    print(
+        json.dumps(
+            {"run_id": result.run_id, "artifacts": str(result.artifact_directory)},
+            indent=2,
+        )
+    )
     return 0 if result.complete else 2
 
 
@@ -321,7 +356,9 @@ def _real_corpus(
         expected_source=("rag", "chunking-embedding", "validation"),
     ).selected_candidates[0]
     chunker, embedding = selected.split("|", 1)
-    manifest = load_manifest(PROJECT_ROOT / "data/benchmarks/rag/rag-selection-validation.json")
+    manifest = load_manifest(
+        PROJECT_ROOT / "data/benchmarks/rag/rag-selection-validation.json"
+    )
     model_lock = load_selected_model_lock(
         PROJECT_ROOT / "data/benchmarks/models/selected.json"
     )
@@ -335,11 +372,12 @@ def _real_corpus(
         dtype=chunking_protocol.profile("validation").dtype,
         chunking_protocol=chunking_protocol,
     )
-    questions = [
-        row for row in manifest.samples if row.get("kind") == "question"
-    ][:query_limit]
+    questions = [row for row in manifest.samples if row.get("kind") == "question"][
+        :query_limit
+    ]
     query_vectors = np.asarray(
-        [index.embedder.embed_query(str(row["question"])) for row in questions], dtype=np.float32
+        [index.embedder.embed_query(str(row["question"])) for row in questions],
+        dtype=np.float32,
     )
     metadata = tuple(
         {
@@ -425,19 +463,21 @@ def _select_config(candidate, corpus, profile, protocol: VectorDatabaseProtocol)
                 hits = adapter.search(query, 10)
                 latencies.append(time.perf_counter() - started)
                 recalls.append(recall(hits, expected, 10))
-            trials.append((config, statistics.fmean(recalls), float(np.quantile(latencies, 0.95))))
+            trials.append(
+                (config, statistics.fmean(recalls), float(np.quantile(latencies, 0.95)))
+            )
         except InvalidIndexState:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001 - classify unsupported server settings
             unsupported.append(config)
         finally:
             if adapter is not None:
                 adapter.close()
     if not trials:
-        raise RuntimeError(f"{candidate} could not execute any declared HNSW configuration")
-    passing = [
-        trial for trial in trials if trial[1] >= protocol.target_recall_at_10
-    ]
+        raise RuntimeError(
+            f"{candidate} could not execute any declared HNSW configuration"
+        )
+    passing = [trial for trial in trials if trial[1] >= protocol.target_recall_at_10]
     if passing:
         selected_trial = min(
             passing,
@@ -524,21 +564,32 @@ def _measure(
             filters = {filter_name: metadata[filter_name]}
             filtered_started = time.perf_counter()
             filtered = adapter.search(query, maximum_cutoff, filters)
-            filtered_latencies[filter_name].append(time.perf_counter() - filtered_started)
+            filtered_latencies[filter_name].append(
+                time.perf_counter() - filtered_started
+            )
             expected_filtered = exact_ids(
                 corpus,
                 query,
                 maximum_cutoff,
                 filters,
-                candidate_indices=filter_indices[(filter_name, str(metadata[filter_name]))],
+                candidate_indices=filter_indices[
+                    (filter_name, str(metadata[filter_name]))
+                ],
             )
             for cutoff in protocol.cutoffs:
                 value = recall(filtered, expected_filtered, cutoff)
                 metrics[f"filtered_ann_recall_{filter_name}_at_{cutoff}"] = value
                 filtered_values[cutoff].append(value)
-            correct.append(all(str(hit.metadata.get(filter_name)) == metadata[filter_name] for hit in filtered))
+            correct.append(
+                all(
+                    str(hit.metadata.get(filter_name)) == metadata[filter_name]
+                    for hit in filtered
+                )
+            )
         for cutoff in protocol.cutoffs:
-            metrics[f"filtered_ann_recall_at_{cutoff}"] = statistics.fmean(filtered_values[cutoff])
+            metrics[f"filtered_ann_recall_at_{cutoff}"] = statistics.fmean(
+                filtered_values[cutoff]
+            )
         metrics["filter_correctness"] = float(all(correct))
         metrics["empty_filter_correctness"] = float(
             not adapter.search(
@@ -547,7 +598,11 @@ def _measure(
                 {str(protocol.conformance["empty_filter"]): "missing"},
             )
         )
-        samples.append(SampleResult(f"{workload}:q{query_number}", metrics, unfiltered_latencies[-1]))
+        samples.append(
+            SampleResult(
+                f"{workload}:q{query_number}", metrics, unfiltered_latencies[-1]
+            )
+        )
 
     operational = {
         "p50_latency_seconds": float(np.median(unfiltered_latencies)),
@@ -556,8 +611,12 @@ def _measure(
     }
     for filter_name, values in filtered_latencies.items():
         operational[f"p50_filtered_{filter_name}_seconds"] = float(np.median(values))
-        operational[f"p95_filtered_{filter_name}_seconds"] = float(np.quantile(values, 0.95))
-        operational[f"p99_filtered_{filter_name}_seconds"] = float(np.quantile(values, 0.99))
+        operational[f"p95_filtered_{filter_name}_seconds"] = float(
+            np.quantile(values, 0.95)
+        )
+        operational[f"p99_filtered_{filter_name}_seconds"] = float(
+            np.quantile(values, 0.99)
+        )
     concurrencies = protocol.concurrency_levels(profile, workload)
     target_success = 1.0
     for concurrency in concurrencies:
@@ -566,12 +625,22 @@ def _measure(
         elapsed, errors, latencies = _concurrent(
             adapter, corpus.queries, concurrency, repetitions, maximum_cutoff
         )
-        operational[f"throughput_concurrency_{concurrency}_qps"] = len(corpus.queries) * repetitions / max(elapsed, 1e-9)
-        operational[f"error_rate_concurrency_{concurrency}"] = errors / (len(corpus.queries) * repetitions)
+        operational[f"throughput_concurrency_{concurrency}_qps"] = (
+            len(corpus.queries) * repetitions / max(elapsed, 1e-9)
+        )
+        operational[f"error_rate_concurrency_{concurrency}"] = errors / (
+            len(corpus.queries) * repetitions
+        )
         if latencies:
-            operational[f"p50_concurrency_{concurrency}_seconds"] = float(np.median(latencies))
-            operational[f"p95_concurrency_{concurrency}_seconds"] = float(np.quantile(latencies, 0.95))
-            operational[f"p99_concurrency_{concurrency}_seconds"] = float(np.quantile(latencies, 0.99))
+            operational[f"p50_concurrency_{concurrency}_seconds"] = float(
+                np.median(latencies)
+            )
+            operational[f"p95_concurrency_{concurrency}_seconds"] = float(
+                np.quantile(latencies, 0.95)
+            )
+            operational[f"p99_concurrency_{concurrency}_seconds"] = float(
+                np.quantile(latencies, 0.99)
+            )
         if concurrency == concurrencies[-1] and errors:
             target_success = 0.0
     return samples, operational, target_success
@@ -587,11 +656,15 @@ def _concurrent(adapter, queries, concurrency, repetitions, cutoff):
     errors = 0
     latencies = []
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
-        futures = [pool.submit(measured, query) for _ in range(repetitions) for query in queries]
+        futures = [
+            pool.submit(measured, query)
+            for _ in range(repetitions)
+            for query in queries
+        ]
         for future in as_completed(futures):
             try:
                 latencies.append(future.result())
-            except Exception:
+            except Exception:  # noqa: BLE001 - count failed concurrent requests
                 errors += 1
     return time.perf_counter() - started, errors, latencies
 

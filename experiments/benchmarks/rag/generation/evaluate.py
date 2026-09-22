@@ -10,7 +10,6 @@ import numpy as np
 
 from edumind.rag.tokenizers import TiktokenOffsetTokenizer
 from edumind.rag.types import RetrievalHit
-
 from experiments.benchmarks.common.contracts import DatasetManifest, SampleResult
 from experiments.benchmarks.common.datasets import evidence_units
 from experiments.benchmarks.common.metrics import (
@@ -166,9 +165,13 @@ def evaluate_candidate(
 
     first_hits, _, _ = context_cache[str(questions[0]["id"])]
     generator.unload()
-    cold = generator.generate_measured_with_results(str(questions[0]["question"]), first_hits)
+    cold = generator.generate_measured_with_results(
+        str(questions[0]["question"]), first_hits
+    )
     for _ in range(warmups):
-        generator.generate_measured_with_results(str(questions[0]["question"]), first_hits)
+        generator.generate_measured_with_results(
+            str(questions[0]["question"]), first_hits
+        )
 
     samples: list[SampleResult] = []
     measurements = []
@@ -193,7 +196,9 @@ def evaluate_candidate(
             )
             repeated_inputs.append((hits, context, retrieval_seconds))
             repeated.append(
-                generator.generate_measured_with_results(str(question["question"]), hits)
+                generator.generate_measured_with_results(
+                    str(question["question"]), hits
+                )
             )
             retrieval_latencies.append(retrieval_seconds)
         hits, context, _ = repeated_inputs[0]
@@ -205,8 +210,7 @@ def evaluate_candidate(
         answer = repeated[0].answer
         answerable = bool(question.get("answerable"))
         repeat_predictions = [
-            not _is_refusal(measurement.answer)
-            for measurement in repeated
+            not _is_refusal(measurement.answer) for measurement in repeated
         ]
         predicted_answerable = Counter(repeat_predictions).most_common(1)[0][0]
         predictions.append(predicted_answerable)
@@ -214,30 +218,48 @@ def evaluate_candidate(
         raw_references = question.get("accepted_answers", [])
         references = (
             [str(value) for value in raw_references if str(value).strip()]
-            if isinstance(raw_references, Sequence) and not isinstance(raw_references, str)
+            if isinstance(raw_references, Sequence)
+            and not isinstance(raw_references, str)
             else []
         )
         if not references:
             references = [str(question.get("answer", ""))]
         repeated_metrics = []
-        for measurement, repeat_prediction in zip(repeated, repeat_predictions, strict=True):
+        for measurement, repeat_prediction in zip(
+            repeated, repeat_predictions, strict=True
+        ):
             repeat_answer = measurement.answer
             clean = _clean_answer(repeat_answer)
             repeated_metrics.append(
                 {
-                    "exact_match": max(exact_match(clean, value) for value in references) if answerable else float(not repeat_prediction),
-                    "token_f1": max(token_f1(clean, value) for value in references) if answerable else float(not repeat_prediction),
-                    "rouge_l": max(rouge_l(clean, value) for value in references) if answerable else float(not repeat_prediction),
-                    **citation_scores(repeat_answer, _supported_contexts(question, hits)),
+                    "exact_match": max(
+                        exact_match(clean, value) for value in references
+                    )
+                    if answerable
+                    else float(not repeat_prediction),
+                    "token_f1": max(token_f1(clean, value) for value in references)
+                    if answerable
+                    else float(not repeat_prediction),
+                    "rouge_l": max(rouge_l(clean, value) for value in references)
+                    if answerable
+                    else float(not repeat_prediction),
+                    **citation_scores(
+                        repeat_answer, _supported_contexts(question, hits)
+                    ),
                     "answerability_correct": float(repeat_prediction == answerable),
                     "hhem_faithfulness": faithfulness.score(context, repeat_answer),
-                    "unsupported_answer_rate": float(not answerable and repeat_prediction),
-                    "malformed_output_rate": float(_malformed(repeat_answer, len(hits))),
+                    "unsupported_answer_rate": float(
+                        not answerable and repeat_prediction
+                    ),
+                    "malformed_output_rate": float(
+                        _malformed(repeat_answer, len(hits))
+                    ),
                 }
             )
         metric_names = repeated_metrics[0]
         averaged_metrics = {
-            name: float(np.mean([row[name] for row in repeated_metrics])) for name in metric_names
+            name: float(np.mean([row[name] for row in repeated_metrics]))
+            for name in metric_names
         }
         averaged_metrics["determinism"] = float(
             all(measurement.answer == answer for measurement in repeated)
@@ -277,7 +299,9 @@ def evaluate_candidate(
             np.median(
                 [
                     measurement.total_seconds + inputs[2]
-                    for measurement, inputs in zip(repeated, repeated_inputs, strict=True)
+                    for measurement, inputs in zip(
+                        repeated, repeated_inputs, strict=True
+                    )
                 ]
             )
         )
@@ -320,34 +344,60 @@ def evaluate_candidate(
             "upper": interval.upper,
             "confidence": interval.confidence,
         }
-    return samples, {
-        "p50_latency_seconds": float(np.median(total_latencies)),
-        "p95_latency_seconds": float(np.quantile(total_latencies, 0.95)),
-        "p50_retrieval_seconds": float(np.median(retrieval_latencies)),
-        "p95_retrieval_seconds": float(np.quantile(retrieval_latencies, 0.95)),
-        "p50_generation_seconds": float(np.median([row.total_seconds for row in measurements])),
-        "p95_generation_seconds": float(np.quantile([row.total_seconds for row in measurements], 0.95)),
-        "p50_time_to_first_token_seconds": float(np.median([row.time_to_first_token_seconds for row in measurements])),
-        "p95_time_to_first_token_seconds": float(np.quantile([row.time_to_first_token_seconds for row in measurements], 0.95)),
-        "mean_prompt_evaluation_seconds": float(np.mean([row.prompt_evaluation_seconds for row in measurements])),
-        "mean_model_generation_seconds": float(np.mean([row.generation_seconds for row in measurements])),
-        "mean_prompt_tokens": float(np.mean([row.prompt_tokens for row in measurements])),
-        "tokens_per_second": float(np.mean([row.tokens_per_second for row in measurements])),
-        "answers_per_minute": 60.0 / max(float(np.mean(total_latencies)), 1e-9),
-        "mean_answer_tokens": float(np.mean([row.answer_tokens for row in measurements])),
-        "mean_reasoning_tokens": float(
-            np.mean([row.reasoning_tokens for row in measurements])
-        ),
-        "mean_generated_tokens": float(
-            np.mean([row.generated_tokens for row in measurements])
-        ),
-        "cold_load_seconds": cold.load_seconds,
-        **runtime_memory,
-    }, {
-        "answerability_balanced_accuracy": answerability,
-        **refusal,
-        "human_review_required": 1.0,
-    }, {}, answerability_intervals
+    return (
+        samples,
+        {
+            "p50_latency_seconds": float(np.median(total_latencies)),
+            "p95_latency_seconds": float(np.quantile(total_latencies, 0.95)),
+            "p50_retrieval_seconds": float(np.median(retrieval_latencies)),
+            "p95_retrieval_seconds": float(np.quantile(retrieval_latencies, 0.95)),
+            "p50_generation_seconds": float(
+                np.median([row.total_seconds for row in measurements])
+            ),
+            "p95_generation_seconds": float(
+                np.quantile([row.total_seconds for row in measurements], 0.95)
+            ),
+            "p50_time_to_first_token_seconds": float(
+                np.median([row.time_to_first_token_seconds for row in measurements])
+            ),
+            "p95_time_to_first_token_seconds": float(
+                np.quantile(
+                    [row.time_to_first_token_seconds for row in measurements], 0.95
+                )
+            ),
+            "mean_prompt_evaluation_seconds": float(
+                np.mean([row.prompt_evaluation_seconds for row in measurements])
+            ),
+            "mean_model_generation_seconds": float(
+                np.mean([row.generation_seconds for row in measurements])
+            ),
+            "mean_prompt_tokens": float(
+                np.mean([row.prompt_tokens for row in measurements])
+            ),
+            "tokens_per_second": float(
+                np.mean([row.tokens_per_second for row in measurements])
+            ),
+            "answers_per_minute": 60.0 / max(float(np.mean(total_latencies)), 1e-9),
+            "mean_answer_tokens": float(
+                np.mean([row.answer_tokens for row in measurements])
+            ),
+            "mean_reasoning_tokens": float(
+                np.mean([row.reasoning_tokens for row in measurements])
+            ),
+            "mean_generated_tokens": float(
+                np.mean([row.generated_tokens for row in measurements])
+            ),
+            "cold_load_seconds": cold.load_seconds,
+            **runtime_memory,
+        },
+        {
+            "answerability_balanced_accuracy": answerability,
+            **refusal,
+            "human_review_required": 1.0,
+        },
+        {},
+        answerability_intervals,
+    )
 
 
 def _frozen_hits(
@@ -376,7 +426,11 @@ def _frozen_hits(
         RetrievalHit(
             f"frozen-{index}",
             text,
-            {"source": question["document_id"], "document_id": question["document_id"], "page": "N/A"},
+            {
+                "source": question["document_id"],
+                "document_id": question["document_id"],
+                "page": "N/A",
+            },
             1.0,
             index,
             "frozen-oracle-context",
@@ -387,7 +441,9 @@ def _frozen_hits(
     return hits, "\n\n".join(hit.document for hit in hits), 0.0
 
 
-def _retrieved_hits(question, index, method, top_k, reranker) -> tuple[list[RetrievalHit], str, float]:
+def _retrieved_hits(
+    question, index, method, top_k, reranker
+) -> tuple[list[RetrievalHit], str, float]:
     import time
 
     started = time.perf_counter()
@@ -411,7 +467,11 @@ def _retrieved_hits(question, index, method, top_k, reranker) -> tuple[list[Retr
                 chunk.tokens,
             )
         )
-    return hits, "\n\n".join(hit.document for hit in hits), time.perf_counter() - started
+    return (
+        hits,
+        "\n\n".join(hit.document for hit in hits),
+        time.perf_counter() - started,
+    )
 
 
 def _supported_contexts(question, hits) -> set[int]:
@@ -485,7 +545,9 @@ def _malformed(answer: str, context_count: int) -> bool:
     if _is_refusal(answer):
         return False
     citations = [int(value) for value in re.findall(r"\[(\d+)\]", answer)]
-    return not citations or any(value < 1 or value > context_count for value in citations)
+    return not citations or any(
+        value < 1 or value > context_count for value in citations
+    )
 
 
 def _refusal_scores(answerable, predicted_answerable):

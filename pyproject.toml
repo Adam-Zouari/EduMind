@@ -23,3 +23,8 @@ include = ["edumind*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+
+[tool.ruff.lint]
+# Invalid serialized protocols and artifacts are validation failures even when
+# the offending JSON value has the wrong Python type.
+ignore = ["TRY004"]

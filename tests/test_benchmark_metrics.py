@@ -7,6 +7,15 @@ from types import SimpleNamespace
 
 import pytest
 
+from edumind.extraction import (
+    ExtractedDocument,
+    ExtractedSegment,
+    ExtractionProfile,
+    ExtractionRequest,
+    SegmentKind,
+    SourceKind,
+)
+from edumind.extraction.structured import build_structured_document
 from experiments.benchmarks.common.metrics import (
     average_precision_at_k,
     balanced_accuracy,
@@ -30,40 +39,35 @@ from experiments.benchmarks.common.metrics import (
     token_f1,
     word_error_rate,
 )
+from experiments.benchmarks.extraction.document import cli as document_cli
+from experiments.benchmarks.extraction.document.adapters import _paddle_blocks
+from experiments.benchmarks.extraction.document.cli import _document_candidates
 from experiments.benchmarks.extraction.document.metrics import (
     METRIC_DIRECTIONS,
     aggregate_evaluations,
     load_reference,
-    score_document as _score_document,
     validate_reference,
 )
-from experiments.benchmarks.extraction.document import cli as document_cli
+from experiments.benchmarks.extraction.document.metrics import (
+    score_document as _score_document,
+)
+from experiments.benchmarks.extraction.document.protocol import (
+    load_protocol as default_document_protocol,
+)
 from experiments.benchmarks.extraction.document.protocol import (
     load_protocol as load_document_protocol,
 )
-from experiments.benchmarks.extraction.document.cli import _document_candidates
-from experiments.benchmarks.extraction.document.adapters import _paddle_blocks
-from experiments.benchmarks.extraction.document.protocol import load_protocol as default_document_protocol
-from edumind.extraction import (
-    ExtractedDocument,
-    ExtractedSegment,
-    ExtractionProfile,
-    ExtractionRequest,
-    SegmentKind,
-    SourceKind,
+from experiments.benchmarks.rag.chunking_embedding.protocol import (
+    load_protocol as default_chunking_protocol,
 )
-from edumind.extraction.structured import build_structured_document
 from experiments.benchmarks.rag.chunking_embedding.strategies import (
     build_chunking_strategy,
 )
-from experiments.benchmarks.rag.chunking_embedding.protocol import load_protocol as default_chunking_protocol
 
 
 def score_document(*args, **kwargs):
     protocol = default_document_protocol()
-    kwargs.setdefault(
-        "element_matching_threshold", protocol.element_matching_threshold
-    )
+    kwargs.setdefault("element_matching_threshold", protocol.element_matching_threshold)
     kwargs.setdefault(
         "duplicate_content_threshold", protocol.duplicate_content_threshold
     )
@@ -77,9 +81,7 @@ def test_official_metric_worker_bootstraps_both_omnidocbench_import_roots(
 
     input_path = tmp_path / "input.json"
     output_path = tmp_path / "output.json"
-    input_path.write_text(
-        json.dumps({"tables": [], "formulas": []}), encoding="utf-8"
-    )
+    input_path.write_text(json.dumps({"tables": [], "formulas": []}), encoding="utf-8")
     monkeypatch.setattr(omnidocbench_worker.sys, "path", list(sys.path))
     omnidocbench_worker.main(input_path, output_path)
     assert omnidocbench_worker.sys.path[:2] == [
@@ -214,13 +216,18 @@ def test_document_metrics_use_element_order_and_grouped_aggregates() -> None:
     assert intervals["text.content_f1"]["lower"] == 1.0
 
 
-def test_table_metrics_separate_detection_content_and_tree_similarity(monkeypatch) -> None:
+def test_table_metrics_separate_detection_content_and_tree_similarity(
+    monkeypatch,
+) -> None:
     from experiments.benchmarks.extraction.document import metrics as document_metrics
 
     monkeypatch.setattr(
         document_metrics,
         "score_official_metrics",
-            lambda tables, formulas, **_kwargs: ([(0.8, 0.9) for _ in tables], [1.0 for _ in formulas]),
+        lambda tables, formulas, **_kwargs: (
+            [(0.8, 0.9) for _ in tables],
+            [1.0 for _ in formulas],
+        ),
     )
     document = _document(
         "A extra",
@@ -271,7 +278,11 @@ def test_section_and_structure_chunkers_return_exact_source_spans() -> None:
 
         @staticmethod
         def spans(text):
-            return [(index, index + 1) for index, value in enumerate(text) if not value.isspace()]
+            return [
+                (index, index + 1)
+                for index, value in enumerate(text)
+                if not value.isspace()
+            ]
 
         @classmethod
         def count(cls, text):
@@ -285,7 +296,9 @@ def test_section_and_structure_chunkers_return_exact_source_spans() -> None:
             protocol=default_chunking_protocol(),
         ).split(text)
         assert spans
-        assert all(text[start:end] and 0 <= start < end <= len(text) for start, end, _ in spans)
+        assert all(
+            text[start:end] and 0 <= start < end <= len(text) for start, end, _ in spans
+        )
 
 
 def test_page_metrics_detect_wrong_page_attribution() -> None:
@@ -427,9 +440,7 @@ def test_paddle_malformed_block_is_skipped_with_a_conversion_warning() -> None:
         warnings=warnings,
     )
     assert [block["text"] for block in blocks] == ["kept"]
-    assert [warning.code for warning in warnings] == [
-        "paddle_block_conversion_failed"
-    ]
+    assert [warning.code for warning in warnings] == ["paddle_block_conversion_failed"]
 
 
 def test_visual_layout_table_and_formula_never_match_across_pages() -> None:
@@ -447,7 +458,10 @@ def test_visual_layout_table_and_formula_never_match_across_pages() -> None:
                 page_number=2,
                 bounding_box=(0.1, 0.1, 0.5, 0.5),
                 kind=SegmentKind.TABLE,
-                structured_content={"rows": [["same"]], "html": "<table><tr><td>same</td></tr></table>"},
+                structured_content={
+                    "rows": [["same"]],
+                    "html": "<table><tr><td>same</td></tr></table>",
+                },
             ),
             ExtractedSegment(
                 "same",
@@ -466,15 +480,40 @@ def test_visual_layout_table_and_formula_never_match_across_pages() -> None:
         "kind": "pdf",
         "reference": "same",
         "reference_capabilities": [
-            "text", "pages", "layout_boxes", "element_types", "tables", "formulas"
+            "text",
+            "pages",
+            "layout_boxes",
+            "element_types",
+            "tables",
+            "formulas",
         ],
         "reference_page_texts": ["same"],
         "has_table": True,
         "has_formula": True,
         "reference_elements": [
-            {"id": "text", "kind": "text", "text": "same", "page_number": 1, "bounding_box": [0.1, 0.1, 0.5, 0.5]},
-            {"id": "table", "kind": "table", "text": "same", "html": "<table><tr><td>same</td></tr></table>", "page_number": 1, "bounding_box": [0.1, 0.1, 0.5, 0.5]},
-            {"id": "formula", "kind": "formula", "text": "same", "latex": "same", "page_number": 1, "bounding_box": [0.1, 0.1, 0.5, 0.5]},
+            {
+                "id": "text",
+                "kind": "text",
+                "text": "same",
+                "page_number": 1,
+                "bounding_box": [0.1, 0.1, 0.5, 0.5],
+            },
+            {
+                "id": "table",
+                "kind": "table",
+                "text": "same",
+                "html": "<table><tr><td>same</td></tr></table>",
+                "page_number": 1,
+                "bounding_box": [0.1, 0.1, 0.5, 0.5],
+            },
+            {
+                "id": "formula",
+                "kind": "formula",
+                "text": "same",
+                "latex": "same",
+                "page_number": 1,
+                "bounding_box": [0.1, 0.1, 0.5, 0.5],
+            },
         ],
     }
     result = score_document(item, document)
@@ -521,7 +560,9 @@ def test_unclaimed_layout_boxes_do_not_change_content_matching() -> None:
     assert "layout.mean_bounding_box_iou" not in result.metrics
 
 
-def test_authoritative_reference_capabilities_are_explicit_and_conditional(tmp_path) -> None:
+def test_authoritative_reference_capabilities_are_explicit_and_conditional(
+    tmp_path,
+) -> None:
     path = tmp_path / "reference.json"
     path.write_text(
         '{"text":"verified","reference_capabilities":["text","tables"],'
@@ -541,7 +582,9 @@ def test_authoritative_reference_capabilities_are_explicit_and_conditional(tmp_p
         )
 
 
-def test_authoritative_reference_rejects_contradictory_structured_negatives(tmp_path) -> None:
+def test_authoritative_reference_rejects_contradictory_structured_negatives(
+    tmp_path,
+) -> None:
     path = tmp_path / "reference.json"
     path.write_text(
         '{"reference_capabilities":["tables"],"has_table":false,'
@@ -604,12 +647,15 @@ def test_docling_candidate_requires_every_behavior_component() -> None:
     )
 
 
-def test_document_runner_keeps_all_attempts_and_empties_partial_failure(monkeypatch) -> None:
+def test_document_runner_keeps_all_attempts_and_empties_partial_failure(
+    monkeypatch,
+) -> None:
     from experiments.benchmarks.common.contracts import BenchmarkPlan
     from experiments.benchmarks.extraction.document import runner
 
     first_document = _document(
-        "alpha", (ExtractedSegment("alpha", 0, 5, page_number=1),),
+        "alpha",
+        (ExtractedSegment("alpha", 0, 5, page_number=1),),
         kind=SourceKind.PDF,
     )
     second_document = _document(
@@ -639,7 +685,11 @@ def test_document_runner_keeps_all_attempts_and_empties_partial_failure(monkeypa
             "docling-standard-native",
             [{"id": "sample", "kind": "pdf", "reference": "alpha"}],
             BenchmarkPlan(
-                "extraction", "document-test", "development", "fixture", ("candidate",),
+                "extraction",
+                "document-test",
+                "development",
+                "fixture",
+                ("candidate",),
                 seed=default_document_protocol().meta.seed,
                 repetitions=3,
                 warmups=0,
@@ -676,7 +726,9 @@ def test_document_configuration_matrix_has_no_duplicate_image_modes() -> None:
 
 
 def test_document_architecture_uses_development_before_validation(monkeypatch) -> None:
-    configuration = "docling-standard|ocr=rapidocr|mode=full_page|table=fast|formula=off"
+    configuration = (
+        "docling-standard|ocr=rapidocr|mode=full_page|table=fast|formula=off"
+    )
     calls = []
 
     def selected(_path, expected_stage, **_limits):

@@ -6,6 +6,7 @@ import random
 import time
 from pathlib import Path
 
+from experiments.benchmarks.common.process import json_worker_main
 from experiments.benchmarks.common.resources import ResourceMonitor
 from experiments.benchmarks.extraction.audio.adapters import build_runtime
 from experiments.benchmarks.extraction.audio.evaluate import (
@@ -14,7 +15,6 @@ from experiments.benchmarks.extraction.audio.evaluate import (
     score_nonspeech,
     score_speech,
 )
-from experiments.benchmarks.common.process import json_worker_main
 from experiments.benchmarks.extraction.audio.protocol import protocol_from_worker
 
 
@@ -58,14 +58,14 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
                             "repetition": repetition + 1,
                             "latency_seconds": latency,
                             "duration_seconds": float(item["duration_seconds"]),
-                            "real_time_factor": latency / float(item["duration_seconds"]),
+                            "real_time_factor": latency
+                            / float(item["duration_seconds"]),
                             "device": device,
                         }
                     )
                 quality, quality_latency = outputs[0]
                 normalized_outputs = [
-                    normalize_transcript(transcript.text)
-                    for transcript, _ in outputs
+                    normalize_transcript(transcript.text) for transcript, _ in outputs
                 ]
                 sample_rows.append(
                     score_speech(

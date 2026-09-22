@@ -9,13 +9,23 @@ from types import SimpleNamespace
 
 import pytest
 
-from edumind.extraction.contracts import ExtractionProfile, ExtractionRequest, SourceKind
+from edumind.extraction.contracts import (
+    ExtractionProfile,
+    ExtractionRequest,
+    SourceKind,
+)
 from edumind.extraction.extractors.audio import WhisperExtractor
 from edumind.extraction.extractors.base import build_document
 from experiments.benchmarks.common import resources as resource_module
-from experiments.benchmarks.common.contracts import BenchmarkPlan, DatasetManifest, SampleResult
+from experiments.benchmarks.common.contracts import (
+    BenchmarkPlan,
+    DatasetManifest,
+    SampleResult,
+)
 from experiments.benchmarks.common.datasets import assert_no_split_leakage
+from experiments.benchmarks.common.process import worker_environment
 from experiments.benchmarks.common.resources import ResourceMonitor
+from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.extraction.audio.adapters import (
     Transcript,
     WhisperRuntime,
@@ -23,19 +33,23 @@ from experiments.benchmarks.extraction.audio.adapters import (
 )
 from experiments.benchmarks.extraction.audio.evaluate import (
     METRIC_DIRECTIONS,
-    aggregate as _aggregate,
     align_sequences,
     normalize_transcript,
     score_nonspeech,
+)
+from experiments.benchmarks.extraction.audio.evaluate import (
+    aggregate as _aggregate,
+)
+from experiments.benchmarks.extraction.audio.evaluate import (
     score_speech as _score_speech,
 )
-from experiments.benchmarks.extraction.audio.runner import (
-    _validate_reliability_split_isolation,
-    _validate_manifest_rows,
+from experiments.benchmarks.extraction.audio.protocol import (
+    load_protocol as default_protocol,
 )
-from experiments.benchmarks.extraction.audio.protocol import load_protocol as default_protocol
-from experiments.benchmarks.common.process import worker_environment
-from experiments.benchmarks.common.runner import run_benchmark
+from experiments.benchmarks.extraction.audio.runner import (
+    _validate_manifest_rows,
+    _validate_reliability_split_isolation,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIO_PROTOCOL = default_protocol()
@@ -70,14 +84,13 @@ def aggregate(*args, **kwargs):
         ),
     ),
 )
-def test_fresh_workers_launch_as_modules(
-    module, usage
-) -> None:
+def test_fresh_workers_launch_as_modules(module, usage) -> None:
     completed = subprocess.run(
         [sys.executable, "-m", module],
         cwd=ROOT,
         capture_output=True,
         text=True,
+        check=False,
     )
     assert completed.returncode != 0
     assert usage in completed.stderr
@@ -86,6 +99,7 @@ def test_fresh_workers_launch_as_modules(
 
 def test_whisper_loader_passes_offline_mode_once(monkeypatch) -> None:
     import torch
+
     from edumind.extraction.extractors.audio import load_whisper_runtime
 
     captured = {"loads": []}
@@ -262,7 +276,8 @@ def test_whisper_preserves_untimed_text_and_benchmark_records_it(tmp_path) -> No
 
     assert document.text == "hello world unfinished"
     assert [
-        (segment.timestamp_start, segment.timestamp_end) for segment in document.segments
+        (segment.timestamp_start, segment.timestamp_end)
+        for segment in document.segments
     ] == [(0.0, 0.4), (0.5, 1.0), (1.0, None)]
     assert [warning.code for warning in document.warnings] == ["incomplete_timestamp"]
 
@@ -274,7 +289,9 @@ def test_whisper_preserves_untimed_text_and_benchmark_records_it(tmp_path) -> No
 
     assert transcript.text == "hello world unfinished"
     assert [segment["text"] for segment in transcript.segments] == ["hello", "world"]
-    assert transcript.warnings == ("1 Whisper chunk(s) lacked complete timestamp boundaries",)
+    assert transcript.warnings == (
+        "1 Whisper chunk(s) lacked complete timestamp boundaries",
+    )
     assert calls == [
         (
             "audio.wav",
@@ -289,7 +306,7 @@ def test_whisper_preserves_untimed_text_and_benchmark_records_it(tmp_path) -> No
                 "return_timestamps": "word",
                 "generate_kwargs": {"do_sample": False},
             },
-        )
+        ),
     ]
 
     video = build_document(
@@ -302,10 +319,12 @@ def test_whisper_preserves_untimed_text_and_benchmark_records_it(tmp_path) -> No
     assert video.text == "hello world\nslide text"
 
 
-def test_word_alignment_returns_known_substitution_deletion_and_insertion_counts() -> None:
-    substitution = align_sequences("a b".split(), "a x".split())
-    deletion = align_sequences("a b".split(), "a".split())
-    insertion = align_sequences("a".split(), "a x".split())
+def test_word_alignment_returns_known_substitution_deletion_and_insertion_counts() -> (
+    None
+):
+    substitution = align_sequences(["a", "b"], ["a", "x"])
+    deletion = align_sequences(["a", "b"], ["a"])
+    insertion = align_sequences(["a"], ["a", "x"])
     assert substitution.substitutions == 1
     assert deletion.deletions == 1
     assert insertion.insertions == 1
@@ -518,9 +537,7 @@ def test_timestamp_span_alignment_does_not_reuse_a_broad_prediction() -> None:
             "id": "word-span",
             "reference": "alpha beta",
             "duration_seconds": 2.0,
-            "reference_segments": [
-                {"text": "alpha beta", "start": 0.0, "end": 2.0}
-            ],
+            "reference_segments": [{"text": "alpha beta", "start": 0.0, "end": 2.0}],
         },
         "alpha beta",
         [
@@ -561,7 +578,12 @@ def test_audio_registry_and_duration_limit_are_frozen() -> None:
         },
     ]
     controls = [
-        {"id": "silence", "reference": "", "duration_seconds": 1.0, "nonspeech_kind": "silence"},
+        {
+            "id": "silence",
+            "reference": "",
+            "duration_seconds": 1.0,
+            "nonspeech_kind": "silence",
+        },
         {
             "id": "noise",
             "reference": "",
@@ -882,7 +904,12 @@ def test_authoritative_audio_split_requires_all_condition_groups() -> None:
             "source_license": "fixture",
             "source_revision": "1",
         }
-        for kind in ("silence", "music_without_lyrics", "background_noise", "environmental_sound")
+        for kind in (
+            "silence",
+            "music_without_lyrics",
+            "background_noise",
+            "environmental_sound",
+        )
     ]
 
     with pytest.raises(ValueError, match="lacks required conditions"):
