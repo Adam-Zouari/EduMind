@@ -1,9 +1,11 @@
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 from edumind.common.artifacts import atomic_write_json
 from edumind.common.paths import PROJECT_ROOT
-from experiments.benchmarks.common.arguments import parser
+from experiments.benchmarks.common.arguments import default_decision_path, parser
 from experiments.benchmarks.common.contracts import BenchmarkPlan
 from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
 from experiments.benchmarks.common.decisions import load_engineer_decision
@@ -46,6 +48,39 @@ from experiments.benchmarks.rag.retrieval_reranking.protocol import (
     load_protocol as load_retrieval_protocol,
 )
 
+
+def _run_smoke_devices(devices: tuple[str, ...]) -> int:
+    """Re-enter once per device so each smoke variant owns one parent run."""
+
+    forwarded: list[str] = []
+    skip = False
+    for value in sys.argv[1:]:
+        if skip:
+            skip = False
+            continue
+        if value == "--device":
+            skip = True
+            continue
+        if value.startswith("--device="):
+            continue
+        forwarded.append(value)
+    return_codes = [
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "experiments.benchmarks.rag.final.run",
+                *forwarded,
+                "--device",
+                device,
+            ],
+            check=False,
+        ).returncode
+        for device in devices
+    ]
+    return 0 if all(code == 0 for code in return_codes) else 2
+
+
 if __name__ == "__main__":
     argument_parser = parser(
         "Benchmark shortlisted complete RAG systems",
@@ -56,7 +91,9 @@ if __name__ == "__main__":
     argument_parser.add_argument("--review-results", type=Path)
     argument_parser.add_argument("--confirm-locked-test", action="store_true")
     argument_parser.add_argument(
-        "--device", choices=("cpu", "cuda"), help="Whole-model generator device"
+        "--device",
+        choices=("cpu", "cuda", "both"),
+        help="Whole-model generator device; smoke defaults to both",
     )
     argument_parser.add_argument(
         "--dtype", choices=("float32", "float16", "bfloat16", "auto")
@@ -79,6 +116,22 @@ if __name__ == "__main__":
     retrieval_protocol = load_retrieval_protocol(arguments.retrieval_protocol)
     chunking_protocol = load_chunking_protocol(arguments.chunking_protocol)
     execution = final_protocol.profile(arguments.profile)
+    if arguments.profile == "smoke" and arguments.device in {None, "both"}:
+        raise SystemExit(_run_smoke_devices(execution.devices))
+    if arguments.profile != "smoke" and arguments.device == "both":
+        argument_parser.error("--device both is valid only for smoke")
+    arguments.shortlist = arguments.shortlist or default_decision_path(
+        "final-rag", arguments.profile
+    )
+    if arguments.profile == "development":
+        arguments.retrieval_selection = (
+            arguments.retrieval_selection
+            or default_decision_path("retrieval-reranking", "locked")
+        )
+        arguments.generation_selection = (
+            arguments.generation_selection
+            or default_decision_path("generation", "locked")
+        )
     if (
         arguments.profile in {"smoke", "development"}
         and arguments.shortlist is not None
@@ -110,12 +163,8 @@ if __name__ == "__main__":
         argument_parser.error(
             "review results and locked-test confirmation apply only to --profile locked"
         )
-    if arguments.profile != "smoke" and arguments.device is None:
-        argument_parser.error(
-            "development/validation/locked final RAG requires explicit --device cpu|cuda"
-        )
     device = arguments.device or execution.device
-    dtype = arguments.dtype or execution.dtype
+    dtype = arguments.dtype or execution.dtype_for(device)
     if execution.hardware_required and (device, dtype) != (
         execution.device,
         execution.dtype,
@@ -269,6 +318,7 @@ if __name__ == "__main__":
         repetitions=execution.repetitions,
         bootstrap_resamples=execution.bootstrap_resamples,
         warmups=execution.warmups,
+        settings={"device": device, "dtype": dtype},
     )
 
     def evaluate(candidate):
@@ -331,6 +381,23 @@ if __name__ == "__main__":
             "final_rag": final_protocol.meta,
         },
         no_mlflow=arguments.no_mlflow,
+        resource_monitor_options={
+            "require_vram": device == "cuda",
+            "report_zero_vram": device == "cpu",
+        },
+        operational_maximums=(
+            {
+                "model_peak_vram_mb": generation_protocol.authoritative_peak_vram_mb,
+                "peak_vram_mb": generation_protocol.authoritative_peak_vram_mb,
+            }
+            if arguments.profile != "smoke"
+            else None
+        ),
+        run_name_prefix=(
+            f"rag-final-smoke-{device}"
+            if arguments.profile == "smoke"
+            else f"rag-final-{arguments.profile}"
+        ),
     )
     print(
         json.dumps(

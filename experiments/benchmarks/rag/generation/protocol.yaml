@@ -1,5 +1,5 @@
 schema_version: 1
-protocol_version: generation-v2
+protocol_version: generation-v3
 seed: 42
 
 models:
@@ -46,6 +46,8 @@ profiles:
     dtype: auto
     batch_size: 1
     hardware_required: false
+    devices: [cpu, cuda]
+    device_dtypes: {cpu: auto, cuda: float16}
   development:
     warmups: 2
     repetitions: 3

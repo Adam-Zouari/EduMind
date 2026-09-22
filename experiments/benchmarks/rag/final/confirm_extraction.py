@@ -143,6 +143,7 @@ def main() -> int:
         repetitions=execution.repetitions,
         bootstrap_resamples=execution.bootstrap_resamples,
         warmups=execution.warmups,
+        settings={"device": arguments.device, "dtype": arguments.dtype},
     )
 
     result = run_benchmark(
