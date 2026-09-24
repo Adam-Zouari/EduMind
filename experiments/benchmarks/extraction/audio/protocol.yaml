@@ -1,5 +1,5 @@
 schema_version: 1
-protocol_version: audio-asr-v3
+protocol_version: audio-asr-v4
 seed: 42
 
 audio:
@@ -72,6 +72,14 @@ resources:
   allow_offload: false
   allow_quantization: false
   allow_device_splitting: false
+
+preflight:
+  warmups: 0
+  repetitions: 1
+  bootstrap_resamples: 0
+  telemetry_interval_seconds: 0.05
+  poll_interval_seconds: 0.05
+  worker_timeout_seconds: 3600
 
 profiles:
   smoke:

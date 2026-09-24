@@ -183,6 +183,24 @@ def test_document_audio_and_video_behavior_comes_from_protocol(tmp_path) -> None
     )
 
 
+@pytest.mark.parametrize(
+    ("name", "source", "loader"),
+    tuple((name, source, loader) for name, source, loader, _ in PROTOCOL_CASES[:5]),
+)
+def test_model_benchmark_preflight_controls_are_strict(
+    tmp_path, name, source, loader
+) -> None:
+    protocol = loader(source)
+    assert protocol.preflight.repetitions == 1
+    assert protocol.preflight.telemetry_interval_seconds == 0.05
+    assert protocol.preflight.worker_timeout_seconds == 3600
+
+    payload = yaml.safe_load(source.read_text(encoding="utf-8"))
+    payload["preflight"]["telemetry_interval_seconds"] = 0
+    with pytest.raises(ValueError, match="telemetry_interval_seconds"):
+        loader(_write_protocol(tmp_path, f"{name}-preflight", payload))
+
+
 def test_chunking_strategy_kind_cannot_contradict_candidate_alias(
     tmp_path: Path,
 ) -> None:

@@ -6,6 +6,7 @@ import argparse
 import json
 import tempfile
 from collections.abc import Mapping, Sequence
+from dataclasses import asdict
 from pathlib import Path
 
 from edumind.common.artifacts import sha256_file, stable_hash
@@ -26,9 +27,10 @@ from experiments.benchmarks.common.preflight import (
     current_qualification_fingerprint,
     eligible_candidates,
     model_lock_fingerprints,
-    resolve_preflight_report,
     run_preflight,
+    stress_input_identity,
 )
+from experiments.benchmarks.common.preflight_reports import resolve_preflight_report
 from experiments.benchmarks.common.process import run_json_worker
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.extraction.audio.evaluate import (
@@ -96,6 +98,15 @@ def main(directory: Path) -> int:
         protocol,
     )
     if arguments.profile == "preflight":
+        ignored = []
+        if arguments.reliability_manifest is not None:
+            ignored.append("--reliability-manifest")
+        if arguments.preflight_report is not None:
+            ignored.append("--preflight-report")
+        if arguments.preflight_run_id is not None:
+            ignored.append("--preflight-run-id")
+        if ignored:
+            parser.error("ASR preflight does not accept: " + ", ".join(ignored))
         result = run_preflight_profile(
             candidates,
             manifest_path=arguments.manifest,
@@ -193,7 +204,29 @@ def run(
     qualification_path = None
     qualification = None
     if profile != "smoke":
-        fingerprint, _ = _qualification_identity(protocol, model_lock)
+        qualification_manifest = (
+            speech_manifest
+            if profile == "development"
+            else load_manifest(_speech_manifest("development"))
+        )
+        qualification_speech = [
+            item
+            for item in qualification_manifest.samples
+            if item.get("kind") == "audio"
+        ]
+        _validate_manifest_rows(
+            qualification_speech, None, "development", protocol
+        )
+        qualification_stress = max(
+            qualification_speech,
+            key=lambda item: float(item["duration_seconds"]),
+        )
+        fingerprint, _ = _qualification_identity(
+            protocol,
+            model_lock,
+            qualification_manifest,
+            qualification_stress,
+        )
         qualification_path, qualification = resolve_preflight_report(
             benchmark="audio",
             fingerprint=fingerprint,
@@ -390,7 +423,9 @@ def run_preflight_profile(
     model_lock = load_selected_model_lock(
         PROJECT_ROOT / "data/benchmarks/models/selected.json", candidates=model_ids
     )
-    fingerprint, context = _qualification_identity(protocol, model_lock)
+    fingerprint, context = _qualification_identity(
+        protocol, model_lock, speech_manifest, stress
+    )
     temporary_root = PROJECT_ROOT / "artifacts/benchmarks/asr-preflight-canonical"
     temporary_root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=temporary_root) as raw_directory:
@@ -404,9 +439,9 @@ def run_preflight_profile(
                 canonical,
                 (),
                 device="cuda",
-                warmups=0,
-                repetitions=1,
-                bootstrap_resamples=0,
+                warmups=protocol.preflight.warmups,
+                repetitions=protocol.preflight.repetitions,
+                bootstrap_resamples=protocol.preflight.bootstrap_resamples,
                 seed=protocol.meta.seed,
                 directory=directory,
                 protocol=protocol,
@@ -467,6 +502,21 @@ def _run_worker(
         error_label="ASR worker",
         temporary_root=directory,
         vram_limit_mb=vram_limit_mb,
+        telemetry_interval_seconds=(
+            protocol.preflight.telemetry_interval_seconds
+            if mode == "preflight"
+            else 0.05
+        ),
+        poll_interval_seconds=(
+            protocol.preflight.poll_interval_seconds
+            if mode == "preflight"
+            else 0.05
+        ),
+        timeout_seconds=(
+            protocol.preflight.worker_timeout_seconds
+            if mode == "preflight"
+            else None
+        ),
     )
 
 
@@ -774,7 +824,9 @@ def _candidates(
     ).selected_candidates
 
 
-def _qualification_identity(protocol: AudioProtocol, model_lock):
+def _qualification_identity(
+    protocol: AudioProtocol, model_lock, manifest, stress
+):
     execution = protocol.profile("development")
     locked_models = model_lock_fingerprints(model_lock)
     revisions = {
@@ -793,12 +845,15 @@ def _qualification_identity(protocol: AudioProtocol, model_lock):
             },
             "batch_size": execution.batch_size,
             "vram_limit_mb": protocol.authoritative_peak_vram_mb,
+            "preflight": asdict(protocol.preflight),
         },
         input_envelope={
+            **stress_input_identity(manifest, (stress,)),
             "kind": "canonical-audio",
             "sample_rate_hz": protocol.audio["sample_rate_hz"],
             "channels": protocol.audio["channels"],
             "maximum_duration_seconds": protocol.audio["maximum_duration_seconds"],
+            "tested_duration_seconds": float(stress["duration_seconds"]),
         },
     )
 

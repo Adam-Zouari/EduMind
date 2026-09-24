@@ -95,16 +95,24 @@ decision has been consumed, preserve it and create a versioned replacement if
 the selection changes. `--shortlist PATH` and stage-specific selection options
 remain explicit overrides.
 
-Development locates preflight by an exact fingerprint covering the candidate
-roster, model revisions and checksums, protocols, software locks, GPU and
-driver, device, dtype, batch size, and tested input envelope. It never chooses
-an arbitrary latest run. Use `--preflight-run-id ID` to select an exact MLflow
-run, or `--preflight-report PATH` for local no-MLflow debugging.
+Development locates preflight by an exact SHA-256 fingerprint covering the
+candidate roster, model revisions and checksums, protocols, software locks,
+executable source tree and Git commit, GPU and driver, device, dtype, batch
+size, exact stress manifest, and tested input envelope. It never chooses an
+arbitrary latest run. Use `--preflight-run-id ID` to select an exact MLflow run,
+or `--preflight-report PATH` for local no-MLflow debugging.
 
 Definitive hardware exclusions (`vram_limit_exceeded`, `gpu_oom`, or
 `offload_detected`) are omitted from development and remain in its provenance.
 `measurement_unavailable`, unverifiable placement, and infrastructure failures
 block development until preflight is rerun successfully.
+
+Each candidate child contains a `preflight_candidate.json` evidence artifact.
+The parent `preflight_report.json` records the complete roster and required
+component groups. Video is ready only when frozen ASR and a visual policy are
+qualified; Document additionally requires viable PDF, image, and DOCX routes.
+Preflight warmups, repetitions, telemetry interval, polling interval, and
+timeout are read from the benchmark protocol.
 
 ## 4. Document extraction
 
@@ -275,14 +283,16 @@ docker compose -f experiments/benchmarks/vectordb/compose.yml up -d
 python -m experiments.benchmarks.vectordb.run --profile smoke
 python -m experiments.benchmarks.vectordb.run --profile development
 python -m experiments.benchmarks.vectordb.run --profile validation
-python -m experiments.benchmarks.vectordb.retrieval_run --profile development
+python -m experiments.benchmarks.vectordb.retrieval_run --profile validation
 docker compose -f experiments/benchmarks/vectordb/compose.yml down
 ```
 
-The validation server decision defaults to `vector-database-validation.json`.
-After reviewing it, record the selected server as
-`vector-database-locked.json`. Complete retrieval resolves that decision plus
-the locked chunking–embedding and retrieval–reranking decisions automatically.
+The server-finalist decision defaults to `vector-database-validation.json` and
+selects one or more development-qualified servers for validation. Complete
+retrieval consumes those finalists together with the locked chunking–embedding
+and retrieval–reranking decisions. After reviewing all validation evidence,
+record exactly one selected server in `vector-database-locked.json` for Final
+RAG.
 
 ## 10. Generation and Final RAG
 

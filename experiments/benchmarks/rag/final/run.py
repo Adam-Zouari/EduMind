@@ -5,7 +5,11 @@ from pathlib import Path
 
 from edumind.common.artifacts import atomic_write_json
 from edumind.common.paths import PROJECT_ROOT
-from experiments.benchmarks.common.arguments import default_decision_path, parser
+from experiments.benchmarks.common.arguments import (
+    default_decision_path,
+    parser,
+    without_option_values,
+)
 from experiments.benchmarks.common.contracts import BenchmarkPlan
 from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
 from experiments.benchmarks.common.decisions import load_engineer_decision
@@ -52,18 +56,7 @@ from experiments.benchmarks.rag.retrieval_reranking.protocol import (
 def _run_smoke_devices(devices: tuple[str, ...]) -> int:
     """Re-enter once per device so each smoke variant owns one parent run."""
 
-    forwarded: list[str] = []
-    skip = False
-    for value in sys.argv[1:]:
-        if skip:
-            skip = False
-            continue
-        if value == "--device":
-            skip = True
-            continue
-        if value.startswith("--device="):
-            continue
-        forwarded.append(value)
+    forwarded = without_option_values(sys.argv[1:], ("--device",))
     return_codes = [
         subprocess.run(
             [

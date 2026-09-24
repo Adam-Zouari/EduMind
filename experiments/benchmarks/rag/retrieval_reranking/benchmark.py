@@ -29,6 +29,7 @@ from experiments.benchmarks.common.process import (
     seed_deterministically,
     successful_execution_payload,
 )
+from experiments.benchmarks.common.protocol import PreflightSettings
 from experiments.benchmarks.common.provenance import package_versions
 from experiments.benchmarks.rag.chunking_embedding.metrics import (
     aggregate_quality,
@@ -71,8 +72,8 @@ def evaluate_candidate(
     *,
     device: str,
     dtype: str,
-    frozen_pool: Mapping[str, object] | None,
-    child_run_id: str,
+    frozen_pool_collection: Mapping[str, object] | None,
+    child_run_id: str | None,
     worker_started_at: float | None = None,
 ):
     """Evaluate one complete stack and return auditable rows and aggregates."""
@@ -132,9 +133,16 @@ def evaluate_candidate(
         0.0,
         initialization_elapsed - index.corpus_build_seconds - preflight_seconds,
     )
+    index_identity = _index_identity(index, candidate)
+    index_build = _index_build_artifact(index, candidate, index_identity)
 
-    pool_by_question, pool_metadata = _load_frozen_pool(
-        candidate, frozen_pool, questions, index, protocol
+    pool_by_question, pool_collection_metadata = _load_pool_collection(
+        candidate,
+        frozen_pool_collection,
+        questions,
+        index,
+        protocol,
+        index_identity=index_identity,
     )
     reranker_input_totals = _reranker_preflight(
         reranker, questions, pool_by_question, index
@@ -159,12 +167,12 @@ def evaluate_candidate(
     ranking_rows: list[dict[str, object]] = []
     match_rows: list[dict[str, object]] = []
     timing_rows: list[dict[str, object]] = []
-    owner_pool_rows: list[dict[str, object]] = []
+    pool_collection_rows: list[dict[str, object]] = []
     failures: list[str] = []
     failed_query_ids: set[str] = set()
     nonfinite_score_count = 0
     permutation_failures = 0
-    pool_mismatches = 0
+    query_pool_mismatches = 0
     expected_agreements = len(questions) * max(0, plan.repetitions - 1)
     matching_agreements = 0
     actual_pool_sizes: list[int] = []
@@ -198,7 +206,7 @@ def evaluate_candidate(
                     try:
                         _require_same_pool(live_pool, quality_pool, question_id)
                     except ValueError:
-                        pool_mismatches += 1
+                        query_pool_mismatches += 1
                         raise
                     rerank_started = time.perf_counter()
                     local_order = reranker.rank_with_scores(
@@ -351,7 +359,7 @@ def evaluate_candidate(
         if reranker is None:
             for rank, (position, score_value) in enumerate(first_pool, start=1):
                 chunk = index.chunks[position]
-                owner_pool_rows.append(
+                pool_collection_rows.append(
                     {
                         "question_id": question_id,
                         "rank": rank,
@@ -388,7 +396,7 @@ def evaluate_candidate(
         "validity.failed_query_count": float(len(failed_query_ids)),
         "validity.truncated_input_count": 0.0,
         "validity.nonfinite_score_count": float(nonfinite_score_count),
-        "validity.pool_checksum_match": float(pool_mismatches == 0),
+        "validity.pool_collection_match": float(query_pool_mismatches == 0),
         "validity.exact_pool_permutation": float(permutation_failures == 0),
         **eligible_counts(samples, alpha_metrics=protocol.alpha_ndcg_metrics),
     }
@@ -433,11 +441,10 @@ def evaluate_candidate(
     if reranker is None:
         operational["index_build_seconds"] = index.corpus_build_seconds
 
-    index_build = _index_build_artifact(index, candidate)
-    pool_checksum = (
-        stable_hash(owner_pool_rows)
+    pool_collection_checksum = (
+        stable_hash(pool_collection_rows)
         if reranker is None
-        else str(pool_metadata["pool_checksum"])
+        else str(pool_collection_metadata["pool_collection_checksum"])
     )
     parameters = _parameters(
         candidate,
@@ -451,9 +458,12 @@ def evaluate_candidate(
         device=device,
         dtype=dtype,
         manifest=manifest,
-        pool_checksum=pool_checksum,
-        pool_owner_run_id=(
-            child_run_id if reranker is None else str(pool_metadata["owner_run_id"])
+        pool_collection_checksum=pool_collection_checksum,
+        index_identity=index_identity,
+        pool_owner_child_run_id=(
+            child_run_id
+            if reranker is None
+            else pool_collection_metadata["owner_child_run_id"]
         ),
     )
     validation_errors = list(failures)
@@ -461,9 +471,9 @@ def evaluate_candidate(
         validation_errors.append(
             f"repeated top-{protocol.pool_size} rankings did not agree exactly"
         )
-    if pool_mismatches:
+    if query_pool_mismatches:
         validation_errors.append(
-            "live first-stage output did not match the frozen pool"
+            "live first-stage output did not match the frozen pool collection"
         )
     if permutation_failures:
         validation_errors.append("reranker output was not an exact pool permutation")
@@ -476,8 +486,9 @@ def evaluate_candidate(
         "manifest_checksum": manifest.checksum,
         "manifest_fingerprint": manifest.fingerprint,
         "pool_owner": candidate.owner_identifier,
-        "pool_owner_run_id": parameters["pool_owner_run_id"],
-        "pool_checksum": pool_checksum,
+        "pool_owner_child_run_id": parameters["pool_owner_child_run_id"],
+        "pool_collection_checksum": pool_collection_checksum,
+        **index_identity,
         "preflight": dict(index.preflight),
         "validity": validity,
         "errors": validation_errors,
@@ -491,7 +502,7 @@ def evaluate_candidate(
         "validation_report": validation_report,
     }
     if reranker is None:
-        artifacts["candidate_pool"] = owner_pool_rows
+        artifacts["pool_collection"] = pool_collection_rows
         artifacts["index_build"] = index_build
     if validation_errors:
         raise CandidateExecutionError(
@@ -514,8 +525,8 @@ def run_in_fresh_process(
     *,
     device: str,
     dtype: str,
-    frozen_pool: Mapping[str, object] | None,
-    child_run_id: str,
+    frozen_pool_collection: Mapping[str, object] | None,
+    child_run_id: str | None,
 ):
     payload = {
         "candidate": candidate,
@@ -524,7 +535,7 @@ def run_in_fresh_process(
         "plan": asdict(plan),
         "device": device,
         "dtype": dtype,
-        "frozen_pool": frozen_pool,
+        "frozen_pool_collection": frozen_pool_collection,
         "child_run_id": child_run_id,
     }
     result = run_json_worker(
@@ -544,6 +555,7 @@ def preflight_in_fresh_process(
     plan: BenchmarkPlan,
     *,
     vram_limit_mb: float,
+    preflight: PreflightSettings,
 ) -> dict[str, object]:
     chunker, _embedding = split_candidate(str(plan.settings["chunker_embedding"]))
     model_backed = parse_candidate(candidate).model_backed or chunker == "semantic"
@@ -562,6 +574,10 @@ def preflight_in_fresh_process(
         prefix="edumind-retrieval-reranking-preflight-",
         error_label=f"retrieval/reranking preflight worker {candidate}",
         vram_limit_mb=vram_limit_mb if model_backed else None,
+        require_vram_measurement=model_backed,
+        telemetry_interval_seconds=preflight.telemetry_interval_seconds,
+        poll_interval_seconds=preflight.poll_interval_seconds,
+        timeout_seconds=preflight.worker_timeout_seconds,
     )
     supervision = result.pop("_worker_supervision", {})
     if isinstance(supervision, Mapping):
@@ -583,12 +599,16 @@ def execute_payload(payload: dict[str, object]) -> dict[str, object]:
             plan,
             device=str(payload["device"]),
             dtype=str(payload["dtype"]),
-            frozen_pool=(
-                payload_mapping(payload.get("frozen_pool"))
-                if payload.get("frozen_pool") is not None
+            frozen_pool_collection=(
+                payload_mapping(payload.get("frozen_pool_collection"))
+                if payload.get("frozen_pool_collection") is not None
                 else None
             ),
-            child_run_id=str(payload["child_run_id"]),
+            child_run_id=(
+                str(payload["child_run_id"])
+                if payload.get("child_run_id") is not None
+                else None
+            ),
             worker_started_at=(
                 float(payload["worker_started_at"])
                 if payload.get("worker_started_at") is not None
@@ -745,33 +765,64 @@ def _reranker(
     )
 
 
-def _load_frozen_pool(
+def _load_pool_collection(
     candidate: RetrievalCandidate,
-    frozen_pool: Mapping[str, object] | None,
+    frozen_pool_collection: Mapping[str, object] | None,
     questions: Sequence[Mapping[str, object]],
     index: ExactIndex,
     protocol: RetrievalProtocol,
+    *,
+    index_identity: Mapping[str, str],
 ) -> tuple[dict[str, list[tuple[int, float]]], dict[str, object]]:
     if candidate.reranker == "none":
-        if frozen_pool is not None:
-            raise ValueError("Pool-owner candidates cannot consume a frozen pool")
+        if frozen_pool_collection is not None:
+            raise ValueError(
+                "Pool-owner candidates cannot consume a frozen pool collection"
+            )
         return {}, {}
-    if frozen_pool is None:
-        raise ValueError(f"{candidate.identifier} requires its owner's frozen pool")
-    rows = frozen_pool.get("rows")
+    if frozen_pool_collection is None:
+        raise ValueError(
+            f"{candidate.identifier} requires its owner's frozen pool collection"
+        )
+    rows = frozen_pool_collection.get("rows")
     if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
-        raise ValueError("Frozen pool rows are missing")
+        raise ValueError("Frozen pool collection rows are missing")
     normalized_rows = [dict(row) for row in rows if isinstance(row, Mapping)]
     if len(normalized_rows) != len(rows):
-        raise ValueError("Frozen pool contains malformed rows")
-    checksum = str(frozen_pool.get("pool_checksum", ""))
+        raise ValueError("Frozen pool collection contains malformed rows")
+    checksum = str(frozen_pool_collection.get("pool_collection_checksum", ""))
     if not checksum or stable_hash(normalized_rows) != checksum:
-        raise ValueError("Frozen pool checksum mismatch")
-    if frozen_pool.get("owner_candidate") != candidate.owner_identifier:
-        raise ValueError("Frozen pool belongs to a different first-stage retriever")
-    owner_run_id = str(frozen_pool.get("owner_run_id", ""))
-    if not owner_run_id:
-        raise ValueError("Frozen pool does not identify its owner run")
+        raise ValueError("Frozen pool collection checksum mismatch")
+    if frozen_pool_collection.get("owner_candidate") != candidate.owner_identifier:
+        raise ValueError(
+            "Frozen pool collection belongs to a different first-stage retriever"
+        )
+    observed_identity = {
+        key: str(frozen_pool_collection[key])
+        for key in _INDEX_IDENTITY_FIELDS
+        if key in frozen_pool_collection
+    }
+    if observed_identity.keys() != index_identity.keys():
+        missing = sorted(index_identity.keys() - observed_identity.keys())
+        unexpected = sorted(observed_identity.keys() - index_identity.keys())
+        details = []
+        if missing:
+            details.append("missing " + ", ".join(missing))
+        if unexpected:
+            details.append("unexpected " + ", ".join(unexpected))
+        raise ValueError(
+            "Frozen pool collection index identity is invalid: " + "; ".join(details)
+        )
+    mismatched = sorted(
+        key for key, value in index_identity.items() if observed_identity[key] != value
+    )
+    if mismatched:
+        raise ValueError(
+            "Frozen pool collection index identity mismatch: " + ", ".join(mismatched)
+        )
+    owner_child_run_id = frozen_pool_collection.get("owner_child_run_id")
+    if owner_child_run_id is not None and not str(owner_child_run_id):
+        raise ValueError("Frozen pool collection has an invalid owner child run ID")
     positions = {
         chunk.identifier: position for position, chunk in enumerate(index.chunks)
     }
@@ -779,29 +830,33 @@ def _load_frozen_pool(
     for row in normalized_rows:
         chunk_id = str(row.get("chunk_id", ""))
         if chunk_id not in positions:
-            raise ValueError(f"Frozen pool references unknown chunk {chunk_id!r}")
+            raise ValueError(
+                f"Frozen pool collection references unknown chunk {chunk_id!r}"
+            )
         by_question.setdefault(str(row.get("question_id", "")), []).append(
             (positions[chunk_id], float(row["score"]))
         )
     expected = {str(question["id"]) for question in questions}
     if set(by_question) != expected:
-        raise ValueError("Frozen pool does not account for every answerable question")
+        raise ValueError(
+            "Frozen pool collection does not account for every answerable question"
+        )
     for question_id, values in by_question.items():
         if not values or len(values) > protocol.pool_size:
-            raise ValueError(f"Frozen pool has an invalid size for {question_id}")
+            raise ValueError(f"Frozen query pool has an invalid size for {question_id}")
         ranks = [
             int(row["rank"])
             for row in normalized_rows
             if str(row.get("question_id", "")) == question_id
         ]
         if ranks != list(range(1, len(values) + 1)):
-            raise ValueError(f"Frozen pool has invalid ranks for {question_id}")
+            raise ValueError(f"Frozen query pool has invalid ranks for {question_id}")
         identifiers = [position for position, _ in values]
         if len(identifiers) != len(set(identifiers)):
-            raise ValueError(f"Frozen pool duplicates chunks for {question_id}")
+            raise ValueError(f"Frozen query pool duplicates chunks for {question_id}")
     return by_question, {
-        "pool_checksum": checksum,
-        "owner_run_id": owner_run_id,
+        "pool_collection_checksum": checksum,
+        "owner_child_run_id": owner_child_run_id,
     }
 
 
@@ -930,9 +985,17 @@ def _candidate_contract_errors(
     return errors
 
 
-def _index_build_artifact(
-    index: ExactIndex, candidate: RetrievalCandidate
-) -> dict[str, object]:
+_INDEX_IDENTITY_FIELDS = frozenset(
+    {
+        "retriever",
+        "chunks_sha256",
+        "dense_index_sha256",
+        "bm25_index_sha256",
+    }
+)
+
+
+def _index_identity(index: ExactIndex, candidate: RetrievalCandidate) -> dict[str, str]:
     dense_sha = (
         hashlib.sha256(index.vectors.tobytes()).hexdigest()
         if index.vectors is not None
@@ -943,16 +1006,42 @@ def _index_build_artifact(
         if index.bm25 is not None
         else None
     )
-    identity = {
+    identity: dict[str, str] = {
         "retriever": candidate.retriever,
-        "chunking_fingerprint": index.chunking_fingerprint,
-        "chunk_ids_sha256": stable_hash([chunk.identifier for chunk in index.chunks]),
-        "dense_index_sha256": dense_sha,
-        "bm25_index_sha256": bm25_sha,
+        "chunks_sha256": stable_hash(
+            [{"id": chunk.identifier, "text": chunk.text} for chunk in index.chunks]
+        ),
     }
+    if dense_sha is not None:
+        identity["dense_index_sha256"] = dense_sha
+    if bm25_sha is not None:
+        identity["bm25_index_sha256"] = bm25_sha
+    expected_components = {
+        "dense": {"dense_index_sha256"},
+        "bm25": {"bm25_index_sha256"},
+        "rrf": {"dense_index_sha256", "bm25_index_sha256"},
+    }[candidate.retriever]
+    observed_components = set(identity) & {
+        "dense_index_sha256",
+        "bm25_index_sha256",
+    }
+    if observed_components != expected_components:
+        raise RuntimeError(
+            f"{candidate.retriever} built unexpected index components: "
+            + ", ".join(sorted(observed_components))
+        )
+    return identity
+
+
+def _index_build_artifact(
+    index: ExactIndex,
+    candidate: RetrievalCandidate,
+    identity: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    identity = dict(identity or _index_identity(index, candidate))
     return {
+        "chunking_fingerprint": index.chunking_fingerprint,
         **identity,
-        "index_sha256": stable_hash(identity),
         "build_seconds": index.corpus_build_seconds,
         "dense_index_bytes": (
             int(index.vectors.nbytes) if index.vectors is not None else 0
@@ -975,8 +1064,9 @@ def _parameters(
     device: str,
     dtype: str,
     manifest: DatasetManifest,
-    pool_checksum: str,
-    pool_owner_run_id: str,
+    pool_collection_checksum: str,
+    index_identity: Mapping[str, str],
+    pool_owner_child_run_id: str | None,
 ) -> dict[str, object]:
     embedding_entry = model_lock[embedding_name]
     reranker_entry = (
@@ -986,7 +1076,6 @@ def _parameters(
     )
     parameters: dict[str, object] = {
         "candidate": candidate.identifier,
-        "retriever": candidate.retriever,
         "reranker": candidate.reranker,
         "chunker": chunker_name,
         "chunking_fingerprint": index.chunking_fingerprint,
@@ -998,8 +1087,9 @@ def _parameters(
         "embedding_contract": asdict(index.embedding_spec),
         "embedding_batch_size": protocol.embedding_batch_size,
         "pool_owner": candidate.owner_identifier,
-        "pool_owner_run_id": pool_owner_run_id,
-        "pool_checksum": pool_checksum,
+        "pool_owner_child_run_id": pool_owner_child_run_id,
+        "pool_collection_checksum": pool_collection_checksum,
+        **index_identity,
         "retrieval_protocol_version": protocol.meta.version,
         "retrieval_protocol_checksum": protocol.meta.checksum,
         "requested_pool_size": protocol.pool_size,

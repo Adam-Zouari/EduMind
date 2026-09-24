@@ -1,5 +1,5 @@
 schema_version: 1
-protocol_version: video-v2
+protocol_version: video-v3
 seed: 42
 
 keyframes:
@@ -15,6 +15,7 @@ keyframes:
 asr:
   window_length_seconds: 30
   overlap_seconds: 2
+  repetitions: 1
   stitching_method: normalized_suffix_prefix
   stitching_normalization: asr-minimal-v1
   maximum_overlap_units: 64
@@ -33,6 +34,14 @@ statistics:
 
 selection:
   maximum_finalists: 3
+
+preflight:
+  warmups: 0
+  repetitions: 1
+  bootstrap_resamples: 0
+  telemetry_interval_seconds: 0.05
+  poll_interval_seconds: 0.05
+  worker_timeout_seconds: 3600
 
 profiles:
   smoke:

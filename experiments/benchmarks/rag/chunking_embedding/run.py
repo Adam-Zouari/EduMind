@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 from edumind.common.paths import PROJECT_ROOT
@@ -20,9 +21,10 @@ from experiments.benchmarks.common.preflight import (
     eligible_candidates,
     model_lock_fingerprints,
     rag_stress_manifest,
-    resolve_preflight_report,
     run_preflight,
+    stress_input_identity,
 )
+from experiments.benchmarks.common.preflight_reports import resolve_preflight_report
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.preparation.models import (
     load_selected_model_lock,
@@ -88,19 +90,36 @@ def main(argv: list[str] | None = None) -> int:
     fingerprint = ""
     qualification_context = {}
     if arguments.profile != "smoke":
+        qualification_manifest = (
+            manifest
+            if arguments.profile in {"preflight", "development"}
+            else load_manifest(_manifest_path("development"))
+        )
+        qualification_stress = rag_stress_manifest(qualification_manifest)
         fingerprint, qualification_context = _qualification_identity(
-            protocol, model_lock
+            protocol, model_lock, qualification_manifest, qualification_stress
         )
 
     if arguments.profile == "preflight":
-        stress = rag_stress_manifest(manifest)
+        ignored = []
+        if arguments.preflight_report is not None:
+            ignored.append("--preflight-report")
+        if arguments.preflight_run_id is not None:
+            ignored.append("--preflight-run-id")
+        if arguments.dtype is not None:
+            ignored.append("--dtype")
+        if ignored:
+            argument_parser.error(
+                "Chunking/embedding preflight does not accept: " + ", ".join(ignored)
+            )
+        stress = qualification_stress
         plan = _plan(protocol, stress, declared, "development", "cuda", execution.dtype)
         plan = BenchmarkPlan(
             **{
                 **vars(plan),
-                "warmups": 0,
-                "repetitions": 1,
-                "bootstrap_resamples": 0,
+                "warmups": protocol.preflight.warmups,
+                "repetitions": protocol.preflight.repetitions,
+                "bootstrap_resamples": protocol.preflight.bootstrap_resamples,
             }
         )
         result = run_preflight(
@@ -119,6 +138,7 @@ def main(argv: list[str] | None = None) -> int:
                 model_lock,
                 plan,
                 vram_limit_mb=protocol.authoritative_peak_vram_mb,
+                preflight=protocol.preflight,
             ),
             no_mlflow=arguments.no_mlflow,
         )
@@ -329,7 +349,7 @@ def _selected_candidates(profile, shortlist, protocol):
     return decision.selected_candidates
 
 
-def _qualification_identity(protocol, model_lock):
+def _qualification_identity(protocol, model_lock, manifest, stress):
     execution = protocol.profile("development")
     return current_qualification_fingerprint(
         benchmark="chunking-embedding",
@@ -341,8 +361,10 @@ def _qualification_identity(protocol, model_lock):
             "dtype": execution.dtype,
             "batch_size": execution.batch_size,
             "vram_limit_mb": protocol.authoritative_peak_vram_mb,
+            "preflight": asdict(protocol.preflight),
         },
         input_envelope={
+            **stress_input_identity(manifest, stress.samples),
             "strategies": {
                 name: dict(settings) for name, settings in protocol.strategies.items()
             },

@@ -1,5 +1,5 @@
 schema_version: 1
-protocol_version: chunking-embedding-v3
+protocol_version: chunking-embedding-v4
 seed: 42
 
 tokenizer: tiktoken:cl100k_base
@@ -62,6 +62,14 @@ selection:
 
 resources:
   authoritative_peak_vram_mb: 3584
+
+preflight:
+  warmups: 0
+  repetitions: 1
+  bootstrap_resamples: 0
+  telemetry_interval_seconds: 0.05
+  poll_interval_seconds: 0.05
+  worker_timeout_seconds: 3600
 
 profiles:
   smoke:

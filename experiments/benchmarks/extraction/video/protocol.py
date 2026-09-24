@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from experiments.benchmarks.common.protocol import (
+    PreflightSettings,
     ProtocolMetadata,
     boolean,
     choice,
@@ -17,6 +18,7 @@ from experiments.benchmarks.common.protocol import (
     mapping,
     metadata,
     number,
+    preflight_settings,
     sequence,
     strict_object,
     string,
@@ -28,6 +30,7 @@ DEFAULT_PROTOCOL_PATH = Path(__file__).with_name("protocol.yaml")
 @dataclass(frozen=True)
 class VideoProtocol:
     meta: ProtocolMetadata
+    preflight: PreflightSettings
     fixed_intervals: tuple[int, ...]
     scene_thresholds: tuple[float, ...]
     hybrid_gaps: tuple[int, ...]
@@ -38,6 +41,7 @@ class VideoProtocol:
     selected_scene_source_run_id: str | None
     window_length_seconds: float
     overlap_seconds: float
+    frozen_asr_repetitions: int
     stitching: Mapping[str, object]
     occurrence_matching: Mapping[str, object]
     video_counts: Mapping[str, int]
@@ -86,6 +90,7 @@ def protocol_from_mapping(
             "datasets",
             "statistics",
             "selection",
+            "preflight",
             "profiles",
         },
     )
@@ -161,6 +166,7 @@ def protocol_from_mapping(
             "stitching_method",
             "stitching_normalization",
             "maximum_overlap_units",
+            "repetitions",
         },
     )
     window = number(
@@ -173,6 +179,9 @@ def protocol_from_mapping(
     overlap = number(asr["overlap_seconds"], "asr.overlap_seconds", minimum=0)
     if overlap >= window:
         raise ValueError("Video ASR overlap must be smaller than its window")
+    asr_repetitions = integer(asr["repetitions"], "asr.repetitions", minimum=1)
+    if asr_repetitions != 1:
+        raise ValueError("Frozen video ASR must be decoded exactly once")
     stitching = {
         "method": choice(
             asr["stitching_method"],
@@ -252,10 +261,12 @@ def protocol_from_mapping(
     profiles = execution_profiles(
         root["profiles"], names=("smoke", "development", "validation", "locked")
     )
+    preflight = preflight_settings(root["preflight"])
     if {profile.batch_size for profile in profiles.values()} != {1}:
         raise ValueError("Video visual profiles must process one sample at a time")
     return VideoProtocol(
         metadata("video", source_path, root, profiles=profiles),
+        preflight,
         fixed,
         scenes,
         gaps,
@@ -266,6 +277,7 @@ def protocol_from_mapping(
         source_run,
         window,
         overlap,
+        asr_repetitions,
         stitching,
         occurrence,
         video_counts,

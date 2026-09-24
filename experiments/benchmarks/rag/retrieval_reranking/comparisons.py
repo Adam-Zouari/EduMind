@@ -78,12 +78,12 @@ COMMON_COLUMNS = (
 
 
 def parent_artifact_builder(
-    pools: Mapping[str, Mapping[str, object]],
+    pool_collections: Mapping[str, Mapping[str, object]],
     directions: Mapping[str, str],
     *,
     compare_finalists: bool,
 ):
-    """Create a runner callback over the owner pool registry."""
+    """Create a runner callback over the owner pool-collection registry."""
 
     def build(
         directory: Path,
@@ -102,7 +102,7 @@ def parent_artifact_builder(
             (
                 "reranker_comparisons",
                 reranker_rows,
-                ("retriever", "shared_pool_checksum"),
+                ("retriever", "shared_pool_collection_checksum"),
             ),
             (
                 "retriever_comparisons",
@@ -110,8 +110,8 @@ def parent_artifact_builder(
                 (
                     "baseline_retriever",
                     "candidate_retriever",
-                    "baseline_pool_checksum",
-                    "candidate_pool_checksum",
+                    "baseline_pool_collection_checksum",
+                    "candidate_pool_collection_checksum",
                 ),
             ),
         ):
@@ -127,33 +127,44 @@ def parent_artifact_builder(
                 "finalist_comparisons",
                 finalist_rows,
                 (
-                    "baseline_pool_checksum",
-                    "candidate_pool_checksum",
+                    "baseline_pool_collection_checksum",
+                    "candidate_pool_collection_checksum",
                     *COMMON_COLUMNS,
                 ),
             )
             written.extend(paths)
             identities["finalist_comparisons"] = identity
 
-        pool_index_path = directory / "pool_index.json"
+        pool_collections_path = directory / "pool_collections.json"
         atomic_write_json(
-            pool_index_path,
+            pool_collections_path,
             {
                 "schema_version": 1,
-                "pools": [
+                "pool_collections": [
                     {
                         "owner_candidate": owner,
-                        "owner_run_id": record.get("owner_run_id"),
-                        "pool_checksum": record.get("pool_checksum"),
-                        "index_checksum": record.get("index_checksum"),
+                        "owner_child_run_id": record.get("owner_child_run_id"),
+                        "pool_collection_checksum": record.get(
+                            "pool_collection_checksum"
+                        ),
+                        "retriever": record.get("retriever"),
+                        "chunks_sha256": record.get("chunks_sha256"),
+                        **{
+                            key: record[key]
+                            for key in (
+                                "dense_index_sha256",
+                                "bm25_index_sha256",
+                            )
+                            if key in record
+                        },
                         "row_count": len(record.get("rows", [])),
                     }
-                    for owner, record in sorted(pools.items())
+                    for owner, record in sorted(pool_collections.items())
                 ],
                 "comparison_artifacts": identities,
             },
         )
-        written.append(pool_index_path)
+        written.append(pool_collections_path)
         return written
 
     return build
@@ -173,11 +184,14 @@ def _reranker_rows(
         baseline = results.get(parsed.owner_identifier)
         if baseline is None:
             continue
-        baseline_checksum = str(baseline.parameters.get("pool_checksum", ""))
-        candidate_checksum = str(candidate.parameters.get("pool_checksum", ""))
+        baseline_checksum = str(baseline.parameters.get("pool_collection_checksum", ""))
+        candidate_checksum = str(
+            candidate.parameters.get("pool_collection_checksum", "")
+        )
         if not baseline_checksum or baseline_checksum != candidate_checksum:
             raise ValueError(
-                f"Cannot compare {candidate_name}: its frozen pool differs from the owner"
+                f"Cannot compare {candidate_name}: its frozen pool collection "
+                "differs from the owner"
             )
         pairs.append(
             (
@@ -185,7 +199,7 @@ def _reranker_rows(
                 candidate,
                 {
                     "retriever": parsed.retriever,
-                    "shared_pool_checksum": baseline_checksum,
+                    "shared_pool_collection_checksum": baseline_checksum,
                 },
             )
         )
@@ -220,11 +234,11 @@ def _retriever_rows(
                         "candidate_retriever": parse_candidate(
                             candidate.candidate
                         ).retriever,
-                        "baseline_pool_checksum": baseline.parameters.get(
-                            "pool_checksum"
+                        "baseline_pool_collection_checksum": baseline.parameters.get(
+                            "pool_collection_checksum"
                         ),
-                        "candidate_pool_checksum": candidate.parameters.get(
-                            "pool_checksum"
+                        "candidate_pool_collection_checksum": candidate.parameters.get(
+                            "pool_collection_checksum"
                         ),
                     },
                 )
@@ -263,11 +277,11 @@ def _finalist_rows(
                     baseline,
                     candidate,
                     {
-                        "baseline_pool_checksum": baseline.parameters.get(
-                            "pool_checksum"
+                        "baseline_pool_collection_checksum": baseline.parameters.get(
+                            "pool_collection_checksum"
                         ),
-                        "candidate_pool_checksum": candidate.parameters.get(
-                            "pool_checksum"
+                        "candidate_pool_collection_checksum": candidate.parameters.get(
+                            "pool_collection_checksum"
                         ),
                     },
                 )

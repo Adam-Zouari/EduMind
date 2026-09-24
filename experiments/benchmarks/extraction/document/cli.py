@@ -63,6 +63,25 @@ def main(directory: Path) -> int:
 def _document_main(arguments, directory: Path) -> int:
     del directory
     protocol = load_protocol(arguments.protocol)
+    if arguments.profile == "preflight":
+        ignored = []
+        if arguments.source != "all":
+            ignored.append("--source")
+        if arguments.comparison is not None:
+            ignored.append("--comparison")
+        if arguments.pdf_selection is not None:
+            ignored.append("--pdf-selection")
+        if arguments.image_selection is not None:
+            ignored.append("--image-selection")
+        if arguments.preflight_report is not None:
+            ignored.append("--preflight-report")
+        if arguments.preflight_run_id is not None:
+            ignored.append("--preflight-run-id")
+        if ignored:
+            raise ValueError(
+                "Document preflight qualifies every declared route and does not "
+                "accept: " + ", ".join(ignored)
+            )
     if arguments.comparison is None:
         arguments.comparison = (
             "architecture"
@@ -80,11 +99,6 @@ def _document_main(arguments, directory: Path) -> int:
         authoritative_device=execution.device,
     )
     if arguments.profile == "preflight":
-        if any(
-            value is not None
-            for value in (arguments.pdf_selection, arguments.image_selection)
-        ):
-            raise ValueError("Document preflight does not consume selection decisions")
         result = run_preflight_profile(
             manifest_path=arguments.manifest,
             no_mlflow=arguments.no_mlflow,

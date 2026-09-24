@@ -80,18 +80,30 @@ Preflight has one parent and one child per candidate in the benchmark's normal
 MLflow experiment. A fresh CUDA worker performs real inference while the parent
 continuously samples its process tree. ASR, embedding, learned-reranker, and
 video-ASR workers are stopped when sampled VRAM exceeds 3,584 MiB. Document and
-video visual parsers instead use their backend-specific placement contracts and
-report VRAM without a shared cap. Framework placement inspection checks all
-available parameters and buffers, Hugging Face device maps, Accelerate hooks,
-and disk/meta placement. CPU tokenization and media decoding are not offloading.
+video visual parsers instead report VRAM without a shared cap. Their loaded
+backend state is inspected rather than trusting the requested device: available
+parameters and buffers, Paddle places, Hugging Face device maps, Accelerate
+hooks, ONNX execution providers, and disk/meta placement are recorded. A backend
+whose placement cannot be observed is blocked as `placement_unverifiable`. CPU
+tokenization and media decoding are not offloading.
 
 `vram_limit_exceeded`, `gpu_oom`, and `offload_detected` are definitive hardware
 exclusions. Missing measurement, unverifiable placement, and infrastructure or
 execution failures block development; they never silently eliminate a
 candidate. Development resolves an exact preflight fingerprint and runs only
 its `qualified_candidates`. Validation and locked reuse that qualification only
-when candidate identity, model lock, protocols, dependency locks, GPU/driver,
-device, dtype, batch size, and input envelope still match.
+when candidate identity, model lock, protocols, dependency locks, executable
+source-tree hash, Git commit, GPU/driver, device, dtype, batch size, exact stress
+manifest, and tested input envelope still match. Identical fingerprints are
+expected only for the same qualification contract and inputs; the fingerprint
+is an identity key, not a random run identifier.
+
+Readiness is evaluated by each benchmark's required component groups. Video
+requires its selected frozen ASR and at least one visual policy; Document
+requires at least one viable route for PDF, image, and DOCX. Every preflight
+child stores `preflight_candidate.json` with its placement, telemetry, input
+validation, and failure evidence. The parent `preflight_report.json` stores the
+complete roster and group-readiness decision.
 
 Development, validation, and locked runs use seed 42, retain per-sample results,
 and report 95% confidence intervals for eligible sample-based aggregates. A
@@ -206,7 +218,9 @@ implementation:
 
 These files own every setting that can change outputs, eligibility, latency,
 memory, or failure status: search ranges, parser and decoder options, cutoffs,
-warmups, repetitions, batch sizes, statistical settings, and hardware gates.
+warmups, repetitions, batch sizes, statistical settings, hardware gates, and
+preflight warmups, repetitions, telemetry interval, polling interval, and
+worker timeout.
 Their schemas reject missing, unknown, contradictory, and non-finite values.
 The resolved protocol has a stable checksum. Parent fingerprints include all
 composed protocol checksums; workers verify the version, checksum, and resolved
@@ -1864,19 +1878,22 @@ The three no-reranker candidates own those artifacts:
 | `bm25|none` | All five BM25 candidates. |
 | `rrf|none` | All five RRF candidates. |
 
-A reranker receives exactly the pool owned by its matching no-reranker child. It
-may only permute those 20 chunk IDs: it cannot add, remove, duplicate, or retrieve
-chunks. The reranker child records the owner's MLflow run ID and the pool
-SHA-256. A mismatch or non-permutation invalidates the child and makes the parent
-comparison incomplete.
+A reranker receives exactly the query pool owned by its matching no-reranker
+child for every question. It may only permute those 20 chunk IDs: it cannot add,
+remove, duplicate, or retrieve chunks. The reranker child records the checksum
+of the complete pool collection. It also records the owner's MLflow child-run ID
+when an owner child exists. Validation may prepare a missing owner's pool
+collection internally as an input; that case has no owner child-run ID. A
+mismatch or non-permutation invalidates the child and makes the parent comparison
+incomplete.
 
 ```text
 load the frozen selected chunker/embedding pair and corpus
 → build Dense and BM25 indexes
-→ create the Dense, BM25, and RRF top-20 pools
-→ checksum each pool under its no-reranker owner
+→ create one Dense, BM25, and RRF top-20 query pool per question
+→ checksum each retriever's complete pool collection under its no-reranker owner
 → score each no-reranker order at @3 and @5
-→ rerank each matching frozen pool with each of the four learned rerankers
+→ rerank each matching frozen query pool with each of the four learned rerankers
 → score every resulting order at @3 and @5
 ```
 
@@ -1886,9 +1903,9 @@ and first five canonical chunk texts are scored exactly as ranked.
 
 Operational measurements do not reuse cached retrieval timings. Every reranked
 candidate executes its first-stage method and reranker together so full-stack
-latency and memory describe the deployable path. The frozen pool is reused only
-to guarantee a fair quality comparison. The no-reranker child measures the same
-live first stage without a learned reranker.
+latency and memory describe the deployable path. The frozen query pool is reused
+only to guarantee a fair quality comparison. The no-reranker child measures the
+same live first stage without a learned reranker.
 
 The versioned `experiments/benchmarks/rag/retrieval_reranking/protocol.yaml` file is the
 single source of truth for benchmark hyperparameters. Its strict schema rejects
@@ -2047,7 +2064,7 @@ metric contract, protocol version and checksum, seed, warmups, repetitions,
 model lock, Git/dependency
 provenance, and hardware. Its direct metrics are completion counts only. Parent
 artifacts are `plan.json`, `provenance.json`, `metric_contract.json`,
-`retrieval_protocol.json`, `pool_index.json`, `leaderboard.parquet`,
+`retrieval_protocol.json`, `pool_collections.json`, `leaderboard.parquet`,
 `retriever_comparisons.parquet`,
 `retriever_comparisons.csv`, `reranker_comparisons.parquet`,
 `reranker_comparisons.csv`, and `summary.json`. Validation additionally stores
@@ -2058,7 +2075,19 @@ Each child run name is its complete candidate ID. Its parameters contain the
 resolved retrieval and reranking contracts, all model/configuration/checksum
 fields, `requested_pool_size=20`, `quality_cutoffs=[3,5]`, evidence and tokenizer
 rules, device, dtype, seed, warmups, repetitions, split, and manifest checksum.
-A reranker child also stores `pool_owner_run_id` and `pool_checksum`.
+A query pool is one question's ranked top-20 first-stage results. A pool
+collection is the complete set of query pools produced by one retriever child.
+A reranker child stores `pool_collection_checksum`, `chunks_sha256`, the
+applicable `dense_index_sha256` and/or `bm25_index_sha256`, and the owner
+candidate.
+`pool_owner_child_run_id` is populated only when the pool collection was
+produced by an actual MLflow owner child; an internally prepared collection
+leaves it null rather than inventing a run ID. The pool-collection checksum
+identifies every ranked row across every answerable question;
+the other checksums identify every ordered chunk ID and its exact text plus the
+concrete search indexes. Dense omits the BM25 field, BM25 omits the Dense field,
+and RRF requires both. The chunking fingerprint remains separate provenance
+explaining how those chunks were produced.
 
 A valid child logs the applicable values under these families:
 
@@ -2109,11 +2138,11 @@ workload.reranker_input_tokens_per_query_p95  # reranked children only
 
 Eligibility counts and validity counters are logged under `validity.*`.
 Required checks include expected/processed/failed queries, zero truncation,
-finite scores, pool-checksum agreement, exact pool permutation, and deterministic
+finite scores, pool-collection agreement, exact pool permutation, and deterministic
 rank agreement. Every child stores `query_metrics.parquet`, `rankings.parquet`,
 `evidence_matches.parquet`, `timings.parquet`, `resources.parquet`,
 `candidate.json`, and `validation_report.json`. Pool-owner children additionally
-store `candidate_pool.parquet` and `index_build.json`. Raw documents and model
+store `pool_collection.parquet` and `index_build.json`. Raw documents and model
 weights are never copied into child artifacts.
 
 ### Paired comparisons and advancement
@@ -2123,7 +2152,7 @@ are separated by the intervention being studied:
 
 - `reranker_comparisons.parquet` and `reranker_comparisons.csv` contain the 12
   reranker-effect comparisons, each learned reranker against the matching
-  `<retriever>|none` candidate over the same checksummed pool;
+  `<retriever>|none` candidate over the same checksummed pool collection;
 - `retriever_comparisons.parquet` and `retriever_comparisons.csv` contain Dense
   versus BM25, Dense versus RRF, and BM25 versus RRF using the three
   no-reranker candidates; and
@@ -2140,7 +2169,8 @@ one shared logical-table SHA-256.
 
 The benchmark does not generate all 105 possible candidate pairs. Each stored
 row represents one comparison, metric, evidence slice, and cutoff. It identifies
-the applicable retriever or complete stacks, both run IDs and pool checksums,
+the applicable retriever or complete stacks, both run IDs and pool-collection
+checksums,
 metric direction, both values, raw `candidate - baseline` difference, whether
 the result favors the candidate, eligible question/document counts, and
 paired-bootstrap confidence bounds when supported.
@@ -2150,16 +2180,17 @@ The reranker-comparison schema is:
 ```text
 comparison_id, retriever,
 baseline_candidate, candidate, baseline_run_id, candidate_run_id,
-shared_pool_checksum, metric_name, evidence_slice, cutoff, direction,
+shared_pool_collection_checksum, metric_name, evidence_slice, cutoff, direction,
 baseline_value, candidate_value, candidate_minus_baseline, favors_candidate,
 ci_lower, ci_upper, confidence_level, ci_status, eligible_questions,
 eligible_documents, bootstrap_resamples, seed
 ```
 
 The retriever-comparison schema replaces `retriever` and
-`shared_pool_checksum` with `baseline_retriever`, `candidate_retriever`,
-`baseline_pool_checksum`, and `candidate_pool_checksum`. Finalist rows identify
-both complete stacks and both pool checksums.
+`shared_pool_collection_checksum` with `baseline_retriever`,
+`candidate_retriever`, `baseline_pool_collection_checksum`, and
+`candidate_pool_collection_checksum`. Finalist rows identify both complete
+stacks and both pool-collection checksums.
 
 `candidate_minus_baseline` always preserves the raw arithmetic difference.
 `favors_candidate` is populated only when the metric has an unconditional
@@ -2259,10 +2290,12 @@ NumPy computes exact top neighbours
 
 #### C. Real retrieval
 
-After the engineer chooses database finalists and one retrieval stack, every
-finalist stores the same real chunks and vectors. The complete retrieval strategy
-is rerun so database ANN behavior is connected to actual RAG quality. The
-engineer then approves one server profile for Final RAG.
+`vector-database-validation.json` selects one or more development-qualified
+database finalists. During validation, every finalist stores the same real
+chunks and vectors and the complete selected retrieval strategy is rerun so
+database ANN behavior is connected to actual RAG quality. Only after all
+validation evidence is reviewed does `vector-database-locked.json` record the
+single server profile approved for Final RAG.
 
 ### Metrics and why they are used
 

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from experiments.benchmarks.common.protocol import (
+    PreflightSettings,
     ProtocolMetadata,
     boolean,
     choice,
@@ -16,6 +17,7 @@ from experiments.benchmarks.common.protocol import (
     mapping,
     metadata,
     number,
+    preflight_settings,
     sequence,
     strict_object,
     string,
@@ -40,6 +42,7 @@ class AudioCandidate:
 @dataclass(frozen=True)
 class AudioProtocol:
     meta: ProtocolMetadata
+    preflight: PreflightSettings
     audio: Mapping[str, object]
     decoding: Mapping[str, Mapping[str, object]]
     candidates: Mapping[str, AudioCandidate]
@@ -102,6 +105,7 @@ def protocol_from_mapping(
             "statistics",
             "selection",
             "resources",
+            "preflight",
             "profiles",
         },
     )
@@ -254,10 +258,12 @@ def protocol_from_mapping(
     profiles = execution_profiles(
         root["profiles"], names=("smoke", "development", "validation", "locked")
     )
+    preflight = preflight_settings(root["preflight"])
     if {profile.batch_size for profile in profiles.values()} != {1}:
         raise ValueError("Every ASR execution profile must use batch size one")
     return AudioProtocol(
         metadata("audio", source_path, root, profiles=profiles),
+        preflight,
         audio,
         decoding,
         candidates,

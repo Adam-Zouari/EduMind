@@ -55,7 +55,7 @@ class Embedder:
 
     def placement_report(self, expected_device: str) -> dict[str, object]:
         return inspect_model_placement(
-            *self._models.values(), expected_device=expected_device, strict=True
+            *self._models.values(), expected_device=expected_device
         )
 
     def input_token_counts(self, texts: Sequence[str], *, role: str) -> list[int]:

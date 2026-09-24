@@ -5,6 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -154,6 +155,7 @@ def test_bm25_preflight_applies_gpu_gate_when_chunking_is_model_backed(
         {},
         plan,
         vram_limit_mb=3584.0,
+        preflight=default_protocol().preflight,
     )
 
     assert observed["vram_limit_mb"] == expected_limit
@@ -452,6 +454,66 @@ def _fixture_index() -> ExactIndex:
     )
 
 
+def test_index_identity_is_exact_and_retriever_specific() -> None:
+    candidate = parse_candidate("bm25|none")
+    original = _fixture_index()
+    changed_text = _fixture_index()
+    first = changed_text.chunks[0]
+    changed_text.chunks[0] = Chunk(
+        first.identifier,
+        first.document_id,
+        "different evidence",
+        first.start,
+        first.end,
+        first.tokens,
+        first.model_tokens,
+    )
+    changed_strategy = _fixture_index()
+    changed_strategy.chunking_fingerprint = "different-chunking-fingerprint"
+
+    original_artifact = retrieval_benchmark._index_build_artifact(original, candidate)
+    changed_text_artifact = retrieval_benchmark._index_build_artifact(
+        changed_text, candidate
+    )
+    changed_strategy_artifact = retrieval_benchmark._index_build_artifact(
+        changed_strategy, candidate
+    )
+
+    assert original_artifact["chunks_sha256"] != changed_text_artifact["chunks_sha256"]
+    assert (
+        original_artifact["bm25_index_sha256"]
+        == changed_text_artifact["bm25_index_sha256"]
+    )
+    assert (
+        original_artifact["chunks_sha256"] == changed_strategy_artifact["chunks_sha256"]
+    )
+    assert (
+        original_artifact["chunking_fingerprint"]
+        != changed_strategy_artifact["chunking_fingerprint"]
+    )
+    assert "dense_index_sha256" not in original_artifact
+    assert "bm25_index_sha256" in original_artifact
+    assert "index_sha256" not in original_artifact
+    assert "chunk_ids_sha256" not in original_artifact
+
+    dense = _fixture_index()
+    dense.vectors = np.arange(60, dtype=np.float32).reshape(30, 2)
+    dense.bm25 = None
+    dense_artifact = retrieval_benchmark._index_build_artifact(
+        dense, parse_candidate("dense|none")
+    )
+    assert "dense_index_sha256" in dense_artifact
+    assert "bm25_index_sha256" not in dense_artifact
+
+    rrf = _fixture_index()
+    rrf.vectors = np.arange(60, dtype=np.float32).reshape(30, 2)
+    rrf_artifact = retrieval_benchmark._index_build_artifact(
+        rrf, parse_candidate("rrf|none")
+    )
+    assert "dense_index_sha256" in rrf_artifact
+    assert "bm25_index_sha256" in rrf_artifact
+
+
 def test_owner_pool_is_reused_by_every_reranker_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -497,10 +559,10 @@ def test_owner_pool_is_reused_by_every_reranker_child(
         plan,
         device="cpu",
         dtype="float32",
-        frozen_pool=None,
+        frozen_pool_collection=None,
         child_run_id="owner-run",
     )
-    rows = owner[5]["candidate_pool"]
+    rows = owner[5]["pool_collection"]
     assert len(rows) == 20
     assert owner[3]["bm25_k1"] == 1.5
     assert owner[3]["bm25_b"] == 0.75
@@ -510,10 +572,14 @@ def test_owner_pool_is_reused_by_every_reranker_child(
     assert "retrieval_contract" not in owner[3]
     assert "reranker_contract" not in owner[3]
     assert "reranker_batch_size" not in owner[3]
-    frozen_pool = {
+    index_build = owner[5]["index_build"]
+    frozen_pool_collection = {
         "owner_candidate": "bm25|none",
-        "owner_run_id": "owner-run",
-        "pool_checksum": stable_hash(rows),
+        "owner_child_run_id": "owner-run",
+        "pool_collection_checksum": stable_hash(rows),
+        "retriever": index_build["retriever"],
+        "chunks_sha256": index_build["chunks_sha256"],
+        "bm25_index_sha256": index_build["bm25_index_sha256"],
         "rows": rows,
     }
     monkeypatch.setattr(
@@ -521,6 +587,34 @@ def test_owner_pool_is_reused_by_every_reranker_child(
         "_reranker",
         lambda *_args, **_kwargs: _FixtureReranker(),
     )
+    with pytest.raises(ValueError, match="index identity mismatch"):
+        evaluate_candidate(
+            "bm25|ettin-150m",
+            manifest,
+            model_lock,
+            plan,
+            device="cpu",
+            dtype="float32",
+            frozen_pool_collection={
+                **frozen_pool_collection,
+                "bm25_index_sha256": "different-index",
+            },
+            child_run_id="child-run",
+        )
+    with pytest.raises(ValueError, match="unexpected dense_index_sha256"):
+        evaluate_candidate(
+            "bm25|ettin-150m",
+            manifest,
+            model_lock,
+            plan,
+            device="cpu",
+            dtype="float32",
+            frozen_pool_collection={
+                **frozen_pool_collection,
+                "dense_index_sha256": "unexpected",
+            },
+            child_run_id="child-run",
+        )
     child = evaluate_candidate(
         "bm25|ettin-150m",
         manifest,
@@ -528,16 +622,20 @@ def test_owner_pool_is_reused_by_every_reranker_child(
         plan,
         device="cpu",
         dtype="float32",
-        frozen_pool=frozen_pool,
+        frozen_pool_collection=frozen_pool_collection,
         child_run_id="child-run",
     )
-    assert "candidate_pool" not in child[5]
-    assert child[3]["pool_owner_run_id"] == "owner-run"
-    assert child[3]["pool_checksum"] == stable_hash(rows)
+    assert "pool_collection" not in child[5]
+    assert child[3]["pool_owner_child_run_id"] == "owner-run"
+    assert child[3]["pool_collection_checksum"] == stable_hash(rows)
+    assert child[3]["chunks_sha256"] == owner[3]["chunks_sha256"]
+    assert child[3]["bm25_index_sha256"] == owner[3]["bm25_index_sha256"]
+    assert "dense_index_sha256" not in child[3]
     assert child[3]["reranker_model"] == "fixture-reranker"
     assert child[3]["reranker_batch_size"] == 1
     assert child[3]["reranker_input_template"] == "tokenizer(query, passage)"
     assert "reranker_contract" not in child[3]
+    assert child[2]["validity.pool_collection_match"] == 1.0
     assert child[2]["validity.exact_pool_permutation"] == 1.0
     assert child[2]["validity.ranking_agreement"] == 1.0
     assert len(child[5]["timings"]) == 2
@@ -593,7 +691,7 @@ def test_measured_failure_keeps_every_timing_row(
             plan,
             device="cpu",
             dtype="float32",
-            frozen_pool=None,
+            frozen_pool_collection=None,
             child_run_id="owner-run",
         )
     assert calls == 3
@@ -613,7 +711,7 @@ def test_parent_comparisons_are_separated_and_csv_matches_parquet(
         "workload.retrieved_tokens_at_3_mean": "descriptive",
         "storage.required_index_bytes": "descriptive",
     }
-    pool_checksums = {
+    pool_collection_checksums = {
         retriever: stable_hash([{"retriever": retriever}])
         for retriever in ("dense", "bm25", "rrf")
     }
@@ -659,17 +757,32 @@ def test_parent_comparisons_are_separated_and_csv_matches_parquet(
                     "first_stage_latency_ms_p50": 5.0 + position,
                 },
                 mlflow_run_id=f"run-{position}",
-                parameters={"pool_checksum": pool_checksums[parsed.retriever]},
+                parameters={
+                    "pool_collection_checksum": pool_collection_checksums[
+                        parsed.retriever
+                    ]
+                },
             )
         )
-    pools = {
+    pool_collections = {
         f"{retriever}|none": {
-            "owner_run_id": f"owner-{retriever}",
-            "pool_checksum": checksum,
-            "index_checksum": f"index-{retriever}",
+            "owner_child_run_id": f"owner-{retriever}",
+            "pool_collection_checksum": checksum,
+            "retriever": retriever,
+            "chunks_sha256": f"chunks-{retriever}",
+            **(
+                {"dense_index_sha256": f"dense-{retriever}"}
+                if retriever in {"dense", "rrf"}
+                else {}
+            ),
+            **(
+                {"bm25_index_sha256": f"bm25-{retriever}"}
+                if retriever in {"bm25", "rrf"}
+                else {}
+            ),
             "rows": [{"retriever": retriever}],
         }
-        for retriever, checksum in pool_checksums.items()
+        for retriever, checksum in pool_collection_checksums.items()
     }
     plan = BenchmarkPlan(
         "rag",
@@ -691,9 +804,9 @@ def test_parent_comparisons_are_separated_and_csv_matches_parquet(
             ],
         ),
     )
-    paths = parent_artifact_builder(pools, directions, compare_finalists=True)(
-        tmp_path, results, plan
-    )
+    paths = parent_artifact_builder(
+        pool_collections, directions, compare_finalists=True
+    )(tmp_path, results, plan)
     assert {path.name for path in paths} == {
         "reranker_comparisons.parquet",
         "reranker_comparisons.csv",
@@ -701,7 +814,7 @@ def test_parent_comparisons_are_separated_and_csv_matches_parquet(
         "retriever_comparisons.csv",
         "finalist_comparisons.parquet",
         "finalist_comparisons.csv",
-        "pool_index.json",
+        "pool_collections.json",
     }
     reranker = pd.read_parquet(tmp_path / "reranker_comparisons.parquet")
     retriever = pd.read_parquet(tmp_path / "retriever_comparisons.parquet")
@@ -711,6 +824,9 @@ def test_parent_comparisons_are_separated_and_csv_matches_parquet(
     assert (
         retriever[["baseline_candidate", "candidate"]].drop_duplicates().shape[0] == 3
     )
+    assert reranker["shared_pool_collection_checksum"].notna().all()
+    assert retriever["baseline_pool_collection_checksum"].notna().all()
+    assert retriever["candidate_pool_collection_checksum"].notna().all()
     pool_recall = retriever[
         retriever["metric_name"] == "diagnostic.pool_evidence_unit_recall_at_20"
     ]
@@ -726,9 +842,24 @@ def test_parent_comparisons_are_separated_and_csv_matches_parquet(
     ]
     assert workload["direction"].eq("descriptive").all()
     assert workload["favors_candidate"].isna().all()
-    pool_index = json.loads((tmp_path / "pool_index.json").read_text())
-    assert len(pool_index["pools"]) == 3
-    assert pool_index["comparison_artifacts"]["reranker_comparisons"][
+    pool_collections_artifact = json.loads(
+        (tmp_path / "pool_collections.json").read_text()
+    )
+    assert len(pool_collections_artifact["pool_collections"]) == 3
+    by_retriever = {
+        row["retriever"]: row for row in pool_collections_artifact["pool_collections"]
+    }
+    assert "bm25_index_sha256" not in by_retriever["dense"]
+    assert "dense_index_sha256" not in by_retriever["bm25"]
+    assert {
+        "dense_index_sha256",
+        "bm25_index_sha256",
+    } <= by_retriever["rrf"].keys()
+    assert all(
+        "index_checksum" not in row
+        for row in pool_collections_artifact["pool_collections"]
+    )
+    assert pool_collections_artifact["comparison_artifacts"]["reranker_comparisons"][
         "logical_table_sha256"
     ]
     assert not (tmp_path / "retrieval_protocol.json").exists()

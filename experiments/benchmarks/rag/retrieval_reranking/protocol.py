@@ -8,6 +8,7 @@ from pathlib import Path
 
 from experiments.benchmarks.common.protocol import (
     ExecutionProfile,
+    PreflightSettings,
     ProtocolMetadata,
     boolean,
     choice,
@@ -17,6 +18,7 @@ from experiments.benchmarks.common.protocol import (
     mapping,
     metadata,
     number,
+    preflight_settings,
     sequence,
     strict_object,
 )
@@ -32,6 +34,7 @@ DEFAULT_PROTOCOL_PATH = Path(__file__).with_name("protocol.yaml")
 @dataclass(frozen=True)
 class RetrievalProtocol:
     meta: ProtocolMetadata
+    preflight: PreflightSettings
     smoke_expected_chunk_count: int
     pool_size: int
     evaluation_tokenizer: str
@@ -143,6 +146,7 @@ def protocol_from_mapping(
             "selection",
             "profiles",
             "resources",
+            "preflight",
         },
     )
     smoke = strict_object(
@@ -322,6 +326,7 @@ def protocol_from_mapping(
     profiles = execution_profiles(
         root["profiles"], names=("smoke", "development", "validation", "locked")
     )
+    preflight = preflight_settings(root["preflight"])
     if {profile.batch_size for profile in profiles.values()} != {
         embedding_batch_size
     } or embedding_batch_size != reranker_batch_size:
@@ -339,6 +344,7 @@ def protocol_from_mapping(
     )
     return RetrievalProtocol(
         meta=metadata("retrieval", source_path, root, profiles=profiles),
+        preflight=preflight,
         smoke_expected_chunk_count=smoke_chunk_count,
         pool_size=pool_size,
         evaluation_tokenizer=evaluation_tokenizer,

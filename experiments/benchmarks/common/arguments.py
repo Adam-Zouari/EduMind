@@ -13,6 +13,27 @@ from .decisions import load_engineer_decision
 LIFECYCLE_PROFILES = ("smoke", "preflight", "development", "validation", "locked")
 
 
+def without_option_values(
+    arguments: Sequence[str], options: Sequence[str]
+) -> list[str]:
+    """Remove selected value-taking options from a child-process argument list."""
+
+    removed = set(options)
+    forwarded: list[str] = []
+    skip_value = False
+    for value in arguments:
+        if skip_value:
+            skip_value = False
+            continue
+        if value in removed:
+            skip_value = True
+            continue
+        if any(value.startswith(f"{option}=") for option in removed):
+            continue
+        forwarded.append(value)
+    return forwarded
+
+
 def parser(
     description: str,
     *,

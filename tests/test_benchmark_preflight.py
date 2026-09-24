@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,10 +16,13 @@ from experiments.benchmarks.common.arguments import (
 )
 from experiments.benchmarks.common.preflight import (
     eligible_candidates,
+    model_lock_fingerprints,
+    qualification_fingerprint,
+    run_preflight,
+)
+from experiments.benchmarks.common.preflight_reports import (
     find_local_preflight_report,
     load_preflight_report,
-    model_lock_fingerprints,
-    run_preflight,
 )
 from experiments.benchmarks.common.process import (
     WorkerMeasurementError,
@@ -198,11 +202,34 @@ def test_preflight_continues_after_definitive_hardware_exclusions(tmp_path) -> N
         "offload": "offload_detected",
     }
     assert payload["candidates"][0]["resource_samples"] == [{"vram_mb": 3600.0}]
+    assert len(list((result.artifact_directory / "candidates").glob("*.json"))) == 4
+
+
+def test_preflight_requires_every_declared_component_group(tmp_path) -> None:
+    def probe(candidate: str):
+        if candidate == "asr":
+            raise RuntimeError("CUDA out of memory")
+        return _qualified()
+
+    result = run_preflight(
+        benchmark="video",
+        candidates=("asr", "visual"),
+        fingerprint="grouped",
+        context={"protocols": {}},
+        probe=probe,
+        required_groups={"frozen-asr": ("asr",), "visual": ("visual",)},
+        no_mlflow=True,
+        artifact_root=tmp_path,
+    )
+    assert not result.ready_for_development
+    assert result.group_readiness == {"frozen-asr": False, "visual": True}
 
 
 def test_worker_supervisor_stops_only_the_process_over_the_vram_limit(
     tmp_path, monkeypatch
 ) -> None:
+    events = []
+
     class Process:
         pid = 123
         returncode = -9
@@ -222,6 +249,7 @@ def test_worker_supervisor_stops_only_the_process_over_the_vram_limit(
             pass
 
         def __enter__(self):
+            events.append("monitor-entered")
             return self
 
         def __exit__(self, *_args):
@@ -234,9 +262,11 @@ def test_worker_supervisor_stops_only_the_process_over_the_vram_limit(
             return [{"vram_mb": self.peak_vram_mb}]
 
     terminated = []
-    monkeypatch.setattr(
-        benchmark_process.subprocess, "Popen", lambda *_a, **_k: Process()
-    )
+    def popen(*_args, **_kwargs):
+        events.append("worker-started")
+        return Process()
+
+    monkeypatch.setattr(benchmark_process.subprocess, "Popen", popen)
     monkeypatch.setattr(benchmark_process, "ResourceMonitor", Monitor)
     monkeypatch.setattr(benchmark_process, "_terminate_process_tree", terminated.append)
     with pytest.raises(WorkerResourceLimitError, match="exceeded"):
@@ -250,6 +280,21 @@ def test_worker_supervisor_stops_only_the_process_over_the_vram_limit(
             vram_limit_mb=3584.0,
         )
     assert terminated == [123]
+    assert events == ["monitor-entered", "worker-started"]
+
+
+def test_process_tree_termination_tolerates_an_already_exited_worker(
+    monkeypatch,
+) -> None:
+    import psutil
+
+    monkeypatch.setattr(
+        psutil,
+        "Process",
+        lambda _pid: (_ for _ in ()).throw(psutil.NoSuchProcess(123)),
+    )
+    monkeypatch.setitem(sys.modules, "psutil", psutil)
+    benchmark_process._terminate_process_tree(123)
 
 
 @pytest.mark.parametrize(
@@ -347,6 +392,40 @@ def test_model_placement_detects_cuda_offload_and_unverifiable_models() -> None:
         == "offload_detected"
     )
     assert inspect_model_placement(_Model([]))["status"] == "placement_unverifiable"
+
+    nested = SimpleNamespace(runtime={"model": _Model(["cuda:0"])})
+    report = inspect_model_placement(nested)
+    assert report["status"] == "qualified"
+    assert report["inspected_object_count"] > 1
+
+
+def test_qualification_fingerprint_changes_with_source_and_stress_input() -> None:
+    protocol = audio().meta
+    common = {
+        "benchmark": "audio",
+        "candidates": ("candidate",),
+        "protocols": {"audio": protocol},
+        "revisions": {"candidate": "revision"},
+        "hardware": {"gpu": "gpu"},
+        "execution": {"device": "cuda"},
+        "dependency_locks": {"requirements": "lock"},
+    }
+    first = qualification_fingerprint(
+        **common,
+        input_envelope={"stress_manifest_checksum": "a"},
+        source_provenance={"source_tree_sha256": "one"},
+    )
+    changed_source = qualification_fingerprint(
+        **common,
+        input_envelope={"stress_manifest_checksum": "a"},
+        source_provenance={"source_tree_sha256": "two"},
+    )
+    changed_input = qualification_fingerprint(
+        **common,
+        input_envelope={"stress_manifest_checksum": "b"},
+        source_provenance={"source_tree_sha256": "one"},
+    )
+    assert len({first, changed_source, changed_input}) == 3
 
 
 def test_document_preflight_uses_only_candidate_applicable_sources() -> None:

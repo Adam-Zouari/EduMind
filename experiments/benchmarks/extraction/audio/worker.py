@@ -136,11 +136,11 @@ def _preflight(runtime, payload: dict[str, object], device: str) -> dict[str, ob
         with monitor:
             runtime.load()
             before = inspect_model_placement(
-                *runtime.placement_models(), expected_device="cuda", strict=True
+                *runtime.placement_models(), expected_device="cuda"
             )
             runtime.transcribe(Path(str(speech[0]["canonical_path"])))
             after = inspect_model_placement(
-                *runtime.placement_models(), expected_device="cuda", strict=True
+                *runtime.placement_models(), expected_device="cuda"
             )
     finally:
         runtime.close()

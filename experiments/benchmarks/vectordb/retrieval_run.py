@@ -13,7 +13,7 @@ import numpy as np
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.arguments import default_decision_path
 from experiments.benchmarks.common.contracts import BenchmarkPlan, SampleResult
-from experiments.benchmarks.common.datasets import load_manifest
+from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
 from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.preparation.models import (
@@ -62,8 +62,8 @@ def main() -> int:
     parser.add_argument("--retrieval-selection", type=Path)
     parser.add_argument(
         "--profile",
-        choices=("development", "validation"),
-        default="development",
+        choices=("validation",),
+        default="validation",
     )
     parser.add_argument("--device", choices=("cpu", "cuda"))
     parser.add_argument("--dtype", choices=("float32", "float16", "bfloat16"))
@@ -78,7 +78,7 @@ def main() -> int:
     arguments = parser.parse_args()
     arguments.database_selection = (
         arguments.database_selection
-        or default_decision_path("vector-database", "locked")
+        or default_decision_path("vector-database", "validation")
     )
     arguments.embedding_selection = (
         arguments.embedding_selection
@@ -105,9 +105,9 @@ def main() -> int:
         )
     database_decision = load_engineer_decision(
         arguments.database_selection,
-        minimum=2,
+        minimum=1,
         maximum=vector_protocol.shortlist_limit,
-        expected_source=("vectordb-server-v4", "dense-ann", "validation"),
+        expected_source=("vectordb-server-v4", "dense-ann", "development"),
     )
     database_payload = _payload(database_decision.source_summary)
     embedding = _single_selection(arguments.embedding_selection, "chunking-embedding")
@@ -117,6 +117,7 @@ def main() -> int:
     manifest = load_manifest(
         PROJECT_ROOT / "data/benchmarks/rag/rag-selection-validation.json"
     )
+    require_manifest_split(manifest, "validation", {"validation"})
     model_lock = load_selected_model_lock(
         PROJECT_ROOT / "data/benchmarks/models/selected.json"
     )

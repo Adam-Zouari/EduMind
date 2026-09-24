@@ -33,6 +33,18 @@ class ExecutionProfile:
 
 
 @dataclass(frozen=True)
+class PreflightSettings:
+    """Execution controls for hardware qualification probes."""
+
+    warmups: int
+    repetitions: int
+    bootstrap_resamples: int
+    telemetry_interval_seconds: float
+    poll_interval_seconds: float
+    worker_timeout_seconds: float
+
+
+@dataclass(frozen=True)
 class ProtocolMetadata:
     name: str
     source_path: Path
@@ -185,6 +197,57 @@ def execution_profile(value: object, label: str) -> ExecutionProfile:
         if profile.dtype_for(profile.device) != profile.dtype:
             raise ValueError(f"{label}.dtype must match the primary device dtype")
     return profile
+
+
+def preflight_settings(
+    value: object, label: str = "preflight"
+) -> PreflightSettings:
+    payload = strict_object(
+        value,
+        label,
+        {
+            "warmups",
+            "repetitions",
+            "bootstrap_resamples",
+            "telemetry_interval_seconds",
+            "poll_interval_seconds",
+            "worker_timeout_seconds",
+        },
+    )
+    settings = PreflightSettings(
+        warmups=integer(payload["warmups"], f"{label}.warmups", minimum=0),
+        repetitions=integer(
+            payload["repetitions"], f"{label}.repetitions", minimum=1
+        ),
+        bootstrap_resamples=integer(
+            payload["bootstrap_resamples"],
+            f"{label}.bootstrap_resamples",
+            minimum=0,
+        ),
+        telemetry_interval_seconds=number(
+            payload["telemetry_interval_seconds"],
+            f"{label}.telemetry_interval_seconds",
+            minimum=0,
+            minimum_exclusive=True,
+        ),
+        poll_interval_seconds=number(
+            payload["poll_interval_seconds"],
+            f"{label}.poll_interval_seconds",
+            minimum=0,
+            minimum_exclusive=True,
+        ),
+        worker_timeout_seconds=number(
+            payload["worker_timeout_seconds"],
+            f"{label}.worker_timeout_seconds",
+            minimum=0,
+            minimum_exclusive=True,
+        ),
+    )
+    if settings.poll_interval_seconds > settings.telemetry_interval_seconds:
+        raise ValueError(
+            f"{label}.poll_interval_seconds cannot exceed the telemetry interval"
+        )
+    return settings
 
 
 def validate_execution(

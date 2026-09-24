@@ -9,6 +9,7 @@ from pathlib import Path
 
 from edumind.rag.contracts import EMBEDDING_SPECS
 from experiments.benchmarks.common.protocol import (
+    PreflightSettings,
     ProtocolMetadata,
     boolean,
     choice,
@@ -19,6 +20,7 @@ from experiments.benchmarks.common.protocol import (
     mapping,
     metadata,
     number,
+    preflight_settings,
     sequence,
     strict_object,
     string,
@@ -43,6 +45,7 @@ _STRATEGY_KINDS = {
 @dataclass(frozen=True)
 class ChunkingEmbeddingProtocol:
     meta: ProtocolMetadata
+    preflight: PreflightSettings
     tokenizer: str
     strategies: Mapping[str, Mapping[str, object]]
     embedding_models: tuple[str, ...]
@@ -117,6 +120,7 @@ def protocol_from_mapping(
             "statistics",
             "selection",
             "resources",
+            "preflight",
             "profiles",
         },
     )
@@ -213,12 +217,14 @@ def protocol_from_mapping(
     profiles = execution_profiles(
         root["profiles"], names=("smoke", "development", "validation", "locked")
     )
+    preflight = preflight_settings(root["preflight"])
     if {profile.batch_size for profile in profiles.values()} != {batch_size}:
         raise ValueError(
             "Chunking/embedding profile and embedding batch sizes must agree"
         )
     return ChunkingEmbeddingProtocol(
         metadata("chunking_embedding", source_path, root, profiles=profiles),
+        preflight,
         tokenizer,
         strategies,
         models,

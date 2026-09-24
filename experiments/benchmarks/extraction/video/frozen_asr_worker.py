@@ -57,7 +57,7 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
                 runtime.load()
                 cold_load_seconds = time.perf_counter() - started
                 placement_before = inspect_model_placement(
-                    *runtime.placement_models(), expected_device=device, strict=True
+                    *runtime.placement_models(), expected_device=device
                 )
                 decoded_audio: dict[str, Path] = {}
                 first_id = str(items[0]["id"])
@@ -189,7 +189,7 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
                         }
                     )
                 placement_after = inspect_model_placement(
-                    *runtime.placement_models(), expected_device=device, strict=True
+                    *runtime.placement_models(), expected_device=device
                 )
         finally:
             runtime.close()

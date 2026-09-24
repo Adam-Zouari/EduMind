@@ -11,6 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
+from edumind.common.model_placement import inspect_model_placement
 from edumind.extraction import ExtractionProfile, ExtractionRequest, SourceKind
 from experiments.benchmarks.common.process import json_worker_main
 from experiments.benchmarks.common.provenance import package_versions
@@ -232,12 +233,9 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
     }
     if preflight_mode:
         return {
-            "placement": {
-                "status": "qualified",
-                "verification": "visual-adapter-cuda-contract",
-                "backend": image_engine,
-                "requested_device": device,
-            },
+            "placement": inspect_model_placement(
+                extractor, expected_device=device
+            ),
             "peak_vram_mb": operational["peak_visual_vram_mb"],
             "peak_process_tree_ram_mb": operational["peak_visual_process_tree_ram_mb"],
             "vram_measurement_method": monitor.vram_measurement_method,

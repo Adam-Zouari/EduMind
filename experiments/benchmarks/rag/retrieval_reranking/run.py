@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Mapping
+from dataclasses import asdict
 from pathlib import Path
 
 from edumind.common.artifacts import stable_hash
@@ -22,9 +23,10 @@ from experiments.benchmarks.common.preflight import (
     eligible_candidates,
     model_lock_fingerprints,
     rag_stress_manifest,
-    resolve_preflight_report,
     run_preflight,
+    stress_input_identity,
 )
+from experiments.benchmarks.common.preflight_reports import resolve_preflight_report
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.preparation.models import (
     load_selected_model_lock,
@@ -133,16 +135,35 @@ def main(argv: list[str] | None = None) -> int:
     fingerprint = ""
     qualification_context = {}
     if arguments.profile != "smoke":
+        qualification_manifest = (
+            manifest
+            if arguments.profile in {"preflight", "development"}
+            else load_manifest(_manifest_path("development"))
+        )
+        qualification_stress = rag_stress_manifest(qualification_manifest)
         fingerprint, qualification_context = _qualification_identity(
             protocol,
             chunking_protocol,
             declared,
             selected_pair,
             model_lock,
+            qualification_manifest,
+            qualification_stress,
         )
 
     if arguments.profile == "preflight":
-        stress = rag_stress_manifest(manifest)
+        ignored = []
+        if arguments.preflight_report is not None:
+            ignored.append("--preflight-report")
+        if arguments.preflight_run_id is not None:
+            ignored.append("--preflight-run-id")
+        if arguments.dtype is not None:
+            ignored.append("--dtype")
+        if ignored:
+            parser.error(
+                "Retrieval/reranking preflight does not accept: " + ", ".join(ignored)
+            )
+        stress = qualification_stress
         plan = _plan(
             protocol,
             chunking_protocol,
@@ -153,9 +174,9 @@ def main(argv: list[str] | None = None) -> int:
             "development",
             "cuda",
             execution.dtype,
-            warmups=0,
-            repetitions=1,
-            bootstrap_resamples=0,
+            warmups=protocol.preflight.warmups,
+            repetitions=protocol.preflight.repetitions,
+            bootstrap_resamples=protocol.preflight.bootstrap_resamples,
         )
         result = run_preflight(
             benchmark="retrieval-reranking",
@@ -173,6 +194,7 @@ def main(argv: list[str] | None = None) -> int:
                 model_lock,
                 plan,
                 vram_limit_mb=protocol.authoritative_peak_vram_mb,
+                preflight=protocol.preflight,
             ),
             decision_files={"chunking_embedding": embedding_selection},
             no_mlflow=arguments.no_mlflow,
@@ -298,28 +320,45 @@ def _run_evaluation(
             }
         )
     directions, required_metrics = directions_for(manifest, protocol)
-    pools: dict[str, dict[str, object]] = {}
+    pool_collections: dict[str, dict[str, object]] = {}
 
-    def store_pool(owner: str, evaluated, owner_run_id: str) -> None:
+    def store_pool_collection(
+        owner: str, evaluated, owner_child_run_id: str | None
+    ) -> None:
         artifacts = dict(evaluated[5])
-        rows = artifacts.get("candidate_pool")
+        rows = artifacts.get("pool_collection")
         index_build = artifacts.get("index_build")
         if not isinstance(rows, list) or not isinstance(index_build, Mapping):
-            raise RuntimeError(f"{owner} did not return its owned pool")
+            raise RuntimeError(f"{owner} did not return its pool collection")
         checksum = stable_hash(rows)
-        if dict(evaluated[3]).get("pool_checksum") != checksum:
-            raise RuntimeError(f"{owner} returned an inconsistent pool hash")
-        pools[owner] = {
+        if dict(evaluated[3]).get("pool_collection_checksum") != checksum:
+            raise RuntimeError(
+                f"{owner} returned an inconsistent pool collection checksum"
+            )
+        index_identity = {
+            key: index_build[key]
+            for key in (
+                "retriever",
+                "chunks_sha256",
+                "dense_index_sha256",
+                "bm25_index_sha256",
+            )
+            if key in index_build
+        }
+        pool_collections[owner] = {
             "owner_candidate": owner,
-            "owner_run_id": owner_run_id,
-            "pool_checksum": checksum,
-            "index_checksum": index_build.get("index_sha256"),
+            "owner_child_run_id": owner_child_run_id,
+            "pool_collection_checksum": checksum,
+            **index_identity,
             "rows": rows,
         }
 
     def evaluate(candidate_name: str, context: Mapping[str, object]):
         parsed = parse_candidate(candidate_name)
-        if parsed.reranker != "none" and parsed.owner_identifier not in pools:
+        if (
+            parsed.reranker != "none"
+            and parsed.owner_identifier not in pool_collections
+        ):
             owner_result = run_in_fresh_process(
                 parsed.owner_identifier,
                 manifest,
@@ -327,13 +366,13 @@ def _run_evaluation(
                 plan,
                 device=device,
                 dtype=dtype,
-                frozen_pool=None,
-                child_run_id=f"{context['mlflow_run_id']}:pool-input",
+                frozen_pool_collection=None,
+                child_run_id=None,
             )
-            store_pool(
+            store_pool_collection(
                 parsed.owner_identifier,
                 owner_result,
-                f"{context['mlflow_run_id']}:pool-input",
+                None,
             )
         evaluated = run_in_fresh_process(
             candidate_name,
@@ -342,11 +381,13 @@ def _run_evaluation(
             plan,
             device=device,
             dtype=dtype,
-            frozen_pool=pools.get(parsed.owner_identifier),
+            frozen_pool_collection=pool_collections.get(parsed.owner_identifier),
             child_run_id=str(context["mlflow_run_id"]),
         )
         if parsed.reranker == "none":
-            store_pool(candidate_name, evaluated, str(context["mlflow_run_id"]))
+            store_pool_collection(
+                candidate_name, evaluated, str(context["mlflow_run_id"])
+            )
         return evaluated
 
     decision_files = {
@@ -405,7 +446,7 @@ def _run_evaluation(
         shuffle_candidates=False,
         evaluator_receives_context=True,
         parent_artifact_builder=parent_artifact_builder(
-            pools,
+            pool_collections,
             directions,
             compare_finalists=compare_finalists,
         ),
@@ -511,7 +552,13 @@ def _selected_candidates(profile, path, declared, maximum_finalists):
 
 
 def _qualification_identity(
-    protocol, chunking_protocol, declared, selected_pair, model_lock
+    protocol,
+    chunking_protocol,
+    declared,
+    selected_pair,
+    model_lock,
+    manifest,
+    stress,
 ):
     execution = protocol.profile("development")
     return current_qualification_fingerprint(
@@ -528,8 +575,10 @@ def _qualification_identity(
             "batch_size": execution.batch_size,
             "vram_limit_mb": protocol.authoritative_peak_vram_mb,
             "chunker_embedding": selected_pair,
+            "preflight": asdict(protocol.preflight),
         },
         input_envelope={
+            **stress_input_identity(manifest, stress.samples),
             "pool_size": protocol.pool_size,
             "reranker_maximum_tokens": dict(protocol.reranker_maximum_tokens),
             "reject_truncation": protocol.reject_truncation,

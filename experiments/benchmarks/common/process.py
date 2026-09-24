@@ -61,6 +61,9 @@ def run_json_worker(
     temporary_root: Path | None = None,
     vram_limit_mb: float | None = None,
     require_vram_measurement: bool = False,
+    telemetry_interval_seconds: float = 0.05,
+    poll_interval_seconds: float = 0.05,
+    timeout_seconds: float | None = None,
 ) -> dict[str, object]:
     module = ".".join(
         script.resolve().relative_to(PROJECT_ROOT.resolve()).with_suffix("").parts
@@ -82,6 +85,7 @@ def run_json_worker(
                 capture_output=True,
                 text=True,
                 check=False,
+                timeout=timeout_seconds,
             )
             stdout, stderr, returncode = (
                 completed.stdout,
@@ -89,18 +93,26 @@ def run_json_worker(
                 completed.returncode,
             )
         else:
-            process = subprocess.Popen(
-                command,
-                cwd=PROJECT_ROOT,
-                env=worker_environment(device),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
+            monitor = ResourceMonitor(
+                interval_seconds=telemetry_interval_seconds,
+                require_vram=True,
             )
-            monitor = ResourceMonitor(require_vram=True)
+            process: subprocess.Popen[str] | None = None
             exceeded: tuple[float, tuple[dict[str, object], ...]] | None = None
+            started = time.perf_counter()
             try:
                 with monitor:
+                    # Capture the whole-device fallback baseline before the child can
+                    # allocate CUDA memory. This is required on Windows/WDDM, where
+                    # NVML may expose the PID but not its per-process byte count.
+                    process = subprocess.Popen(
+                        command,
+                        cwd=PROJECT_ROOT,
+                        env=worker_environment(device),
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    )
                     while process.poll() is None:
                         monitor.sample_now()
                         peak = monitor.peak_vram_mb
@@ -112,15 +124,27 @@ def run_json_worker(
                             exceeded = (peak, tuple(monitor.samples()))
                             _terminate_process_tree(process.pid)
                             break
-                        time.sleep(min(0.05, monitor.interval_seconds))
+                        if (
+                            timeout_seconds is not None
+                            and time.perf_counter() - started > timeout_seconds
+                        ):
+                            _terminate_process_tree(process.pid)
+                            raise TimeoutError(
+                                f"{error_label} exceeded the {timeout_seconds:g}s timeout"
+                            )
+                        time.sleep(poll_interval_seconds)
             except RuntimeError as exc:
-                _terminate_process_tree(process.pid)
-                process.communicate()
+                if process is not None:
+                    _terminate_process_tree(process.pid)
+                    process.communicate()
                 raise WorkerMeasurementError(str(exc)) from exc
             except BaseException:
-                _terminate_process_tree(process.pid)
-                process.communicate()
+                if process is not None:
+                    _terminate_process_tree(process.pid)
+                    process.communicate()
                 raise
+            if process is None:  # defensive: Popen either returns or raises
+                raise RuntimeError(f"{error_label} did not start")
             final_peak = monitor.peak_vram_mb
             if (
                 exceeded is None
@@ -153,6 +177,37 @@ def run_json_worker(
         result = json.loads(output_path.read_text(encoding="utf-8"))
         if not isinstance(result, dict):
             raise RuntimeError(f"{error_label} returned a non-object result")
+        reported_peak = _reported_peak_vram_mb(result)
+        if reported_peak is not None and supervision is not None:
+            supervision["worker_reported_peak_vram_mb"] = reported_peak
+            reported_method = result.get("vram_measurement_method")
+            if (
+                supervision.get("vram_measurement_method") == "unavailable"
+                and isinstance(reported_method, str)
+                and reported_method != "unavailable"
+            ):
+                supervision["vram_measurement_method"] = (
+                    f"worker-{reported_method}"
+                )
+            supervised_peak = supervision.get("peak_vram_mb")
+            if not isinstance(supervised_peak, (int, float)) or isinstance(
+                supervised_peak, bool
+            ):
+                supervision["peak_vram_mb"] = reported_peak
+            else:
+                supervision["peak_vram_mb"] = max(
+                    float(supervised_peak), reported_peak
+                )
+        if (
+            vram_limit_mb is not None
+            and reported_peak is not None
+            and reported_peak > vram_limit_mb
+        ):
+            samples = list((supervision or {}).get("resource_samples", []))
+            samples.append(
+                {"source": "worker-report", "vram_mb": reported_peak}
+            )
+            raise WorkerResourceLimitError(reported_peak, vram_limit_mb, samples)
         if supervision is not None:
             result["_worker_supervision"] = supervision
         return result
@@ -162,8 +217,14 @@ def _terminate_process_tree(pid: int) -> None:
     try:
         import psutil
 
-        root = psutil.Process(pid)
-        children = root.children(recursive=True)
+        try:
+            root = psutil.Process(pid)
+            children = root.children(recursive=True)
+        except psutil.NoSuchProcess:
+            return
+        except psutil.Error:
+            _taskkill(pid)
+            return
         for process in reversed(children):
             try:
                 process.terminate()
@@ -180,14 +241,30 @@ def _terminate_process_tree(pid: int) -> None:
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
     except (ImportError, OSError):
-        try:
-            subprocess.run(
-                ["taskkill", "/PID", str(pid), "/T", "/F"],
-                capture_output=True,
-                check=False,
-            )
-        except OSError:
-            pass
+        _taskkill(pid)
+
+
+def _taskkill(pid: int) -> None:
+    try:
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        pass
+
+
+def _reported_peak_vram_mb(result: Mapping[str, object]) -> float | None:
+    values: list[float] = []
+    for container in (result, result.get("operational"), result.get("metrics")):
+        if not isinstance(container, Mapping):
+            continue
+        for name in ("peak_vram_mb", "peak_visual_vram_mb"):
+            value = container.get(name)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                values.append(float(value))
+    return max(values) if values else None
 
 
 def json_worker_main(

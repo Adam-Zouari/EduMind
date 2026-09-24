@@ -3,21 +3,23 @@
 from __future__ import annotations
 
 import json
-import os
+import subprocess
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from pathlib import Path
 
 from edumind.common.artifacts import atomic_write_json, sha256_file, stable_hash
 from edumind.common.paths import PROJECT_ROOT
 
 from .contracts import DatasetManifest
+from .preflight_reports import qualification_groups
 from .process import WorkerMeasurementError, WorkerResourceLimitError
 from .protocol import ProtocolMetadata
 from .provenance import hardware_summary
-from .tracking import DEFAULT_TRACKING_URI, EXPERIMENT_NAMES, tracker
+from .tracking import EXPERIMENT_NAMES, tracker
 
 
 def model_lock_fingerprints(
@@ -70,6 +72,17 @@ def rag_stress_manifest(manifest: DatasetManifest) -> DatasetManifest:
     )
 
 
+def stress_input_identity(
+    manifest: DatasetManifest, samples: Sequence[Mapping[str, object]]
+) -> dict[str, str]:
+    """Bind qualification to the exact reviewed manifest and selected stress rows."""
+
+    return {
+        "stress_manifest_checksum": manifest.fingerprint,
+        "stress_input_fingerprint": stable_hash([dict(row) for row in samples]),
+    }
+
+
 def current_qualification_fingerprint(
     *,
     benchmark: str,
@@ -79,6 +92,12 @@ def current_qualification_fingerprint(
     execution: Mapping[str, object],
     input_envelope: Mapping[str, object],
 ) -> tuple[str, dict[str, object]]:
+    required_input_identity = {"stress_manifest_checksum", "stress_input_fingerprint"}
+    missing = sorted(required_input_identity - set(input_envelope))
+    if missing:
+        raise ValueError(
+            "Qualification input envelope is missing: " + ", ".join(missing)
+        )
     hardware = dict(hardware_summary())
     locks = {
         str(path.relative_to(PROJECT_ROOT)): sha256_file(path)
@@ -88,6 +107,7 @@ def current_qualification_fingerprint(
         )
         if path.is_file()
     }
+    source = source_provenance()
     fingerprint = qualification_fingerprint(
         benchmark=benchmark,
         candidates=candidates,
@@ -97,10 +117,12 @@ def current_qualification_fingerprint(
         execution=execution,
         input_envelope=input_envelope,
         dependency_locks=locks,
+        source_provenance=source,
     )
     return fingerprint, {
         "hardware": hardware,
         "dependency_locks": locks,
+        "source_provenance": source,
         "execution": dict(execution),
         "input_envelope": dict(input_envelope),
         "protocols": {
@@ -125,11 +147,13 @@ class PreflightResult:
     qualified_candidates: tuple[str, ...]
     excluded_candidates: tuple[str, ...]
     blocked_candidates: tuple[str, ...]
+    readiness: bool
+    group_readiness: Mapping[str, bool]
     artifact_directory: Path
 
     @property
     def ready_for_development(self) -> bool:
-        return bool(self.qualified_candidates) and not self.blocked_candidates
+        return self.readiness
 
 
 def eligible_candidates(
@@ -166,6 +190,7 @@ def qualification_fingerprint(
     execution: Mapping[str, object],
     input_envelope: Mapping[str, object],
     dependency_locks: Mapping[str, str],
+    source_provenance: Mapping[str, object],
 ) -> str:
     return stable_hash(
         {
@@ -180,8 +205,51 @@ def qualification_fingerprint(
             "execution": dict(execution),
             "input_envelope": dict(input_envelope),
             "dependency_locks": dict(dependency_locks),
+            "source_provenance": dict(source_provenance),
         }
     )
+
+
+@lru_cache(maxsize=1)
+def source_provenance() -> dict[str, object]:
+    """Identify the executable source tree, including uncommitted Python edits."""
+
+    roots = (
+        PROJECT_ROOT / "experiments/benchmarks",
+        PROJECT_ROOT / "src/edumind",
+    )
+    files = sorted(
+        (
+            path
+            for root in roots
+            for path in root.rglob("*.py")
+            if "__pycache__" not in path.parts
+        ),
+        key=lambda path: path.as_posix(),
+    )
+    pyproject = PROJECT_ROOT / "pyproject.toml"
+    if pyproject.is_file():
+        files.append(pyproject)
+    checksums = {
+        path.relative_to(PROJECT_ROOT).as_posix(): sha256_file(path) for path in files
+    }
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        commit = completed.stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        commit = "unavailable"
+    return {
+        "schema": "benchmark-source-tree-v1",
+        "git_commit": commit,
+        "source_tree_sha256": stable_hash(checksums),
+        "source_file_count": len(checksums),
+    }
 
 
 def run_preflight(
@@ -191,6 +259,7 @@ def run_preflight(
     fingerprint: str,
     context: Mapping[str, object],
     probe: Callable[[str], Mapping[str, object]],
+    required_groups: Mapping[str, Sequence[str]] | None = None,
     decision_files: Mapping[str, Path] | None = None,
     no_mlflow: bool = False,
     artifact_root: Path = PROJECT_ROOT / "artifacts/benchmarks",
@@ -201,6 +270,7 @@ def run_preflight(
         raise ValueError(f"Unknown preflight benchmark: {benchmark}")
     if not candidates or len(set(candidates)) != len(candidates):
         raise ValueError("Preflight candidates must be non-empty and unique")
+    groups = qualification_groups(candidates, required_groups)
     run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     directory = artifact_root / benchmark / "preflight" / run_id
     tracking = tracker(disabled=no_mlflow, experiment=EXPERIMENT_NAMES[benchmark])
@@ -311,6 +381,18 @@ def run_preflight(
                 )
                 row = _probe_candidate(candidate, probe)
                 rows.append(row)
+                candidate_artifact = directory / "candidates" / _safe_name(candidate)
+                candidate_artifact = candidate_artifact.with_suffix(".json")
+                atomic_write_json(
+                    candidate_artifact,
+                    {
+                        "schema_version": 1,
+                        "benchmark": benchmark,
+                        "qualification_fingerprint": fingerprint,
+                        **row,
+                    },
+                )
+                tracking.artifact(candidate_artifact, "preflight-candidates")
                 numeric = {
                     key: float(value)
                     for key, value in row.items()
@@ -340,8 +422,13 @@ def run_preflight(
         blocked = tuple(
             str(row["candidate"]) for row in rows if row["status"] == "blocked"
         )
+        group_readiness = {
+            name: any(candidate in qualified for candidate in members)
+            for name, members in groups.items()
+        }
+        ready = all(group_readiness.values()) and not blocked
         payload = {
-            "schema_version": 1,
+            "schema_version": 2,
             "run_id": run_id,
             "mlflow_run_id": parent_id,
             "benchmark": benchmark,
@@ -352,7 +439,9 @@ def run_preflight(
             "qualified_candidates": list(qualified),
             "excluded_candidates": list(excluded),
             "blocked_candidates": list(blocked),
-            "ready_for_development": bool(qualified) and not blocked,
+            "required_groups": {name: list(values) for name, values in groups.items()},
+            "group_readiness": group_readiness,
+            "ready_for_development": ready,
         }
         report = directory / "preflight_report.json"
         atomic_write_json(report, payload)
@@ -362,13 +451,13 @@ def run_preflight(
                 "qualified_candidates": float(len(qualified)),
                 "excluded_candidates": float(len(excluded)),
                 "blocked_candidates": float(len(blocked)),
-                "ready_for_development": float(bool(qualified) and not blocked),
+                "ready_for_development": float(ready),
             }
         )
         tracking.tags(
             {
                 "qualification.fingerprint": fingerprint,
-                "qualification.ready": str(bool(qualified) and not blocked).lower(),
+                "qualification.ready": str(ready).lower(),
             }
         )
     return PreflightResult(
@@ -378,204 +467,15 @@ def run_preflight(
         qualified,
         excluded,
         blocked,
+        ready,
+        group_readiness,
         directory,
     )
 
 
-def load_preflight_report(
-    path: Path,
-    *,
-    fingerprint: str,
-    declared_candidates: Sequence[str],
-) -> dict[str, object]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if payload.get("schema_version") != 1:
-        raise ValueError(f"{path} must use preflight schema_version 1")
-    if payload.get("qualification_fingerprint") != fingerprint:
-        raise ValueError(f"{path} does not match the current qualification fingerprint")
-    rows = payload.get("candidates")
-    if not isinstance(rows, list):
-        raise ValueError(f"{path} has no candidate qualification rows")
-    if not all(isinstance(row, Mapping) for row in rows):
-        raise ValueError(f"{path} contains a malformed candidate row")
-    observed = [str(row.get("candidate", "")) for row in rows]
-    if set(observed) != set(declared_candidates) or len(observed) != len(set(observed)):
-        raise ValueError(
-            f"{path} does not cover the complete declared candidate roster"
-        )
-    by_status = {
-        status: [str(row["candidate"]) for row in rows if row.get("status") == status]
-        for status in ("qualified", "excluded", "blocked")
-    }
-    if sum(len(values) for values in by_status.values()) != len(rows):
-        raise ValueError(f"{path} contains an unknown qualification status")
-    allowed_outcomes = {
-        "qualified": {"qualified"},
-        "excluded": {"vram_limit_exceeded", "gpu_oom", "offload_detected"},
-        "blocked": {
-            "measurement_unavailable",
-            "placement_unverifiable",
-            "wrong_device",
-            "execution_error",
-        },
-    }
-    if any(
-        row.get("outcome") not in allowed_outcomes[str(row["status"])]
-        or row.get("reason_code") != row.get("outcome")
-        for row in rows
-    ):
-        raise ValueError(f"{path} contains an invalid qualification outcome")
-    for status, key in (
-        ("qualified", "qualified_candidates"),
-        ("excluded", "excluded_candidates"),
-        ("blocked", "blocked_candidates"),
-    ):
-        if payload.get(key) != by_status[status]:
-            raise ValueError(f"{path} has inconsistent {key}")
-    ready = bool(by_status["qualified"]) and not by_status["blocked"]
-    if payload.get("ready_for_development") is not ready:
-        raise ValueError(f"{path} has an inconsistent readiness state")
-    if not ready:
-        raise ValueError(f"{path} contains unresolved preflight failures")
-    return payload
-
-
-def resolve_preflight_report(
-    *,
-    benchmark: str,
-    fingerprint: str,
-    candidates: Sequence[str],
-    explicit: Path | None = None,
-    run_id: str | None = None,
-    artifact_root: Path = PROJECT_ROOT / "artifacts/benchmarks",
-) -> tuple[Path, dict[str, object]]:
-    """Resolve one exact qualification, never an unrelated latest run."""
-
-    if explicit is not None and run_id is not None:
-        raise ValueError(
-            "Use either --preflight-report or --preflight-run-id, not both"
-        )
-    if explicit is not None:
-        path = explicit.resolve()
-    else:
-        path = (
-            _find_report_by_run_id(artifact_root, benchmark, run_id) if run_id else None
-        )
-        if path is None:
-            path = _find_mlflow_preflight_report(
-                benchmark, fingerprint, artifact_root, run_id=run_id
-            )
-        if path is None and run_id is not None:
-            raise FileNotFoundError(
-                f"No {benchmark} preflight report has run ID {run_id!r}"
-            )
-        if path is None:
-            path = find_local_preflight_report(
-                artifact_root, benchmark, fingerprint, candidates
-            )
-    payload = load_preflight_report(
-        path,
-        fingerprint=fingerprint,
-        declared_candidates=candidates,
-    )
-    if payload.get("benchmark") != benchmark:
-        raise ValueError(f"{path} belongs to a different benchmark")
-    return path, payload
-
-
-def find_local_preflight_report(
-    artifact_root: Path,
-    benchmark: str,
-    fingerprint: str,
-    candidates: Sequence[str],
-) -> Path:
-    matches: list[Path] = []
-    for path in (artifact_root / benchmark / "preflight").glob(
-        "*/preflight_report.json"
-    ):
-        try:
-            load_preflight_report(
-                path,
-                fingerprint=fingerprint,
-                declared_candidates=candidates,
-            )
-        except (OSError, ValueError, json.JSONDecodeError):
-            continue
-        matches.append(path)
-    if not matches:
-        raise FileNotFoundError(
-            f"No valid {benchmark} preflight matches the current hardware and protocol; "
-            "run --profile preflight or pass --preflight-report PATH"
-        )
-    return max(matches, key=lambda path: path.stat().st_mtime_ns)
-
-
-def _find_report_by_run_id(
-    artifact_root: Path, benchmark: str, run_id: str | None
-) -> Path | None:
-    if run_id is None:
-        return None
-    for path in (artifact_root / benchmark / "preflight").glob(
-        "*/preflight_report.json"
-    ):
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if run_id in {payload.get("run_id"), payload.get("mlflow_run_id")}:
-            return path
-    return None
-
-
-def _find_mlflow_preflight_report(
-    benchmark: str,
-    fingerprint: str,
-    artifact_root: Path,
-    *,
-    run_id: str | None = None,
-) -> Path | None:
-    try:
-        from mlflow import MlflowClient
-    except ImportError:
-        return None
-    try:
-        client = MlflowClient(
-            tracking_uri=os.getenv("MLFLOW_TRACKING_URI", DEFAULT_TRACKING_URI)
-        )
-        if run_id is not None:
-            run = client.get_run(run_id)
-            tags = run.data.tags
-            runs = (
-                [run]
-                if tags.get("qualification.fingerprint") == fingerprint
-                and tags.get("qualification.ready") == "true"
-                else []
-            )
-        else:
-            experiment = client.get_experiment_by_name(EXPERIMENT_NAMES[benchmark])
-            if experiment is None:
-                return None
-            escaped = fingerprint.replace("'", "\\'")
-            runs = client.search_runs(
-                [experiment.experiment_id],
-                filter_string=(
-                    f"tags.`qualification.fingerprint` = '{escaped}' and "
-                    "tags.`qualification.ready` = 'true'"
-                ),
-                order_by=["attributes.start_time DESC"],
-                max_results=1,
-            )
-        if not runs:
-            return None
-        destination = artifact_root / benchmark / "preflight" / "mlflow-cache"
-        downloaded = client.download_artifacts(
-            runs[0].info.run_id,
-            "preflight_report.json",
-            str(destination),
-        )
-        return Path(downloaded)
-    except Exception:  # noqa: BLE001 - local exact-match fallback remains available
-        return None
+def _safe_name(value: str) -> str:
+    slug = "".join(character if character.isalnum() else "-" for character in value)
+    return f"{slug[:80]}-{stable_hash(value)[:12]}"
 
 
 def _probe_candidate(candidate: str, probe) -> dict[str, object]:

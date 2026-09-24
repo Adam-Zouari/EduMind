@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from edumind.extraction import ExtractionPipeline
+from edumind.common.model_placement import inspect_model_placement
+from edumind.extraction import ExtractionPipeline, SourceKind
 from experiments.benchmarks.common.process import json_worker_main
 from experiments.benchmarks.extraction.document.benchmark import extract_once
 from experiments.benchmarks.extraction.document.profiles import parse_document_profile
@@ -20,26 +21,45 @@ def execute(payload: dict[str, object]) -> dict[str, object]:
     latency = 0.0
     segment_count = warning_count = 0
     sample_ids = []
-    for item in payload["items"]:
-        document, item_latency = extract_once(
+    items = list(payload["items"])
+    for _ in range(int(payload["warmups"])):
+        extract_once(
             candidate,
-            item,
+            items[0],
             payload["model_lock"],
             {"device": "cuda"},
             pipeline,
             protocol=protocol,
         )
-        latency += item_latency
-        segment_count += len(document.segments)
-        warning_count += len(document.warnings)
-        sample_ids.append(str(item["id"]))
-    return {
-        "placement": {
+    for _ in range(int(payload["repetitions"])):
+        for item in items:
+            document, item_latency = extract_once(
+                candidate,
+                item,
+                payload["model_lock"],
+                {"device": "cuda"},
+                pipeline,
+                protocol=protocol,
+            )
+            latency += item_latency
+            segment_count += len(document.segments)
+            warning_count += len(document.warnings)
+            sample_ids.append(str(item["id"]))
+    if bool(payload["placement_required"]):
+        extractor = pipeline.registry.create(
+            profile.runtime_engine,
+            SourceKind(str(items[0]["kind"])),
+        )
+        placement = inspect_model_placement(extractor, expected_device="cuda")
+    else:
+        placement = {
             "status": "qualified",
-            "verification": "document-adapter-cuda-contract",
+            "verification": "no-model-placement-required",
             "backend": profile.runtime_engine,
-            "requested_device": "cuda",
-        },
+            "expected_device": "cuda",
+        }
+    return {
+        "placement": placement,
         "latency_seconds": latency,
         "output_segment_count": segment_count,
         "warning_count": warning_count,

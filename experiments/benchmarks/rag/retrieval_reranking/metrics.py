@@ -50,7 +50,7 @@ VALIDITY_DIRECTIONS = {
     "validity.failed_query_count": "gate",
     "validity.truncated_input_count": "gate",
     "validity.nonfinite_score_count": "gate",
-    "validity.pool_checksum_match": "gate",
+    "validity.pool_collection_match": "gate",
     "validity.exact_pool_permutation": "gate",
 }
 
@@ -111,7 +111,7 @@ def directions_for(
         "validity.failed_query_count",
         "validity.truncated_input_count",
         "validity.nonfinite_score_count",
-        "validity.pool_checksum_match",
+        "validity.pool_collection_match",
         "validity.exact_pool_permutation",
         *eligibility,
         "operational.full_stack_latency_ms_p50",

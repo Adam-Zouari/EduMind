@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Mapping
+from dataclasses import asdict
 from pathlib import Path
 
 from edumind.common.artifacts import sha256_file
@@ -15,9 +16,10 @@ from experiments.benchmarks.common.preflight import (
     current_qualification_fingerprint,
     eligible_candidates,
     model_lock_fingerprints,
-    resolve_preflight_report,
     run_preflight,
+    stress_input_identity,
 )
+from experiments.benchmarks.common.preflight_reports import resolve_preflight_report
 from experiments.benchmarks.common.process import run_json_worker
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.extraction.document import runner
@@ -131,7 +133,17 @@ def run(
     qualification = None
     if profile != "smoke":
         qualification_lock = _model_lock(declared)
-        fingerprint, _ = _qualification_identity(protocol, qualification_lock, declared)
+        qualification_manifest = (
+            manifest if profile == "development" else load_manifest(_manifest("development"))
+        )
+        qualification_stress = _stress_documents(qualification_manifest)
+        fingerprint, _ = _qualification_identity(
+            protocol,
+            qualification_lock,
+            declared,
+            qualification_manifest,
+            qualification_stress,
+        )
         qualification_path, qualification = resolve_preflight_report(
             benchmark="document",
             fingerprint=fingerprint,
@@ -245,13 +257,7 @@ def run_preflight_profile(
         if item.get("kind") in {"image", "pdf", "docx"}
     ]
     _validate_assets(items, require_checksums=True, require_provenance=True)
-    stress = tuple(
-        max(
-            (item for item in items if item.get("kind") == kind),
-            key=lambda item: (PROJECT_ROOT / str(item["source_path"])).stat().st_size,
-        )
-        for kind in ("image", "pdf", "docx")
-    )
+    stress = _stress_documents(manifest)
     candidates = declared_document_candidates(protocol)
     model_lock = _model_lock(candidates)
     for candidate in candidates:
@@ -259,7 +265,9 @@ def run_preflight_profile(
         runner.validate_prepared_components(
             candidate, model_lock.get(profile.lock_candidate, {}), protocol
         )
-    fingerprint, context = _qualification_identity(protocol, model_lock, candidates)
+    fingerprint, context = _qualification_identity(
+        protocol, model_lock, candidates, manifest, stress
+    )
 
     def probe(candidate: str):
         candidate_items = _preflight_items(candidate, stress)
@@ -271,11 +279,17 @@ def run_preflight_profile(
                 "items": candidate_items,
                 "model_lock": model_lock,
                 "protocol": protocol.meta.worker_payload(),
+                "warmups": protocol.preflight.warmups,
+                "repetitions": protocol.preflight.repetitions,
+                "placement_required": model_backed,
             },
             device="cuda",
             prefix="edumind-document-preflight-",
             error_label=f"document preflight worker {candidate}",
             require_vram_measurement=model_backed,
+            telemetry_interval_seconds=protocol.preflight.telemetry_interval_seconds,
+            poll_interval_seconds=protocol.preflight.poll_interval_seconds,
+            timeout_seconds=protocol.preflight.worker_timeout_seconds,
         )
         supervision = result.pop("_worker_supervision", {})
         if isinstance(supervision, Mapping):
@@ -295,6 +309,14 @@ def run_preflight_profile(
             "stress_sample_ids": [str(item["id"]) for item in stress],
         },
         probe=probe,
+        required_groups={
+            kind: tuple(
+                candidate
+                for candidate in candidates
+                if kind in {str(item["kind"]) for item in _preflight_items(candidate, stress)}
+            )
+            for kind in ("pdf", "image", "docx")
+        },
         no_mlflow=no_mlflow,
     )
 
@@ -325,7 +347,7 @@ def declared_document_candidates(protocol):
     )
 
 
-def _qualification_identity(protocol, model_lock, candidates):
+def _qualification_identity(protocol, model_lock, candidates, manifest, stress):
     execution = protocol.profile("development")
     return current_qualification_fingerprint(
         benchmark="document",
@@ -337,8 +359,34 @@ def _qualification_identity(protocol, model_lock, candidates):
             "dtype": execution.dtype,
             "batch_size": execution.batch_size,
             "resource_policy": "backend-specific-reporting",
+            "preflight": asdict(protocol.preflight),
         },
-        input_envelope={"source_types": ["image", "pdf", "docx"]},
+        input_envelope={
+            **stress_input_identity(manifest, stress),
+            "source_types": ["image", "pdf", "docx"],
+            "source_sizes_bytes": {
+                str(item["kind"]): (
+                    PROJECT_ROOT / str(item["source_path"])
+                ).stat().st_size
+                for item in stress
+            },
+        },
+    )
+
+
+def _stress_documents(manifest):
+    items = [
+        item
+        for item in manifest.samples
+        if item.get("kind") in {"image", "pdf", "docx"}
+    ]
+    _validate_assets(items, require_checksums=True, require_provenance=True)
+    return tuple(
+        max(
+            (item for item in items if item.get("kind") == kind),
+            key=lambda item: (PROJECT_ROOT / str(item["source_path"])).stat().st_size,
+        )
+        for kind in ("image", "pdf", "docx")
     )
 
 

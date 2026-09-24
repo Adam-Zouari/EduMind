@@ -2591,8 +2591,8 @@ that is absent from this pool. The value therefore separates a first-stage miss
 from a poor reordering decision.
 
 It is recorded once on each of `dense|none`, `bm25|none`, and `rrf|none`. The
-four reranker children reference the matching pool artifact and checksum instead
-of copying the same value as if they had created it.
+four reranker children reference the matching pool-collection artifact and
+checksum instead of copying the same value as if they had created it.
 
 **Range and direction:** `[0, 1]`; higher is better as a diagnostic ceiling.
 

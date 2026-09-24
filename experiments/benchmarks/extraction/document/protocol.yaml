@@ -1,5 +1,5 @@
 schema_version: 1
-protocol_version: document-v3
+protocol_version: document-v4
 seed: 42
 
 candidate_factors:
@@ -48,6 +48,14 @@ backend_devices:
   docling-standard: [cpu, cuda]
   docling-vlm-granite-258m: [cpu, cuda]
   paddleocr-vl-1.6: [cpu, cuda]
+
+preflight:
+  warmups: 0
+  repetitions: 1
+  bootstrap_resamples: 0
+  telemetry_interval_seconds: 0.05
+  poll_interval_seconds: 0.05
+  worker_timeout_seconds: 3600
 
 profiles:
   smoke:

@@ -26,7 +26,7 @@ from experiments.benchmarks.common.process import (
     seed_deterministically,
     successful_execution_payload,
 )
-from experiments.benchmarks.common.protocol import validate_execution
+from experiments.benchmarks.common.protocol import PreflightSettings, validate_execution
 from experiments.benchmarks.common.provenance import package_versions
 from experiments.benchmarks.rag.evaluation import (
     InputCompatibilityError,
@@ -432,6 +432,7 @@ def preflight_in_fresh_process(
     plan: BenchmarkPlan,
     *,
     vram_limit_mb: float,
+    preflight: PreflightSettings,
 ) -> dict[str, object]:
     result = run_json_worker(
         WORKER,
@@ -448,6 +449,9 @@ def preflight_in_fresh_process(
         prefix="edumind-chunking-embedding-preflight-",
         error_label=f"chunking/embedding preflight worker {candidate}",
         vram_limit_mb=vram_limit_mb,
+        telemetry_interval_seconds=preflight.telemetry_interval_seconds,
+        poll_interval_seconds=preflight.poll_interval_seconds,
+        timeout_seconds=preflight.worker_timeout_seconds,
     )
     supervision = result.pop("_worker_supervision", {})
     if isinstance(supervision, Mapping):
