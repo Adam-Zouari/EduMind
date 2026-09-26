@@ -52,8 +52,7 @@ silently reselected.
 - `preflight` qualifies every declared candidate on the target CUDA hardware.
   It produces hardware evidence, not quality evidence.
 - `development` compares only candidates qualified by the exact matching
-  preflight. Vector Database, Generation, and Final RAG follow their documented
-  exceptions.
+  preflight. Vector Database and Final RAG follow their documented exceptions.
 - `validation` runs explicit engineer-selected finalists on validation data.
 - `locked` runs exactly one frozen selection on locked-test data and is never
   used for tuning.
@@ -65,7 +64,8 @@ silently reselected.
 - Decisions that require inspecting downloaded corpora are tracked in the
   [temporary data-review checklist](pending-data-review.md), not guessed in the
   benchmark contract.
-- No weighted overall score or automatic production promotion is used.
+- Selection is recorded in reviewed decision artifacts; benchmark runners never
+  modify production configuration automatically.
 - Performance results apply to the hardware and software environment recorded
   with that run.
 

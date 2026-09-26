@@ -76,16 +76,68 @@ types, the smoke profile records an explicit dtype for each device; the current
 embedding, retrieval, generation, and Final RAG CUDA smoke paths use the same
 FP16 contract as their authoritative CUDA execution.
 
+### Preflight and measured-run lifecycles
+
+Preflight answers one question: can the exact candidate execute the supported
+workload on the target CUDA hardware without exceeding its resource contract or
+moving model state to CPU, disk, or meta storage?
+
+Each candidate receives a fresh process and follows this sequence:
+
+```text
+start process-tree and GPU monitoring before model construction
+-> load the exact pinned model and runtime components
+-> inspect device placement
+-> run one frozen stress input near the upper supported workload boundary
+-> synchronize CUDA and collect the final resource sample
+-> inspect device placement again
+-> stop monitoring, write the qualification report, and terminate the worker
+```
+
+The stress input is demanding but valid and comes only from reviewed development
+or dedicated stress data. Preflight uses no warmup: the first inference is the
+qualification event, so its initial allocations, offloading, peak VRAM, and OOM
+behavior must remain visible. It produces hardware evidence rather than quality
+or steady-state latency evidence. Because the worker terminates, none of its
+runtime state carries into development.
+
 Preflight has one parent and one child per candidate in the benchmark's normal
-MLflow experiment. A fresh CUDA worker performs real inference while the parent
-continuously samples its process tree. ASR, embedding, learned-reranker, and
-video-ASR workers are stopped when sampled VRAM exceeds 3,584 MiB. Document and
-video visual parsers instead report VRAM without a shared cap. Their loaded
-backend state is inspected rather than trusting the requested device: available
-parameters and buffers, Paddle places, Hugging Face device maps, Accelerate
-hooks, ONNX execution providers, and disk/meta placement are recorded. A backend
-whose placement cannot be observed is blocked as `placement_unverifiable`. CPU
-tokenization and media decoding are not offloading.
+MLflow experiment. ASR, embedding, learned-reranker, and video-ASR workers are
+stopped when sampled VRAM exceeds 3,584 MiB. Document and video visual parsers
+instead report VRAM without a shared cap. Their loaded backend state is inspected
+through available parameters and buffers, Paddle places, Hugging Face device
+maps, Accelerate hooks, ONNX execution providers, and disk/meta placement. A
+backend whose placement cannot be observed is blocked as
+`placement_unverifiable`. CPU tokenization and media decoding are not offloading.
+
+A measured `smoke`, `development`, `validation`, or `locked` worker uses a
+different lifecycle:
+
+```text
+start a fresh worker and resource monitoring
+-> start the cold-load timer
+-> load and place the candidate
+-> synchronize the device and stop the cold-load timer
+-> run one complete representative warmup request
+-> synchronize the device and validate the warmup output
+-> execute the measured requests in the same worker
+-> stop monitoring after the final measured request
+```
+
+Cold Model-Load Time covers only model and runtime preparation. "Cold" means that
+the model is absent from the new process and device; the operating-system disk
+cache is not forcibly cleared.
+
+The warmup starts after cold loading has finished and ends after one complete
+request, including preprocessing, inference, postprocessing, output validation,
+and device synchronization. It initializes first-use runtime state such as CUDA
+contexts, kernels, reusable buffers, and model caches before steady-state timing.
+Its output and latency are excluded from quality and warm-latency aggregates,
+while any failure still invalidates the candidate execution. The worker remains
+alive, so the measured requests reuse the state initialized by the warmup.
+
+Every measured profile uses exactly one warmup per candidate, device, fresh
+worker, and materially distinct execution path. Preflight always uses zero.
 
 `vram_limit_exceeded`, `gpu_oom`, and `offload_detected` are definitive hardware
 exclusions. Missing measurement, unverifiable placement, and infrastructure or
@@ -105,10 +157,11 @@ child stores `preflight_candidate.json` with its placement, telemetry, input
 validation, and failure evidence. The parent `preflight_report.json` stores the
 complete roster and group-readiness decision.
 
-Development, validation, and locked runs use seed 42, retain per-sample results,
-and report 95% confidence intervals for eligible sample-based aggregates. A
-stage's locked split is used once for its engineer-selected winner or frozen
-source-routing policy.
+Development, validation, and locked runs use protocol-frozen seeds, retain
+per-sample results, and report 95% confidence intervals for eligible
+sample-based aggregates. Deterministic suites use seed `42`; sampled generation
+uses the aligned seed list `42`, `43`, and `44`. A stage's locked split is used
+once for its engineer-selected winner or frozen source-routing policy.
 Decision files are written after engineer review; runners validate those files
 but never promote candidates automatically.
 
@@ -218,9 +271,10 @@ implementation:
 
 These files own every setting that can change outputs, eligibility, latency,
 memory, or failure status: search ranges, parser and decoder options, cutoffs,
-warmups, repetitions, batch sizes, statistical settings, hardware gates, and
-preflight warmups, repetitions, telemetry interval, polling interval, and
-worker timeout.
+the shared one-warmup rule for measured profiles, repetitions, batch sizes,
+statistical settings, hardware gates, and preflight telemetry interval, polling
+interval, qualification repetitions, and worker timeout. Preflight warmups are
+always zero.
 Their schemas reject missing, unknown, contradictory, and non-finite values.
 The resolved protocol has a stable checksum. Parent fingerprints include all
 composed protocol checksums; workers verify the version, checksum, and resolved
@@ -280,8 +334,8 @@ EduMind / <Benchmark>
 ```
 
 Only applicable phases appear. Vector Database omits CUDA smoke and preflight;
-Generation and Final RAG currently omit preflight. Video may create separate
-frozen-ASR and visual-comparison parents within one phase.
+Final RAG currently omits preflight. Video may create separate frozen-ASR and
+visual-comparison parents within one phase.
 
 Every parent and child is tagged with the benchmark, profile, concrete phase
 (`smoke-cpu`, `smoke-cuda`, or the authoritative profile), run type, device,
@@ -306,9 +360,10 @@ quantization. Peak process VRAM must not exceed `3,584 MiB`. Smoke executes both
 CPU and CUDA by default, but neither result is selection evidence.
 Document and video parser backends follow their separately recorded lifecycle
 and device contracts because not every parser runtime exposes the same backend.
-Generation and Final RAG are intentionally outside preflight until their
-benchmark designs are finalized; their ordinary runtime resource gates still
-apply. Vector Database is CPU-only and has neither CUDA smoke nor preflight.
+Final RAG is intentionally outside preflight because its component candidates
+have already been qualified separately; its ordinary runtime resource gates
+still apply. Vector Database is CPU-only and has neither CUDA smoke nor
+preflight.
 
 When a stage declares paired candidate comparisons, they are analysis artifacts
 rather than new metrics. They are calculated from aligned per-sample results;
@@ -1072,7 +1127,7 @@ The process performs:
 ```text
 load the exact pinned model
 → record cold model-load time
-→ run two warmups
+→ run one warmup
 → transcribe every deterministically shuffled speech clip
 → run three measured warm repetitions per speech clip
 → process the corresponding nonspeech reliability controls
@@ -2316,29 +2371,34 @@ production default automatically.
 Which local Hugging Face generator produces the best grounded, cited answer when
 every model receives exactly the same verified evidence?
 
-### Models
+### Models and modes
 
-| Model/profile | Why it is included |
-|---|---|
-| Falcon-H1-Tiny-R-90M, reasoning | Independent weak control that establishes a low-resource quality floor. |
-| Qwen3 0.6B, reasoning enabled | Small established reasoning candidate. |
-| Qwen3.5 0.8B, reasoning enabled | Newer intermediate candidate. |
-| MiniCPM5 1B, reasoning enabled | Strongest candidate in the common public hardware-feasible screen. |
+| Model/profile | Modes evaluated | Why it is included |
+|---|---|---|
+| Falcon-H1-Tiny-R-90M control | Reasoning only | Independent weak control that establishes a low-resource quality floor using its documented profile. |
+| Qwen3 0.6B | Direct and reasoning | Small established candidate with an official hard thinking switch. |
+| Qwen3.5 0.8B | Direct and reasoning | Newer intermediate candidate with official mode-specific generation settings. |
+| MiniCPM5 1B | Direct and reasoning | Strongest candidate in the common public hardware-feasible screen and provides an official thinking switch. |
 
-No trustworthy public benchmark compares all four under EduMind's grounded QA,
-citation, refusal, faithfulness, and local-latency protocol. Public evidence made
-the shortlist; this experiment makes them directly comparable.
+The three switchable checkpoints therefore create six model-mode configurations;
+Falcon contributes one reasoning control. A model-mode pair is one candidate
+configuration because mode and decoding can change quality, token workload, and
+latency. No trustworthy public benchmark compares all seven configurations under
+EduMind's grounded QA, citation, refusal, faithfulness, and local-hardware
+protocol. Public evidence made the shortlist; this experiment makes the
+configurations directly comparable.
 
 ### Data
 
 Smoke uses committed wiring fixtures. Development uses 24 development questions
-balanced across answerability, answer type, and evidence type as an initial
-screen. Validation evaluates only engineer-selected generator finalists on the
-complete frozen validation question set; it is not limited to 24 questions.
-The selected generator is exercised on locked-test questions only as part of the
-one frozen complete-system run.
+selected deterministically and balanced across answerability, answer type, and
+evidence type as an initial screen. Validation evaluates only engineer-selected
+generator finalists on the complete frozen validation question set; it is not
+limited to 24 questions. The selected generator configuration is exercised on
+locked-test questions only as part of the one frozen complete-system run.
 
-- Answerable questions receive their verified numbered evidence blocks.
+- Answerable questions receive their verified numbered evidence blocks, accepted
+  answers, required gold claims, and required gold evidence-unit IDs.
 - Unanswerable questions receive text from their document that does not answer
   the question.
 - Retrieval is not run in this stage.
@@ -2346,25 +2406,101 @@ one frozen complete-system run.
 Using frozen evidence prevents a good generator from being penalized by a poor
 retriever.
 
-### Execution
+### Frozen decoding and output contract
 
 Every generator uses its exact pinned local snapshot, official chat template,
-reasoning mode, temperature 0, seed 42, an 8,192-token context limit, and at
-most 256 generated tokens. Authoritative development and validation runs use the same
-CUDA device, `float16`, and batch size `1`: one complete question-and-evidence
-prompt is generated at a time, and repetitions run sequentially. No model
-receives hidden quantization, CPU/GPU offload, automatic device splitting, or a
-candidate-specific batch size.
+official mode switch, and documented mode-specific decoding:
+
+| Configuration | Frozen decoding |
+|---|---|
+| Qwen3 direct | `enable_thinking=false`, sampling, temperature `0.7`, top-p `0.8`, top-k `20`, min-p `0` |
+| Qwen3 reasoning | `enable_thinking=true`, sampling, temperature `0.6`, top-p `0.95`, top-k `20`, min-p `0` |
+| Qwen3.5 direct | `enable_thinking=false`, sampling, temperature `1.0`, top-p `1.0`, top-k `20`, min-p `0`, presence penalty `2.0`, repetition penalty `1.0` |
+| Qwen3.5 reasoning | `enable_thinking=true`, sampling, temperature `1.0`, top-p `0.95`, top-k `20`, min-p `0`, presence penalty `1.5`, repetition penalty `1.0` |
+| MiniCPM5 direct | `enable_thinking=false`, sampling, temperature `0.7`, top-p `0.95` |
+| MiniCPM5 reasoning | `enable_thinking=true`, sampling, temperature `0.9`, top-p `0.95` |
+| Falcon control | Reasoning-only configuration resolved from its pinned official generation configuration |
+
+Development, validation, and complete-system locked reporting use an 8,192-token
+model context, the same CUDA device, `float16`, and batch size `1`. CPU smoke uses
+`float32`. No configuration receives hidden quantization, CPU/GPU offload,
+automatic device splitting, or a candidate-specific batch size.
+
+Output capacity is the context remaining after the complete prompt is tokenized.
+When the runtime requires `max_new_tokens`, the runner supplies that remaining
+capacity. Generation stops at EOS, the context boundary, or the frozen timeout.
+Every attempt records prompt, reasoning, visible-answer, and total output token
+counts when the runtime exposes them, plus the exact finish reason.
+
+### Response schema
+
+Every visible model response contains exactly three fields:
+
+| Field | Meaning |
+|---|---|
+| `status` | Either `answered` or `insufficient_evidence`. |
+| `answer` | The visible answer text or the frozen refusal sentence. |
+| `citations` | An ordered list of supplied evidence-block IDs. |
+
+An answerable response uses `status="answered"`, contains a non-empty substantive
+answer, and cites the supplied evidence blocks used by that answer. For example:
+
+```json
+{
+  "status": "answered",
+  "answer": "The trial included 500 participants.",
+  "citations": ["E1"]
+}
+```
+
+An unanswerable response uses the frozen refusal representation:
+
+```json
+{
+  "status": "insufficient_evidence",
+  "answer": "The provided evidence is insufficient to answer the question.",
+  "citations": []
+}
+```
+
+Reasoning text is captured separately when the runtime exposes it and is never
+placed inside `answer`. Unknown citation identifiers, missing or additional
+top-level fields, an unsupported status, mixed refusal and substantive-answer
+content, and unparsable output are malformed. Repeated citation IDs are
+deduplicated before citation scoring. Runtime failures, timeouts, and
+context-boundary termination are recorded by the runner as attempt outcomes
+rather than invented model statuses.
+
+### Frozen semantic judge
+
+One pinned LLM judge supplies every semantic label needed for Faithfulness,
+Factual Correctness, Answer Relevancy, and Repeat Semantic Agreement. It uses one
+structured per-response rubric for claim extraction, context support, gold-claim
+matching, and relevancy, plus one pairwise rubric for repeated-answer semantic
+equivalence. Deterministic benchmark code converts those labels into metric
+values and aggregates; the judge never calculates citation-ID coverage,
+validity, reliability, or operational metrics.
+
+The exact judge version, decoding, prompts, rubric checksums, schema, retries,
+and calibration artifact are frozen before authoritative execution. Candidate
+identity is hidden from the judge, raw judge outputs are retained, and a judge
+failure makes evaluation incomplete rather than lowering the candidate's score.
+The judge must first pass a human-labeled calibration set. Its latency, cost, and
+resources are excluded from generator operational measurements.
 
 ### Execution profiles and selection
 
 ```text
 smoke:
-all runnable generators on tiny committed fixtures
--> verify loading, output parsing, scoring, artifacts, and cleanup
+all seven model-mode configurations on tiny committed fixtures, independently on CPU and CUDA
+-> verify loading, mode switching, decoding, output parsing, scoring, artifacts, and cleanup
+
+preflight:
+all declared configurations in fresh CUDA workers on frozen stress inputs
+-> qualify placement, offloading, VRAM, first-inference behavior, and the supported input envelope
 
 development:
-all four generator profiles on the 24-question development screen
+all hardware-qualified configurations on the 24-question development screen
 -> engineer records up to three generator finalists
 
 validation:
@@ -2376,33 +2512,119 @@ the one selected generator runs only inside the frozen Final RAG system
 -> no further generator tuning
 ```
 
-### Per-candidate workflow
+Smoke supplies wiring evidence only. Preflight supplies hardware eligibility
+only and has zero warmups. Development is the only stage in which alternatives
+may be compared or tuned. Validation runs only the configurations named in the
+reviewed development decision. The resulting `generation-locked.json` records
+the successful generator configurations approved for Final RAG, up to the
+protocol maximum of three. Generation has no separate locked-data run; exactly
+one generator reaches locked data only after complete-system comparison and
+blinded review have selected one frozen Final RAG system.
+
+### Per-candidate execution
 
 ```text
 unload previous generator
-→ cold-load candidate
-→ run two warmups
-→ give every candidate the same question and numbered evidence
-→ generate three times
-→ separate hidden reasoning from visible answer
-→ validate citations and compare with accepted answers
+-> start a fresh worker and measure process-cold model load
+-> run one representative warmup with seed 0
+-> give every candidate the same question and numbered evidence
+-> generate sequentially with aligned seeds 42, 43, and 44
+-> separate reasoning from the visible answer where supported
+-> validate schema, answer/refusal behavior, citations, and finish reason
+-> apply the frozen semantic judge after generator timing is complete
+-> aggregate quality, validity, repeatability, workload, and operational results
 ```
+
+The warmup output and latency are excluded from quality and warm-latency
+statistics, but a warmup failure remains fatal. Cold Model-Load Time ends when
+the model is ready and CUDA is synchronized; it is separate from Time to First
+Token and total warm latency. The three fixed measured seeds sample the frozen
+decoder reproducibly and support semantic, status, and citation repeatability
+diagnostics.
 
 ### Metrics and why they are used
 
 | Role | Metrics | Why they are needed |
 |---|---|---|
-| Primary | Citation Precision/Recall/F1 on answerable questions, Answerability Balanced Accuracy, Unsupported Answer Rate, Malformed Output Rate | Measures evidence use, answer/refusal decisions, substantive answers to unanswerable questions, and protocol failures without penalizing correct refusals for having no citations. |
-| Secondary | Token F1 | Provides partial answer-correctness evidence before human review. |
-| Diagnostic | Exact Match, ROUGE-L, Refusal Precision/Recall/F1, HHEM on substantive non-refusal answers, Repeat Output Agreement | Explains lexical similarity, refusal errors, automated support estimates, and stability. HHEM never replaces human Faithfulness. |
-| Operational | Cold load, Time to First Token, generation time, total p50/p95 latency, tokens/second, peak RAM, peak VRAM | Separates startup, responsiveness, decoding speed, total latency, and memory. |
-| Workload descriptor | Prompt, visible-answer, reasoning, and total generated token counts | Records how much native-tokenizer input and output produced the observed quality and latency. |
+| Primary quality | **Faithfulness**, **Factual Correctness F1**, **Answer Relevancy**, **Citation F1** | Separates support by supplied context, correctness and completeness against required facts, relevance to the question, and explicit evidence selection. |
+| Quality diagnostic | Factual Correctness Precision/Recall, Citation Precision/Recall | Explains whether an F1 loss comes from unsupported additions or omitted required facts/evidence. |
+| Behavioral validity | **Response Validity Rate**, **Refusal Validity Rate**, **Malformed Output Rate** | Measures valid answer behavior on answerable questions, the exact refusal contract on unanswerable questions, and general schema integrity. |
+| Reliability | Generation Failure Rate, Timeout Rate, Context-Limit-Reached Rate | Distinguishes runtime failure from bounded but incomplete generation. |
+| Repeatability diagnostic | Repeat Status Agreement, Repeat Citation Agreement, Repeat Semantic Agreement | Measures stability of answer/refusal decisions, selected evidence, and meaning across seeds without requiring identical wording. |
+| Operational | Cold Model-Load Time, Time to First Token p50/p95, End-to-End Latency p50/p95, Decode Throughput, peak process-tree RAM, peak VRAM | Separates startup, initial responsiveness, complete warm-request latency, decoding rate, and memory. |
+| Workload descriptor | Prompt, context, reasoning, visible-answer, and total output tokens; citation and generated-claim counts; finish-reason distribution | Records how much work produced the observed quality and latency. |
 
-The engineer approves up to three generator profiles after inspecting automatic
-quality, citation/refusal behavior, latency, and resources. An automatically
-supported citation must identify a supplied evidence block that completely
-covers at least one required gold evidence unit. Human review of broader claim
-faithfulness happens only after retrieval and generation are combined.
+Malformed Output Rate is minimized; Response and Refusal Validity Rates are
+maximized. A malformed answerable response receives failed-quality treatment and
+cannot disappear from quality denominators. Citation metrics are deterministic:
+a correct citation is a supplied evidence-block ID covering required gold
+evidence. The judge supplies semantic claim labels, while code calculates every
+ratio, F1, aggregate, and confidence interval.
+
+The engineer approves up to three generator configurations after inspecting the
+primary metrics, validity gates, repeatability, latency, workload, and resources.
+Exact metric eligibility, failure behavior, and aggregation are defined in
+[metrics.md](metrics.md).
+
+### MLflow result structure
+
+Generation uses `EduMind / Generation`:
+
+```text
+MLflow experiment: EduMind / Generation
+|- parent: generation-smoke-cpu-<timestamp>
+|  `- one child per model-mode configuration
+|- parent: generation-smoke-cuda-<timestamp>
+|  `- one child per model-mode configuration
+|- parent: generation-preflight-<timestamp>
+|  `- one qualification child per model-mode configuration
+|- parent: generation-development-<timestamp>
+|  `- one child per hardware-qualified configuration
+`- parent: generation-validation-<timestamp>
+   `- one child per engineer-selected finalist
+```
+
+The parent stores the manifest, protocol and judge identities, aligned seed
+list, candidate order, qualification or decision provenance, completion state,
+and aggregate comparison artifacts. Each child stores the model and mode,
+resolved decoder, device, dtype, batch size, warmup count, cold-load and warm
+operational measurements, primary-metric contract, judge rubric checksums, and
+per-question outputs and labels. The judge does not receive a nested candidate
+run and its resource use is never attributed to the generator.
+
+Generation child metrics use role-bearing namespaces:
+
+```text
+quality.faithfulness
+quality.factual_correctness_f1
+quality.answer_relevancy
+quality.citation_f1
+quality.factual_correctness_precision
+quality.factual_correctness_recall
+quality.citation_precision
+quality.citation_recall
+validity.response_validity_rate
+validity.refusal_validity_rate
+validity.malformed_output_rate
+reliability.generation_failure_rate
+reliability.timeout_rate
+reliability.context_limit_reached_rate
+repeatability.status_agreement
+repeatability.citation_agreement
+repeatability.semantic_agreement
+operational.cold_model_load_seconds
+operational.ttft_p50_seconds
+operational.ttft_p95_seconds
+operational.latency_p50_seconds
+operational.latency_p95_seconds
+operational.decode_tokens_per_second
+operational.peak_ram_mib
+operational.peak_vram_mib
+```
+
+The parent and every child also store the four primary metric names and their
+directions in the metric contract so the main selection evidence is visible and
+validated consistently.
 
 ## 8. Final RAG and human review
 
@@ -2447,9 +2669,10 @@ at 3 and 5.
 
 Final RAG reports nDCG, Evidence-unit Recall, and Evidence-token Precision at the
 available cutoff, plus eligible alpha-nDCG as a diagnostic. It also reports the
-primary and secondary generation metrics from Experiment 7 and retrieval,
-generation, server-call, and complete end-to-end p50/p95 latency. RAM and VRAM
-remain operational measurements.
+primary generation-quality metrics, behavioral validity, reliability, and
+repeatability diagnostics from Experiment 7, plus retrieval, generation,
+server-call, and complete end-to-end p50/p95 latency. RAM and VRAM remain
+operational measurements.
 
 ### Human review
 
@@ -2505,11 +2728,11 @@ The experiment reports the paired extracted-minus-reference difference for:
 
 - **Retrieval:** nDCG, Evidence-unit Recall, and Evidence-token Precision at the
   system's actual top-K, plus eligible alpha-nDCG as a diagnostic.
-- **Generation:** Token F1, answerable-only Citation Precision/Recall/F1,
-  Answerability Balanced Accuracy, Unsupported Answer Rate, and Malformed Output
-  Rate.
-- **Diagnostics:** refusal metrics, HHEM on substantive answers, and per-question
-  error inspection.
+- **Generation quality:** Faithfulness, Factual Correctness F1, Answer Relevancy,
+  and answerable-only Citation Precision/Recall/F1.
+- **Validity and diagnostics:** Response Validity Rate, Refusal Validity Rate,
+  Malformed Output Rate, reliability rates, repeatability metrics, and
+  per-question error inspection.
 - **Operational:** server-call, retrieval, generation, and complete p50/p95
   latency.
 

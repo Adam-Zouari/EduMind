@@ -2868,40 +2868,175 @@ confidence interval. Every table reports submitted, successful, failed, and
 eligible request counts. Null means a defined eligibility condition was not met;
 it never means zero.
 
-## Generation and final-answer quality
+## Generation
 
 This section covers generation on frozen evidence and the same automated metrics
-when generation is embedded in Final RAG. Blinded human judgments remain the
-authority for claim-level faithfulness and answer quality; automated metrics
-answer narrower, reproducible questions.
+when generation is embedded in Final RAG. One pinned, human-calibrated LLM judge
+supplies structured semantic labels; deterministic benchmark code calculates
+the metric values and aggregates. Blinded human review remains the final
+complete-system selection evidence.
 
 ### Metric summary
 
-#### Automated quality and validity
+#### Quality
 
 | Metric | Role | Question answered | Direction |
 |---|---|---|---|
-| Citation Precision/Recall/F1 | Primary | On answerable questions, are citations correct and do they cover the required evidence? | Higher |
-| Answerability Balanced Accuracy | Primary | Does the model distinguish answerable from unanswerable questions without the majority class dominating? | Higher |
-| Unsupported Answer Rate | Primary | How often does the model give a substantive answer to an unanswerable question? | Lower |
-| Malformed Output Rate | Primary | How often does a completed response violate the required answer/citation schema? | Lower |
-| Token F1 | Secondary | How much accepted answer content is recovered even when wording differs? | Higher |
-| Exact Match and ROUGE-L | Diagnostic | How often is wording exact, and how similar is its sequence to an accepted answer? | Higher |
-| Refusal Precision/Recall/F1 | Diagnostic | Are refusals reserved for unanswerable questions, and are those questions actually refused? | Higher |
-| HHEM Faithfulness | Diagnostic | Does a pinned local model judge a substantive answer supported by the supplied evidence? | Higher |
-| Repeat Output Agreement | Diagnostic | Does deterministic generation return the same visible answer and citations? | Higher |
+| Faithfulness | Primary | Are the generated factual claims supported by the supplied evidence? | Higher |
+| Factual Correctness F1 | Primary | Does the answer include the required facts without introducing incorrect ones? | Higher |
+| Answer Relevancy | Primary | Does the response directly address the question that was asked? | Higher |
+| Citation F1 | Primary | Are the explicit citations both correct and complete? | Higher |
+| Factual Correctness Precision | Diagnostic | What share of the generated factual claims are correct? | Higher |
+| Factual Correctness Recall | Diagnostic | What share of the required gold claims are correctly included? | Higher |
+| Citation Precision | Diagnostic | What share of the produced citations identify required evidence? | Higher |
+| Citation Recall | Diagnostic | What share of the required gold evidence is covered by valid citations? | Higher |
+
+#### Behavioral validity and reliability
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Response Validity Rate | Validity | How often does an answerable question receive the required valid answer behavior? | Higher |
+| Refusal Validity Rate | Validity | How often does an unanswerable question receive the exact required refusal behavior? | Higher |
+| Malformed Output Rate | Validity gate | How often does an attempted generation violate the required response schema? | Lower |
+| Generation Failure Rate | Reliability gate | How often does model execution fail before producing an evaluable output? | Lower |
+| Timeout Rate | Reliability | How often does generation reach the frozen wall-clock timeout? | Lower |
+| Context-Limit-Reached Rate | Reliability | How often does generation exhaust the available model context before EOS? | Lower |
+
+#### Repeatability
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Repeat Status Agreement | Diagnostic | Across fixed sampling seeds, does the model consistently answer or refuse? | Higher |
+| Repeat Citation Agreement | Diagnostic | Across fixed sampling seeds, does the model select the same evidence? | Higher |
+| Repeat Semantic Agreement | Diagnostic | Across fixed sampling seeds, do the visible answers preserve the same meaning? | Higher |
 
 #### Operational measurements and descriptors
 
 | Metric | Role | Question answered | Direction |
 |---|---|---|---|
-| Time to First Token | Operational | How long does a warm request wait before generation begins? | Lower |
-| Prompt-Evaluation Time | Operational | How long is spent processing the prompt before decoding? | Lower |
-| Generation Time and Generated Tokens/Second | Operational | How long does decoding take and at what observed rate? | Lower / Higher |
-| Total Response Latency p50/p95 | Operational | How long does the complete warm generation request usually take, and how slow is its tail? | Lower |
+| Time to First Token p50/p95 | Operational | How long does a warm request wait before generation begins? | Lower |
+| End-to-End Latency p50/p95 | Operational | How long does the complete warm generation request usually take, and how slow is its tail? | Lower |
+| Decode Throughput | Operational | How many native-tokenizer output tokens are produced per measured decoding second? | Higher |
 | Cold Model-Load Time | Operational | How long does a fresh worker need to make the generator ready? | Lower |
 | Peak Process-Tree RAM and Peak VRAM | Operational | What host and device memory does the profile require? | Lower at equal quality |
-| Prompt, Visible-Answer, Reasoning, and Generated Token Counts | Workload descriptor | How much native-tokenizer input and output produced the quality and latency results? | Descriptive |
+| Prompt, Context, Reasoning, Visible-Answer, and Total Output Tokens | Workload descriptor | How much native-tokenizer input and output produced the quality and latency results? | Descriptive |
+| Citation Count, Generated-Claim Count, and Finish-Reason Distribution | Workload descriptor | What evidence and factual workload did the model produce, and why did generation stop? | Descriptive |
+
+### Semantic quality and judge responsibilities
+
+The frozen judge returns structured claim-level labels. It extracts atomic
+factual claims from the visible answer, checks support against the supplied
+evidence, matches generated claims to human-verified gold claims, and applies the
+Answer Relevancy rubric. Benchmark code retains those labels and calculates all
+ratios, F1 values, aggregates, and intervals.
+
+These metrics use answerable questions. A refusal, malformed response, timeout,
+context-limited response, or execution failure on an answerable question receives
+zero, so difficult questions cannot disappear from the quality denominator.
+
+#### Faithfulness
+
+**Question:** What share of the factual claims made by the answer are supported
+by the evidence supplied to the generator?
+
+```text
+Faithfulness =
+supported generated factual claims
+----------------------------------
+all generated factual claims
+```
+
+A claim is supported only when the supplied evidence entails it. General world
+knowledge does not compensate for missing support in the provided context.
+
+**Example:** An answer makes four atomic factual claims and the judge finds
+support for three. Faithfulness is `3 / 4 = 0.75`.
+
+**Range and direction:** `[0, 1]`; higher is better. An answerable response with
+no evaluable factual claim receives zero.
+
+#### Factual Correctness Precision
+
+**Question:** What share of the generated factual claims are correct according
+to the verified answer and gold claims?
+
+```text
+Factual Correctness Precision =
+correct generated factual claims
+--------------------------------
+  all generated factual claims
+```
+
+**Example:** If four claims are generated and three are correct, precision is
+`3 / 4 = 0.75`. The incorrect additional claim lowers precision even when the
+three remaining claims are correct.
+
+**Range and direction:** `[0, 1]`; higher is better.
+
+#### Factual Correctness Recall
+
+**Question:** What share of the required gold claims are correctly included in
+the answer?
+
+```text
+Factual Correctness Recall =
+required gold claims correctly included
+----------------------------------------
+         all required gold claims
+```
+
+**Example:** If the reference requires five atomic claims and the response
+correctly includes three, recall is `3 / 5 = 0.60`.
+
+**Range and direction:** `[0, 1]`; higher is better.
+
+#### Factual Correctness F1
+
+**Question:** Does the response balance avoiding incorrect claims with covering
+the facts required for a complete answer?
+
+```text
+Factual Correctness F1 =
+2 x precision x recall
+----------------------
+  precision + recall
+```
+
+**Example:** Precision `0.75` and recall `0.60` produce F1 approximately `0.67`.
+A response that is correct but incomplete has high precision and lower recall;
+a detailed response containing false additions has lower precision.
+
+**Range and direction:** `[0, 1]`; higher is better. F1 is zero when precision
+or recall is zero.
+
+#### Answer Relevancy
+
+**Question:** Does the visible response directly address the question without
+being evasive or dominated by unrelated information?
+
+The judge assigns one frozen rubric level:
+
+| Level | Meaning |
+|---:|---|
+| `0` | The response does not address the question. |
+| `1` | The response addresses the question only partly or contains substantial unrelated material. |
+| `2` | The response directly addresses the question with no substantial unrelated material. |
+
+Benchmark code divides the rubric level by `2` to report Answer Relevancy on
+`[0, 1]`.
+
+**Example:** A response that answers one part of a two-part question but avoids
+the other receives level `1`, reported as `0.50`. Its factual completeness is
+still measured separately by Factual Correctness Recall.
+
+**Range and direction:** `[0, 1]`; higher is better.
+
+The exact judge model version, decoding settings, prompts, rubric checksums,
+schema, and retry policy are frozen. Candidate identities are hidden from the
+judge. Before authoritative use, its labels must satisfy the protocol's agreement
+criteria on a human-labeled calibration set. A judge failure makes evaluation
+incomplete. Judge latency and resources are excluded from candidate operational
+metrics.
 
 ### Citation quality
 
@@ -2910,103 +3045,360 @@ which always have one or more verified gold evidence units. Unanswerable
 questions are handled by answerability and refusal metrics rather than receiving
 artificially perfect citation scores.
 
-A citation is automatically supported only when it is a valid identifier for a
-supplied numbered evidence block and that block completely covers at least one
-required gold evidence unit. Text similarity alone does not make a citation
-correct. Repeated references to the same block count once. An unknown citation
-ID counts as produced but unsupported and also makes the response malformed.
+A citation is correct when it is a valid supplied evidence-block ID and that
+block completely covers at least one required gold evidence unit. Repeated IDs
+count once. An unknown ID is produced but incorrect and also makes the response
+malformed.
 
-- **Citation Precision** asks what share of the distinct citations produced are
-  supported. An answerable response with no citations receives zero.
-- **Citation Recall** asks what share of the distinct required gold evidence
-  units are covered by at least one supported citation. A cited block can cover
-  more than one unit when its frozen intervals genuinely contain them.
-- **Citation F1** balances those two results. It is zero when either no required
-  evidence is cited or no produced citation is supported.
+#### Citation Precision
 
-All three lie in `[0, 1]`; higher is better. A malformed answerable response
-receives zero for all three so protocol failures are not removed from the
-quality denominator.
+**Question:** When the model cites an evidence block, how often is that block
+part of the verified evidence required for the answer?
 
-### Answerability, refusal, and output validity
+```text
+Citation Precision =
+distinct correct citation IDs
+-----------------------------
+all distinct produced citation IDs
+```
 
-A response is a **refusal** only when it uses the frozen refusal representation
-and contains no substantive answer. Every other completed response is a
-substantive answer. Answerability Balanced Accuracy averages the recall of the
-answerable class and the unanswerable class; both classes must occur in an
-authoritative split. It therefore cannot be inflated by always choosing the
-larger class.
+**Example:** Citations `[E1, E2, E9]` contain two correct IDs and one unrelated
+or unknown ID. Citation Precision is `2 / 3`, approximately `0.67`.
 
-Unsupported Answer Rate is the share of unanswerable questions that receive a
-substantive answer. It does not claim to measure whether every statement in an
-answerable response is faithful; that broader question belongs to blinded human
-review, with HHEM retained only as a diagnostic.
+**Range and direction:** `[0, 1]`; higher is better. An answerable response with
+no citations receives zero.
 
-Refusal Precision asks what share of refusals were issued for unanswerable
-questions. Refusal Recall asks what share of unanswerable questions were
-refused. Refusal F1 balances them. A profile that never refuses receives zero
-precision, recall, and F1 when the split contains unanswerable questions.
+#### Citation Recall
 
-Malformed Output Rate includes responses that cannot be parsed into the required
-answer/citation schema, use unknown citation IDs, mix the refusal marker with a
-substantive answer, or omit required fields. A completed but malformed response
-is still a scored sample. An inference crash is instead a validity failure: the
-child fails and the parent comparison is incomplete rather than averaging only
-the surviving questions.
+**Question:** How much of the required gold evidence is covered by at least one
+correct citation?
 
-### Accepted-answer similarity
+```text
+Citation Recall =
+required gold evidence units covered by correct citations
+---------------------------------------------------------
+           all required gold evidence units
+```
 
-Exact Match, Token F1, and ROUGE-L apply to answerable questions. A refusal or
-malformed response to an answerable question receives zero. When several
-accepted answers exist, the highest score across those references is used.
+**Example:** If an answer requires evidence units `G1`, `G2`, and `G3`, and the
+correct citations cover `G1` and `G2`, Citation Recall is `2 / 3`, approximately
+`0.67`.
 
-- **Exact Match** requires the normalized predicted answer to equal an accepted
-  answer exactly.
-- **Token F1** uses repeated normalized token occurrences, so it rewards partial
-  recovery without treating repeated words as a set.
-- **ROUGE-L** rewards an in-order common token sequence and can distinguish two
-  answers with similar words but different ordering.
+**Range and direction:** `[0, 1]`; higher is better.
 
-Unanswerable questions are ineligible for these three metrics because they have
-no accepted substantive answer. Exact Match and ROUGE-L are diagnostic; Token
-F1 is the secondary automated answer-correctness measure.
+#### Citation F1
 
-### Automated faithfulness and repeatability
+**Question:** Does the response balance citing only correct evidence with citing
+all evidence required for the answer?
 
-HHEM scores every parsable substantive answer against exactly the supplied
-evidence blocks. It is omitted when a candidate produces no eligible
-substantive answers. The pinned HHEM checkpoint, revision, prompt construction,
-and score direction are recorded. Its result never replaces human Faithfulness.
+```text
+Citation F1 =
+2 x precision x recall
+----------------------
+  precision + recall
+```
 
-For Repeat Output Agreement, the first measured response is designated and each
-later repetition agrees only when its normalized visible answer and ordered
-distinct citation IDs are identical. Hidden reasoning text does not affect the
-agreement value but its token count remains a workload descriptor. A failed
-repetition is a disagreement and also fails the candidate's completeness gate.
-Smoke with one measured response has no meaningful agreement value.
+**Example:** Citation Precision `0.80` and Citation Recall `0.50` produce
+Citation F1 approximately `0.62`.
+
+**Range and direction:** `[0, 1]`; higher is better. A malformed answerable
+response receives zero for all three citation metrics.
+
+### Response, refusal, and output validity
+
+#### Response Validity Rate
+
+**Question:** How often does an answerable generation attempt exhibit the
+required answer behavior?
+
+A response passes when it is parseable, uses `status="answered"`, contains a
+non-empty substantive answer, and contains a structurally valid list of supplied
+citation IDs.
+
+```text
+Response Validity Rate =
+answerable attempts with valid answer behavior
+-----------------------------------------------
+       all scheduled answerable attempts
+```
+
+**Example:** If 8 of 10 scheduled answerable attempts produce valid answered
+responses, Response Validity Rate is `8 / 10 = 0.80`. A validly formatted
+refusal on either of the other two attempts still fails this metric because an
+answer was required.
+
+**Range and direction:** `[0, 1]`; higher is better. It is null when the split
+contains no answerable questions.
+
+#### Refusal Validity Rate
+
+**Question:** How often does an unanswerable generation attempt exhibit the
+exact required refusal behavior?
+
+A refusal passes when it is parseable, uses `status="insufficient_evidence"`,
+contains the frozen refusal text, and has an empty citation list.
+
+```text
+Refusal Validity Rate =
+unanswerable attempts with valid refusal behavior
+-------------------------------------------------
+      all scheduled unanswerable attempts
+```
+
+**Example:** If 4 of 5 scheduled unanswerable attempts produce the required
+refusal and one produces a substantive answer, Refusal Validity Rate is
+`4 / 5 = 0.80`.
+
+**Range and direction:** `[0, 1]`; higher is better. It is null when the split
+contains no unanswerable questions.
+
+#### Malformed Output Rate
+
+**Question:** How often does an attempted generation violate the common response
+schema?
+
+Malformed output includes unparsable JSON, missing or additional top-level
+fields, unsupported statuses, unknown citation IDs, and responses that mix
+refusal text with a substantive answer. Repeated citation IDs are deduplicated
+before citation scoring and do not make an otherwise valid response malformed.
+
+```text
+Malformed Output Rate =
+malformed generated outputs
+---------------------------
+all scheduled generation attempts
+```
+
+**Example:** If 2 of 20 scheduled attempts return malformed output, Malformed
+Output Rate is `2 / 20 = 0.10`. A runtime failure with no output contributes to
+Generation Failure Rate instead; it is not also labeled malformed.
+
+**Range and direction:** `[0, 1]`; lower is better.
+
+The three validity metrics have different scopes. A malformed answerable output
+increments Malformed Output Rate and fails Response Validity Rate. A parseable
+refusal on an answerable question does not increment Malformed Output Rate but
+still fails Response Validity Rate. Store the numerator, denominator, and rate
+for each metric.
+
+### Generation reliability
+
+#### Generation Failure Rate
+
+**Question:** How often does model or runtime execution fail before an evaluable
+response exists?
+
+```text
+Generation Failure Rate =
+failed generation attempts
+--------------------------
+all scheduled generation attempts
+```
+
+**Example:** One CUDA error among 60 scheduled attempts gives a rate of
+`1 / 60`, approximately `0.017`.
+
+#### Timeout Rate and Context-Limit-Reached Rate
+
+**Question:** How often is output stopped by the wall-clock boundary or model
+context boundary instead of normal EOS termination?
+
+Each rate divides the corresponding finish-reason count by all scheduled
+generation attempts. For example, 3 timeouts and 2 context-boundary terminations
+among 60 attempts produce Timeout Rate `0.05` and Context-Limit-Reached Rate
+approximately `0.033`.
+
+All three reliability rates lie in `[0, 1]`; lower is better. A failed, timed-out,
+or context-limited answerable attempt receives failed-quality treatment. A judge
+or benchmark-infrastructure failure makes the comparison incomplete instead of
+becoming a candidate reliability event.
+
+### Repeatability
+
+Development, validation, and locked complete-system reporting generate each
+question with seeds `42`, `43`, and `44`. The same seed list is used by every
+candidate. The three outputs create three unordered response pairs, and pair
+values are averaged within the question. Smoke and preflight use one seed and do
+not report repeatability metrics.
+
+#### Repeat Status Agreement
+
+**Question:** Does the model consistently decide to answer or refuse?
+
+Each response pair receives `1` when both statuses match and `0` otherwise. A
+failed attempt also produces pair value `0`.
+
+**Example:** Statuses `answered`, `answered`, and `insufficient_evidence` create
+three pairs. One pair agrees, so Repeat Status Agreement is `1 / 3`,
+approximately `0.33`.
+
+**Range and direction:** `[0, 1]`; higher is better.
+
+#### Repeat Citation Agreement
+
+**Question:** Does the model repeatedly select the same evidence blocks?
+
+Each answerable response pair uses Jaccard agreement:
+
+```text
+citations present in both outputs
+---------------------------------
+distinct citations in either output
+```
+
+**Example:** Citation sets `{E1, E2}`, `{E1, E2}`, and `{E1}` have pair values
+`1.0`, `0.5`, and `0.5`. Their mean Repeat Citation Agreement is approximately
+`0.67`.
+
+**Range and direction:** `[0, 1]`; higher is better. Two empty citation sets on
+an answerable question receive zero because required evidence was not selected.
+
+#### Repeat Semantic Agreement
+
+**Question:** Do repeated visible answers preserve the same meaning even when
+their wording differs?
+
+The frozen judge labels each response pair as semantically equivalent or not.
+Equivalent pairs receive `1`; non-equivalent pairs, status disagreements, and
+failed attempts receive `0`.
+
+**Example:** If two answers state that 500 people participated and the third
+states that 800 participated, only the first pair agrees. Repeat Semantic
+Agreement is `1 / 3`, approximately `0.33`.
+
+**Range and direction:** `[0, 1]`; higher is better.
 
 ### Operational measurement
 
-Time to First Token starts immediately before the warm generation call and ends
-when the first generated token is available. Prompt-Evaluation Time uses the
-runtime's measured prefill interval when exposed; otherwise it is null with an
-`unsupported_by_runtime` status rather than inferred by subtraction.
-Generation Time runs from the first generated token through completion, and
-Generated Tokens/Second uses all generated native-tokenizer tokens over that
-interval. Both are null if no token is generated.
+#### Time to First Token p50/p95
 
-Total Response Latency covers prompt preparation, tokenization, model prefill,
-reasoning and visible-answer decoding, output parsing, and citation validation.
-For Final RAG, separate server-call, retrieval/reranking, context-packing, and
-generation timings are also reported; end-to-end latency contains all of them.
-The median repetition is the per-question warm observation used for p50 and p95.
+**Question:** After a warm request begins, how long does the generator take to
+produce its first token?
 
-Cold Model-Load Time is measured once in a fresh worker before warmup. Peak RAM
-includes the worker process tree; Peak VRAM uses process-attributed device
-measurement and must be non-zero for an authoritative CUDA child. Prompt,
-reasoning, visible-answer, and total generated token counts use each generator's
-native tokenizer and are reported per question before mean and p95 summaries.
-Unavailable separate reasoning counts remain null rather than being estimated.
+Time to First Token is measured for every query and measured seed. It starts
+immediately before the generation call and ends when the first model-generated
+token becomes available. For reasoning configurations, that token may belong to
+the reasoning stream; the metric measures model start responsiveness rather than
+time to the completed visible answer.
+
+This matters because two models can have similar total latency while one leaves
+the caller waiting much longer before generation starts. Prompt prefill and
+initial generation work are visible in TTFT.
+
+For each question, the median TTFT across its three seeds becomes the question's
+warm observation. p50 summarizes a typical question and p95 summarizes the slow
+tail.
+
+**Example:** TTFT p50 `0.35 seconds` and p95 `0.90 seconds` mean that half of the
+question-level observations start within 0.35 seconds and 95% start within 0.90
+seconds.
+
+**Range and direction:** Non-negative seconds; lower is better.
+
+#### End-to-End Latency p50/p95
+
+**Question:** How long does a complete warm generation request take?
+
+The interval includes prompt preparation, tokenization, model prefill, reasoning
+and visible-answer decoding, output parsing, and citation validation. The median
+measured latency for each question becomes its warm observation; p50 and p95 are
+then calculated across questions.
+
+**Example:** p95 `8.4 seconds` means 95% of question-level warm observations
+complete within 8.4 seconds.
+
+For Final RAG, retrieval, reranking, context packing, generation, and complete
+system latency are also reported separately.
+
+**Range and direction:** Non-negative seconds; lower is better.
+
+#### Decode Throughput
+
+**Question:** Once decoding begins, how quickly does the model produce output
+tokens?
+
+```text
+Decode Throughput =
+generated native-tokenizer tokens
+---------------------------------
+measured decoding seconds
+```
+
+The interval starts at the first generated token and ends when generation stops.
+
+**Example:** Producing 120 tokens during 4 seconds of decoding gives
+`30 tokens/second`.
+
+**Range and direction:** Non-negative tokens/second; higher is better. It is null
+when no token is generated.
+
+#### Cold Model-Load Time
+
+**Question:** How long does a fresh worker need to make the generator ready?
+
+The timer starts before model construction and ends after weights are loaded,
+device placement is complete, and CUDA is synchronized. It ends before the
+warmup request. The model is absent from the new process and device at the start;
+the operating-system disk cache is left in its normal state.
+
+**Example:** If loading starts at `0.0 seconds` and the synchronized CUDA model is
+ready at `5.4 seconds`, Cold Model-Load Time is `5.4 seconds`.
+
+**Range and direction:** Non-negative seconds; lower is better. One cold-load
+observation receives no confidence interval.
+
+#### Peak Process-Tree RAM and Peak VRAM
+
+**Question:** What maximum host and GPU memory does the complete generator worker
+require?
+
+Peak RAM is the largest sampled resident-memory total for the worker and its
+child processes. Peak VRAM is the largest process-attributed GPU allocation from
+worker start through the final measured request.
+
+**Example:** RAM samples peaking at `3,100 MiB` and VRAM samples peaking at
+`2,850 MiB` produce those two reported peaks.
+
+**Range and direction:** Non-negative MiB; lower is better at equal quality.
+Unavailable measurement is null, not zero.
+
+### Workload descriptors
+
+Prompt, supplied-context, reasoning, visible-answer, and total output token counts
+use each candidate's native tokenizer. Citation count, generated-claim count, and
+finish reason are retained with every question and summarized with their
+observation counts. Separate reasoning counts remain null when the runtime does
+not expose a reliable boundary.
+
+These values explain performance and quality differences. For example, a
+reasoning configuration may produce better factual recall while generating four
+times as many output tokens and therefore taking longer.
+
+### Worked candidate interpretation
+
+Suppose one generator configuration produces:
+
+```text
+Faithfulness                         = 0.92
+Factual Correctness Precision        = 0.88
+Factual Correctness Recall           = 0.70
+Factual Correctness F1               = 0.78
+Answer Relevancy                     = 0.95
+Citation F1                          = 0.84
+Response Validity Rate               = 0.96
+Refusal Validity Rate                = 0.85
+Malformed Output Rate                = 0.02
+Repeat Semantic Agreement            = 0.90
+TTFT p95                              = 0.90 seconds
+End-to-End Latency p95                = 8.40 seconds
+```
+
+The answers are usually well supported and directly relevant. Factual
+Correctness Recall is lower than Factual Correctness Precision, so omitted
+required facts are a larger problem than false additions. Refusal Validity shows
+that unanswerable questions remain a distinct weakness. The non-zero malformed
+rate identifies a schema issue separate from answer/refusal behavior, while
+repeatability and latency describe stability and runtime cost.
 
 ### Human review metrics
 
@@ -3021,11 +3413,14 @@ claim.
 
 ### Eligibility, aggregation, and confidence intervals
 
-Automated values are first calculated per question, averaged within each source
-document, and macro-averaged across documents. This prevents a paper with many
-questions from dominating. Development and validation runs use 10,000 bootstrap
-resamples of complete documents with seed 42. Answerable-only, unanswerable-only,
-substantive-answer-only, and evidence-type results always report their eligible
+Quality, validity, and reliability indicators are calculated for every scheduled
+seed and first averaged within each question. Question values are then averaged
+within each source document and macro-averaged across documents. This prevents
+either one sampled trajectory or a paper with many questions from dominating.
+Development and validation runs use
+10,000 bootstrap resamples of complete documents with bootstrap seed `42`; that
+seed is independent of generation seeds. Answerable-only, unanswerable-only,
+substantive-answer-only, and evidence-type results always report eligible
 question and document counts.
 
 Warm latency and token-workload summaries use the same fixed question set and

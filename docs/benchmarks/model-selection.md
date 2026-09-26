@@ -45,7 +45,7 @@ The ranges in this document were added after inspecting the candidate sizes. The
 |---|---|---|
 | `component` | Component being selected. | `embedding` |
 | `candidate` | Exact model or product identifier. | `Qwen/Qwen3-Embedding-0.6B` |
-| `purpose` | Why the row participates in the selection package. | `candidate`, `control`, or `diagnostic` |
+| `purpose` | Why the row participates in the selection package. | `candidate` or `control` |
 | `decision` | Whether the row is included in the benchmark shortlist. | `include` or `exclude` |
 | `approx_params_b` | Approximate parameter count in billions; blank for non-model products. | `0.595776512` |
 | `public_benchmark` | Public benchmark used to screen the candidate. | `MTEB English v2` |
@@ -63,13 +63,12 @@ Blank values mean that the field does not apply or the information is unavailabl
 
 ### Purpose and decision
 
-`purpose` uses only three values:
+`purpose` uses only two values:
 
 | Purpose | Meaning |
 |---|---|
 | `candidate` | A possible component to evaluate. It may be included or excluded from the runnable shortlist. |
 | `control` | The current or established baseline used to measure improvement. |
-| `diagnostic` | A supporting evaluator, such as HHEM, that cannot replace authoritative human evaluation. |
 
 `decision=include` means **run this row in the relevant EduMind benchmark**. It does not mean that the candidate has been promoted into production. `decision=exclude` means that the reviewed row is not part of the current runnable shortlist; `reason` explains why.
 
@@ -219,6 +218,42 @@ The public screen uses a 23-model comparison published by the Ettin authors. “
 
 Shared evidence: [published comparison](https://huggingface.co/blog/ettin-reranker), [pinned comparison source](https://github.com/huggingface/blog/blob/8dc6a4f4bcdd9fe5ac2a107895b0515377691a17/ettin-reranker.md), and [MTEB English-v2 Retrieval](https://leaderboard.mteb.org/benchmark/MTEB%28eng%2C%20v2%29).
 
+## Generation
+
+No public benchmark currently compares the selected compact models under one protocol for all of EduMind's target behavior: grounded correctness, faithfulness, citations, answerability, completeness, refusal, and local latency. [ALCE](https://github.com/princeton-nlp/ALCE), [FaithJudge](https://github.com/vectara/FaithJudge), [ChatRAG-Bench](https://huggingface.co/datasets/nvidia/ChatRAG-Bench), and [FACTS Grounding](https://www.kaggle.com/benchmarks/google/facts-grounding) are relevant, but do not publish a common result for these current checkpoints.
+
+Artificial Analysis is therefore used only to choose plausible compact quality
+points. Its current Intelligence Index gives the three candidates one common
+screening reference, but it does not evaluate the control and does not select
+the final generator. The control instead has a direct same-protocol comparison
+with Qwen3-0.6B in the Falcon-H1-Tiny technical report.
+
+| Approximate profile | Candidate | Public screening evidence | Why it is included |
+|---|---|---:|---|
+| ~0.6B | [`Qwen/Qwen3-0.6B`](https://huggingface.co/Qwen/Qwen3-0.6B/tree/c1899de289a04d12100db370d81485cdf75e47ca) | [AA reasoning score **5**](https://artificialanalysis.ai/models/qwen3-0.6b-instruct-reasoning) | Small established candidate and first candidate scale above the control. Its official direct and reasoning modes are both evaluated. |
+| ~0.8B | [`Qwen/Qwen3.5-0.8B`](https://huggingface.co/Qwen/Qwen3.5-0.8B/tree/2fc06364715b967f1860aea9cf38778875588b17) | [AA reasoning score **6**](https://artificialanalysis.ai/models/qwen3-5-0-8b) | Newer intermediate candidate that tests whether its quality increase is worth its latency and token cost. Its official direct and reasoning modes are both evaluated. |
+| ~1B | [`openbmb/MiniCPM5-1B`](https://huggingface.co/openbmb/MiniCPM5-1B/tree/87179e5c1f455ef22e6223592d2d61351b525bfc) | [AA reasoning score **9**](https://artificialanalysis.ai/models/minicpm5-1b) | Strongest candidate in the reviewed hardware-feasible range on the common public screen. Its official direct and reasoning modes are both evaluated. |
+| Control | [`tiiuae/Falcon-H1-Tiny-R-90M`](https://huggingface.co/tiiuae/Falcon-H1-Tiny-R-90M/tree/7385612bf04c64405a51b29b6229d6d2ab0e72fd) | [Direct reasoning comparison](https://tiiuae-tiny-h1-blogpost.hf.space/) | Independent 91M lower-bound control. The report evaluates it and Qwen3-0.6B on the same AIME24, AIME25, LiveCodeBench v6, and MATH-500 protocol and reports the control below Qwen on all four. |
+
+Public scores provide reasoning-mode screening evidence; they do not decide
+whether reasoning is best for EduMind. Qwen3, Qwen3.5, and MiniCPM therefore each
+enter the local benchmark in their official direct and reasoning modes. Falcon
+has no documented equivalent direct switch and remains a reasoning-only control.
+Each model-mode pair is a separate configuration with its own frozen official
+decoding. Public scores are screening evidence only; the frozen EduMind
+evaluation determines grounded-RAG quality.
+
+### Semantic evaluator
+
+Generation uses one pinned LLM judge for Faithfulness, Factual Correctness,
+Answer Relevancy, and Repeat Semantic Agreement. The judge is an evaluation
+dependency and does not appear in the generator candidate roster or generator
+selection evidence. Its exact identity has not yet been selected. Before
+authoritative generation runs, the chosen judge must pass the human-labeled
+calibration set; its exact model version, decoding settings, and rubric checksums
+are then frozen in the generation evaluation contract. Authoritative generation
+runs remain blocked until that calibration and freeze are complete.
+
 ## Vector database servers
 
 The benchmark compares self-hosted network servers with the same vectors, metadata, filters, schema, query order, and client-visible latency. Vendor benchmark numbers are not used to rank them because those numbers do not hold EduMind's workload and environment constant.
@@ -229,29 +264,3 @@ The benchmark compares self-hosted network servers with the same vectors, metada
 | Qdrant | `qdrant/qdrant:v1.17.0`; client `1.18.0` | Purpose-built HNSW server with payload indexes and filtered search. | [Installation](https://qdrant.tech/documentation/installation/); [filtering](https://qdrant.tech/documentation/guides/) |
 | Weaviate | `cr.weaviate.io/semitechnologies/weaviate:1.38.2`; client `4.22.0` | Independent purpose-built HNSW server with structured filtering. | [Docker deployment](https://docs.weaviate.io/deploy/installation-guides/docker-installation) |
 | PostgreSQL + pgvector | `pgvector/pgvector:0.8.2-pg17-bookworm`; Psycopg `3.3.4` | Relational and transactional design point with SQL metadata and HNSW cosine search. | [pgvector documentation](https://github.com/pgvector/pgvector/tree/v0.8.2) |
-
-## Generation and faithfulness
-
-No public benchmark currently compares the selected compact models under one protocol for all of EduMind's target behavior: grounded correctness, faithfulness, citations, answerability, completeness, refusal, and local latency. [ALCE](https://github.com/princeton-nlp/ALCE), [FaithJudge](https://github.com/vectara/FaithJudge), [ChatRAG-Bench](https://huggingface.co/datasets/nvidia/ChatRAG-Bench), and [FACTS Grounding](https://www.kaggle.com/benchmarks/google/facts-grounding) are relevant, but do not publish a common result for these current checkpoints.
-
-Artificial Analysis is therefore used only to choose plausible compact quality
-points. Its current Intelligence Index gives the three candidates one common
-screening reference, but it does not evaluate the control and does not select
-the final generator. The control instead has a direct same-protocol comparison
-with Qwen3-0.6B in the Falcon-H1-Tiny technical report.
-
-| Approximate profile | Candidate and mode | Public screening evidence | Why it is included |
-|---|---|---:|---|
-| ~0.6B | [`Qwen/Qwen3-0.6B`](https://huggingface.co/Qwen/Qwen3-0.6B/tree/c1899de289a04d12100db370d81485cdf75e47ca), reasoning | [AA score **5**](https://artificialanalysis.ai/models/qwen3-0.6b-instruct-reasoning) | Small established reasoning candidate and first candidate scale above the control. |
-| ~0.8B | [`Qwen/Qwen3.5-0.8B`](https://huggingface.co/Qwen/Qwen3.5-0.8B/tree/2fc06364715b967f1860aea9cf38778875588b17), reasoning | [AA score **6**](https://artificialanalysis.ai/models/qwen3-5-0-8b) | Newer intermediate reasoning candidate that tests whether its modest quality increase is worth its latency and token cost. |
-| ~1B | [`openbmb/MiniCPM5-1B`](https://huggingface.co/openbmb/MiniCPM5-1B/tree/87179e5c1f455ef22e6223592d2d61351b525bfc), reasoning | [AA score **9**](https://artificialanalysis.ai/models/minicpm5-1b) | Strongest candidate in the reviewed hardware-feasible range on the common public screen. |
-| Control | [`tiiuae/Falcon-H1-Tiny-R-90M`](https://huggingface.co/tiiuae/Falcon-H1-Tiny-R-90M/tree/7385612bf04c64405a51b29b6229d6d2ab0e72fd), reasoning | [Direct reasoning comparison](https://tiiuae-tiny-h1-blogpost.hf.space/) | Independent 91M lower-bound control. The report evaluates it and Qwen3-0.6B on the same AIME24, AIME25, LiveCodeBench v6, and MATH-500 protocol and reports the control below Qwen on all four. |
-
-All four profiles generate with reasoning enabled. The control is not a second
-mode of a candidate checkpoint, so candidate gains represent model changes
-rather than a relabeled decoding configuration. Public scores are screening
-evidence only; the frozen EduMind evaluation determines grounded-RAG quality.
-
-### Automated faithfulness diagnostic
-
-[`vectara/hallucination_evaluation_model`](https://huggingface.co/vectara/hallucination_evaluation_model/blob/d3924deeff88f76f9203ae18d11432c400c07f41/README.md) is included as an automated diagnostic. Its model card reports **74.28% balanced accuracy** and **60.00% F1** on RAGTruth-QA. It does not replace blinded human faithfulness evaluation.

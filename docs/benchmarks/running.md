@@ -56,8 +56,9 @@ smoke-cpu + smoke-cuda -> preflight -> development -> validation -> locked
 - `validation` runs the finalists named in the reviewed development decision.
 - `locked` runs exactly one validation winner and is reporting-only.
 
-Vector Database is CPU-only and has no CUDA preflight. Generation and Final RAG
-have CPU/CUDA smoke but no preflight until their benchmark designs are frozen.
+Vector Database is CPU-only and has no CUDA preflight. Final RAG has CPU/CUDA
+smoke but no separate preflight because its selected model components have
+already been qualified by their own benchmarks.
 
 Development, validation, and locked use the device, dtype, and batch size in
 the benchmark protocol. Their current model-backed contracts require CUDA;
@@ -111,8 +112,20 @@ Each candidate child contains a `preflight_candidate.json` evidence artifact.
 The parent `preflight_report.json` records the complete roster and required
 component groups. Video is ready only when frozen ASR and a visual policy are
 qualified; Document additionally requires viable PDF, image, and DOCX routes.
-Preflight warmups, repetitions, telemetry interval, polling interval, and
-timeout are read from the benchmark protocol.
+Every measured `smoke`, `development`, `validation`, and `locked` profile uses
+one warmup per fresh candidate worker and materially distinct execution path.
+Preflight uses zero warmups: monitoring starts before loading and continues
+through one retained demanding qualification inference so first-use allocation,
+offloading, and peak VRAM remain visible. The preflight worker then exits and
+cannot warm a later benchmark process.
+
+Where Cold Model-Load Time is reported, a fresh worker times loading and device
+placement, ends that timer, runs the one warmup, and only then begins measured
+requests. Cold load, warmup, and measured latency are separate lifecycle phases;
+neither cold load nor warmup is included in warm Time to First Token or
+end-to-end latency. The operating system's disk cache is not forcibly cleared.
+Qualification repetitions, telemetry interval, polling interval, and timeout
+are read from the benchmark protocol.
 
 ## 4. Document extraction
 
@@ -300,18 +313,30 @@ Generation uses frozen evidence contexts:
 
 ```powershell
 python -m experiments.benchmarks.rag.generation.run --profile smoke
+python -m experiments.benchmarks.rag.generation.run --profile preflight
 python -m experiments.benchmarks.rag.generation.run --profile development
 python -m experiments.benchmarks.rag.generation.run --profile validation
 ```
 
-Its smoke command runs CPU and CUDA independently. Authoritative runs use the
-protocol CUDA contract. Validation reads `generation-validation.json`. After
-reviewing validation, record the selected generator in `generation-locked.json`;
-this is a transition decision consumed by Final RAG, not another generation
-profile.
+Its smoke command runs every model-mode configuration independently on CPU and
+CUDA. Preflight uses frozen demanding development/stress inputs and produces
+hardware qualification only. Development uses qualified configurations and the
+24-question development screen; validation reads `generation-validation.json`
+and evaluates only the recorded finalists on the complete validation set.
+Authoritative runs use the protocol CUDA/FP16 contract, batch size `1`, one
+warmup, and aligned measured seeds `42`, `43`, and `44`.
 
-Final RAG composes the locked retrieval choice and selected generator by
-default:
+Before development, configure the one pinned semantic judge and verify its
+human-calibration artifact. The judge runs after generator timing and supplies
+structured labels for Faithfulness, Factual Correctness, Answer Relevancy, and
+Repeat Semantic Agreement. Its latency and resources are not attributed to the
+generator. After reviewing validation, record up to three successful model-mode
+configurations in `generation-locked.json`; this is a transition decision
+consumed by Final RAG, not another generation profile. Final RAG and blinded
+review select the one complete system that reaches locked-test data.
+
+Final RAG composes the locked retrieval choice and approved generator
+configurations by default:
 
 ```powershell
 python -m experiments.benchmarks.rag.final.run --profile smoke

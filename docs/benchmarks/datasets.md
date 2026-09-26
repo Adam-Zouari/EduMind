@@ -115,9 +115,18 @@ QASPER supplies the paper-level split foundation. The preparation step samples
 whole papers with seed `42`, so one paper and its questions never cross splits.
 The structured supplement is not a model-generated augmentation: a reviewer
 must verify every document, question, answerability label, accepted answer,
-evidence type, evidence-unit ID, and half-open source interval. Each split must
-contain at least ten answerable questions with verified evidence for each of
-`table`, `formula`, and `mixed` before it can be combined with QASPER.
+required atomic gold claim, evidence type, evidence-unit ID, and half-open source
+interval. Each split must contain at least ten answerable questions with
+verified evidence for each of `table`, `formula`, and `mixed` before it can be
+combined with QASPER.
+
+Generation also requires a versioned evaluator-calibration artifact drawn only
+from reviewed development material. It contains representative faithful,
+unsupported, partially correct, irrelevant, and refusal outputs with human
+labels for claim support, gold-claim matching, answer relevancy, and semantic
+equivalence. It is used only to qualify and freeze the semantic judge; it is not
+added to candidate quality results and never contains validation or locked-test
+questions.
 
 ## 2. Prerequisites and storage layout
 

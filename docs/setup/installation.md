@@ -149,12 +149,19 @@ The RAG download contains these exact approved identities:
 
 - Embeddings: [GTE ModernBERT base](https://huggingface.co/Alibaba-NLP/gte-modernbert-base/tree/e7f32e3c00f91d699e8c43b53106206bcc72bb22), [Snowflake Arctic Embed M v2](https://huggingface.co/Snowflake/snowflake-arctic-embed-m-v2.0), [F2LLM v2 0.6B](https://huggingface.co/codefuse-ai/F2LLM-v2-0.6B), [Octen 0.6B](https://huggingface.co/Octen/Octen-Embedding-0.6B), [Qwen3 Embedding 0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B), and [Nemotron Embed 1B](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16).
 - Rerankers: [GTE ModernBERT control](https://huggingface.co/Alibaba-NLP/gte-reranker-modernbert-base), [Ettin 150M](https://huggingface.co/cross-encoder/ettin-reranker-150m-v1), [Ettin 400M](https://huggingface.co/cross-encoder/ettin-reranker-400m-v1), and [Ettin 1B](https://huggingface.co/cross-encoder/ettin-reranker-1b-v1).
-- Generators: [Falcon-H1-Tiny-R-90M reasoning control](https://huggingface.co/tiiuae/Falcon-H1-Tiny-R-90M/tree/7385612bf04c64405a51b29b6229d6d2ab0e72fd), [Qwen3 0.6B](https://huggingface.co/Qwen/Qwen3-0.6B/tree/c1899de289a04d12100db370d81485cdf75e47ca), [Qwen3.5 0.8B](https://huggingface.co/Qwen/Qwen3.5-0.8B/tree/2fc06364715b967f1860aea9cf38778875588b17), and [MiniCPM5 1B](https://huggingface.co/openbmb/MiniCPM5-1B/tree/87179e5c1f455ef22e6223592d2d61351b525bfc). All four use their reasoning profile.
-- Diagnostic evaluator: [HHEM](https://huggingface.co/vectara/hallucination_evaluation_model).
+- Generators: [Falcon-H1-Tiny-R-90M reasoning control](https://huggingface.co/tiiuae/Falcon-H1-Tiny-R-90M/tree/7385612bf04c64405a51b29b6229d6d2ab0e72fd), [Qwen3 0.6B](https://huggingface.co/Qwen/Qwen3-0.6B/tree/c1899de289a04d12100db370d81485cdf75e47ca), [Qwen3.5 0.8B](https://huggingface.co/Qwen/Qwen3.5-0.8B/tree/2fc06364715b967f1860aea9cf38778875588b17), and [MiniCPM5 1B](https://huggingface.co/openbmb/MiniCPM5-1B/tree/87179e5c1f455ef22e6223592d2d61351b525bfc). Falcon is reasoning-only; the other three run their official direct and reasoning modes.
 
 Authoritative generator comparisons run on CUDA with `float16`, batch size `1`,
-no quantization, no automatic CPU/GPU split, temperature 0, and seed 42. The
-benchmark records the whole-model device and processes repetitions sequentially.
+no quantization, and no automatic CPU/GPU split. Each model-mode configuration
+uses its frozen official decoder and aligned measured seeds `42`, `43`, and `44`.
+The benchmark records the whole-model device and processes repetitions
+sequentially.
+
+Semantic generation metrics use one protocol-pinned LLM judge. The judge
+identity, version, rubrics, and human-calibration artifact must exist
+before an authoritative generation run. Hosted credentials, if required by the
+selected judge, are supplied through the environment and are never written to a
+protocol or MLflow artifact.
 
 ### Migrating an existing MiniLM index
 
@@ -297,7 +304,7 @@ require updating several copies.
 
 Before using a run as comparative evidence:
 
-- `prepare.py --list` names only included models, the HHEM diagnostic, and documented Docling subcomponents.
+- `prepare.py --list` names only included application and benchmark models plus documented Docling subcomponents.
 - `selected.json` exists and every recorded directory exists.
 - Development, validation, and locked manifests pass checksum, provenance,
   evidence-offset, and split-leakage validation.

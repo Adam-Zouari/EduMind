@@ -68,8 +68,12 @@ the authoritative dataset manifests and methodology, then remove the item.
   validation, and locked test. Confirm at least ten answerable questions with
   verified evidence for each of `table`, `formula`, and `mixed` in every split.
 - Verify every canonical document, accepted answer, answerability label,
-  evidence-unit ID, evidence type, and half-open source interval before combining
-  a structured manifest with QASPER.
+  required atomic gold claim, evidence-unit ID, evidence type, and half-open
+  source interval before combining a structured manifest with QASPER.
+- Build a development-only semantic-judge calibration set with human labels for
+  claim support, gold-claim matching, answer relevancy, and pairwise semantic
+  equivalence. Freeze the exact judge version and rubric only after it passes the
+  recorded agreement criteria; do not use validation or locked-test questions.
 - Inspect the resulting question and document counts by evidence type before
   deciding which slice confidence intervals are sufficiently supported.
 - Publish one complete authoritative RAG document row and answerable,
