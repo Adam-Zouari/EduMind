@@ -2714,7 +2714,7 @@ index build, index bytes, peak resources, and workload descriptors receive point
 observations but no invented interval. Warm latency intervals are reported only
 when enough independent query observations support them.
 
-## Vector-server correctness and performance
+## Vector databases
 
 The NumPy exact cosine search result is the oracle for ANN quality; it is not a
 production candidate. Results are reported separately by `K`, filter
@@ -2871,10 +2871,10 @@ it never means zero.
 ## Generation
 
 This section covers generation on frozen evidence and the same automated metrics
-when generation is embedded in Final RAG. One pinned, human-calibrated LLM judge
-supplies structured semantic labels; deterministic benchmark code calculates
-the metric values and aggregates. Blinded human review remains the final
-complete-system selection evidence.
+when generation is embedded in Final RAG. Once selected, calibrated, and frozen,
+one pinned LLM judge supplies structured semantic labels; deterministic
+benchmark code calculates the metric values and aggregates. Blinded human review
+remains the final complete-system selection evidence.
 
 ### Metric summary
 
@@ -2897,8 +2897,8 @@ complete-system selection evidence.
 |---|---|---|---|
 | Response Validity Rate | Validity | How often does an answerable question receive the required valid answer behavior? | Higher |
 | Refusal Validity Rate | Validity | How often does an unanswerable question receive the exact required refusal behavior? | Higher |
-| Malformed Output Rate | Validity gate | How often does an attempted generation violate the required response schema? | Lower |
-| Generation Failure Rate | Reliability gate | How often does model execution fail before producing an evaluable output? | Lower |
+| Malformed Output Rate | Validity | How often does an attempted generation violate the required response schema? | Lower |
+| Generation Failure Rate | Reliability | How often does model execution fail before producing an evaluable output? | Lower |
 | Timeout Rate | Reliability | How often does generation reach the frozen wall-clock timeout? | Lower |
 | Context-Limit-Reached Rate | Reliability | How often does generation exhaust the available model context before EOS? | Lower |
 
@@ -2924,11 +2924,11 @@ complete-system selection evidence.
 
 ### Semantic quality and judge responsibilities
 
-The frozen judge returns structured claim-level labels. It extracts atomic
-factual claims from the visible answer, checks support against the supplied
-evidence, matches generated claims to human-verified gold claims, and applies the
-Answer Relevancy rubric. Benchmark code retains those labels and calculates all
-ratios, F1 values, aggregates, and intervals.
+Once selected, calibrated, and frozen, the judge returns structured claim-level
+labels. It extracts atomic factual claims from the visible answer, checks support
+against the supplied evidence, matches generated claims to human-verified gold
+claims, and applies the Answer Relevancy rubric. Benchmark code retains those
+labels and calculates all ratios, F1 values, aggregates, and intervals.
 
 These metrics use answerable questions. A refusal, malformed response, timeout,
 context-limited response, or execution failure on an answerable question receives
@@ -2971,7 +2971,8 @@ correct generated factual claims
 `3 / 4 = 0.75`. The incorrect additional claim lowers precision even when the
 three remaining claims are correct.
 
-**Range and direction:** `[0, 1]`; higher is better.
+**Range and direction:** `[0, 1]`; higher is better. An answerable response with
+no evaluable factual claim receives zero.
 
 #### Factual Correctness Recall
 
@@ -3062,8 +3063,9 @@ distinct correct citation IDs
 all distinct produced citation IDs
 ```
 
-**Example:** Citations `[E1, E2, E9]` contain two correct IDs and one unrelated
-or unknown ID. Citation Precision is `2 / 3`, approximately `0.67`.
+**Example:** Citations `[E1, E2, E9]` contain two correct IDs. `E9` is a valid
+supplied evidence block, but it does not cover any required gold evidence unit.
+Citation Precision is `2 / 3`, approximately `0.67`.
 
 **Range and direction:** `[0, 1]`; higher is better. An answerable response with
 no citations receives zero.
@@ -3101,8 +3103,9 @@ Citation F1 =
 **Example:** Citation Precision `0.80` and Citation Recall `0.50` produce
 Citation F1 approximately `0.62`.
 
-**Range and direction:** `[0, 1]`; higher is better. A malformed answerable
-response receives zero for all three citation metrics.
+**Range and direction:** `[0, 1]`; higher is better. Citation F1 is defined as
+zero when both precision and recall are zero. A malformed answerable response
+receives zero for all three citation metrics.
 
 ### Response, refusal, and output validity
 
@@ -3112,8 +3115,8 @@ response receives zero for all three citation metrics.
 required answer behavior?
 
 A response passes when it is parseable, uses `status="answered"`, contains a
-non-empty substantive answer, and contains a structurally valid list of supplied
-citation IDs.
+non-empty substantive answer, and contains at least one valid citation ID from
+the evidence blocks supplied with the current question.
 
 ```text
 Response Validity Rate =
@@ -3158,9 +3161,10 @@ contains no unanswerable questions.
 schema?
 
 Malformed output includes unparsable JSON, missing or additional top-level
-fields, unsupported statuses, unknown citation IDs, and responses that mix
-refusal text with a substantive answer. Repeated citation IDs are deduplicated
-before citation scoring and do not make an otherwise valid response malformed.
+fields, fields with the wrong type, unsupported statuses, unknown citation IDs,
+and responses that mix refusal text with a substantive answer. Repeated citation
+IDs are deduplicated before citation scoring and do not make an otherwise valid
+response malformed.
 
 ```text
 Malformed Output Rate =
@@ -3178,8 +3182,10 @@ Generation Failure Rate instead; it is not also labeled malformed.
 The three validity metrics have different scopes. A malformed answerable output
 increments Malformed Output Rate and fails Response Validity Rate. A parseable
 refusal on an answerable question does not increment Malformed Output Rate but
-still fails Response Validity Rate. Store the numerator, denominator, and rate
-for each metric.
+still fails Response Validity Rate. Likewise, an otherwise valid `answered`
+response with an empty citation list is not malformed, but it fails Response
+Validity Rate and receives zero for Citation Precision, Recall, and F1. Store
+the numerator, denominator, and rate for each metric.
 
 ### Generation reliability
 
@@ -3293,7 +3299,8 @@ tail.
 question-level observations start within 0.35 seconds and 95% start within 0.90
 seconds.
 
-**Range and direction:** Non-negative seconds; lower is better.
+**Range and direction:** Non-negative seconds; lower is better. TTFT percentiles
+are null when no measured request emits a generated token.
 
 #### End-to-End Latency p50/p95
 
@@ -3310,7 +3317,8 @@ complete within 8.4 seconds.
 For Final RAG, retrieval, reranking, context packing, generation, and complete
 system latency are also reported separately.
 
-**Range and direction:** Non-negative seconds; lower is better.
+**Range and direction:** Non-negative seconds; lower is better. End-to-End
+Latency percentiles are null when no measured request completes successfully.
 
 #### Decode Throughput
 

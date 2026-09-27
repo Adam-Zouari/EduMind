@@ -2278,7 +2278,7 @@ this component benchmark, selects the one deployed retrieval stack. The
 versioned decision file references the parent and child run IDs and all
 governing checksums.
 
-## 6. Vector database servers
+## 6. Vector databases
 
 Which networked vector server preserves nearest-neighbour and filter correctness
 while providing the most useful latency, concurrency, ingestion, memory, and
@@ -2443,7 +2443,9 @@ Every visible model response contains exactly three fields:
 | `citations` | An ordered list of supplied evidence-block IDs. |
 
 An answerable response uses `status="answered"`, contains a non-empty substantive
-answer, and cites the supplied evidence blocks used by that answer. For example:
+answer, and cites the supplied evidence blocks used by that answer. Only IDs
+from evidence blocks supplied with the current question are valid; this isolated
+generation benchmark does not provide conversation history. For example:
 
 ```json
 {
@@ -2471,15 +2473,17 @@ deduplicated before citation scoring. Runtime failures, timeouts, and
 context-boundary termination are recorded by the runner as attempt outcomes
 rather than invented model statuses.
 
-### Frozen semantic judge
+### Semantic judge contract
 
-One pinned LLM judge supplies every semantic label needed for Faithfulness,
-Factual Correctness, Answer Relevancy, and Repeat Semantic Agreement. It uses one
-structured per-response rubric for claim extraction, context support, gold-claim
-matching, and relevancy, plus one pairwise rubric for repeated-answer semantic
-equivalence. Deterministic benchmark code converts those labels into metric
-values and aggregates; the judge never calculates citation-ID coverage,
-validity, reliability, or operational metrics.
+Authoritative generation will use one pinned LLM judge after its identity has
+passed calibration and been frozen. That judge supplies every semantic label
+needed for Faithfulness, Factual Correctness, Answer Relevancy, and Repeat
+Semantic Agreement. It uses one structured per-response rubric for claim
+extraction, context support, gold-claim matching, and relevancy, plus one
+pairwise rubric for repeated-answer semantic equivalence. Deterministic
+benchmark code converts those labels into metric values and aggregates; the
+judge never calculates citation-ID coverage, validity, reliability, or
+operational metrics.
 
 The exact judge version, decoding, prompts, rubric checksums, schema, retries,
 and calibration artifact are frozen before authoritative execution. Candidate
@@ -2562,7 +2566,8 @@ evidence. The judge supplies semantic claim labels, while code calculates every
 ratio, F1, aggregate, and confidence interval.
 
 The engineer approves up to three generator configurations after inspecting the
-primary metrics, validity gates, repeatability, latency, workload, and resources.
+primary metrics, validity and reliability metrics, repeatability, latency,
+workload, and resources.
 Exact metric eligibility, failure behavior, and aggregation are defined in
 [metrics.md](metrics.md).
 

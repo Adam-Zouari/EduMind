@@ -137,7 +137,7 @@ hybrid keyframe-selection configurations defined in
 [methodology.md](methodology.md). This prevents model changes from being
 mistaken for improvements in frame selection.
 
-## Chunking and embeddings
+## Chunking and embedding
 
 ### Embedding candidates
 
@@ -245,16 +245,16 @@ evaluation determines grounded-RAG quality.
 
 ### Semantic evaluator
 
-Generation uses one pinned LLM judge for Faithfulness, Factual Correctness,
-Answer Relevancy, and Repeat Semantic Agreement. The judge is an evaluation
-dependency and does not appear in the generator candidate roster or generator
-selection evidence. Its exact identity has not yet been selected. Before
+Authoritative generation will use one pinned LLM judge for Faithfulness, Factual
+Correctness, Answer Relevancy, and Repeat Semantic Agreement. The judge is an
+evaluation dependency and does not appear in the generator candidate roster or
+generator selection evidence. Its exact identity has not yet been selected. Before
 authoritative generation runs, the chosen judge must pass the human-labeled
 calibration set; its exact model version, decoding settings, and rubric checksums
 are then frozen in the generation evaluation contract. Authoritative generation
 runs remain blocked until that calibration and freeze are complete.
 
-## Vector database servers
+## Vector databases
 
 The benchmark compares self-hosted network servers with the same vectors, metadata, filters, schema, query order, and client-visible latency. Vendor benchmark numbers are not used to rank them because those numbers do not hold EduMind's workload and environment constant.
 

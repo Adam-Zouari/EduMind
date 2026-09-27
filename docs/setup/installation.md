@@ -125,8 +125,10 @@ python -m experiments.benchmarks.prepare all-models
 ```
 
 `embedding-models` prepares only the six candidates used by the
-chunking--embedding matrix. `rag-models` is the aggregate RAG target and also
-prepares the selected rerankers, generators, and evaluator.
+chunking--embedding matrix. `rag-models` is the aggregate RAG target and prepares
+the selected rerankers and generators. Once a semantic judge has been selected,
+calibrated, and added to the frozen evaluation contract, the aggregate target
+also prepares that judge.
 The application's provisional CPU Qwen3-1.7B snapshot is separate from the
 generation benchmark: it is not the benchmark control and is not part of the
 three-candidate generator shortlist.
@@ -157,8 +159,9 @@ uses its frozen official decoder and aligned measured seeds `42`, `43`, and `44`
 The benchmark records the whole-model device and processes repetitions
 sequentially.
 
-Semantic generation metrics use one protocol-pinned LLM judge. The judge
-identity, version, rubrics, and human-calibration artifact must exist
+Semantic generation metrics will use one protocol-pinned LLM judge. No judge
+identity is currently approved. Its identity, version, rubrics, and
+human-calibration artifact must exist
 before an authoritative generation run. Hosted credentials, if required by the
 selected judge, are supplied through the environment and are never written to a
 protocol or MLflow artifact.
@@ -269,7 +272,7 @@ Audio and video regeneration requires an FFmpeg build containing the optional
 `flite` filter. This is needed only to recreate the committed synthetic speech;
 running the existing smoke benchmarks does not require `flite`.
 
-## 5. Vector database servers
+## 5. Vector databases
 
 Prepare and digest-lock the four server images:
 
@@ -280,7 +283,7 @@ python -m experiments.benchmarks.prepare vectordb
 The compared servers are [Chroma](https://docs.trychroma.com/guides/deploy/docker), [Qdrant](https://qdrant.tech/documentation/installation/), [Weaviate](https://docs.weaviate.io/deploy/installation-guides/docker-installation), and [PostgreSQL with pgvector](https://github.com/pgvector/pgvector). The command writes `data/benchmarks/models/vectordb.json` and a digest-based Compose environment.
 
 Server start/stop commands belong to the
-[benchmark runbook](../benchmarks/running.md#6-run-vector-server-experiments) and
+[benchmark runbook](../benchmarks/running.md#9-vector-databases) and
 [application run guide](running.md#2-start-chroma). Servers bind to loopback
 ports, and benchmark data remains separate from application data.
 

@@ -8,7 +8,7 @@ the original material. Extraction, retrieval, and generation run locally.
 
 The repository also contains the experiments used to choose those components.
 Instead of treating public model rankings as the answer, EduMind benchmarks
-document and speech extraction, video, chunking and embeddings, retrieval and
+document and speech extraction, video, chunking and embedding, retrieval and
 reranking, vector databases, and generation on project-specific data before any
 winner is promoted to the application.
 
@@ -84,7 +84,7 @@ manifests described in the [dataset guide](docs/benchmarks/datasets.md).
 ```text
 PDF / DOCX / image / audio / video
     -> extraction with pages, timestamps, and source provenance
-    -> chunking and embeddings -> Chroma HTTP
+    -> chunking and embedding -> Chroma HTTP
     -> evidence retrieval -> local generation -> cited answer
 ```
 

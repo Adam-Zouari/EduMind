@@ -56,4 +56,4 @@ until an explicit benchmark-backed production change.
 - [Retrieval and reranking experiment](../benchmarks/methodology.md#5-retrieval-and-reranking)
 - [Generation experiment](../benchmarks/methodology.md#7-generation)
 - [Final RAG experiment](../benchmarks/methodology.md#8-final-rag-and-human-review)
-- [Vector database experiment](../benchmarks/methodology.md#6-vector-database-servers)
+- [Vector database experiment](../benchmarks/methodology.md#6-vector-databases)

@@ -287,7 +287,7 @@ Pool artifacts and paired-comparison Parquet/CSV files are attached to the
 comparison parent. Exact NumPy dense search and local BM25 are benchmark
 controls, not production indexes.
 
-## 9. Vector database
+## 9. Vector databases
 
 Start the four servers, run the CPU-only profiles, and stop them afterward:
 
@@ -326,8 +326,9 @@ and evaluates only the recorded finalists on the complete validation set.
 Authoritative runs use the protocol CUDA/FP16 contract, batch size `1`, one
 warmup, and aligned measured seeds `42`, `43`, and `44`.
 
-Before development, configure the one pinned semantic judge and verify its
-human-calibration artifact. The judge runs after generator timing and supplies
+Before development, select and configure one semantic judge, freeze its exact
+identity and rubric, and verify its human-calibration artifact. The judge runs
+after generator timing and supplies
 structured labels for Faithfulness, Factual Correctness, Answer Relevancy, and
 Repeat Semantic Agreement. Its latency and resources are not attributed to the
 generator. After reviewing validation, record up to three successful model-mode
