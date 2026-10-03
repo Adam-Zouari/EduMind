@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Changed the project license to PolyForm Strict License 1.0.0; third-party
+  dependencies, model weights, and datasets retain their upstream licenses.
 - Reworked the documentation hierarchy around project purpose, architecture,
   setup, experiment methodology, exact metrics, and one benchmark runbook;
   removed duplicate stage pages and command copies.

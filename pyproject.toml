@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +8,8 @@ version = "0.1.0"
 description = "Local-first, benchmark-driven multimodal extraction and RAG system."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
-license = "MIT"
+license = "LicenseRef-PolyForm-Strict-1.0.0"
+license-files = ["LICENSE"]
 authors = [{ name = "EduMind-AI Maintainers" }]
 dependencies = [
   "numpy",

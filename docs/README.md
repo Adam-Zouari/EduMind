@@ -38,7 +38,7 @@ one document so the same instructions are not maintained in several places.
 
 - [Contributing](../CONTRIBUTING.md) explains how to change code and documentation.
 - [Changelog](../CHANGELOG.md) records notable changes.
-- [License](../LICENSE) contains the MIT terms.
+- [License](../LICENSE) contains the PolyForm Strict License 1.0.0 terms.
 
 ## Machine-readable authorities
 

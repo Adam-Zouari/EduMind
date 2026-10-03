@@ -109,7 +109,15 @@ not expose a public API or require hosted inference.
 
 ## License
 
-The source code is licensed under the [MIT License](LICENSE). Model weights and
-benchmark datasets retain their own upstream terms; consult the
+Copyright (c) 2026 EduMind-AI.
+
+EduMind's source code and project documentation are available under the
+[PolyForm Strict License 1.0.0](LICENSE). This is a source-available license:
+it permits the uses defined in its terms but does not grant permission to
+modify or redistribute the software. Uses outside those permissions require
+a separate license from the copyright holder.
+
+Third-party dependencies, model weights, and benchmark datasets retain their
+own upstream licenses; this project license does not replace them. Consult the
 [dataset guide](docs/benchmarks/datasets.md) and
 [model-selection record](docs/benchmarks/model-selection.md) before redistribution.

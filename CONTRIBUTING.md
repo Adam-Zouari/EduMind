@@ -5,6 +5,13 @@
 [Benchmark methodology](docs/benchmarks/methodology.md) ·
 [Benchmark runbook](docs/benchmarks/running.md)
 
+## Permission to contribute
+
+The [PolyForm Strict License 1.0.0](LICENSE) does not grant permission to modify
+or redistribute the software. Obtain separate permission from the copyright
+holder before modifying code or submitting a contribution. The workflow below
+applies to authorized contributions.
+
 ## Workflow
 
 1. Create a feature branch from `main`.
