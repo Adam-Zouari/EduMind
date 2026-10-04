@@ -1,6 +1,6 @@
 # Benchmark metric reference
 
-[Benchmark overview](overview.md) · [Experiment sequence and rationale](methodology.md) ·
+[Benchmark program](../README.md#experiments) · [Experiment sequence and rationale](methodology.md) ·
 [Benchmark runbook](running.md)
 
 This page defines EduMind's approved benchmark metric contracts. The
@@ -2209,10 +2209,10 @@ novelty diagnostic. None is combined into a weighted score.
 
 | Metric | Role | Question answered | Direction |
 |---|---|---|---|
-| nDCG@3/@5 | Primary | Are chunks containing verified evidence ranked near the top? | Higher |
+| nDCG@3/@5 | Primary | Are chunks containing more required evidence ranked near the top? | Higher |
 | Evidence-unit Recall@3/@5 | Primary | How much of the required evidence is present in the retrieved set? | Higher |
 | Evidence-token Precision@3/@5 | Primary | How concentrated is the retrieved text around verified evidence? | Higher |
-| alpha-nDCG@3/@5 | Diagnostic | On multi-evidence questions, is new evidence placed early instead of repeatedly covering evidence already retrieved? | Higher |
+| alpha-nDCG@3/@5 | Diagnostic | How early does required evidence appear when repeated coverage receives less credit? | Higher |
 
 `@3` and `@5` mean that the same calculation is performed over the first three
 and first five ranked chunks. Both are reported to compare retrieval quality
@@ -2245,20 +2245,33 @@ at the two candidate context counts before the final system's top-K is frozen.
 
 #### nDCG@3/@5
 
-**Question:** How early do relevant chunks appear when repeated evidence is not
-penalized?
+**Question:** How early do evidence-rich chunks appear when repeated evidence
+keeps its relevance credit?
 
-nDCG gives more credit when chunks containing verified evidence appear earlier.
-A chunk is relevant when it completely covers at least one required evidence
-unit. Covering an evidence unit already found in an earlier chunk does not
-reduce that chunk's relevance credit.
+nDCG uses linear evidence-count gains: a chunk receives one point for each
+distinct required evidence unit it completely covers. A chunk containing no
+complete unit receives `0`; one containing three receives `3`. Each unit counts
+once within a chunk, but its presence in an earlier chunk does not reduce the
+credit of a later chunk. Distinct chunks containing the same evidence or text
+can therefore both receive full relevance credit.
 
-**Example:** Moving a relevant chunk from rank 4 to rank 2 improves nDCG. Two
-chunks containing the same relevant passage can both receive relevance credit.
+The count is used directly, not converted into an exponential gain. Earlier
+ranks receive more weight through the usual logarithmic rank discount. For each
+question and pair, the ideal ranking sorts the gains of every chunk in that
+pair's complete corpus from highest to lowest and applies the same discount and
+cutoff. The reported score compares the retrieved ranking with this exact
+ideal; the ideal is never restricted to the retrieved top-20 list.
 
-nDCG is primary because conventional relevance ranking is the direct job of the
-chunker/embedding pair. Evidence-unit Recall separately shows whether repetition
-displaced other required evidence.
+**Example:** Suppose the corpus has only two evidence-bearing chunks: one covers
+one required unit and the other covers all three. At `@3`, ordering their gains
+as `[3, 1, 0]` gives `1.00`, while `[1, 3, 0]` gives approximately `0.80`. Both
+orders recover the same units and return the same text, but the first places
+more evidence earlier.
+
+nDCG is primary because this benchmark evaluates relevance ranking rather than
+diversity-aware selection. Evidence-unit Recall separately measures distinct
+coverage; alpha-nDCG diagnoses novelty without treating repeated relevant
+evidence as a relevance-ranking error.
 
 **Range and direction:** `[0, 1]`; higher is better. A question for which no
 candidate chunk contains verified evidence receives zero.
@@ -2303,8 +2316,8 @@ receives zero.
 
 #### Alpha-nDCG@3/@5
 
-**Question:** Are different required evidence units placed early instead of
-being displaced by repeated evidence?
+**Question:** How early does required evidence appear when repeated coverage
+receives less credit?
 
 Alpha-nDCG rewards useful evidence more when it appears near the top and reduces
 the credit for later chunks that repeat the same evidence. With the frozen
@@ -2318,12 +2331,27 @@ Here, repetition is not decided by text similarity. It means that a chunk
 covers an evidence-unit ID already covered by a higher-ranked chunk. Exact
 duplicate chunk IDs are forbidden separately by the retrieval contract.
 
-This is diagnostic rather than primary because repeated relevant evidence is
-not automatically a retrieval failure. It can still explain why a candidate
-with strong conventional ranking quality covers fewer distinct evidence units.
-The metric is calculated only for questions with at least two distinct gold
-evidence units; it is omitted for other questions, and its eligible question
-and document counts are reported.
+This is diagnostic rather than primary because novelty is a separate objective
+from relevance ranking. Repeated relevant evidence is not automatically a
+retrieval failure, and a low novelty score does not establish that the chunks
+are irrelevant or that repetition harms the downstream answer.
+The metric is calculated for every answerable question with at least one gold
+evidence unit, using the same eligible questions and documents as the three
+primary retrieval metrics. With one unit, its first occurrence receives full
+credit and later occurrences receive discounted credit; the same rule is used
+in the greedy normalization. Unanswerable questions have no gold evidence and
+are excluded from all four retrieval-quality metrics.
+
+Normalization uses a deterministic greedy approximation over the pair's
+complete chunk corpus. At each rank, it chooses the unused chunk with the
+largest remaining alpha gain, including discounted credit for previously seen
+units; ties follow the frozen corpus order. This is an approximation, not a
+guaranteed maximum. Scores are capped at `1`, so a perfect score means the
+ranking meets or exceeds this greedy baseline, not necessarily the exact ideal.
+The [data-review checklist](pending-data-review.md) records the development-only
+comparison with exact normalization before the method is frozen for held-out
+evaluation. The [original alpha-nDCG paper](https://plg.uwaterloo.ca/~gvcormac/novelty.pdf)
+describes this practical greedy approximation.
 
 **Range and direction:** `[0, 1]`; higher is better. An eligible question for
 which no candidate chunk contains verified evidence receives zero.
@@ -2332,17 +2360,17 @@ which no candidate chunk contains verified evidence receives zero.
 
 | Metric | What changes it | What it does not answer directly |
 |---|---|---|
-| nDCG@3/@5 | The ranks of chunks that contain complete evidence | Whether all distinct evidence units were found or how much extra text was returned |
+| nDCG@3/@5 | The ranks and complete evidence-unit counts of chunks | Whether all distinct evidence units were found or how much extra text was returned |
 | Evidence-unit Recall@3/@5 | Whether each required evidence unit appears inside the cutoff | Whether the recovered units were ordered well or surrounded by extra context |
 | Evidence-token Precision@3/@5 | How much returned text is annotated evidence | Whether all required units were found or ranked early |
-| alpha-nDCG@3/@5 | On eligible questions, the order in which different evidence units appear | Whether repetition actually harms the downstream answer |
+| alpha-nDCG@3/@5 | When evidence appears and how often it has already been covered | Whether repetition actually harms the downstream answer |
 
 The three primary families are complementary. Reordering the same chunks can
 change nDCG without changing recall or token precision. Adding non-evidence text
 can lower token precision without changing relevance order or recovered units.
 Missing one required unit lowers recall even when the remaining relevant chunks
-are ranked early. Alpha-nDCG deliberately overlaps with nDCG, but is kept only
-to diagnose novelty on questions where novelty is measurable.
+are ranked early. Alpha-nDCG deliberately overlaps with nDCG, but adds a
+repeated-evidence discount as a diagnostic, not a primary relevance criterion.
 
 ### Worked candidate interpretation
 
@@ -2355,14 +2383,16 @@ nDCG@5                       = 0.81
 alpha-nDCG@5                 = 0.74
 ```
 
-The nDCG result says that relevant chunks generally appear early. Recall says
-that 82% of the required evidence units are present somewhere in the first five
-chunks, leaving 18% missing. Token precision says that 44% of the returned
-tokens are relevant evidence and 56% are
-additional context according to the reference annotations. On the eligible
-multi-evidence subset, the lower alpha-nDCG result suggests that repeated
-evidence sometimes appears before new evidence. It does not by itself declare
-those repetitions harmful. The same interpretation is performed separately at
+The nDCG result summarizes how early evidence-rich chunks appear. After question
+scores are averaged within documents and then across documents, average
+evidence recovery is `0.82` and average evidence-token precision is `0.44`.
+These describe completeness and concentration, not pooled percentages of all
+corpus evidence units or returned tokens. Alpha-nDCG uses the same answerable
+questions and describes novelty under its repeated-evidence discount. Its
+value is not directly comparable with nDCG because the gains and normalization
+differ. Inspect the evidence matches to
+identify repeated coverage; neither the score nor the gap establishes that
+repetition harms answers. The same interpretation is performed separately at
 `@3`. No formula combines these values.
 
 ### Operational performance
@@ -2442,7 +2472,7 @@ for worse retrieval quality.
 
 | Value | 95% confidence interval? | Rule |
 |---|---:|---|
-| Development, validation, and locked nDCG, Evidence-unit Recall, Evidence-token Precision, and eligible alpha-nDCG at @3/@5 | Yes | Resample source documents and recalculate each aggregate. |
+| Development, validation, and locked nDCG, Evidence-unit Recall, Evidence-token Precision, and alpha-nDCG at @3/@5 | Yes | Resample source documents and recalculate each aggregate. |
 | Text, table, formula, and mixed evidence slices | Yes, when enough documents contribute | Resample only the contributing source documents. |
 | p50/p95 warm query latency | Conditional | Report only when enough independent query observations support the percentile estimate. |
 | Smoke metrics | No authoritative interval | Smoke validates execution and is too small for selection claims. |
@@ -2483,10 +2513,10 @@ families are combined into a weighted score.
 
 | Metric | Role | Question answered | Direction |
 |---|---|---|---|
-| nDCG@3/@5 | Primary | Does the complete stack place chunks containing verified evidence near the top? | Higher |
+| nDCG@3/@5 | Primary | Does the complete stack place chunks containing more required evidence near the top? | Higher |
 | Evidence-unit Recall@3/@5 | Primary | How much of the required evidence is present in the first three or five chunks? | Higher |
 | Evidence-token Precision@3/@5 | Primary | How concentrated are the first three or five chunks around verified evidence? | Higher |
-| alpha-nDCG@3/@5 | Diagnostic | On eligible multi-evidence questions, does the ranking surface new evidence early instead of repeatedly covering evidence already found? | Higher |
+| alpha-nDCG@3/@5 | Diagnostic | How early does the ranking surface required evidence when repeated coverage receives less credit? | Higher |
 | Candidate-pool Evidence-unit Recall@20 | Diagnostic | Did the first-stage top-20 pool contain the required evidence before any reranker reordered it? | Higher |
 | Ranking Agreement | Validity gate | Does repeated inference return the same complete ordering? | Must equal 1.0 |
 
@@ -2525,27 +2555,30 @@ into a winner score.
 
 #### nDCG@3/@5
 
-**Question:** How early does the complete stack place relevant chunks when
-repeated evidence is not treated as an error?
+**Question:** How early does the complete stack place evidence-rich chunks when
+repeated evidence keeps its relevance credit?
 
-nDCG gives more credit when chunks containing complete verified evidence appear
-at earlier ranks. A chunk remains relevant when it covers evidence already seen
-in another chunk, so the metric evaluates conventional relevance ordering rather
-than diversity.
+The linear evidence-count definition is the same as in chunking and embedding:
+each chunk's gain is the number of distinct required units it completely covers,
+used directly with the logarithmic rank discount. A unit counts once within
+each chunk; coverage in an earlier chunk does not reduce a later chunk's gain.
+The metric evaluates relevance ordering, not diversity-aware selection.
 
-For each question, the ideal ranking is derived from the relevance labels of
-every chunk in the complete frozen corpus. It is not derived from Dense, BM25,
-RRF, or any candidate's top-20 pool. All 15 candidates therefore use the same
-ideal denominator for that question; a retriever cannot make its normalization
-easier by failing to retrieve relevant chunks.
+For each question, the exact ideal ranking sorts the gains of every chunk in
+the complete frozen corpus. It is not derived from Dense, BM25, RRF, or any
+candidate's top-20 pool. All 15 candidates therefore use the same ideal
+denominator for that question; a retriever cannot make its normalization easier
+by failing to retrieve relevant chunks.
 
-**Example:** Moving an evidence-bearing chunk from rank 5 to rank 2 improves
-nDCG. Two high-ranked chunks that contain the same verified passage may both
-receive relevance credit.
+**Example:** A chunk covering three required units receives gain `3`; one
+covering one receives `1`. Moving the three-unit chunk ahead of the one-unit
+chunk improves nDCG. Two distinct chunks covering the same three units each
+retain gain `3`, even when placed consecutively.
 
-This is primary because ordering relevant material is the direct job shared by
-the retriever and reranker. Evidence-unit Recall separately reveals whether
-repetition displaced other required evidence.
+This is primary because the retriever and reranker are compared on relevance
+ranking. Repeated relevant chunks are not automatically ranking errors.
+Evidence-unit Recall measures distinct coverage, while diagnostic alpha-nDCG
+describes how early new evidence is introduced.
 
 **Range and direction:** `[0, 1]`; higher is better. A question with no verified
 evidence in the scored results receives zero.
@@ -2590,8 +2623,8 @@ still contain substantial unrelated material.
 
 #### alpha-nDCG@3/@5
 
-**Question:** On questions that require multiple distinct evidence units, does
-the ranking introduce new evidence early?
+**Question:** How early does the ranking surface required evidence when repeated
+coverage receives less credit?
 
 Alpha-nDCG discounts a lower-ranked chunk only when it covers an evidence-unit
 ID already covered higher in the ranking. It does not use text similarity to
@@ -2602,16 +2635,25 @@ evidence inherently bad.
 a different required unit, moving the different unit to rank 2 improves
 alpha-nDCG while ordinary nDCG may remain high.
 
-The metric is diagnostic because novelty is useful context information but is
-not the retriever's only responsibility. It uses fixed `alpha=0.5` and is
-calculated only for questions with at least two distinct gold evidence units.
-For other questions it is omitted rather than reported as zero.
+The metric is diagnostic because it adds a novelty preference beyond the
+relevance-ranking objective. A lower score does not make repeated relevant
+chunks irrelevant or establish that their repetition harms answers. It uses
+fixed `alpha=0.5` and is calculated for every answerable question with at least
+one gold evidence unit, including single-unit questions. Its eligible questions
+and documents are the same as those of the primary retrieval metrics.
+Unanswerable questions are excluded from all four quality metrics.
 
-Its ideal ordering is built deterministically from the complete frozen corpus,
-choosing chunks that add the most not-yet-covered evidence at each rank. It is
-never constructed from the candidate's retrieved pool.
+Normalization uses the same deterministic greedy approximation described in
+the chunking/embedding section. At each rank, the unused chunk with the largest
+remaining alpha gain is chosen, including discounted credit for repeated units;
+ties follow the frozen corpus order. All candidates share this baseline from
+the complete frozen corpus, never from a retrieved pool. Scores are capped at
+`1`; the baseline is not guaranteed to be the exact maximum. The development-only
+greedy-versus-exact review is tracked in
+[pending-data-review.md](pending-data-review.md).
 
-**Range and direction:** `[0, 1]`; higher is better on its eligible subset.
+**Range and direction:** `[0, 1]`; higher is better. An answerable question with
+no complete evidence unit in its scored results receives zero.
 
 #### Candidate-pool Evidence-unit Recall@20
 
@@ -2649,15 +2691,16 @@ not a quality trade-off.
 
 | Metric | What changes it | What it does not answer directly |
 |---|---|---|
-| nDCG@3/@5 | The ranks of evidence-bearing chunks | Whether every distinct unit was recovered or how much extra text was returned |
+| nDCG@3/@5 | The ranks and complete evidence-unit counts of chunks | Whether every distinct unit was recovered or how much extra text was returned |
 | Evidence-unit Recall@3/@5 | Which distinct required units appear within the cutoff | Whether those units appeared early or were surrounded by unrelated text |
 | Evidence-token Precision@3/@5 | The proportion of returned tokens inside verified evidence | Whether all required units were found or ordered early |
-| alpha-nDCG@3/@5 | The order in which distinct evidence-unit IDs first appear | Whether repeated relevant evidence actually harms the downstream answer |
+| alpha-nDCG@3/@5 | When evidence appears and how often its unit IDs have already been covered | Whether repeated relevant evidence actually harms the downstream answer |
 | Pool Recall@20 | Evidence available to a reranker before reordering | Whether the final top-three or top-five order is good |
 
 Together, the primary metrics answer ordering, completeness, and concentration.
-The diagnostics then explain whether a weakness came from a limited first-stage
-pool, repeated evidence, or unstable execution.
+The diagnostics describe first-stage pool limits and repeated coverage. Ranking
+Agreement separately checks execution stability; repeated relevant evidence is
+not itself a relevance-ranking failure.
 
 ### Operational measurements
 
@@ -2730,8 +2773,9 @@ There is no average failure-rate metric that can hide these errors.
 
 Quality metrics include answerable questions only. Every overall result and
 text, table, formula, or mixed slice records eligible question and document
-counts. Alpha-nDCG separately records its smaller multi-evidence eligibility
-counts. Inapplicable fields are absent rather than filled with zero.
+counts shared by all four retrieval-quality metrics. Single-unit questions are
+included in alpha-nDCG. Inapplicable operational fields are absent rather than
+filled with zero.
 
 ### Aggregation and confidence intervals
 

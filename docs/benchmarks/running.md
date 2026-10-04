@@ -1,6 +1,6 @@
 # Benchmark runbook
 
-[Benchmark overview](overview.md) · [Experiment methodology](methodology.md) ·
+[Benchmark program](../README.md#experiments) · [Experiment methodology](methodology.md) ·
 [Metric definitions](metrics.md) · [Installation](../setup/installation.md)
 
 This is the command reference for running EduMind benchmarks. Run every command
@@ -15,9 +15,12 @@ running.
 
 The separate Generation and Vector Database locked stages and the locked-only
 Final RAG workflow below define the approved target interface. Runner alignment
-for those stages, the revised generation scoring/timing rules, and whole-device
-CUDA memory measurement is pending; documentation changes alone do not implement
-these contracts or enable the new commands.
+for those stages, the revised generation scoring/timing rules and full-development
+workload, frozen vector-index finalist selection, whole-device CUDA memory
+measurement, linear evidence-count nDCG, and shared answerable-question
+eligibility for alpha-nDCG remains pending. Documentation changes alone do not
+implement these contracts or enable the new commands. The current retrieval
+scorer still uses binary nDCG gains and narrower alpha-nDCG eligibility.
 
 Start MLflow in a separate terminal:
 
@@ -319,12 +322,15 @@ docker compose -f experiments/benchmarks/vectordb/compose.yml down
 ```
 
 The server-finalist decision defaults to `vector-database-validation.json` and
-selects one or more development-qualified servers for validation. Complete
-retrieval consumes those finalists together with the locked chunking–embedding
-and retrieval–reranking decisions. After reviewing all validation evidence,
-record exactly one selected server in `vector-database-locked.json`. Its own
-locked run reports the frozen server configuration on the reviewed held-out
-workload. Final RAG consumes the same choice without further server selection.
+selects one or more complete server/index finalists from development, including
+their exact tested HNSW settings. The grid search belongs to development;
+validation rebuilds and compares only those recorded configurations without
+retuning. Complete retrieval consumes those finalists together with the locked
+chunking–embedding and retrieval–reranking decisions. After reviewing all
+validation evidence, record exactly one selected server/index profile in
+`vector-database-locked.json`. Its own locked run reports that frozen
+configuration on the reviewed held-out workload. Final RAG consumes the same
+choice without further server or index selection.
 
 ## 10. Generation and Final RAG
 
@@ -340,9 +346,10 @@ python -m experiments.benchmarks.rag.generation.run --profile locked
 
 Its smoke command runs every model-mode configuration independently on CPU and
 CUDA. Preflight uses frozen demanding development/stress inputs and produces
-hardware qualification only. Development uses qualified configurations and the
-24-question development screen; validation reads `generation-validation.json`
-and evaluates only the recorded finalists on the complete validation set.
+hardware qualification only. Development runs every qualified configuration on
+the complete frozen development question set; validation reads
+`generation-validation.json` and compares only the recorded frozen finalists on
+the complete validation set, without introducing configurations or retuning.
 Authoritative runs use the protocol CUDA/FP16 contract, batch size `1`, one
 warmup, and aligned measured seeds `42`, `43`, and `44`.
 

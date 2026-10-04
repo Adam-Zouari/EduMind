@@ -1,6 +1,6 @@
 # How the EduMind experiments work
 
-[Benchmark overview](overview.md) · [Metric definitions](metrics.md) ·
+[Benchmark program](../README.md#experiments) · [Metric definitions](metrics.md) ·
 [Run commands](running.md) · [Candidate rationale](model-selection.md)
 
 The experiments form a sequence. First compare extraction components. Separately,
@@ -1812,15 +1812,28 @@ in isolation and is not another chunking/embedding selection round.
 
 | Category | Metrics | Why they are needed |
 |---|---|---|
-| Retrieval quality | **nDCG@3/@5**, **Evidence-unit Recall@3/@5**, **Evidence-token Precision@3/@5**; alpha-nDCG@3/@5 diagnostic | Measures conventional relevance order, evidence completeness, and context concentration; alpha-nDCG diagnoses repeated evidence on eligible multi-evidence questions. |
+| Retrieval quality | **nDCG@3/@5**, **Evidence-unit Recall@3/@5**, **Evidence-token Precision@3/@5**; alpha-nDCG@3/@5 diagnostic | Measures evidence-richness ordering, evidence completeness, and context concentration; alpha-nDCG diagnoses novelty on the same answerable questions. |
 | Evidence slices | Retrieval metrics repeated for text, table, formula, and mixed questions | Reveals a pair that performs well only on the majority evidence type. |
 | Operational | Corpus-build time and source-token throughput, p50/p95 warm query latency, peak process-tree RAM, peak device VRAM | Measures the observed preparation, query, and hardware cost of the complete pair. |
 | Workload and storage | Corpus counts, source and indexed-token counts, chunk count and lengths, embedding dimension and dtype, matrix bytes | Explains how much work and storage each pair creates without treating those values as quality. |
 
 The three bold metric families are primary and are reviewed separately at both
-cutoffs. Alpha-nDCG is diagnostic, `alpha=0.5` is fixed, and no weighted overall
-score is created. Alpha-nDCG is omitted, rather than scored as zero, when a
-question has fewer than two distinct evidence units.
+cutoffs. nDCG uses each chunk's complete evidence-unit count directly as its
+linear gain, without discounting evidence already supplied by another chunk.
+Its exact ideal sorts all chunk gains in the pair's complete corpus, not only
+the retrieved top 20. This evaluates relevance ranking; Evidence-unit Recall
+separately measures distinct coverage.
+
+Alpha-nDCG is diagnostic with fixed `alpha=0.5`. Its denominator uses a
+deterministic greedy approximation over the same complete corpus, choosing the
+unused chunk with the greatest remaining alpha gain at each rank and resolving
+ties by frozen corpus order. Scores are capped at one. It describes novelty,
+not a relevance failure or demonstrated harm from repeated evidence. The
+[data-review checklist](pending-data-review.md) tracks whether exact
+normalization is practical; any change is frozen before held-out evaluation.
+All four retrieval-quality metrics use every answerable question with at least
+one gold evidence unit, including single-unit questions. No weighted overall
+score is created.
 First-hit metrics and chunk-level precision/recall are omitted because they add
 little coverage information or use denominators changed by the chunker. Exact
 definitions, examples, directions, and confidence-interval rules are in
@@ -1829,9 +1842,8 @@ definitions, examples, directions, and confidence-interval rules are in
 The four retrieval metric families are reported overall and for mutually
 exclusive `text`, `table`, `formula`, and `mixed` slices. A mixed question
 requires at least two evidence types. Each slice reports its contributing
-question and document counts; alpha-nDCG also reports its smaller eligible
-question and document counts. Unanswerable questions remain a workload count
-and do not enter retrieval-quality aggregates.
+question and document counts, shared by all four metrics. Unanswerable questions
+remain a workload count and do not enter retrieval-quality aggregates.
 
 ### MLflow result structure
 
@@ -1880,8 +1892,8 @@ quality.overall.evidence_unit_recall_at_3
 quality.overall.evidence_unit_recall_at_5
 quality.overall.evidence_token_precision_at_3
 quality.overall.evidence_token_precision_at_5
-quality.overall.alpha_ndcg_at_3       # eligible multi-evidence questions only
-quality.overall.alpha_ndcg_at_5       # eligible multi-evidence questions only
+quality.overall.alpha_ndcg_at_3
+quality.overall.alpha_ndcg_at_5
 
 quality.text.<metric>
 quality.table.<metric>
@@ -1913,9 +1925,9 @@ metric families and evidence slices. Eligible uncertainty bounds use the shared
 `.ci_lower` and `.ci_upper` suffixes.
 Validity counters such as expected/processed documents and queries, truncated
 inputs, failed cases, nonfinite/zero-norm vectors, dimension mismatches, and
-determinism mismatches are logged under `validity.*`. General retrieval
-eligibility and the smaller alpha-nDCG-eligible question/document counts are
-logged per evidence scope. The final decision is also stored as a
+determinism mismatches are logged under `validity.*`. Retrieval-eligible question
+and document counts are shared by all four quality metrics and logged per
+evidence scope. The final decision is also stored as a
 `benchmark.valid` tag and a `validation.status` tag whose value is `passed` or
 `failed`. MLflow scalar values do not replace the
 detailed `validation_report.json` artifact. Stored dtype is a parameter in the
@@ -1926,7 +1938,7 @@ Each successful child stores:
 | Artifact | Contents and purpose |
 |---|---|
 | `chunk_manifest.parquet` | One row per chunk with source document, exact offsets, strategy metadata, and token counts. |
-| `query_metrics.parquet` | One row per answerable question with @3/@5 quality values and evidence slice; ineligible alpha-nDCG fields are absent. |
+| `query_metrics.parquet` | One row per answerable question with all four retrieval-quality families at @3/@5 and its evidence slice. |
 | `retrievals.parquet` | Ordered top-20 chunk IDs and scores for near-miss diagnosis; the first three and first five are scored. |
 | `evidence_matches.parquet` | Trace from each question and evidence unit to the chunks that recovered it. |
 | `timings.parquet` | One row per query and measured repetition with warm latency and success state. |
@@ -2093,11 +2105,13 @@ index: it references both checksummed indexes and creates only the fused ranked
 pool. Its required storage is the unique sum of those dependencies, while its
 incremental fusion-index storage is zero.
 
-The ideal ranking used to normalize nDCG is derived from the complete frozen
-chunk corpus for each question, never from a candidate's retrieved pool. The
-alpha-nDCG ideal is constructed from the same complete corpus using its frozen
-evidence-unit coverage. Consequently, every executed candidate is compared
-against the same candidate-independent ideal for a given question.
+The exact ideal used to normalize linear nDCG sorts each chunk's complete
+evidence-unit count over the complete frozen corpus for each question, never
+over a candidate's retrieved pool. Alpha-nDCG uses a deterministic greedy
+approximation from the same corpus and evidence-unit coverage, with the same
+gain calculation, tie rule, and score cap as in chunking/embedding. Every
+executed candidate therefore shares the same denominator for each metric on
+a given question; the alpha-nDCG denominator is not a guaranteed maximum.
 
 ### Execution profiles and selection
 
@@ -2128,7 +2142,7 @@ winner rule is used.
 
 | Role | Metrics | Why they are needed |
 |---|---|---|
-| Primary | **nDCG@3/@5**, **Evidence-unit Recall@3/@5**, **Evidence-token Precision@3/@5** | Separates ranking quality, evidence completeness, and concentration of retrieved text. |
+| Primary | **nDCG@3/@5**, **Evidence-unit Recall@3/@5**, **Evidence-token Precision@3/@5** | Separates evidence-richness ordering, evidence completeness, and concentration of retrieved text. |
 | Diagnostic | alpha-nDCG@3/@5, candidate-pool Evidence-unit Recall@20 | Diagnoses repeated evidence and first-stage pool limits without replacing the primary decision. |
 | Validity gate | Ranking Agreement | Requires repeated inference to return the same complete ordering before the run may be used as evidence. |
 | Operational | Full-stack warm p50/p95 latency, first-stage warm p50/p95 latency, reranker warm p50/p95 latency when applicable, cold initialization, peak process-tree RAM, peak device VRAM, index-build time | Separates retriever cost, incremental reranker cost, startup, memory, and one-time index preparation. |
@@ -2136,8 +2150,14 @@ winner rule is used.
 | Storage descriptor | Dense/BM25 index bytes, RRF required and incremental index bytes, reranker snapshot bytes | Describes the local searchable state and model storage each candidate requires. |
 
 The three bold quality families are primary and are reviewed separately at both
-cutoffs. Alpha-nDCG uses `alpha=0.5` and is reported only for questions with at
-least two distinct evidence units. Candidate-pool Recall@20 is recorded once on
+cutoffs. Linear nDCG credits each chunk independently; repeated relevant evidence
+does not reduce its gain. Alpha-nDCG adds a novelty preference and remains
+diagnostic rather than treating repetition as a relevance-ranking error. It uses
+`alpha=0.5` and uses the same answerable questions as the primary metrics,
+including those with one gold evidence unit. Greedy-versus-exact normalization
+is reviewed on development data as described in
+[pending-data-review.md](pending-data-review.md).
+Candidate-pool Recall@20 is recorded once on
 each no-reranker pool owner because its four learned-reranker children receive
 the same pool. Reranker-only latency and input-token metrics are omitted, not set to zero,
 for the no-reranker option.
@@ -2331,7 +2351,7 @@ populated only when a paired interval is available. Otherwise they are null and
 `ci_status` states why, such as `smoke`, `insufficient_documents`, or
 `not_supported`.
 
-Reranker-effect rows compare all primary quality metrics, eligible alpha-nDCG,
+Reranker-effect rows compare all primary quality metrics, diagnostic alpha-nDCG,
 full-stack latency, cold initialization, RAM, VRAM, and retrieved-token workload.
 They do not pretend that shared pool Recall@20, shared index build, first-stage
 latency, or reranker-only fields are reranker improvements. Retriever-effect rows
@@ -2378,7 +2398,7 @@ embeddings internally.
 Synthetic vectors contain clusters and 5% near-duplicates. Metadata creates
 filters matching approximately 50%, 10%, 1%, and in validation 0.1% of records.
 
-Development and validation test supported HNSW combinations of:
+Development searches the supported HNSW combinations:
 
 ```text
 m:                     16 or 32
@@ -2390,6 +2410,11 @@ This makes sure one server is not compared with an unnecessarily weak default.
 Unsupported settings are recorded rather than silently replaced.
 Every supported configuration remains visible in MLflow; the runner does not
 automatically choose the database winner.
+
+A validation finalist is a server together with its exact development-tested
+index settings. Validation rebuilds those indexes on the validation corpus and
+compares only the recorded finalists without changing their settings or
+reopening the grid search.
 
 ### Execution
 
@@ -2416,12 +2441,13 @@ NumPy computes exact top neighbours
 
 #### C. Real retrieval
 
-`vector-database-validation.json` selects one or more development-qualified
-database finalists. During validation, every finalist stores the same real
-chunks and vectors and the complete selected retrieval strategy is rerun so
-database ANN behavior is connected to actual RAG quality. Only after all
-validation evidence is reviewed does `vector-database-locked.json` record the
-single server profile approved for its own locked report and for Final RAG.
+`vector-database-validation.json` selects one or more complete server/index
+finalists from the completed development comparison, preserving their exact
+tested settings. During validation, every finalist stores the same real chunks
+and vectors and the complete selected retrieval strategy is rerun so database
+ANN behavior is connected to actual RAG quality. Only after all validation
+evidence is reviewed does `vector-database-locked.json` record the single
+server/index profile approved for its own locked report and for Final RAG.
 Locked execution evaluates only that server with its frozen index settings and
 workload. It repeats the applicable conformance and performance checks without
 reopening the HNSW search or server selection. Exact held-out workload sizes and
@@ -2465,12 +2491,13 @@ configurations directly comparable.
 
 ### Data
 
-Smoke uses committed wiring fixtures. Development uses 24 development questions
-selected deterministically and balanced across answerability, answer type, and
-evidence type as an initial screen. Validation evaluates only engineer-selected
-generator finalists on the complete frozen validation question set; it is not
-limited to 24 questions. The selected generator configuration receives its own
-locked test on frozen evidence, separately from the end-to-end Final RAG report.
+Smoke uses committed wiring fixtures. Every hardware-qualified generator
+configuration receives the complete frozen development question set, including
+answerable and unanswerable questions from QASPER and the verified structured
+supplement. Validation evaluates only engineer-selected generator finalists on
+the complete frozen validation question set. The selected generator
+configuration receives its own locked test on frozen evidence, separately from
+the end-to-end Final RAG report.
 
 - For an answerable question, the generator receives the question and verified
   numbered evidence blocks. The evaluator separately receives accepted answers,
@@ -2621,7 +2648,7 @@ all declared configurations in fresh CUDA workers on frozen stress inputs
 -> qualify placement, offloading, VRAM, first-inference behavior, and the supported input envelope
 
 development:
-all hardware-qualified configurations on the 24-question development screen
+all hardware-qualified configurations on the complete frozen development question set
 -> engineer records up to three generator finalists
 
 validation:
@@ -2634,10 +2661,12 @@ the one selected generator runs on frozen evidence in its own benchmark
 ```
 
 Smoke supplies wiring evidence only. Preflight supplies hardware eligibility
-only and has zero warmups. Development is the only stage in which alternatives
-may be compared or tuned. Validation runs only the configurations named in the
-reviewed development decision. The resulting `generation-locked.json` records
-exactly one successful model-mode configuration selected from validation. Its
+only and has zero warmups. Development is the stage for introducing candidate
+configurations and tuning their settings. Validation compares only the frozen
+finalists named in the reviewed development decision on unseen data; it does not
+introduce configurations or retune their settings. The resulting
+`generation-locked.json` records exactly one successful model-mode configuration
+selected from validation. Its
 own locked run measures generation on verified evidence; Final RAG uses the
 same selection but measures answers on the complete retrieval path. Neither
 locked report can reopen selection.
@@ -2795,8 +2824,9 @@ chunk document
 For `top_k=3`, retrieval quality is reported at 3. For `top_k=5`, it is reported
 at 3 and 5.
 
-Final RAG reports nDCG, Evidence-unit Recall, and Evidence-token Precision at the
-available cutoff, plus eligible alpha-nDCG as a diagnostic. It also reports the
+Final RAG reports the same linear-gain nDCG, Evidence-unit Recall, and
+Evidence-token Precision at the available cutoff, plus alpha-nDCG
+with the frozen greedy normalization as a diagnostic. It also reports the
 primary generation-quality metrics, behavioral validity, reliability, and
 repeatability diagnostics from Experiment 7, plus retrieval, generation,
 server-call, and complete end-to-end p50/p95 latency. RAM and VRAM remain
@@ -2856,7 +2886,8 @@ component selection after the system has been frozen.
 The experiment reports the paired extracted-minus-reference difference for:
 
 - **Retrieval:** nDCG, Evidence-unit Recall, and Evidence-token Precision at the
-  system's actual top-K, plus eligible alpha-nDCG as a diagnostic.
+  system's actual top-K, plus alpha-nDCG as a diagnostic on the same answerable
+  questions.
 - **Generation quality:** Faithfulness, Factual Correctness F1, Answer Relevancy,
   and answerable-only Citation Precision/Recall/F1.
 - **Validity and diagnostics:** Response Validity Rate, Refusal Validity Rate,

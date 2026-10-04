@@ -23,9 +23,29 @@ one document so the same instructions are not maintained in several places.
 
 ## Experiments
 
+EduMind benchmarks components before changing the provisional application
+defaults. Runs record results and provenance in MLflow; an engineer reviews the
+evidence and records which candidates advance in decision files.
+
+The main dependencies are:
+
+```text
+document parser + audio ASR -> video extraction
+chunking x embedding -> retrieval/reranking -> real vector-server retrieval
+generation on frozen evidence (independent of retrieval)
+
+selected components -> non-locked extraction-impact confirmation
+                    -> one Final RAG locked report -> human review
+```
+
+Document, audio, chunking/embedding, synthetic vector-server checks, and
+generation can begin independently. Each component has its own locked report;
+Final RAG evaluates one already-selected complete system. The methodology
+explains the lifecycle and decision files, while the runbook records commands
+and current implementation limitations.
+
 | Question | Document |
 |---|---|
-| How does the benchmark program fit together? | [Benchmark overview](benchmarks/overview.md) |
 | What runs in each experiment, in what order, on which data, and why? | [Experiment methodology](benchmarks/methodology.md) |
 | What does each metric mean and how is it calculated? | [Metric reference](benchmarks/metrics.md) |
 | Why was each candidate included? | [Model-selection rationale](benchmarks/model-selection.md) |
@@ -51,5 +71,8 @@ inputs:
 - Each benchmark's `protocol.yaml` defines its settings and, where needed, its
   candidate roster; fixed adapter support is defined in code.
 - Frozen dataset manifests define samples, splits, checksums, and provenance.
-- `data/benchmarks/models/selected.json` records prepared local model paths.
+- `data/benchmarks/models/selected.json` records model revisions, prepared local
+  snapshot paths, and checksums.
+- Engineer-reviewed files under `data/benchmarks/decisions/` record selections
+  and the completed runs that support them.
 - MLflow and run artifacts record what an experiment actually executed.

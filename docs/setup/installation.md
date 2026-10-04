@@ -2,7 +2,7 @@
 
 [Project overview](../../README.md) · [Documentation map](../README.md) ·
 [Run only the application](running.md) ·
-[Benchmark overview](../benchmarks/overview.md)
+[Benchmark program](../README.md#experiments)
 
 This guide prepares the provisional application and every approved benchmark candidate. The authoritative shortlist is described in [model selection](../benchmarks/model-selection.md); exact executable revisions are read from [selection evidence](../../experiments/benchmarks/selection_evidence.csv). Excluded rows are historical evidence and are never downloaded.
 

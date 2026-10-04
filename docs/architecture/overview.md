@@ -2,7 +2,7 @@
 
 [Project overview](../../README.md) · [Documentation map](../README.md) ·
 [Run the application](../setup/running.md) ·
-[Benchmark overview](../benchmarks/overview.md)
+[Benchmark program](../README.md#experiments)
 
 ## Architectural intent
 

@@ -1,6 +1,6 @@
 # Temporary benchmark data-review checklist
 
-[Benchmark overview](overview.md) · [Dataset guide](datasets.md) ·
+[Benchmark program](../README.md#experiments) · [Dataset guide](datasets.md) ·
 [Methodology](methodology.md)
 
 This is a temporary checklist for decisions that cannot be made honestly before
@@ -78,6 +78,19 @@ the authoritative dataset manifests and methodology, then remove the item.
   correctness. Keep the required gold claims atomic and non-duplicate; they
   define completeness, while that verification material can establish additional
   correct facts. Neither is supplied as an answer to the generator.
+- Review alpha-nDCG ideal-ranking normalization for chunking–embedding and
+  retrieval–reranking using development data. Deterministic greedy normalization
+  remains the current method. Compare it with exact maximization at `@3` and
+  `@5`, with `alpha=0.5`, over the complete frozen chunk corpus rather than only
+  the retrieved top-20 pool.
+- Record the number of evidence units and distinct evidence-coverage patterns,
+  exact computation time with reuse of identical chunk corpora, and score or
+  ranking differences between the two methods. Check whether clipping scores at
+  one under the greedy denominator hides differences. Use these findings to
+  decide whether exact normalization is practical; freeze one method in the
+  metric contract and versioned protocol before validation or locked execution.
+  Do not mix normalization methods within a comparison or tune the choice on
+  held-out results.
 - Build a development-only semantic-judge calibration set with human labels for
   claim extraction, context support, source-verified correctness, gold-claim
   matching, answer relevancy, and pairwise semantic equivalence. Include repeated

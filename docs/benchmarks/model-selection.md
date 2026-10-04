@@ -1,7 +1,7 @@
 # Benchmark candidate selection
 
 [Project overview](../../README.md) · [Documentation map](../README.md) ·
-[Benchmark overview](overview.md) · [Benchmark manual](methodology.md) ·
+[Benchmark program](../README.md#experiments) · [Benchmark manual](methodology.md) ·
 [Selection evidence](../../experiments/benchmarks/selection_evidence.csv)
 
 Status: **public-evidence shortlist; EduMind's local benchmarks inform the engineer's final decisions**
