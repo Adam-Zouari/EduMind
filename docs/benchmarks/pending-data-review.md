@@ -15,6 +15,10 @@ the authoritative dataset manifests and methodology, then remove the item.
   for conditional table, formula, reliability, timestamp, and p95-latency
   results. Repeated measurements of one document, audio clip, or video are not
   additional independent samples.
+- Identify dependent pages, capture variants, and excerpts from a common
+  original source. Freeze the independent resampling/group IDs in the reviewed
+  manifests so all dependent observations travel together in bootstrap draws
+  and paired comparisons.
 
 ## Document extraction
 
@@ -70,10 +74,18 @@ the authoritative dataset manifests and methodology, then remove the item.
 - Verify every canonical document, accepted answer, answerability label,
   required atomic gold claim, evidence-unit ID, evidence type, and half-open
   source interval before combining a structured manifest with QASPER.
+- Review and checksum the authoritative verification material used for factual
+  correctness. Keep the required gold claims atomic and non-duplicate; they
+  define completeness, while that verification material can establish additional
+  correct facts. Neither is supplied as an answer to the generator.
 - Build a development-only semantic-judge calibration set with human labels for
-  claim support, gold-claim matching, answer relevancy, and pairwise semantic
-  equivalence. Freeze the exact judge version and rubric only after it passes the
-  recorded agreement criteria; do not use validation or locked-test questions.
+  claim extraction, context support, source-verified correctness, gold-claim
+  matching, answer relevancy, and pairwise semantic equivalence. Include repeated
+  and compound claims, qualifiers, correct extra facts, unverified additions,
+  and missed required facts. Freeze the exact judge version, decoding, prompts,
+  rubric/schema, finite retry policy, and calibration checksum only after it
+  passes recorded criteria for each responsibility; do not use validation or
+  locked-test questions. Do not fabricate acceptance thresholds before review.
 - Inspect the resulting question and document counts by evidence type before
   deciding which slice confidence intervals are sufficiently supported.
 - Publish one complete authoritative RAG document row and answerable,

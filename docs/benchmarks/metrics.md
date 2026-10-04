@@ -5,7 +5,7 @@
 
 This page defines EduMind's approved benchmark metric contracts. The
 [methodology](methodology.md) says **where** each metric is used and why; this
-page says **what the value means and how it is calculated**. A development or validation
+page says **what the value means and how it is calculated**. A development, validation, or locked
 result is authoritative only when its runner implements the applicable contract
 exactly and records every required value. Higher is better unless a metric is
 marked lower-is-better.
@@ -15,26 +15,51 @@ marked lower-is-better.
 - Prose comparison uses one symmetric, evaluation-only projection on both the
   reference and prediction: Unicode NFC, case-folding, replacement of Unicode
   punctuation with spaces, and whitespace collapse. The resulting whitespace-
-  separated units are used by prose Content, Exact Match, Token F1, and
-  ROUGE-L; prose CER and WER operate on the same projected strings. Raw outputs
-  remain unchanged in artifacts. The projection does not dehyphenate words,
+  separated tokens are used by prose Content metrics; prose CER and WER
+  operate on the same projected strings. Raw outputs remain unchanged in
+  artifacts. The projection does not dehyphenate words,
   correct spelling, rewrite numbers, remove headers, or alter formulas, code,
   layout trees, or table trees.
 - Source and evidence spans are half-open intervals: `[start, end)`.
 - Empty denominators use the explicit behavior stated below; they never produce
   fabricated zero-quality observations.
 - Development, validation, and locked runs retain one row per sample before aggregation.
-- p50, p95, and p99 are latency percentiles. Throughput is completed operations
-  divided by measured wall-clock time.
+- p50, p95, and p99 are latency percentiles. Each throughput metric specifies
+  which completed work and timed interval it uses.
 - Eligible development, validation, and locked sample-based aggregates use 10,000
   bootstrap resamples with seed 42 and 95% confidence intervals. Counts,
   statuses, fixed identifiers, and single operational observations do not
   receive intervals.
+- A bootstrap draw preserves each independent unit with all its dependent
+  observations: a document and its pages, a speech clip, a video, a source paper
+  and its questions, or a vector-database query within its workload cell.
+  Related clips or videos from one original source are grouped when the reviewed
+  manifest declares that source as the independent unit. Repetitions do not
+  increase the independent sample count. Each draw recalculates the metric's
+  own aggregate; resampling does not replace pooled counts with a macro-average.
+  Paired comparisons use the same sampled units for both candidates.
+- Conditional intervals record defined and undefined resample counts. A draw
+  undefined for one metric still contributes to other defined metrics. If the
+  frozen minimum independent count is not met, retain the point estimate and
+  record null confidence bounds and their reason in artifacts; MLflow scalar
+  bounds are absent. The minimum is fixed after data review, before evaluation.
 - Normalized precision, recall, F1, accuracy, coverage, nDCG, and correctness
   values lie in `[0, 1]`. CER and WER are non-negative and can exceed 1 when
   insertions outnumber reference units. Human rubric scores use their stated
   `0–2` or `0–1` scales. Time, memory, storage, and throughput are non-negative
   and have no fixed upper bound.
+
+CUDA **Peak Device VRAM** is the largest sampled total `memory.used` reported by
+NVML for the assigned GPU, from before candidate loading through the final
+inference. It includes driver, desktop, and other process allocations; it is
+neither a per-process estimate nor a baseline-subtracted increase. Record the
+measurement method (`nvml-device-total`), GPU identity, idle baseline, total/free
+memory, and resource samples. The baseline is explanatory and is not deducted.
+GPU background activity must remain controlled across candidates. Missing
+required CUDA telemetry invalidates the measurement rather than producing zero.
+A confirmed CPU-only zero-VRAM report is an execution marker, not a measurement
+of the machine's GPU. Peak Process-Tree RAM continues to measure the worker and
+its children.
 
 ## Document extraction
 
@@ -145,12 +170,8 @@ examples, and confidence-interval rules follow the summary.
 | Complete Document Latency | How long does a user wait for a complete source? |
 | Batch Pages per Minute | What sustained batch capacity does the parser provide? |
 | Peak Process-Tree RAM | How much system memory does the complete extractor require? |
-| Peak VRAM | How much GPU memory does extraction require? |
+| Peak Device VRAM | How much total memory is occupied on the assigned GPU during extraction? |
 | Peak Temporary Disk | How much additional working-disk space does extraction require? |
-
-This contract replaces the legacy exact-line, adjacency-table, and raw-LaTeX
-scorers. The executable document runner uses these names, applicability rules,
-group aggregates, sample counts, and confidence intervals directly.
 
 All candidates receive the same canonical reference and output conversion.
 The prose projection defined above handles harmless representation differences;
@@ -399,9 +420,9 @@ Reading Order Accuracy = 2 / 3 = 0.67
 This metric is especially important for multi-column pages, where the text can
 be recognized correctly but returned in an unusable order.
 
-**Range and direction:** `[0, 1]`; higher is better. Samples with fewer than two
-matched elements are ineligible rather than being assigned an artificial zero
-or perfect score.
+**Range and direction:** `[0, 1]`; higher is better. With fewer than two
+comparable matched elements, the value is null rather than an artificial zero
+or perfect score. The sample and match count remain in the artifacts.
 
 ### Pages
 
@@ -496,7 +517,7 @@ matched elements assigned to the correct page
 page 2 instead of page 3. The paragraph still contributes to text recovery, but
 it fails Page Attribution Accuracy.
 
-**Range and direction:** `[0, 1]`; higher is better. It is omitted when there
+**Range and direction:** `[0, 1]`; higher is better. It is null when there
 are no matched elements with page annotations.
 
 #### Duplicate Page Rate
@@ -565,6 +586,15 @@ Visual layout, table, and formula pairs must also have equal page numbers;
 identical boxes on different pages never match. Page Attribution Accuracy is
 the deliberate exception: it first matches content while ignoring page, then
 scores whether the predicted page label is correct.
+
+Matching establishes which reference and prediction describe the same element;
+it does not establish that the predicted type, hierarchy, or page is correct.
+Those attributes are scored after matching. Conditional attribute and geometry
+metrics are null when there are no eligible matches, even if the reference
+contains elements. Detection recall still records the missed elements. Artifacts
+retain the null value, reason, and eligible-match count; MLflow omits only the
+corresponding scalar, not the sample or its other scores. Metrics whose reference
+capability is genuinely absent are inapplicable instead.
 
 #### Layout Element Precision
 
@@ -655,11 +685,12 @@ matched elements assigned the correct type
              matched elements
 ```
 
-**Example:** A heading detected at the correct location but labelled as a
-paragraph counts as a successful detection and an incorrect type. Detection
-metrics and type accuracy therefore answer different questions.
+**Example:** The reference has one heading, "Methods". A prediction matches its
+box on the same page but labels it as a paragraph: one element is matched and
+zero types are correct, so Type Accuracy is `0 / 1 = 0`. If nothing is predicted,
+there are no matches: Type Accuracy is null and Layout Recall is `0 / 1 = 0`.
 
-**Range and direction:** `[0, 1]`; higher is better. It is omitted when there
+**Range and direction:** `[0, 1]`; higher is better. It is null when there
 are no matched elements.
 
 #### Hierarchy Accuracy
@@ -685,7 +716,7 @@ and heading level.
 **Example:** A detected level-two heading incorrectly promoted to level one
 fails Hierarchy Accuracy even though the heading itself was found.
 
-**Range and direction:** `[0, 1]`; higher is better. It is omitted when no
+**Range and direction:** `[0, 1]`; higher is better. It is null when no
 matched elements have hierarchy annotations.
 
 #### Mean Bounding-Box Intersection over Union (IoU)
@@ -714,12 +745,8 @@ IoU = 0.0  → boxes do not overlap
 Layout Recall tells us whether elements were found; Mean IoU tells us how
 accurately the found elements were localized.
 
-**Range and direction:** `[0, 1]`; higher is better. It is omitted when there
+**Range and direction:** `[0, 1]`; higher is better. It is null when there
 are no matched elements with both boxes.
-
-The previous exact-line Block F1 is not part of this contract. Exact line equality
-is too brittle for layout detection and does not measure element types, geometry,
-or hierarchy.
 
 ### Tables
 
@@ -1178,14 +1205,18 @@ metrics separates silent extraction failures from execution failures.
 **Range and direction:** `[0, 1]`; lower is better.
 
 Every scheduled sample remains visible. A recoverable empty or malformed output
-is scored as an empty prediction: it contributes zero to every applicable
-recall, F1, coverage, accuracy, or similarity aggregate while precision follows
-that metric's documented empty-denominator rule. A fatal candidate error with a
+is scored as an empty prediction. Content, detection, coverage, and recognition
+metrics apply their stated empty-prediction rules, including zero for missed
+reference content. Conditional type, hierarchy, geometry, page-attribution,
+and reading-order metrics remain null when no eligible matches or pairs exist;
+an undefined conditional accuracy is not a measured accuracy of zero.
+A fatal candidate error with a
 valid per-sample error record follows the same quality treatment and also
 increments Candidate Failure Rate. A failure that prevents the required
 per-sample record makes the benchmark invocation incomplete and therefore
-non-authoritative. Failed difficult documents can therefore never disappear
-from the denominator and make a candidate look artificially strong.
+non-authoritative. Failed documents remain in the scheduled sample counts,
+detection/content scores, and failure rates. Conditional scores must be read
+with their match counts and detection recall, not as a substitute for detection.
 Every configured repetition is attempted and written to `timings.parquet`, even
 after an earlier attempt fails. If any measured repetition fails, the sample is
 scored as empty, Candidate Failure Rate is one, and Structured-output
@@ -1292,15 +1323,15 @@ MiB, Peak Process-Tree RAM is `2,450 MiB`.
 
 **Range and direction:** Non-negative MiB; lower is better at equal quality.
 
-#### Peak VRAM
+#### Peak Device VRAM
 
-**Question:** How much GPU memory does extraction require?
+**Question:** How much total memory is occupied on the assigned GPU during extraction?
 
-Report the largest GPU-memory allocation attributable to the candidate during
-the measured extraction.
+Report the largest raw NVML device-memory sample under the shared CUDA resource
+contract, including loading, warmup, and measured extraction.
 
-**Example:** GPU-memory samples of `700`, `1,800`, and `1,500` MiB produce Peak
-VRAM `1,800 MiB`.
+**Example:** Device-memory samples of `700`, `1,800`, and `1,500` MiB produce Peak
+Device VRAM `1,800 MiB`; an idle baseline is not subtracted.
 
 **Range and direction:** Non-negative MiB; lower is better at equal quality.
 
@@ -1468,7 +1499,7 @@ page, audio already defines one chronological sequence.
 | p95 Warm Clip Latency | Operational | What is slow-case warm processing latency? | Lower |
 | Cold Model-Load Time | Operational | How long does initial model loading take? | Lower |
 | Peak Process-Tree RAM | Operational | How much total system memory does the candidate require? | Lower |
-| Peak VRAM | Operational | How much GPU memory does the candidate require? | Lower |
+| Peak Device VRAM | Operational | How much total GPU memory is occupied during candidate execution? | Lower |
 
 These 16 metrics are the frozen ASR evaluation contract. Technical-Term
 Accuracy is excluded because EduMind has no fixed subject vocabulary;
@@ -1755,14 +1786,15 @@ complete-pipeline latency and cannot be hidden from both measurements.
 
 **Range and direction:** Non-negative seconds; lower is better.
 
-#### Peak Process-Tree RAM and Peak VRAM
+#### Peak Process-Tree RAM and Peak Device VRAM
 
-**Question:** What maximum system and GPU memory does the complete candidate
-execution require?
+**Question:** What is the worker's peak host-memory use and the assigned GPU's
+peak total memory use during complete candidate execution?
 
 Peak Process-Tree RAM is the largest sampled resident-memory total for the
-worker and its child processes. Peak VRAM is the largest GPU-memory allocation
-attributable to that worker. Every result records the explicit CPU or GPU
+worker and its child processes. Peak Device VRAM follows the shared raw NVML
+device-total contract, including loading and first-use allocations.
+Every result records the explicit CPU or GPU
 profile; silent device fallback is invalid.
 
 **Example:** Process-tree samples peaking at `3,200 MiB` and GPU samples peaking
@@ -1783,7 +1815,7 @@ Timestamp Boundary MAE             = 0.32 seconds
 Timestamp Alignment Coverage       = 0.94
 Nonspeech False-Transcription Rate = 0.10
 Complete-Pipeline RTF              = 0.40
-Peak VRAM                          = 2,100 MiB
+Peak Device VRAM                   = 2,100 MiB
 ```
 
 The profile transcribes faster than playback and aligns most timed segments,
@@ -1884,7 +1916,7 @@ combined into one score because the much longer transcript would dominate it.
 | p95 Warm Visual Latency | Operational | What is slow-case warm visual-processing time? | Lower |
 | Cold Visual-Pipeline Load Time | Operational | How long does initial loading of the keyframe and document-parser path take? | Lower |
 | Peak Visual Process-Tree RAM | Operational | How much system memory does the visual path require? | Lower |
-| Peak Visual VRAM | Operational | How much GPU memory does the visual path require? | Lower |
+| Peak Visual Device VRAM | Operational | How much total GPU memory is occupied while the visual path runs? | Lower |
 
 #### Workload descriptor
 
@@ -2067,13 +2099,15 @@ performance.
 
 **Range and direction:** Non-negative seconds; lower is better.
 
-#### Peak Visual Process-Tree RAM and Peak Visual VRAM
+#### Peak Visual Process-Tree RAM and Peak Visual Device VRAM
 
-**Question:** What maximum system and GPU memory does the visual path require?
+**Question:** What peak host memory does the visual worker use, and what peak
+total memory is occupied on its assigned GPU?
 
 Peak RAM is the largest sampled resident-memory total across the worker and its
-child processes. Peak VRAM is the largest GPU-memory allocation attributable to
-that worker.
+child processes. Peak Visual Device VRAM follows the shared raw NVML device-total
+contract during the fresh visual worker's lifecycle. Frozen ASR runs separately;
+its models and allocations are not kept resident during visual measurement.
 
 **Example:** If process-tree RAM peaks at `5,600 MiB` and GPU memory peaks at
 `2,900 MiB`, those are the reported resource values.
@@ -2181,8 +2215,8 @@ novelty diagnostic. None is combined into a weighted score.
 | alpha-nDCG@3/@5 | Diagnostic | On multi-evidence questions, is new evidence placed early instead of repeatedly covering evidence already retrieved? | Higher |
 
 `@3` and `@5` mean that the same calculation is performed over the first three
-and first five ranked chunks. Both are reported because Final RAG evaluates
-both context counts.
+and first five ranked chunks. Both are reported to compare retrieval quality
+at the two candidate context counts before the final system's top-K is frozen.
 
 #### Operational performance
 
@@ -2193,7 +2227,7 @@ both context counts.
 | p50 Warm Query Latency | Operational | What is normal query-embedding and exact-search latency? | Lower |
 | p95 Warm Query Latency | Operational | What is slow-case warm query latency? | Lower |
 | Peak Process-Tree RAM | Operational | How much total system memory does the pair require? | Lower at equal quality |
-| Peak VRAM | Operational | How much GPU memory does the pair require? | Lower at equal quality |
+| Peak Device VRAM | Operational | How much total GPU memory is occupied while the pair runs? | Lower at equal quality |
 
 #### Workload and storage descriptors
 
@@ -2243,8 +2277,7 @@ the next two recover another, Recall@3 is approximately `0.33` and Recall@5 is
 approximately `0.67`.
 
 This primary metric catches rankings that look good near the top but still miss
-part of the evidence needed for a complete answer. It also makes a separate Hit
-Rate unnecessary.
+part of the evidence needed for a complete answer.
 
 **Range and direction:** `[0, 1]`; higher is better.
 
@@ -2374,14 +2407,14 @@ concurrency.
 **Range and direction:** non-negative milliseconds per query; lower is better at
 equal quality.
 
-#### Peak process-tree RAM and peak VRAM
+#### Peak process-tree RAM and peak device VRAM
 
-**Question:** What maximum system and GPU memory does the complete pair require
-during corpus build and query evaluation?
+**Question:** What peak host-process and total device memory accompany corpus
+build and query evaluation?
 
 Peak RAM is the largest sampled resident-memory total across the benchmark
-worker and its child processes. Peak VRAM uses the shared process-attributed
-resource-monitor contract. The artifact identifies the measurement method.
+worker and its child processes. Peak Device VRAM uses the shared raw NVML
+device-total contract. The artifact identifies the measurement method.
 
 **Range and direction:** non-negative MiB; lower is better at equal quality. A
 confirmed CPU-only run may report zero VRAM; unavailable GPU instrumentation is
@@ -2409,19 +2442,19 @@ for worse retrieval quality.
 
 | Value | 95% confidence interval? | Rule |
 |---|---:|---|
-| Development and validation nDCG, Evidence-unit Recall, Evidence-token Precision, and eligible alpha-nDCG at @3/@5 | Yes | Resample source documents and recalculate each aggregate. |
+| Development, validation, and locked nDCG, Evidence-unit Recall, Evidence-token Precision, and eligible alpha-nDCG at @3/@5 | Yes | Resample source documents and recalculate each aggregate. |
 | Text, table, formula, and mixed evidence slices | Yes, when enough documents contribute | Resample only the contributing source documents. |
 | p50/p95 warm query latency | Conditional | Report only when enough independent query observations support the percentile estimate. |
 | Smoke metrics | No authoritative interval | Smoke validates execution and is too small for selection claims. |
 | Corpus-build time and throughput | No | One corpus-build observation cannot estimate uncertainty. |
-| Peak RAM and VRAM | No | Report the observed peak without invented bounds. |
+| Peak Process-Tree RAM and Peak Device VRAM | No | Report the observed peak without invented bounds. |
 | Workload and storage descriptors | No | These are observed properties of the candidate and fixed corpus, not sampled quality estimates. |
 
 #### Calculation
 
 Quality is first calculated for each answerable question. Questions are averaged
 within their source document so a paper with many questions cannot dominate the
-result. Development and validation runs then use 10,000 bootstrap resamples of complete
+result. Development, validation, and locked runs then use 10,000 bootstrap resamples of complete
 documents with seed 42 and take the 2.5th and 97.5th percentiles as the 95%
 confidence bounds.
 
@@ -2458,9 +2491,9 @@ families are combined into a weighted score.
 | Ranking Agreement | Validity gate | Does repeated inference return the same complete ordering? | Must equal 1.0 |
 
 `@3` and `@5` mean that the calculation uses the first three and first five
-ranked chunks. Both cutoffs are primary because the later complete-system
-experiment evaluates both context counts. The top-20 metric diagnoses the
-first-stage ceiling; it is not another selection cutoff.
+ranked chunks. Both cutoffs are primary so the engineer can compare the two
+context counts before freezing the final system's top-K. The top-20 metric
+diagnoses the first-stage ceiling; it is not another selection cutoff.
 
 #### Operational performance
 
@@ -2471,7 +2504,7 @@ first-stage ceiling; it is not another selection cutoff.
 | Reranker Warm Latency p50/p95 | Operational | For reranked candidates, what additional query time does learned reranking require? | Lower |
 | Cold Initialization Time | Operational | How long does the complete candidate take to become ready from a fresh worker? | Lower |
 | Peak Process-Tree RAM | Operational | What maximum system memory does the candidate require? | Lower |
-| Peak VRAM | Operational | What maximum GPU memory does the candidate require? | Lower |
+| Peak Device VRAM | Operational | What maximum total GPU memory is occupied during candidate execution? | Lower |
 | Index-Build Time | Operational | How long does preparation of the first-stage searchable state take? | Lower |
 | Index Bytes | Storage descriptor | How much stored searchable state does the first-stage retriever require? | Descriptive |
 
@@ -2532,7 +2565,7 @@ recover one, Recall@3 is about `0.33`. If ranks 4 and 5 add a second unit,
 Recall@5 is about `0.67`.
 
 This is primary because an early-looking ranking may still omit evidence needed
-for a complete answer. It also makes a separate Hit Rate unnecessary.
+for a complete answer.
 
 **Range and direction:** `[0, 1]`; higher is better.
 
@@ -2653,8 +2686,8 @@ tokenizers, and reranker when applicable; downloads and environment installation
 remain outside the benchmark.
 
 Peak RAM is the largest sampled resident-memory total across the worker and its
-child processes. Peak VRAM uses process-attributed GPU sampling. A confirmed
-CPU-only run may report zero VRAM; missing GPU instrumentation is reported as
+child processes. Peak Device VRAM uses the shared raw NVML device-total contract.
+A confirmed CPU-only run may report zero VRAM; missing GPU instrumentation is reported as
 unavailable, not converted to zero.
 
 #### Index build and storage
@@ -2704,7 +2737,7 @@ counts. Inapplicable fields are absent rather than filled with zero.
 
 Quality is calculated per eligible question, averaged within each source
 document, and macro-averaged across documents. This prevents a paper with many
-questions from dominating the result. Development and validation runs use 10,000
+questions from dominating the result. Development, validation, and locked runs use 10,000
 bootstrap resamples of complete documents with seed 42; the 2.5th and 97.5th
 percentiles form the 95% confidence interval. Evidence slices repeat the same
 calculation over contributing documents.
@@ -2857,7 +2890,7 @@ measurements are labeled separately and are never added to server peaks.
 Search-quality metrics are calculated once per frozen query and then averaged
 within each workload cell. Filtered results are also averaged independently per
 selectivity band. Query identities and conditions remain aligned across servers.
-Development and validation quality intervals use 10,000 bootstrap resamples of complete
+Development, validation, and locked quality intervals use 10,000 bootstrap resamples of complete
 query IDs with seed 42. A resampled query carries all of its compared server
 results and filter conditions.
 
@@ -2874,7 +2907,7 @@ This section covers generation on frozen evidence and the same automated metrics
 when generation is embedded in Final RAG. Once selected, calibrated, and frozen,
 one pinned LLM judge supplies structured semantic labels; deterministic
 benchmark code calculates the metric values and aggregates. Blinded human review
-remains the final complete-system selection evidence.
+provides separate reporting-only evidence about the selected complete system.
 
 ### Metric summary
 
@@ -2918,17 +2951,26 @@ remains the final complete-system selection evidence.
 | End-to-End Latency p50/p95 | Operational | How long does the complete warm generation request usually take, and how slow is its tail? | Lower |
 | Decode Throughput | Operational | How many native-tokenizer output tokens are produced per measured decoding second? | Higher |
 | Cold Model-Load Time | Operational | How long does a fresh worker need to make the generator ready? | Lower |
-| Peak Process-Tree RAM and Peak VRAM | Operational | What host and device memory does the profile require? | Lower at equal quality |
+| Peak Process-Tree RAM and Peak Device VRAM | Operational | What peak host-process and total device memory accompany the profile? | Lower at equal quality |
 | Prompt, Context, Reasoning, Visible-Answer, and Total Output Tokens | Workload descriptor | How much native-tokenizer input and output produced the quality and latency results? | Descriptive |
 | Citation Count, Generated-Claim Count, and Finish-Reason Distribution | Workload descriptor | What evidence and factual workload did the model produce, and why did generation stop? | Descriptive |
 
 ### Semantic quality and judge responsibilities
 
 Once selected, calibrated, and frozen, the judge returns structured claim-level
-labels. It extracts atomic factual claims from the visible answer, checks support
-against the supplied evidence, matches generated claims to human-verified gold
-claims, and applies the Answer Relevancy rubric. Benchmark code retains those
-labels and calculates all ratios, F1 values, aggregates, and intervals.
+labels. It extracts distinct atomic factual claims from the visible answer,
+checks support against the supplied context, verifies correctness against frozen
+authoritative reference material, matches required gold claims, and applies the
+Answer Relevancy rubric. Benchmark code retains those labels and calculates all
+ratios, F1 values, aggregates, and intervals.
+
+An atomic claim expresses one independently checkable fact. Compound statements
+are split; repeated or semantically equivalent claims count once per response.
+Qualifiers such as numbers, units, dates, negation, and population must be
+preserved. The required gold claims define answer completeness, not every
+correct fact the response is permitted to contain. The exact extraction,
+verification, and matching rules are frozen in the
+[semantic judge contract](methodology.md#semantic-judge-contract).
 
 These metrics use answerable questions. A refusal, malformed response, timeout,
 context-limited response, or execution failure on an answerable question receives
@@ -2958,7 +3000,7 @@ no evaluable factual claim receives zero.
 #### Factual Correctness Precision
 
 **Question:** What share of the generated factual claims are correct according
-to the verified answer and gold claims?
+to the frozen authoritative reference material?
 
 ```text
 Factual Correctness Precision =
@@ -2970,6 +3012,14 @@ correct generated factual claims
 **Example:** If four claims are generated and three are correct, precision is
 `3 / 4 = 0.75`. The incorrect additional claim lowers precision even when the
 three remaining claims are correct.
+
+A fact absent from the required gold list still receives correctness credit
+when the frozen verification material establishes it. It does not earn extra
+recall credit or compensate for a missing required fact. An unverified addition
+receives no correctness credit; the judge's background knowledge is not a
+verification source. Answer Relevancy separately evaluates unrelated additions.
+This source-verified precision is EduMind's frozen claim contract, not a rule
+that every claim absent from a reference-answer list is automatically false.
 
 **Range and direction:** `[0, 1]`; higher is better. An answerable response with
 no evaluable factual claim receives zero.
@@ -2989,6 +3039,9 @@ required gold claims correctly included
 **Example:** If the reference requires five atomic claims and the response
 correctly includes three, recall is `3 / 5 = 0.60`.
 
+Semantic paraphrases receive credit, but each required claim counts at most once.
+Repeating a fact or adding a different correct fact cannot increase recall.
+
 **Range and direction:** `[0, 1]`; higher is better.
 
 #### Factual Correctness F1
@@ -3006,6 +3059,12 @@ Factual Correctness F1 =
 **Example:** Precision `0.75` and recall `0.60` produce F1 approximately `0.67`.
 A response that is correct but incomplete has high precision and lower recall;
 a detailed response containing false additions has lower precision.
+
+For example, the required facts are "500 participants" and "six months". The
+verification source also establishes that participants were adults. An answer
+stating "500 adult participants" has two correct generated claims: precision
+is `1`, recall is `1 / 2`, and F1 is approximately `0.67`. The correct extra fact
+is accepted, while the missing duration still lowers completeness.
 
 **Range and direction:** `[0, 1]`; higher is better. F1 is zero when precision
 or recall is zero.
@@ -3035,7 +3094,8 @@ still measured separately by Factual Correctness Recall.
 The exact judge model version, decoding settings, prompts, rubric checksums,
 schema, and retry policy are frozen. Candidate identities are hidden from the
 judge. Before authoritative use, its labels must satisfy the protocol's agreement
-criteria on a human-labeled calibration set. A judge failure makes evaluation
+criteria for each responsibility on a human-labeled development calibration set.
+A judge failure makes evaluation
 incomplete. Judge latency and resources are excluded from candidate operational
 metrics.
 
@@ -3109,6 +3169,12 @@ receives zero for all three citation metrics.
 
 ### Response, refusal, and output validity
 
+The rate formulas below are calculated within each question over its scheduled
+seeds. Question rates are then averaged within each document and macro-averaged
+across documents, as defined in the aggregation section. Raw event and attempt
+counts are retained alongside the reported rate; their corpus-wide ratio is not
+the document-macro result.
+
 #### Response Validity Rate
 
 **Question:** How often does an answerable generation attempt exhibit the
@@ -3120,15 +3186,15 @@ the evidence blocks supplied with the current question.
 
 ```text
 Response Validity Rate =
-answerable attempts with valid answer behavior
+valid answered attempts for this question
 -----------------------------------------------
-       all scheduled answerable attempts
+all scheduled seeds for this answerable question
 ```
 
-**Example:** If 8 of 10 scheduled answerable attempts produce valid answered
-responses, Response Validity Rate is `8 / 10 = 0.80`. A validly formatted
-refusal on either of the other two attempts still fails this metric because an
-answer was required.
+**Example:** Two of an answerable question's three scheduled seeds produce
+valid answered responses; the third produces a parseable refusal. That
+question's Response Validity Rate is `2 / 3`, approximately `0.67`. The refusal
+is well formed but fails the required answer behavior.
 
 **Range and direction:** `[0, 1]`; higher is better. It is null when the split
 contains no answerable questions.
@@ -3143,14 +3209,14 @@ contains the frozen refusal text, and has an empty citation list.
 
 ```text
 Refusal Validity Rate =
-unanswerable attempts with valid refusal behavior
+valid refusal attempts for this question
 -------------------------------------------------
-      all scheduled unanswerable attempts
+all scheduled seeds for this unanswerable question
 ```
 
-**Example:** If 4 of 5 scheduled unanswerable attempts produce the required
-refusal and one produces a substantive answer, Refusal Validity Rate is
-`4 / 5 = 0.80`.
+**Example:** Two of an unanswerable question's three scheduled seeds produce
+the required refusal and one produces a substantive answer. That question's
+Refusal Validity Rate is `2 / 3`, approximately `0.67`.
 
 **Range and direction:** `[0, 1]`; higher is better. It is null when the split
 contains no unanswerable questions.
@@ -3168,14 +3234,15 @@ response malformed.
 
 ```text
 Malformed Output Rate =
-malformed generated outputs
----------------------------
-all scheduled generation attempts
+malformed outputs for this question
+----------------------------------
+all scheduled seeds for this question
 ```
 
-**Example:** If 2 of 20 scheduled attempts return malformed output, Malformed
-Output Rate is `2 / 20 = 0.10`. A runtime failure with no output contributes to
-Generation Failure Rate instead; it is not also labeled malformed.
+**Example:** One malformed output among a question's three scheduled seeds
+gives that question a Malformed Output Rate of `1 / 3`. A runtime failure with
+no output contributes to Generation Failure Rate instead; it is not also
+labeled malformed.
 
 **Range and direction:** `[0, 1]`; lower is better.
 
@@ -3196,23 +3263,23 @@ response exists?
 
 ```text
 Generation Failure Rate =
-failed generation attempts
---------------------------
-all scheduled generation attempts
+failed generation attempts for this question
+-------------------------------------------
+all scheduled seeds for this question
 ```
 
-**Example:** One CUDA error among 60 scheduled attempts gives a rate of
-`1 / 60`, approximately `0.017`.
+**Example:** One CUDA error among a question's three scheduled seeds gives
+that question a Generation Failure Rate of `1 / 3`.
 
 #### Timeout Rate and Context-Limit-Reached Rate
 
 **Question:** How often is output stopped by the wall-clock boundary or model
 context boundary instead of normal EOS termination?
 
-Each rate divides the corresponding finish-reason count by all scheduled
-generation attempts. For example, 3 timeouts and 2 context-boundary terminations
-among 60 attempts produce Timeout Rate `0.05` and Context-Limit-Reached Rate
-approximately `0.033`.
+Each question's rate divides the corresponding finish-reason count by its
+scheduled seed count, then follows document-macro aggregation. If one seed
+times out, one reaches the context boundary, and one finishes normally, both
+question-level rates are `1 / 3`.
 
 All three reliability rates lie in `[0, 1]`; lower is better. A failed, timed-out,
 or context-limited answerable attempt receives failed-quality treatment. A judge
@@ -3221,18 +3288,24 @@ becoming a candidate reliability event.
 
 ### Repeatability
 
-Development, validation, and locked complete-system reporting generate each
-question with seeds `42`, `43`, and `44`. The same seed list is used by every
-candidate. The three outputs create three unordered response pairs, and pair
+Generation development, validation, and locked reporting, and Final RAG locked
+reporting, generate each question with seeds `42`, `43`, and `44`. The same seed
+list is used by every candidate. The three outputs create three unordered response pairs, and pair
 values are averaged within the question. Smoke and preflight use one seed and do
 not report repeatability metrics.
+
+All three scheduled pairs remain in the question's denominator. Any pair
+containing an execution failure, malformed output, timeout, or context-limited
+output receives zero for each applicable agreement metric, including a pair of
+two failed outputs. These events are not successful agreement. An unresolved
+judge error makes evaluation incomplete rather than assigning candidate zero.
 
 #### Repeat Status Agreement
 
 **Question:** Does the model consistently decide to answer or refuse?
 
-Each response pair receives `1` when both statuses match and `0` otherwise. A
-failed attempt also produces pair value `0`.
+Each valid, completed response pair receives `1` when both statuses match and
+`0` otherwise. Invalid or interrupted pairs follow the zero rule above.
 
 **Example:** Statuses `answered`, `answered`, and `insufficient_evidence` create
 three pairs. One pair agrees, so Repeat Status Agreement is `1 / 3`,
@@ -3244,7 +3317,8 @@ approximately `0.33`.
 
 **Question:** Does the model repeatedly select the same evidence blocks?
 
-Each answerable response pair uses Jaccard agreement:
+Each valid, completed answerable response pair uses Jaccard agreement over
+distinct valid supplied evidence IDs:
 
 ```text
 citations present in both outputs
@@ -3258,19 +3332,25 @@ distinct citations in either output
 
 **Range and direction:** `[0, 1]`; higher is better. Two empty citation sets on
 an answerable question receive zero because required evidence was not selected.
+Unanswerable questions are inapplicable to this metric.
 
 #### Repeat Semantic Agreement
 
 **Question:** Do repeated visible answers preserve the same meaning even when
 their wording differs?
 
-The frozen judge labels each response pair as semantically equivalent or not.
+The frozen judge labels each valid, completed response pair with matching
+statuses as semantically equivalent or not.
 Equivalent pairs receive `1`; non-equivalent pairs, status disagreements, and
 failed attempts receive `0`.
 
 **Example:** If two answers state that 500 people participated and the third
 states that 800 participated, only the first pair agrees. Repeat Semantic
 Agreement is `1 / 3`, approximately `0.33`.
+
+Paraphrases and two valid refusals can agree. Two equally incorrect but
+semantically equivalent answers can also agree: repeatability measures stability,
+while factual correctness and faithfulness measure quality.
 
 **Range and direction:** `[0, 1]`; higher is better.
 
@@ -3291,9 +3371,11 @@ This matters because two models can have similar total latency while one leaves
 the caller waiting much longer before generation starts. Prompt prefill and
 initial generation work are visible in TTFT.
 
-For each question, the median TTFT across its three seeds becomes the question's
-warm observation. p50 summarizes a typical question and p95 summarizes the slow
-tail.
+For each question, the median of available measured TTFT values becomes its warm
+observation. A request that emits no token has no TTFT; a later timeout does not
+erase an already-observed first token. Report scheduled attempts, attempts with
+observed TTFT, and contributing questions alongside the percentiles. p50
+summarizes a typical contributing question and p95 its slow tail.
 
 **Example:** TTFT p50 `0.35 seconds` and p95 `0.90 seconds` mean that half of the
 question-level observations start within 0.35 seconds and 95% start within 0.90
@@ -3308,8 +3390,13 @@ are null when no measured request emits a generated token.
 
 The interval includes prompt preparation, tokenization, model prefill, reasoning
 and visible-answer decoding, output parsing, and citation validation. The median
-measured latency for each question becomes its warm observation; p50 and p95 are
-then calculated across questions.
+latency of successfully completed requests for each question becomes its warm
+observation; p50 and p95 are then calculated across contributing questions.
+Every attempt also retains its elapsed time through termination and outcome in
+the timing artifact, including failed and interrupted attempts. These elapsed
+times are not treated as successful completion latency. Report scheduled and
+successful attempt counts and contributing question counts, and read latency
+alongside the failure and termination rates.
 
 **Example:** p95 `8.4 seconds` means 95% of question-level warm observations
 complete within 8.4 seconds.
@@ -3327,18 +3414,25 @@ tokens?
 
 ```text
 Decode Throughput =
-generated native-tokenizer tokens
----------------------------------
-measured decoding seconds
+N - 1 generated tokens after the first token
+------------------------------------------
+time of last counted token - time of first token
 ```
 
-The interval starts at the first generated token and ends when generation stops.
+`N` is the number of model-generated token events in the measured output,
+including reasoning, visible output, and emitted control/termination tokens.
+Prompt tokens and padding are not counted. The interval starts when the first
+generated token is available and ends when the last counted token is available.
+The first token starts the clock and is therefore not counted as work performed
+inside this interval. Parsing and cleanup after the last token are excluded.
 
-**Example:** Producing 120 tokens during 4 seconds of decoding gives
-`30 tokens/second`.
+**Example:** Four tokens arrive at `0.0`, `0.1`, `0.2`, and `0.3` seconds.
+Decode Throughput is `(4 - 1) / 0.3 = 10 tokens/second`.
 
 **Range and direction:** Non-negative tokens/second; higher is better. It is null
-when no token is generated.
+when fewer than two tokens are generated or no positive inter-token interval
+can be measured. Missing required timing instrumentation makes measurement
+incomplete. Throughput has no upper bound of one.
 
 #### Cold Model-Load Time
 
@@ -3355,14 +3449,14 @@ ready at `5.4 seconds`, Cold Model-Load Time is `5.4 seconds`.
 **Range and direction:** Non-negative seconds; lower is better. One cold-load
 observation receives no confidence interval.
 
-#### Peak Process-Tree RAM and Peak VRAM
+#### Peak Process-Tree RAM and Peak Device VRAM
 
-**Question:** What maximum host and GPU memory does the complete generator worker
-require?
+**Question:** What peak host memory does the generator worker use, and what peak
+total memory is occupied on its assigned GPU?
 
 Peak RAM is the largest sampled resident-memory total for the worker and its
-child processes. Peak VRAM is the largest process-attributed GPU allocation from
-worker start through the final measured request.
+child processes. Peak Device VRAM follows the shared raw NVML device-total
+contract from before loading through the final measured request.
 
 **Example:** RAM samples peaking at `3,100 MiB` and VRAM samples peaking at
 `2,850 MiB` produce those two reported peaks.
@@ -3414,22 +3508,34 @@ For Final RAG, one blinded reviewer scores Faithfulness, Answer Correctness,
 Completeness, and Citation Accuracy on the frozen `0` to `2` rubric, plus
 Answerability Correctness on `0` or `1`. A score of `0` means the requirement is
 not met, `1` means partly met, and `2` means fully met. The reviewer sees the
-same question, accepted answer, and supplied evidence for each anonymous system.
+question, accepted answer, and supplied evidence for the anonymous frozen system.
 These values are reported separately; they are never averaged into a universal
 quality score. A single reviewer does not support an inter-reviewer agreement
-claim.
+claim. Human review is reporting-only and cannot reopen locked selection.
 
 ### Eligibility, aggregation, and confidence intervals
 
 Quality, validity, and reliability indicators are calculated for every scheduled
 seed and first averaged within each question. Question values are then averaged
-within each source document and macro-averaged across documents. This prevents
-either one sampled trajectory or a paper with many questions from dominating.
-Development and validation runs use
+within each source document and macro-averaged across documents. Repeatability
+first averages all scheduled pairs within a question, then uses the same
+document-macro calculation. Each metric uses its declared eligibility slice.
+Raw numerators, scheduled denominators, contributing counts, and failure rows
+remain available even when a conditional value is null.
+
+For example, document A has four question values `1, 1, 0, 0` and document B
+has one question value `1`. Their document means are `0.50` and `1.00`; the
+reported document-macro value is `0.75`. The pooled question average would be
+`3 / 5 = 0.60`, giving the longer document four times the influence. Equal
+document weight is used consistently for generation quality and rates.
+
+Development, validation, and locked runs use
 10,000 bootstrap resamples of complete documents with bootstrap seed `42`; that
-seed is independent of generation seeds. Answerable-only, unanswerable-only,
-substantive-answer-only, and evidence-type results always report eligible
-question and document counts.
+seed is independent of generation seeds. The 2.5th and 97.5th percentiles are
+the 95% confidence bounds. Answerable-only, unanswerable-only, and evidence-type
+results always report eligible question and document counts. Substantive-answer-only
+diagnostics, if reported, do not replace primary answerable results that
+include refusals and failed attempts.
 
 Warm latency and token-workload summaries use the same fixed question set and
 report their observation counts. Cold load and observed RAM/VRAM peaks are

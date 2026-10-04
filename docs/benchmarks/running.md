@@ -13,6 +13,12 @@ for dependencies, model snapshots, data preparation, evaluator images, and
 vector-server images. A benchmark does not download missing models while it is
 running.
 
+The separate Generation and Vector Database locked stages and the locked-only
+Final RAG workflow below define the approved target interface. Runner alignment
+for those stages, the revised generation scoring/timing rules, and whole-device
+CUDA memory measurement is pending; documentation changes alone do not implement
+these contracts or enable the new commands.
+
 Start MLflow in a separate terminal:
 
 ```powershell
@@ -56,9 +62,9 @@ smoke-cpu + smoke-cuda -> preflight -> development -> validation -> locked
 - `validation` runs the finalists named in the reviewed development decision.
 - `locked` runs exactly one validation winner and is reporting-only.
 
-Vector Database is CPU-only and has no CUDA preflight. Final RAG has CPU/CUDA
-smoke but no separate preflight because its selected model components have
-already been qualified by their own benchmarks.
+Vector Database is CPU-only and has no CUDA preflight, but has its own locked
+report. Final RAG has only one locked evaluation of the already-selected system;
+it does not run another smoke, preflight, development, or validation comparison.
 
 Development, validation, and locked use the device, dtype, and batch size in
 the benchmark protocol. Their current model-backed contracts require CUDA;
@@ -74,7 +80,7 @@ A **manifest** fixes the exact samples, split, paths, checksums, annotations,
 and source provenance. `--profile` selects the project manifest automatically.
 Use `--manifest PATH` only to run an alternate reviewed manifest.
 
-A **decision file** is an engineer-reviewed transition between stages. It names
+A **component decision file** is an engineer-reviewed transition between stages. It names
 the exact successful candidates selected from a completed upstream parent:
 
 ```json
@@ -126,6 +132,17 @@ neither cold load nor warmup is included in warm Time to First Token or
 end-to-end latency. The operating system's disk cache is not forcibly cleared.
 Qualification repetitions, telemetry interval, polling interval, and timeout
 are read from the benchmark protocol.
+
+Before a CUDA comparison, close other GPU workloads and record the assigned
+GPU's identity, idle memory use, and total/free capacity. Monitor raw NVML
+device `memory.used` from before model loading through the final inference;
+record `nvml-device-total` and keep all samples. Do not subtract the idle baseline
+or infer process bytes from it. For capped model-backed paths, stop the worker
+if a sampled device total exceeds `3,584 MiB`; document/video visual paths report
+the peak without this shared cap. Offload inspection remains a separate check.
+If unrelated GPU activity changes the baseline during a comparison, rerun the
+affected measurement under controlled conditions. A preflight made under the
+former process/delta policy cannot qualify this device-total contract.
 
 ## 4. Document extraction
 
@@ -297,6 +314,7 @@ python -m experiments.benchmarks.vectordb.run --profile smoke
 python -m experiments.benchmarks.vectordb.run --profile development
 python -m experiments.benchmarks.vectordb.run --profile validation
 python -m experiments.benchmarks.vectordb.retrieval_run --profile validation
+python -m experiments.benchmarks.vectordb.run --profile locked
 docker compose -f experiments/benchmarks/vectordb/compose.yml down
 ```
 
@@ -304,8 +322,9 @@ The server-finalist decision defaults to `vector-database-validation.json` and
 selects one or more development-qualified servers for validation. Complete
 retrieval consumes those finalists together with the locked chunking–embedding
 and retrieval–reranking decisions. After reviewing all validation evidence,
-record exactly one selected server in `vector-database-locked.json` for Final
-RAG.
+record exactly one selected server in `vector-database-locked.json`. Its own
+locked run reports the frozen server configuration on the reviewed held-out
+workload. Final RAG consumes the same choice without further server selection.
 
 ## 10. Generation and Final RAG
 
@@ -316,6 +335,7 @@ python -m experiments.benchmarks.rag.generation.run --profile smoke
 python -m experiments.benchmarks.rag.generation.run --profile preflight
 python -m experiments.benchmarks.rag.generation.run --profile development
 python -m experiments.benchmarks.rag.generation.run --profile validation
+python -m experiments.benchmarks.rag.generation.run --profile locked
 ```
 
 Its smoke command runs every model-mode configuration independently on CPU and
@@ -331,33 +351,31 @@ identity and rubric, and verify its human-calibration artifact. The judge runs
 after generator timing and supplies
 structured labels for Faithfulness, Factual Correctness, Answer Relevancy, and
 Repeat Semantic Agreement. Its latency and resources are not attributed to the
-generator. After reviewing validation, record up to three successful model-mode
-configurations in `generation-locked.json`; this is a transition decision
-consumed by Final RAG, not another generation profile. Final RAG and blinded
-review select the one complete system that reaches locked-test data.
+generator. After reviewing validation, record exactly one successful model-mode
+configuration in `generation-locked.json`. Generation reports that choice on
+its own locked frozen-evidence test. Final RAG uses the same generator unchanged.
 
-Final RAG composes the locked retrieval choice and approved generator
-configurations by default:
+Freeze one complete system in `final-rag-locked.json`, referencing the selected
+component decisions and the chosen top-K, prompt, and context settings. Finish
+non-locked integration and extraction-confirmation checks before locked
+execution. Final RAG runs only this selected system:
 
 ```powershell
-python -m experiments.benchmarks.rag.final.run --profile smoke
-python -m experiments.benchmarks.rag.final.run --profile development
-python -m experiments.benchmarks.rag.final.run --profile validation
+python -m experiments.benchmarks.rag.final.run --profile locked --confirm-locked-test
 ```
 
-Export anonymous validation answers, enter judgments, and import them:
+After locked execution, export the reporting-only human-review sample, enter
+judgments, and import them:
 
 ```powershell
-python -m experiments.benchmarks.review export FINAL_RAG_VALIDATION REVIEW.csv
+python -m experiments.benchmarks.review export FINAL_RAG_LOCKED REVIEW.csv
 python -m experiments.benchmarks.review import REVIEW.csv
 ```
 
-Run the selected complete system once after review:
-
-```powershell
-python -m experiments.benchmarks.rag.final.run --profile locked `
-  --review-results REVIEW.results.json --confirm-locked-test
-```
+The review describes the frozen system; it does not select another winner or
+authorize another locked run. If component reports share locked data with Final
+RAG, freeze the entire system before the first component locked report. Otherwise
+use a separate untouched Final RAG holdout.
 
 The complete server-backed Final RAG path remains pending until the Final RAG
 runner accepts the selected vector-server decision. Do not present its current

@@ -17,7 +17,7 @@ Candidate selection follows the same practical sequence for each component:
 1. **Define the job.** Retrieval models are screened on retrieval quality, rerankers on reranking quality, ASR models on English transcription plus timestamps, and generators on their suitability for grounded answering.
 2. **Inspect relevant public evidence.** Prefer a common task-specific benchmark such as MTEB Retrieval, a common reranker comparison, OmniDocBench, or the Open ASR Leaderboard. General-capability evidence is used only when no current task-specific comparison covers the candidate set.
 3. **Apply basic eligibility checks.** A candidate must be downloadable, self-hostable, usable for the intended EduMind deployment, and expose the capability required by the experiment.
-4. **Enforce the target-hardware envelope.** Authoritative ASR, embedding, reranking, and generation candidates must run on the laptop's RTX 3050 4 GiB GPU in the stage's frozen supported 16-bit dtype without CPU offload, automatic device splitting, quantization, or silent fallback. Until hardware qualification is complete, every model processes one inference input at a time; runtimes with a batch setting use batch size `1`. NVML-measured peak process VRAM must not exceed 3,584 MiB, preserving at least 512 MiB of the physical 4,096 MiB device for driver/runtime variation. The check uses the longest applicable development input and frozen output limit and is repeated during the real development run. CPU or CUDA may be used for smoke and debugging, but those runs cannot support selection. Models that fail the authoritative gate remain recorded as exclusions rather than receiving a different execution protocol.
+4. **Enforce the target-hardware envelope.** Authoritative ASR, embedding, reranking, and generation candidates must run on the laptop's RTX 3050 4 GiB GPU in the stage's frozen supported 16-bit dtype without CPU offload, automatic device splitting, quantization, or silent fallback. Until hardware qualification is complete, every model processes one inference input at a time; runtimes with a batch setting use batch size `1`. Raw NVML peak total memory on the assigned GPU must not exceed 3,584 MiB. This includes the driver/desktop baseline and leaves a nominal 512 MiB margin on the physical 4,096 MiB device at sampled observations; the baseline is not subtracted. Close other GPU workloads and retain baseline, total/free memory, device identity, and measurement method. The check uses demanding valid development/stress inputs and frozen termination rules and remains active in development, validation, and locked execution. CPU or CUDA may be used for smoke and debugging, but those runs cannot support selection. Models that fail the authoritative gate remain recorded as exclusions rather than receiving a different execution protocol.
 5. **Keep different feasible resource scales.** After eligibility screening, the remaining models are organized into approximate parameter-size groups so the local benchmark compares compact, middle, and higher-quality options that can actually be deployed on the target hardware. A size range may remain empty when no reviewed model passes the hardware gate. These groups describe the reviewed shortlist; they were not fixed before the search.
 6. **Prefer comparable evidence.** When candidates were tested under the same public protocol, the strongest eligible representatives are kept. When promising models use incompatible protocols, both may be kept and compared locally instead of comparing unlike public scores.
 7. **Keep an independent control.** Use the current baseline when it is eligible;
@@ -250,8 +250,13 @@ Correctness, Answer Relevancy, and Repeat Semantic Agreement. The judge is an
 evaluation dependency and does not appear in the generator candidate roster or
 generator selection evidence. Its exact identity has not yet been selected. Before
 authoritative generation runs, the chosen judge must pass the human-labeled
-calibration set; its exact model version, decoding settings, and rubric checksums
-are then frozen in the generation evaluation contract. Authoritative generation
+calibration set for claim extraction, supplied-context support, source-verified
+correctness, gold matching, relevancy, and semantic equivalence. Its exact model
+version, decoding settings, prompts, rubric/schema checksums, finite retry policy,
+and calibration artifact are then frozen in the generation evaluation contract.
+The required gold facts define completeness; frozen authoritative references
+can verify additional correct facts without awarding extra recall credit.
+Authoritative generation
 runs remain blocked until that calibration and freeze are complete.
 
 ## Vector databases

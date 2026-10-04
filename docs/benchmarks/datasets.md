@@ -120,11 +120,24 @@ interval. Each split must contain at least ten answerable questions with
 verified evidence for each of `table`, `formula`, and `mixed` before it can be
 combined with QASPER.
 
+For generation, required gold claims are atomic, non-duplicate facts needed for
+a complete answer. They are not an exhaustive list of every permissible correct
+fact. Preserve frozen authoritative verification material and its checksum with
+the evaluation inputs so the judge can verify additional generated claims and
+retain supporting source spans. A verified extra fact can receive correctness
+precision credit, but cannot replace a missing required gold fact in recall.
+Only the question and supplied evidence blocks go to the generator; accepted
+answers, gold claims, and broader verification references remain evaluator-only.
+Faithfulness is checked against the supplied blocks, not the broader reference.
+
 Generation also requires a versioned evaluator-calibration artifact drawn only
 from reviewed development material. It contains representative faithful,
 unsupported, partially correct, irrelevant, and refusal outputs with human
-labels for claim support, gold-claim matching, answer relevancy, and semantic
-equivalence. It is used only to qualify and freeze the semantic judge; it is not
+labels for atomic claim extraction, context support, source-verified correctness,
+gold-claim matching, answer relevancy, and semantic equivalence. Include compound
+claims, paraphrases, repeated claims, factual qualifiers, verified extra facts,
+unverified additions, and incomplete answers. It is used only to qualify and
+freeze the semantic judge; it is not
 added to candidate quality results and never contains validation or locked-test
 questions.
 
@@ -216,6 +229,13 @@ The QASPER and structured manifests being combined must use the same split and
 split seed. IDs must be globally unique, source-document families must remain
 isolated, and the locked-test manifest must not be inspected during component
 selection.
+
+Each component benchmark has its own locked execution. A locked manifest may
+also be used for the Final RAG report only when every affected component and
+complete-system choice was frozen before the first locked result was inspected.
+If component locked results inform further choices, reserve a separate untouched
+Final RAG holdout instead. Reviewed manifests must record the intended uses;
+locked reports never authorize reselection on the same data.
 
 ## 4. Install the document datasets
 

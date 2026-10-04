@@ -5,13 +5,15 @@
 
 The experiments form a sequence. First compare extraction components. Separately,
 compare chunker/embedding pairs, then retrieval methods and vector servers.
-Generation is tested on fixed evidence so retrieval cannot influence it. Finally,
-combine the approved retrieval and generation profiles and review their answers.
+Generation is tested on fixed evidence so retrieval cannot influence it. Each
+component benchmark reports its selected configuration on its own locked test.
+Final RAG then reports one already-selected complete system, rather than running
+another candidate comparison.
 
 ```text
 1. Document extraction: configuration on development, architectures on validation,
    and one frozen route per source type on locked test
-2. Audio extraction: qualified candidates on development, finalists on validation
+2. Audio extraction: development, validation, and one selected ASR on locked test
 1 + 2 --> 3. Video keyframes with parser and ASR frozen
 
 4. Chunking x embedding --> 5. Retrieval and reranking
@@ -19,10 +21,11 @@ combine the approved retrieval and generation profiles and review their answers.
 
 7. Generation on fixed evidence (independent of retrieval)
 
-approved server + retrieval finalists + generator finalists
---> 8. Final RAG systems on development, finalists on validation + blinded review
---> 9. Extraction-to-RAG confirmation on separate non-locked data
---> 10. Exactly one locked-test run
+Each component: development -> validation -> one frozen component locked report
+
+selected extraction + chunking/embedding + retrieval + server + generator
+--> extraction-to-RAG confirmation on separate non-locked data
+--> one Final RAG locked report, followed by reporting-only human review
 ```
 
 Document extraction, audio, chunking/embedding, the synthetic
@@ -39,7 +42,7 @@ architecture, quality level, or hardware preset. Candidate/runtime profiles,
 such as a Docling parser configuration or an ASR decoding configuration, are a
 different concept and always run inside one of these execution profiles.
 
-The benchmark lifecycle is one-way:
+The component-benchmark lifecycle is one-way:
 
 ```text
 smoke-cpu + smoke-cuda -> preflight -> development -> validation -> locked
@@ -49,12 +52,22 @@ smoke-cpu + smoke-cuda -> preflight -> development -> validation -> locked
 profile. The four evaluation profiles remain `smoke`, `development`,
 `validation`, and `locked`.
 
+Every independently evaluated component has its own locked report, including
+Generation and Vector Database. Final RAG is different: its components and
+complete-system settings are already selected, so it has only one locked
+evaluation, not another smoke, development, or validation comparison.
+
+All choices affecting a shared locked manifest must be frozen before its first
+use by any benchmark. Component locked results cannot inform later system
+selection. If further selection is needed after those results are inspected,
+Final RAG requires a separate untouched holdout.
+
 | Phase or profile | Data | Candidates | Purpose | Result may be used for |
 |---|---|---|---|---|
 | `smoke` | Tiny committed fixtures | The protocol's smoke roster | Run separate CPU and CUDA parents to catch loading, wiring, schema, scoring, artifact, and device-path errors cheaply. | Debugging only; never ranking, tuning, qualification, or selection. |
 | `preflight` | Reviewed development/stress inputs | Every declared candidate | Qualify the exact model, protocol, software locks, CUDA device, dtype, batch size, and supported input envelope. | Hardware eligibility for development only. |
 | `development` | Development manifest | Candidates marked `qualified` by the matching preflight | Compare alternatives, inspect failures, and make all tuning or shortlist decisions. | An engineer-reviewed finalist decision for validation. |
-| `validation` | Unseen validation manifest | Only finalists recorded from a completed development run | Test whether the development conclusion holds on unseen data without reopening the search. | An engineer-reviewed final component or complete-system decision. |
+| `validation` | Unseen validation manifest | Only finalists recorded from a completed development run | Test whether the development conclusion holds on unseen data without reopening the search. | An engineer-reviewed final component decision. |
 | `locked` | Untouched locked-test manifest | Exactly one fully frozen selection | Produce the final unbiased estimate after every model, setting, and policy decision is fixed. | Reporting only; never further tuning or reselection. |
 
 The profiles answer different questions, so a later profile does not merely mean
@@ -73,7 +86,7 @@ optional `--device cpu|cuda|both` argument only narrows smoke for debugging;
 development, validation, and locked use the CUDA device and dtype frozen in the
 protocol and reject CPU overrides. When CPU and CUDA require different numeric
 types, the smoke profile records an explicit dtype for each device; the current
-embedding, retrieval, generation, and Final RAG CUDA smoke paths use the same
+embedding, retrieval, and generation CUDA smoke paths use the same
 FP16 contract as their authoritative CUDA execution.
 
 ### Preflight and measured-run lifecycles
@@ -102,9 +115,10 @@ or steady-state latency evidence. Because the worker terminates, none of its
 runtime state carries into development.
 
 Preflight has one parent and one child per candidate in the benchmark's normal
-MLflow experiment. ASR, embedding, learned-reranker, and video-ASR workers are
-stopped when sampled VRAM exceeds 3,584 MiB. Document and video visual parsers
-instead report VRAM without a shared cap. Their loaded backend state is inspected
+MLflow experiment. ASR, embedding, learned-reranker, generation, and video-ASR
+workers are stopped when sampled total memory on the assigned GPU exceeds
+3,584 MiB. Document and video visual parsers instead report VRAM without a shared
+cap. Their loaded backend state is inspected
 through available parameters and buffers, Paddle places, Hugging Face device
 maps, Accelerate hooks, ONNX execution providers, and disk/meta placement. A
 backend whose placement cannot be observed is blocked as
@@ -206,6 +220,12 @@ one frozen winner + locked-test manifest
 -> no further tuning, selection, or promotion
 ```
 
+Final RAG consumes the single selected configuration from each component's
+validation-winner decision. The engineer freezes their composition, including
+top-K, prompt, and context settings, before any applicable locked data is
+examined. Component locked reports are evidence about those fixed choices, not
+inputs to another finalist search.
+
 Project-owned decisions live under `data/benchmarks/decisions/` because they are
 reviewed experimental inputs, not executable implementation. Validation
 resolves its development-finalist decision automatically; locked resolves its
@@ -215,7 +235,7 @@ decision is treated as immutable after a run consumes it; a changed choice is a
 new versioned decision, not an edit to the consumed file. Placeholder decisions
 are not committed.
 
-Every decision uses this contract:
+Component transition decisions use this contract:
 
 ```json
 {
@@ -333,8 +353,9 @@ EduMind / <Benchmark>
    `- one selected candidate child
 ```
 
-Only applicable phases appear. Vector Database omits CUDA smoke and preflight;
-Final RAG currently omits preflight. Video may create separate frozen-ASR and
+Only applicable phases appear. Vector Database omits CUDA smoke and preflight
+but retains its own locked report. Final RAG has only a locked parent with one
+frozen complete-system child. Video may create separate frozen-ASR and
 visual-comparison parents within one phase.
 
 Every parent and child is tagged with the benchmark, profile, concrete phase
@@ -356,7 +377,7 @@ Authoritative development, validation, and locked comparisons for ASR, embedding
 learned reranking, and generation use the laptop's RTX 3050 through CUDA. Each
 stage freezes one supported 16-bit dtype, keeps the whole active model on that
 GPU, and forbids CPU fallback, CPU/GPU offload, automatic device splitting, and
-quantization. Peak process VRAM must not exceed `3,584 MiB`. Smoke executes both
+quantization. Peak Device VRAM must not exceed `3,584 MiB`. Smoke executes both
 CPU and CUDA by default, but neither result is selection evidence.
 Document and video parser backends follow their separately recorded lifecycle
 and device contracts because not every parser runtime exposes the same backend.
@@ -365,16 +386,68 @@ have already been qualified separately; its ordinary runtime resource gates
 still apply. Vector Database is CPU-only and has neither CUDA smoke nor
 preflight.
 
+CUDA memory is sampled as raw NVML `memory.used` for the assigned GPU, using
+`nvml-device-total`. Monitoring starts before loading and includes cold load,
+warmup, and measured inference; preflight instead includes loading and its
+retained first stress inference. Report the largest observed device total, not
+per-process bytes or an increase above baseline. Record GPU identity, idle
+memory, total/free memory, and timestamped samples. The idle baseline is not
+subtracted: driver and desktop allocations consume the same physical budget.
+The 3,584 MiB device-total limit leaves a nominal 512 MiB margin on a 4,096 MiB
+GPU at the observed samples, not a separate 3,584 MiB allowance for model weights.
+
+Close other GPU workloads before running and keep the background baseline
+stable across candidates. If unrelated GPU activity changes during a comparison,
+the affected measurement must be rerun under a controlled environment rather
+than attributed to the candidate. Whole-device VRAM does not prove model
+placement; the independent pre/post-inference offload inspection still applies.
+Document and video visual backends report this same measurement without an
+artificial shared cap. Video's frozen ASR is measured separately and unloaded
+before a fresh visual worker. Qualification evidence from a process-attributed
+or baseline-delta memory policy is not reusable under the device-total contract.
+
 When a stage declares paired candidate comparisons, they are analysis artifacts
 rather than new metrics. They are calculated from aligned per-sample results;
 bootstrap comparisons resample the same sample IDs for both candidates instead
 of comparing unrelated aggregate values. The applicable pairs, stored fields,
 and artifact placement are defined in that stage's methodology section.
 
+### Shared uncertainty procedure
+
+Every applicable development, validation, and locked metric uses the same
+resampling procedure, with the independent unit appropriate to its benchmark:
+
+| Benchmark | Independent resampling unit |
+|---|---|
+| Document | Source document, retaining all pages and matched capture variants. |
+| ASR | Speech or control clip; related clips remain grouped if the reviewed manifest defines their common source as the independent unit. |
+| Video | Video; related excerpts remain grouped by the reviewed original source when required. |
+| Chunking–embedding, retrieval–reranking, generation, and Final RAG | Source document with all eligible questions, repeated outputs, and pair results. |
+| Vector database | Query with its aligned requests, within one declared workload cell. |
+
+Resample complete units with replacement 10,000 times using bootstrap seed `42`,
+recalculate the metric's existing aggregate on every draw, and take the 2.5th
+and 97.5th percentiles. This does not change pooled detection counts, corpus
+WER/CER, document-macro retrieval/generation quality, or named latency percentiles
+into a different statistic. Paired comparisons resample aligned units together
+and recalculate both candidates on each draw. Repeated attempts are retained
+inside their unit, not treated as additional independent evidence.
+
+The minimum independent support for each conditional or slice interval is
+frozen after manifest review and before authoritative evaluation. An undefined
+draw is excluded only from that metric's bounds, with defined/undefined draw
+counts recorded. If support is insufficient, retain the point estimate and null
+bounds with a reason in artifacts; omit only the MLflow scalar bounds. Smoke,
+configuration counts, one cold-load observation, and observed resource peaks
+do not receive authoritative intervals.
+
 ### Shared MLflow metric convention
 
-The stage sections below list only each metric's base key. A sample-based
-aggregate is stored using one consistent convention:
+The stage sections below list only each metric's base key. CUDA keys named
+`peak_vram_mb`, `peak_vram_mib`, or `peak_visual_vram_mb`, including their
+`operational.` forms, report Peak Device VRAM under `nvml-device-total`.
+Their recorded measurement method distinguishes them from historical process
+or delta measurements. A sample-based aggregate uses one consistent convention:
 
 ```text
 <metric_key>
@@ -768,6 +841,10 @@ attempt has its own timing/error row. If any measured repetition fails, that
 document's quality output is the empty prediction, Candidate Failure Rate is
 one, and Structured-output Determinism is zero. Throughput counts pages from
 successful attempts but divides by the elapsed time of every measured attempt.
+An empty prediction does not create matched elements: conditional type,
+hierarchy, geometry, page-attribution, and reading-order scores are null when
+their match or pair denominator is empty. Detection/content scores and failure
+counts retain the missed document; conditional match counts remain visible.
 Development determines both the Standard settings and the parser-architecture
 finalists. Validation confirms only those finalists; it is not the first local
 comparison of Granite Docling or PaddleOCR-VL. After validation, the engineer
@@ -1193,7 +1270,7 @@ changes application configuration.
 | WER diagnostics | Word Substitution Rate, Word Deletion Rate, Word Insertion Rate | Shows whether WER comes mainly from confused, omitted, or unsupported words. These explain WER but do not replace it. |
 | Timestamps | **Timestamp Boundary MAE**, **Timestamp Alignment Coverage** | MAE measures the accuracy of aligned start/end boundaries; coverage prevents a candidate from looking accurate after aligning only easy segments. |
 | Reliability | Empty Transcript Rate, Nonspeech False-Transcription Rate, Repeat Transcript Agreement Rate | Measures complete empty output on speech, invented lexical output on verified nonspeech controls, and transcript stability across repeated runs. |
-| Operational | **Complete-Pipeline Real-Time Factor**, p50/p95 warm clip latency, cold model-load time, peak process-tree RAM, peak VRAM | Measures the complete transcription and alignment cost of the frozen CUDA profile. |
+| Operational | **Complete-Pipeline Real-Time Factor**, p50/p95 warm clip latency, cold model-load time, peak process-tree RAM, peak device VRAM | Measures the complete transcription and alignment cost of the frozen CUDA profile. |
 
 Content F1 and Reading Order Accuracy are not ASR metrics in this benchmark.
 Audio already supplies chronological order, so Corpus WER evaluates the required
@@ -1307,13 +1384,11 @@ Every successful development, validation, or locked child must contain all 16 ag
 metric fields. Timestamp Boundary MAE is the sole nullable field, under the rule
 above. A CPU profile may report zero VRAM only when execution confirms that no
 GPU process was used; unavailable instrumentation is not converted to zero.
-CUDA children record `vram_measurement_method`. NVML process-tree bytes are
-used directly when the driver exposes them. On Windows WDDM, where NVML can
-identify the benchmark PID but returns no per-process byte count, the monitor
-records `nvml-device-delta-wddm` and measures the peak increase from the
-pre-run device-memory baseline while that PID is present. If neither method
-captures a positive allocation, the CUDA child fails rather than reporting a
-fabricated zero.
+CUDA children record `vram_measurement_method="nvml-device-total"` and the
+assigned device's raw peak memory use under the shared hardware contract.
+Per-process byte availability on Windows WDDM is not required. Device placement
+is verified independently; a missing device-memory measurement fails the CUDA
+child rather than producing a fabricated zero.
 If a candidate crashes, lacks required timestamp output, or cannot produce the
 required artifacts or aggregates, its child remains visible as failed and the
 parent is incomplete. The engineer repairs the problem and reruns the complete
@@ -1443,7 +1518,7 @@ for the recorded educational-video corpus.
 | Secondary | Visual Content Precision/Recall | Explains whether a low F1 came from unsupported extracted text or missed visible text. |
 | Diagnostic | Duplicate Visual Text Rate | Shows whether repeatedly selected unchanged frames duplicate the same content. |
 | Diagnostic | Frozen-ASR Transcript WER, recorded once for the shared ASR output | Confirms the audio input to every policy; it is not used to compare keyframe policies because it is constant. |
-| Operational | Visual Real-Time Factor, p50/p95 warm visual latency, cold visual-pipeline load time, peak visual process-tree RAM, peak visual VRAM | Measures the keyframe and visual-parser cost that differs between configurations. |
+| Operational | Visual Real-Time Factor, p50/p95 warm visual latency, cold visual-pipeline load time, peak visual process-tree RAM, peak visual device VRAM | Measures the keyframe and visual-parser cost that differs between configurations. |
 | Workload descriptor | Mean selected frames per video | Records how much visual input each policy sends to the parser without treating fewer frames as inherently better. |
 
 Spoken and visible tokens remain separate. A video's transcript usually
@@ -1618,7 +1693,7 @@ structured-evidence set. The counts below describe QASPER papers only:
 |---|---:|---|
 | Development | 100 | Development candidate comparison |
 | Validation | 40 | Validation finalist comparison |
-| Locked test | 40 | One final complete system only |
+| Locked test | 40 | One selected chunking–embedding pair; reporting only |
 
 Each question stores answerability, accepted answers, evidence type, and exact
 half-open evidence offsets. The structured supplement contains table, formula,
@@ -1667,9 +1742,9 @@ One child run executes one planned pair in a fresh operating-system process.
 The requested device, dtype, model and tokenizer revisions, query/document
 prefixes, pooling, normalization, seed, warmups, and repetitions are fixed and
 recorded. Silent device fallback or unrecorded truncation invalidates the child.
-Authoritative development and validation comparisons use the target RTX 3050 through
-CUDA with `float16` and embedding batch size `1`. Peak process VRAM must remain
-at or below 3,584 MiB, leaving a 512 MiB safety reserve on the 4,096 MiB device.
+Authoritative development, validation, and locked comparisons use the target RTX 3050 through
+CUDA with `float16` and embedding batch size `1`. Peak Device VRAM must remain
+at or below 3,584 MiB under the shared whole-device contract.
 The same settings apply to every pair; a candidate cannot receive a smaller
 batch or a different precision to avoid an out-of-memory result.
 
@@ -1724,14 +1799,14 @@ selected finalists on 40 unseen papers
 -> engineer records exactly one selected chunker/embedding pair
 
 locked test:
-the selected pair runs only inside the one frozen complete-system evaluation
-on 40 locked papers -> no further component tuning
+the selected pair runs in its own component benchmark on 40 locked papers
+-> reporting only, with no further component tuning
 ```
 
 Smoke validates wiring only. Development compares the declared matrix, and
 validation checks the finalists on unseen papers. A failed pair makes its parent
-comparison incomplete. The locked split is reserved for the final complete
-system and is not another chunking/embedding selection round.
+comparison incomplete. The component locked report evaluates the selected pair
+in isolation and is not another chunking/embedding selection round.
 
 ### Metrics and why they are used
 
@@ -1739,7 +1814,7 @@ system and is not another chunking/embedding selection round.
 |---|---|---|
 | Retrieval quality | **nDCG@3/@5**, **Evidence-unit Recall@3/@5**, **Evidence-token Precision@3/@5**; alpha-nDCG@3/@5 diagnostic | Measures conventional relevance order, evidence completeness, and context concentration; alpha-nDCG diagnoses repeated evidence on eligible multi-evidence questions. |
 | Evidence slices | Retrieval metrics repeated for text, table, formula, and mixed questions | Reveals a pair that performs well only on the majority evidence type. |
-| Operational | Corpus-build time and source-token throughput, p50/p95 warm query latency, peak process-tree RAM, peak VRAM | Measures the observed preparation, query, and hardware cost of the complete pair. |
+| Operational | Corpus-build time and source-token throughput, p50/p95 warm query latency, peak process-tree RAM, peak device VRAM | Measures the observed preparation, query, and hardware cost of the complete pair. |
 | Workload and storage | Corpus counts, source and indexed-token counts, chunk count and lengths, embedding dimension and dtype, matrix bytes | Explains how much work and storage each pair creates without treating those values as quality. |
 
 The three bold metric families are primary and are reviewed separately at both
@@ -1855,7 +1930,7 @@ Each successful child stores:
 | `retrievals.parquet` | Ordered top-20 chunk IDs and scores for near-miss diagnosis; the first three and first five are scored. |
 | `evidence_matches.parquet` | Trace from each question and evidence unit to the chunks that recovered it. |
 | `timings.parquet` | One row per query and measured repetition with warm latency and success state. |
-| `resources.parquet` | Timestamped process-tree RAM and VRAM samples. |
+| `resources.parquet` | Timestamped process-tree RAM and raw assigned-device VRAM samples, with measurement identity. |
 | `candidate.json` | Resolved contracts, status, fingerprint, aggregates, confidence intervals, operational values, and artifact references. |
 | `validation_report.json` | Input-length and validity checks, counts, limits, checksums, and any errors. |
 
@@ -1983,8 +2058,8 @@ The target-hardware profile uses CUDA `float16`. The protocol fixes both
 embedding and reranker inference to batch size `1`; learned rerankers therefore
 score the 20 query-passage pairs sequentially. Qualification includes
 both components under the planned lifecycle and requires NVML-measured peak
-process VRAM at or below 3,584 MiB, preserving a 512 MiB reserve on the 4 GiB
-GPU. Per-candidate quantization, offload, fallback, or batch reduction is not an
+device-total VRAM at or below 3,584 MiB under the shared hardware contract.
+Per-candidate quantization, offload, fallback, or batch reduction is not an
 allowed way to pass the gate.
 
 The retrieval controls are fixed as follows. They are established, untuned
@@ -2036,7 +2111,7 @@ all hardware-qualified members of the 15-candidate roster on the development man
 
 validation:
 the finalists on the unseen validation manifest
-→ engineer approves up to three retrieval stacks for complete-system testing
+→ engineer records exactly one selected retrieval stack
 
 locked test:
 exactly one validation winner on the locked component split
@@ -2056,7 +2131,7 @@ winner rule is used.
 | Primary | **nDCG@3/@5**, **Evidence-unit Recall@3/@5**, **Evidence-token Precision@3/@5** | Separates ranking quality, evidence completeness, and concentration of retrieved text. |
 | Diagnostic | alpha-nDCG@3/@5, candidate-pool Evidence-unit Recall@20 | Diagnoses repeated evidence and first-stage pool limits without replacing the primary decision. |
 | Validity gate | Ranking Agreement | Requires repeated inference to return the same complete ordering before the run may be used as evidence. |
-| Operational | Full-stack warm p50/p95 latency, first-stage warm p50/p95 latency, reranker warm p50/p95 latency when applicable, cold initialization, peak process-tree RAM, peak VRAM, index-build time | Separates retriever cost, incremental reranker cost, startup, memory, and one-time index preparation. |
+| Operational | Full-stack warm p50/p95 latency, first-stage warm p50/p95 latency, reranker warm p50/p95 latency when applicable, cold initialization, peak process-tree RAM, peak device VRAM, index-build time | Separates retriever cost, incremental reranker cost, startup, memory, and one-time index preparation. |
 | Workload descriptor | Corpus/query/chunk/pool counts, retrieved tokens at @3/@5, reranker input tokens when applicable | Explains the amount of work behind quality and operational results. |
 | Storage descriptor | Dense/BM25 index bytes, RRF required and incremental index bytes, reranker snapshot bytes | Describes the local searchable state and model storage each candidate requires. |
 
@@ -2077,11 +2152,7 @@ intervals, and text/table/formula/mixed slices are the same as in the
 chunking/embedding phase. Exact definitions and comparison rules are in
 [metrics.md](metrics.md#retrieval-and-reranking).
 
-Hit Rate, MRR, MAP, binary chunk Precision/Recall, and a context-budget metric
-are not reported. They either repeat questions already answered by the primary
-metrics, use a chunk-dependent denominator, or test a packing policy that this
-phase does not have. Failures and truncation are validity conditions rather than
-quality metrics.
+Failures and truncation are validity conditions rather than quality metrics.
 
 ### MLflow result structure
 
@@ -2271,12 +2342,11 @@ Validity counters are gates, not winner metrics, and receive no comparison rows.
 Quality differences use 10,000 paired bootstrap resamples of aligned source
 documents with seed 42. One-off cold-load and peak-resource observations receive
 point differences but no invented confidence interval. The engineer selects up
-to three complete finalists after jointly reviewing primary quality, uncertainty,
-evidence slices, diagnostics, and operational feasibility, then approves up to
-three validation-qualified stacks for complete-system testing. Final RAG, not
-this component benchmark, selects the one deployed retrieval stack. The
-versioned decision file references the parent and child run IDs and all
-governing checksums.
+to three complete finalists for validation after jointly reviewing primary
+quality, uncertainty, evidence slices, diagnostics, and operational feasibility,
+then records exactly one validation winner. That stack receives its own locked
+component report and is used unchanged by Final RAG. The versioned decision file
+references the parent and child run IDs and all governing checksums.
 
 ## 6. Vector databases
 
@@ -2303,6 +2373,7 @@ embeddings internally.
 | Smoke | 1,000 vectors at dimension 384; 50 queries; concurrency 1 |
 | Development | 100,000 vectors at dimensions 384 and 1,024; 500 queries; concurrency 1/8/32 |
 | Validation | Selected real embeddings plus 1,000,000 clustered vectors; up to 1,000 queries; concurrency 1/8/32/64 |
+| Locked | One selected server and frozen index settings on a held-out vector/query workload fixed before execution; reporting only |
 
 Synthetic vectors contain clusters and 5% near-duplicates. Metadata creates
 filters matching approximately 50%, 10%, 1%, and in validation 0.1% of records.
@@ -2350,7 +2421,11 @@ database finalists. During validation, every finalist stores the same real
 chunks and vectors and the complete selected retrieval strategy is rerun so
 database ANN behavior is connected to actual RAG quality. Only after all
 validation evidence is reviewed does `vector-database-locked.json` record the
-single server profile approved for Final RAG.
+single server profile approved for its own locked report and for Final RAG.
+Locked execution evaluates only that server with its frozen index settings and
+workload. It repeats the applicable conformance and performance checks without
+reopening the HNSW search or server selection. Exact held-out workload sizes and
+source provenance must be reviewed and recorded before the locked run.
 
 ### Metrics and why they are used
 
@@ -2394,11 +2469,13 @@ Smoke uses committed wiring fixtures. Development uses 24 development questions
 selected deterministically and balanced across answerability, answer type, and
 evidence type as an initial screen. Validation evaluates only engineer-selected
 generator finalists on the complete frozen validation question set; it is not
-limited to 24 questions. The selected generator configuration is exercised on
-locked-test questions only as part of the one frozen complete-system run.
+limited to 24 questions. The selected generator configuration receives its own
+locked test on frozen evidence, separately from the end-to-end Final RAG report.
 
-- Answerable questions receive their verified numbered evidence blocks, accepted
-  answers, required gold claims, and required gold evidence-unit IDs.
+- For an answerable question, the generator receives the question and verified
+  numbered evidence blocks. The evaluator separately receives accepted answers,
+  required gold claims, gold evidence-unit IDs, and frozen verification material;
+  gold answers are never included in the generator's prompt.
 - Unanswerable questions receive text from their document that does not answer
   the question.
 - Retrieval is not run in this stage.
@@ -2421,8 +2498,8 @@ official mode switch, and documented mode-specific decoding:
 | MiniCPM5 reasoning | `enable_thinking=true`, sampling, temperature `0.9`, top-p `0.95` |
 | Falcon control | Reasoning-only configuration resolved from its pinned official generation configuration |
 
-Development, validation, and complete-system locked reporting use an 8,192-token
-model context, the same CUDA device, `float16`, and batch size `1`. CPU smoke uses
+Development, validation, generation locked, and Final RAG reporting use an
+8,192-token model context, the same CUDA device, `float16`, and batch size `1`. CPU smoke uses
 `float32`. No configuration receives hidden quantization, CPU/GPU offload,
 automatic device splitting, or a candidate-specific batch size.
 
@@ -2479,18 +2556,58 @@ Authoritative generation will use one pinned LLM judge after its identity has
 passed calibration and been frozen. That judge supplies every semantic label
 needed for Faithfulness, Factual Correctness, Answer Relevancy, and Repeat
 Semantic Agreement. It uses one structured per-response rubric for claim
-extraction, context support, gold-claim matching, and relevancy, plus one
-pairwise rubric for repeated-answer semantic equivalence. Deterministic
+extraction, context support, source-verified correctness, gold-claim matching,
+and relevancy, plus one pairwise rubric for repeated-answer semantic equivalence.
+Deterministic
 benchmark code converts those labels into metric values and aggregates; the
 judge never calculates citation-ID coverage, validity, reliability, or
 operational metrics.
 
-The exact judge version, decoding, prompts, rubric checksums, schema, retries,
-and calibration artifact are frozen before authoritative execution. Candidate
-identity is hidden from the judge, raw judge outputs are retained, and a judge
+The claim and evidence rules are frozen before calibration:
+
+- Score only the visible answer, not hidden reasoning. Extract independently
+  checkable atomic claims, splitting compound statements while preserving
+  negation, quantities, units, dates, scope, and uncertainty.
+- Semantically deduplicate generated claims within a response before calculating
+  claim ratios; retain their original spans for audit. Repeating a correct fact
+  cannot inflate precision, faithfulness, or recall.
+- Use human-reviewed, atomic, non-duplicate gold claims to define the facts
+  required for a complete answer. Semantic equivalents count; a partially
+  covered compound statement must first be separated into atomic facts. Each
+  required fact can receive recall credit only once.
+- Verify every distinct generated factual claim against frozen authoritative
+  source/reference material. A correct extra fact absent from the required gold
+  list receives precision credit if that material verifies it, but no extra
+  recall credit. Unverified additions receive no correctness credit. Relevancy
+  independently assesses whether additions help answer the question.
+- Judge Faithfulness solely against the evidence supplied to this generator
+  request. Broader verification material may establish factual correctness but
+  cannot rescue a claim unsupported by the supplied context. When those two
+  reference sets coincide, support and correctness can overlap; gold recall
+  still measures completeness.
+- Retain the source span or evidence justification for each support,
+  correctness, and gold-matching label. The judge's own memory or an unrecorded
+  lookup is not an authoritative verification source.
+- For repeat semantic agreement, compare valid completed responses with matching
+  statuses for equivalent material meaning, including factual qualifiers.
+  Paraphrases can agree; incorrect but equivalent answers can also agree.
+
+The frozen verification material and required gold claims are separate inputs:
+the former establishes correctness, while the latter establishes completeness.
+This is EduMind's source-verified claim contract, rather than treating every
+generated claim absent from a reference-answer list as incorrect.
+
+The exact judge version, decoding, prompts, rubric checksums, schema, verification
+material identity, finite retry policy, and calibration artifact are frozen
+before authoritative execution. Candidate identity is hidden from the judge,
+raw judge outputs are retained, and a judge
 failure makes evaluation incomplete rather than lowering the candidate's score.
-The judge must first pass a human-labeled calibration set. Its latency, cost, and
-resources are excluded from generator operational measurements.
+The judge must first pass a human-labeled development calibration set with
+recorded acceptance criteria for claim extraction, support, correctness,
+gold matching, relevancy, and semantic equivalence separately. Unresolved judge
+errors make evaluation incomplete after the frozen retry policy is exhausted.
+Its latency, cost, and resources are excluded from generator operational
+measurements.
 
 ### Execution profiles and selection
 
@@ -2509,21 +2626,21 @@ all hardware-qualified configurations on the 24-question development screen
 
 validation:
 only the recorded finalists on the complete unseen validation question set
--> engineer records the generator profiles approved for complete-system testing
+-> engineer records exactly one selected model-mode configuration
 
 locked test:
-the one selected generator runs only inside the frozen Final RAG system
--> no further generator tuning
+the one selected generator runs on frozen evidence in its own benchmark
+-> reporting only, with no further generator tuning
 ```
 
 Smoke supplies wiring evidence only. Preflight supplies hardware eligibility
 only and has zero warmups. Development is the only stage in which alternatives
 may be compared or tuned. Validation runs only the configurations named in the
 reviewed development decision. The resulting `generation-locked.json` records
-the successful generator configurations approved for Final RAG, up to the
-protocol maximum of three. Generation has no separate locked-data run; exactly
-one generator reaches locked data only after complete-system comparison and
-blinded review have selected one frozen Final RAG system.
+exactly one successful model-mode configuration selected from validation. Its
+own locked run measures generation on verified evidence; Final RAG uses the
+same selection but measures answers on the complete retrieval path. Neither
+locked report can reopen selection.
 
 ### Per-candidate execution
 
@@ -2546,16 +2663,24 @@ Token and total warm latency. The three fixed measured seeds sample the frozen
 decoder reproducibly and support semantic, status, and citation repeatability
 diagnostics.
 
+Every scheduled seed remains in the quality, validity, and reliability
+denominators. Generation computes each question's mean first, then averages
+eligible questions within each source document and macro-averages documents.
+Repeatability retains all three scheduled response pairs, assigns zero to pairs
+containing schema-invalid, failed, or interrupted attempts, and follows the same document-macro
+aggregation. Raw event counts remain in artifacts and are not substituted for
+these equal-document-weight results.
+
 ### Metrics and why they are used
 
 | Role | Metrics | Why they are needed |
 |---|---|---|
 | Primary quality | **Faithfulness**, **Factual Correctness F1**, **Answer Relevancy**, **Citation F1** | Separates support by supplied context, correctness and completeness against required facts, relevance to the question, and explicit evidence selection. |
-| Quality diagnostic | Factual Correctness Precision/Recall, Citation Precision/Recall | Explains whether an F1 loss comes from unsupported additions or omitted required facts/evidence. |
+| Quality diagnostic | Factual Correctness Precision/Recall, Citation Precision/Recall | Explains whether an F1 loss comes from incorrect/unverified claims, omitted required facts, or incorrect/missing citations. |
 | Behavioral validity | **Response Validity Rate**, **Refusal Validity Rate**, **Malformed Output Rate** | Measures valid answer behavior on answerable questions, the exact refusal contract on unanswerable questions, and general schema integrity. |
 | Reliability | Generation Failure Rate, Timeout Rate, Context-Limit-Reached Rate | Distinguishes runtime failure from bounded but incomplete generation. |
 | Repeatability diagnostic | Repeat Status Agreement, Repeat Citation Agreement, Repeat Semantic Agreement | Measures stability of answer/refusal decisions, selected evidence, and meaning across seeds without requiring identical wording. |
-| Operational | Cold Model-Load Time, Time to First Token p50/p95, End-to-End Latency p50/p95, Decode Throughput, peak process-tree RAM, peak VRAM | Separates startup, initial responsiveness, complete warm-request latency, decoding rate, and memory. |
+| Operational | Cold Model-Load Time, Time to First Token p50/p95, End-to-End Latency p50/p95, Decode Throughput, peak process-tree RAM, peak device VRAM | Separates startup, initial responsiveness, complete warm-request latency, decoding rate, and memory. |
 | Workload descriptor | Prompt, context, reasoning, visible-answer, and total output tokens; citation and generated-claim counts; finish-reason distribution | Records how much work produced the observed quality and latency. |
 
 Malformed Output Rate is minimized; Response and Refusal Validity Rates are
@@ -2565,8 +2690,8 @@ a correct citation is a supplied evidence-block ID covering required gold
 evidence. The judge supplies semantic claim labels, while code calculates every
 ratio, F1, aggregate, and confidence interval.
 
-The engineer approves up to three generator configurations after inspecting the
-primary metrics, validity and reliability metrics, repeatability, latency,
+The engineer selects validation finalists, then one validation winner, after
+inspecting the primary metrics, validity and reliability metrics, repeatability, latency,
 workload, and resources.
 Exact metric eligibility, failure behavior, and aggregation are defined in
 [metrics.md](metrics.md).
@@ -2585,8 +2710,10 @@ MLflow experiment: EduMind / Generation
 |  `- one qualification child per model-mode configuration
 |- parent: generation-development-<timestamp>
 |  `- one child per hardware-qualified configuration
-`- parent: generation-validation-<timestamp>
-   `- one child per engineer-selected finalist
+|- parent: generation-validation-<timestamp>
+|  `- one child per engineer-selected finalist
+`- parent: generation-locked-<timestamp>
+   `- one selected model-mode child
 ```
 
 The parent stores the manifest, protocol and judge identities, aligned seed
@@ -2633,31 +2760,27 @@ validated consistently.
 
 ## 8. Final RAG and human review
 
-Which complete retrieval-and-generation system gives the best evidence-backed
+How well does the already-selected complete system produce evidence-backed
 answers when every component runs together?
 
-### Execution profiles and systems tested
+### Frozen system and execution profile
 
-Development crosses the approved component finalists on development data:
+Final RAG has only the `locked` profile. The engineer records one complete system
+assembled from the selected extraction routes, ASR/video policy where applicable,
+chunking–embedding pair, retrieval–reranking stack, vector-server profile, and
+generator model-mode configuration. Top-K is one frozen value, either `3` or `5`,
+chosen from component development and validation evidence before locked data is
+examined. The prompt, context packing, and refusal policy are also frozen.
 
-```text
-1 approved vector-server profile
-× up to 3 retrieval stacks
-× up to 3 generators
-× top_k {3, 5}
-= at most 18 complete systems
-```
-
-The engineer records exactly three successful complete-system finalists. Validation
-runs only those three systems on unseen validation data and supplies their
-answers for blinded review. After review, the engineer records exactly one
-complete system. The locked profile runs only that frozen system on the locked-test data.
+`final-rag-locked.json` identifies this composition and its upstream reviewed
+decisions. Final RAG does not cross component finalists, tune settings, or select
+a winner. Non-locked integration checks and extraction confirmation occur before
+the one locked execution.
 
 ### Data and execution
 
-The development Final RAG profile uses the development manifest, validation uses
-the validation manifest, and locked uses the locked-test manifest. For every question, the
-complete path runs:
+The locked profile uses the held-out locked-test manifest. For every question,
+the complete path runs:
 
 ```text
 chunk document
@@ -2681,14 +2804,15 @@ operational measurements.
 
 ### Human review
 
-Validation evaluates the three successful complete systems selected after development.
-The exporter selects 20 common validation questions and creates:
+Human review provides a separate qualitative report on the frozen system; it
+does not select another system. The exporter selects 20 locked questions using
+a selection rule frozen before answers are inspected and creates:
 
 ```text
-20 questions × 3 anonymous systems = 60 anonymous answer items
+20 questions × 1 anonymous system = 20 anonymous answer items
 ```
 
-One reviewer scores all 60 answer items while system identity remains hidden. The
+One reviewer scores all 20 answer items while model identity remains hidden. The
 reviewer sees the question, answer, accepted answer, and evidence. Each answer
 receives:
 
@@ -2701,8 +2825,8 @@ receives:
 | Answerability Correctness | 0–1 | Whether the system correctly answered or refused. |
 
 This is single-reviewer evidence, so the report does not claim inter-reviewer
-reliability. After ratings are imported and validated, system identities are
-revealed and the engineer selects exactly one complete system. A future
+reliability. Ratings are imported and validated as reporting-only evidence;
+they cannot reopen selection after the locked test. A future
 multi-reviewer study must define overlap, agreement, and adjudication separately.
 
 ## 9. Extraction-to-RAG confirmation
@@ -2746,9 +2870,10 @@ cost of extraction after component selection.
 
 ## 10. Locked test
 
-After Final RAG review and extraction confirmation are complete, the one frozen
-system runs exactly once on the locked-test manifest. The selected parser, ASR,
-chunker, embedding, retrieval method, vector server, generator, prompt, and
+Every component benchmark reports its selected configuration on its own locked
+test. After all selection and non-locked extraction confirmation are complete,
+Final RAG runs the one frozen system exactly once on its locked-test manifest.
+The selected parser, ASR, chunker, embedding, retrieval method, vector server, generator, prompt, and
 context settings cannot change between confirmation and this run.
 
 The locked result is the final unbiased estimate. It is not used for more tuning.

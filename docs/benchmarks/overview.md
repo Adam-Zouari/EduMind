@@ -34,9 +34,11 @@ chunking × embedding -> retrieval/reranking -> real vector-server retrieval
 
 generation on frozen evidence
 
-selected server + retrieval + generator -> Final RAG -> blinded review
-                                           -> extraction-impact confirmation
-                                           -> one locked-test evaluation
+each component -> validation winner -> its own locked component report
+
+selected extraction + retrieval + server + generator
+    -> non-locked extraction-impact confirmation
+    -> one Final RAG locked evaluation -> reporting-only human review
 ```
 
 Document extraction, audio, chunking/embedding, vector-server ANN checks, and
@@ -52,10 +54,14 @@ silently reselected.
 - `preflight` qualifies every declared candidate on the target CUDA hardware.
   It produces hardware evidence, not quality evidence.
 - `development` compares only candidates qualified by the exact matching
-  preflight. Vector Database and Final RAG follow their documented exceptions.
+  preflight. Vector Database is CPU-only; Final RAG has no candidate comparison.
 - `validation` runs explicit engineer-selected finalists on validation data.
 - `locked` runs exactly one frozen selection on locked-test data and is never
   used for tuning.
+- Every component benchmark has its own locked report. Final RAG has only one
+  locked end-to-end evaluation, using the already-selected components and settings.
+- When locked data is shared, freeze all affected component and system choices
+  before its first use. Otherwise reserve a separate untouched Final RAG holdout.
 - Every planned candidate and required metric must complete for a comparison to
   be usable.
 - Development, validation, and locked runs retain per-sample rows and report 95% confidence intervals for
@@ -68,6 +74,10 @@ silently reselected.
   modify production configuration automatically.
 - Performance results apply to the hardware and software environment recorded
   with that run.
+- CUDA Peak Device VRAM is the assigned GPU's raw NVML total, including its
+  stable driver/desktop baseline, not estimated process memory. Close unrelated
+  GPU workloads and retain device identity, baseline, and total/free samples.
+  Placement/offload checks remain independent of the memory measurement.
 
 New runs are grouped into one MLflow experiment per benchmark rather than one
 broad extraction or RAG experiment. Each phase has a comparison parent and one

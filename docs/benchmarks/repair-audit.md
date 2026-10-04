@@ -4,6 +4,13 @@ This file preserves dated verification evidence. A result applies to the
 repository state named by its section and must not be read as a rolling claim
 about the current candidate set.
 
+Historical process-attributed and `nvml-device-delta-wddm` memory results below
+retain their original measurement meaning. The current approved
+[hardware contract](methodology.md) uses raw assigned-device NVML memory totals,
+without baseline subtraction. Those historical peaks are not comparable to the
+new device-total limit and cannot provide qualification under it. Documentation
+of this change is not evidence that the monitor implementation has been updated.
+
 ## Historical audit snapshot — 2026-09-11
 
 At the close of this audit, the target-scope status was complete. The document,

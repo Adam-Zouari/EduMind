@@ -43,7 +43,14 @@ provisional CPU application and for smoke/debug checks. Authoritative developmen
 validation, and locked ASR, embedding, learned-reranking, and generation runs use the
 RTX 3050, batch size `1`, a stage-frozen supported 16-bit dtype, and one whole
 model on the GPU. They permit no fallback, offload, automatic device splitting,
-or quantization, and peak process VRAM must not exceed `3,584 MiB`.
+or quantization, and sampled peak total memory on the assigned GPU must not
+exceed `3,584 MiB`. Measure raw NVML `memory.used`, including driver/desktop
+allocations, without subtracting the idle baseline. Close other GPU workloads
+and keep background usage stable across candidates; record GPU identity,
+baseline, total/free memory, and the `nvml-device-total` measurement method.
+This whole-device contract is defined in the
+[methodology](../benchmarks/methodology.md); the measurement implementation is
+pending alignment, as recorded in the [runbook](../benchmarks/running.md).
 
 ## 2. Create an isolated Python environment
 
@@ -315,6 +322,7 @@ Before using a run as comparative evidence:
 - generation candidates share the same explicit device.
 - vector servers report healthy and use actual ANN indexes.
 - the parent MLflow run reports `benchmark_complete=1`; failed candidates and partial artifacts remain visible, and smoke output is never treated as comparative evidence.
-- final human review is imported before selecting the locked-test system.
+- component winners and the complete system are frozen before applicable locked data is inspected.
+- Final RAG human review is imported as reporting-only evidence, not used to select another system.
 
 If a model is missing, rerun the matching preparation target. If a pinned revision no longer resolves, stop and review the selection package; do not replace it with the repository's current head.
