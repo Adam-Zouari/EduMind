@@ -91,6 +91,15 @@ the authoritative dataset manifests and methodology, then remove the item.
   metric contract and versioned protocol before validation or locked execution.
   Do not mix normalization methods within a comparison or tune the choice on
   held-out results.
+- Defer semantic-judge model selection until representative development data has
+  been collected and reviewed. Compare a small, cost-aware shortlist against the
+  same human-labeled calibration set; neither a model's price nor its general
+  benchmark ranking establishes its suitability as a judge. Estimate full-run
+  judging costs across generator candidates, modes, repetitions, and semantic
+  tasks using observed input/output usage, including billable reasoning and
+  retries. Record agreement results, estimated costs, and the selection rationale
+  in the calibration artifact. Choose an affordable judge that meets the reviewed
+  acceptance criteria, rather than assuming a frontier model is required.
 - Build a development-only semantic-judge calibration set with human labels for
   claim extraction, context support, source-verified correctness, gold-claim
   matching, answer relevancy, and pairwise semantic equivalence. Include repeated
