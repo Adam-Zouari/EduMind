@@ -20,8 +20,9 @@ applies to authorized contributions.
 4. Run the focused validity checks and the relevant benchmark's `--profile smoke` command.
 5. Keep generated outputs in `artifacts/`, not in Git.
 
-The repository intentionally has no Ruff, MyPy, coverage, or wheel-build gate.
-For changes to benchmark selection, datasets, or metrics, run:
+For authorized Python changes, run `python -m ruff check .` and
+`python -m ruff format --check .` as well as focused tests. For changes to
+benchmark selection, datasets, metrics, or documentation links, run:
 
 ```powershell
 python -m pytest tests/test_benchmark_metrics.py tests/test_benchmark_datasets.py tests/test_selection_alignment.py tests/test_documentation_links.py -q
@@ -41,10 +42,14 @@ python -m pytest tests/test_benchmark_metrics.py tests/test_benchmark_datasets.p
   navigation.
 - Put complete installation/download instructions in the
   [installation guide](docs/setup/installation.md).
-- Put experiment order, candidates, datasets, procedures, metric rationale, and
-  limitations in the [benchmark methodology](docs/benchmarks/methodology.md).
-- Put metric definitions, calculation procedures, examples, and edge cases in the
-  [metric reference](docs/benchmarks/metrics.md).
+- Put shared lifecycle and decision rules in the
+  [shared methodology](docs/benchmarks/methodology.md). Keep each benchmark's
+  candidates, data, procedures, metric rationale, and limitations in its linked
+  methodology page.
+- Put shared measurement conventions in the
+  [shared metric reference](docs/benchmarks/metrics.md). Keep individual metric
+  definitions, calculations, examples, and edge cases in the linked benchmark
+  metric pages.
 - Put benchmark commands and operational troubleshooting in the
   [benchmark runbook](docs/benchmarks/running.md).
 - Put public candidate-screening evidence only in the

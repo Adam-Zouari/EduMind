@@ -83,8 +83,10 @@ A **manifest** fixes the exact samples, split, paths, checksums, annotations,
 and source provenance. `--profile` selects the project manifest automatically.
 Use `--manifest PATH` only to run an alternate reviewed manifest.
 
-A **component decision file** is an engineer-reviewed transition between stages. It names
-the exact successful candidates selected from a completed upstream parent:
+A **component decision file** is an engineer-reviewed transition between stages.
+It names exact candidates with complete, run-level-valid evidence selected from
+a completed upstream parent. Sample-attempt failures remain visible in that
+evidence rather than being confused with an incomplete candidate run:
 
 ```json
 {
@@ -121,8 +123,8 @@ Each candidate child contains a `preflight_candidate.json` evidence artifact.
 The parent `preflight_report.json` records the complete roster and required
 component groups. Video is ready only when frozen ASR and a visual policy are
 qualified; Document additionally requires viable PDF, image, and DOCX routes.
-Every measured `smoke`, `development`, `validation`, and `locked` profile uses
-one warmup per fresh candidate worker and materially distinct execution path.
+Every measured model-backed `smoke`, `development`, `validation`, and `locked`
+profile uses one warmup per fresh candidate worker and materially distinct execution path.
 Preflight uses zero warmups: monitoring starts before loading and continues
 through one retained demanding qualification inference so first-use allocation,
 offloading, and peak VRAM remain visible. The preflight worker then exits and
@@ -132,7 +134,9 @@ Where Cold Model-Load Time is reported, a fresh worker times loading and device
 placement, ends that timer, runs the one warmup, and only then begins measured
 requests. Cold load, warmup, and measured latency are separate lifecycle phases;
 neither cold load nor warmup is included in warm Time to First Token or
-end-to-end latency. The operating system's disk cache is not forcibly cleared.
+warm end-to-end request latency. First-item latency, where reported, separately
+includes startup/loading and the first complete request. The operating system's
+disk cache is not forcibly cleared.
 Qualification repetitions, telemetry interval, polling interval, and timeout
 are read from the benchmark protocol.
 
@@ -149,8 +153,9 @@ former process/delta policy cannot qualify this device-total contract.
 
 ## 4. Document extraction
 
-Prepare the official table/formula evaluator when the manifest contains those
-annotations:
+Prepare the official table/formula evaluator when the manifest contains positive
+reference tables or formulas requiring reconstruction scores. Verified-negative
+presence annotations alone do not require an official reconstruction scorer:
 
 ```powershell
 docker version
@@ -192,23 +197,55 @@ python -m experiments.benchmarks.extraction.document.run `
 ```
 
 After validation, record exactly one winner from each PDF and image parent in
-`document-pdf-locked.json` and `document-image-locked.json`. Run the frozen
-source routes once on the locked-test manifest:
+`document-pdf-locked.json` and `document-image-locked.json`. Produce one frozen
+source-routing report on the untouched locked-test manifest:
 
 ```powershell
 python -m experiments.benchmarks.extraction.document.run --profile locked
 ```
 
 The locked profile selects the architecture comparison automatically, resolves
-both decisions, runs the selected PDF and
-image parser once per locked sample, and runs native Docling for DOCX. The same
-`document-image-locked.json` decision is consumed by Video. Locked Document
+both decisions, runs one frozen PDF/image profile per source with three measured
+attempts per locked document, and runs native Docling for DOCX under the same
+measurement contract. Video consumes the same `document-image-locked.json`
+decision. Locked Document
 results are reporting-only and cannot change either winner. A `--source`
 override is rejected for locked execution so a partial source result cannot be
 mistaken for the complete frozen routing policy.
 
 Use `--source pdf|image|docx` to isolate one source type. The default `all`
 creates separate parents because the valid candidate sets differ.
+
+### Reading the document results
+
+Development, validation, and locked load each candidate in a fresh worker,
+measure cold loading, perform one complete warmup, and execute every document
+three times with the same settings and inference seed. Smoke uses one measured
+attempt per fixture; preflight has no warmup and does not measure repeatability.
+
+- Attempt 1 is the only quality-scored output. Attempts 2 and 3 are validated,
+  timed, and compared for repeatability, not quality-scored again.
+- Never substitute a later success for a failed first attempt or erase valid
+  first-attempt quality because another attempt failed.
+- Repeatability Success Rate compares all three scheduled output pairs;
+  Attempt Failure Rate counts failed attempts. `A, A, failure` gives `1/3` for
+  both rates while keeping the first `A` as the quality output.
+- Quality is document-macro averaged, including expected-object misses and
+  first-attempt failure penalties. No reference tables/formulas means no
+  reconstruction task, but verified-negative detection remains applicable.
+- Confidence intervals are calculated after execution by resampling saved
+  independent document results 10,000 times with seed `42`. Quality intervals
+  use first-attempt scores; repeatability/failure intervals use each document's
+  three-attempt values. Resampling does not run additional inference.
+
+Inspect `samples.parquet` for first-attempt quality and each metric's status,
+reason, eligibility, and coverage. Inspect `timings.parquet` and retained outputs
+for all attempts, including failures and unexecuted requests. A valid empty
+output, a failed extraction, an unavailable evaluator, and interrupted execution
+are distinct outcomes. Resolve unavailable required evaluator results before
+publishing a complete comparison; quality scoring may be rerun on saved outputs.
+Missing telemetry is not zero memory. The full rules and score directions are
+in the [document metric reference](extraction/document/metrics.md).
 
 ## 5. ASR
 
@@ -246,11 +283,13 @@ to debug one half of that sequence.
 Review the scene parent, set `selected_scene_threshold` and
 `selected_scene_source_run_id` in the video protocol, increment its version,
 rerun video preflight, and regenerate frozen ASR because the protocol checksum
-changed. Then run:
+changed. Run all nine visual configurations under the final protocol checksum;
+the earlier scene run remains the threshold-selection evidence. Then run:
 
 ```powershell
 python -m experiments.benchmarks.extraction.video.run --profile preflight
-python -m experiments.benchmarks.extraction.video.run --profile development --phase hybrid
+python -m experiments.benchmarks.extraction.video.run --profile development --phase frozen-asr
+python -m experiments.benchmarks.extraction.video.run --profile development --phase all
 ```
 
 Create `video-validation.json`, regenerate the validation frozen-ASR artifact,

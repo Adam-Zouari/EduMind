@@ -40,14 +40,17 @@ selected components -> non-locked extraction-impact confirmation
 
 Document, audio, chunking/embedding, synthetic vector-server checks, and
 generation can begin independently. Each component has its own locked report;
-Final RAG evaluates one already-selected complete system. The methodology
-explains the lifecycle and decision files, while the runbook records commands
-and current implementation limitations.
+Final RAG evaluates one already-selected complete system. Each benchmark has
+its own methodology and metric reference under `benchmarks/extraction/`,
+`benchmarks/rag/`, or `benchmarks/vectordb/`, matching the implementation layout.
+The shared methodology explains the lifecycle and decision files; shared metric
+conventions define cross-benchmark measurement and reporting rules. The runbook
+records commands and current implementation limitations.
 
 | Question | Document |
 |---|---|
-| What runs in each experiment, in what order, on which data, and why? | [Experiment methodology](benchmarks/methodology.md) |
-| What does each metric mean and how is it calculated? | [Metric reference](benchmarks/metrics.md) |
+| What is the shared lifecycle, and where is each benchmark's evaluation procedure? | [Shared methodology and benchmark guides](benchmarks/methodology.md) |
+| What are the shared measurement rules, and where are individual metric definitions? | [Shared conventions and benchmark metric references](benchmarks/metrics.md) |
 | Why was each candidate included? | [Model-selection rationale](benchmarks/model-selection.md) |
 | Which commands prepare and run experiments? | [Benchmark runbook](benchmarks/running.md) |
 | How are benchmark datasets acquired and described? | [Benchmark dataset guide](benchmarks/datasets.md) |

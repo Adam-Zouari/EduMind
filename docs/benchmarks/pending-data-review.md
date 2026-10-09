@@ -12,7 +12,7 @@ the authoritative dataset manifests and methodology, then remove the item.
 
 - After the frozen manifests exist, set a documented minimum number of
   independent eligible samples for reporting confidence intervals, especially
-  for conditional table, formula, reliability, timestamp, and p95-latency
+  for reference-eligible table/formula tasks, reliability, timestamp, and p95-latency
   results. Repeated measurements of one document, audio clip, or video are not
   additional independent samples.
 - Identify dependent pages, capture variants, and excerpts from a common
@@ -22,9 +22,26 @@ the authoritative dataset manifests and methodology, then remove the item.
 
 ## Document extraction
 
-- Verify that every conditional metric has enough eligible samples: pages with
+- Verify that every reference-eligible metric has enough independent sources: pages with
   page references, layouts with element boxes/types/hierarchy, tables with cell
   structure, and formulas with detection and transcription references.
+- Verify blank-source and table/formula-negative coverage within the existing
+  corpus allocation. Empty reference fields must be verified negatives, not
+  substitutes for missing annotations; publish positive/negative and eligible
+  document/source counts for every reported metric and slice.
+- Freeze compatible element granularity and eligible types across source
+  converters, complete reference reading-order sequences, canonical parent-ID
+  mapping, box-free non-text object identities, symbol-preserving formula/code
+  unitization, coordinate units, and numeric fingerprint precision before
+  authoritative execution. Record the canonicalization version; do not adjust
+  matching or fingerprint tolerances after observing held-out outputs.
+- Check the number of independent sources after grouping related pages and
+  clean/degraded captures. Confirm support for document-macro quality,
+  three-attempt repeatability/failure intervals, and successful-latency intervals;
+  more bootstrap resamples or repeated attempts do not replace more sources.
+- Inspect degenerate bootstrap cases, including all-zero/all-one reliability
+  values, and ensure equal calculated bounds are flagged rather than described
+  as proof of zero uncertainty on future documents.
 - Confirm whether document rows need multiple source/capability labels and make
   those labels consistent across datasets.
 - Publish one complete authoritative manifest example after real assets and
@@ -53,11 +70,16 @@ the authoritative dataset manifests and methodology, then remove the item.
   validation and locked-test results cannot tune it.
 - After the development scene comparison, write the selected declared scene
   threshold and its source development run ID into video `protocol.yaml`, bump
-  the protocol version, and regenerate the frozen-ASR artifact.
+  the protocol version, refresh preflight, regenerate the frozen-ASR artifact,
+  and run the complete nine-configuration comparison under the final checksum.
 - Confirm that SlideSpeech and the other selected sources are downloadable under
   the recorded terms and that the chosen assets can be checksum-pinned.
 - Verify how many independent validation and locked videos are available before
   treating p95 latency or bootstrap intervals as stable evidence.
+- Freeze consistent visible-line segmentation for reference text and timed
+  occurrences under `normalized_lines_distinct_v1`; each timed unit must have
+  nonempty comparison text and a verified visibility interval. Do not convert
+  reference lines and predicted lines at different granularities.
 - Define the annotation labels needed to diagnose slide, screen-recording,
   presenter, gradual-change, and repeated-scene behavior from the real corpus.
 - Publish one complete video-manifest row after the source interval, visible-text
@@ -113,6 +135,16 @@ the authoritative dataset manifests and methodology, then remove the item.
 - Publish one complete authoritative RAG document row and answerable,
   unanswerable, table, formula, and mixed question examples after the real
   manifests and checksums exist.
+
+## Vector databases
+
+- Freeze the independent synthetic corpus/query seeds and selected-real-corpus
+  allocation for validation and locked reporting, including exact workload sizes,
+  dimensions, filters, concurrency, and source provenance. Locked requests must
+  not reuse inputs observed during server/index selection.
+- Set minimum successful-request and independent-query support for p95/p99
+  reporting per workload cell. Record submitted, successful, and failed counts;
+  many failed or repeated requests do not establish tail-latency support.
 
 ## Resolution rule
 

@@ -2,7 +2,7 @@
 
 [Project overview](../../README.md) ·
 [Architecture](overview.md) ·
-[Pipeline](application.md) · [Extraction benchmark methodology](../benchmarks/methodology.md#1-document-extraction)
+[Pipeline](application.md) · [Extraction benchmark methodology](../benchmarks/extraction/document/methodology.md)
 
 ## Role
 
@@ -43,6 +43,13 @@ collapse. This projection compares text but does not clean stored output. Struct
 output canonicalization is a separate operation used only to make equivalent
 serialized objects stable for comparison, hashing, and caching.
 
+Document benchmark attempts bypass the completed-source result cache so each
+measured request actually executes extraction. Loaded model/runtime reuse is
+expected. Only the first measured output supplies quality scores; later outputs
+are validated and retained for repeatability and timing. The
+[document methodology](../benchmarks/extraction/document/methodology.md)
+defines the benchmark lifecycle separately from production caching.
+
 ## Current production routes
 
 | Source | Provisional route |
@@ -70,6 +77,6 @@ raw exceptions through the UI.
 
 ## Related benchmarks
 
-- [Complete document parsing](../benchmarks/methodology.md#1-document-extraction)
-- [Audio transcription](../benchmarks/methodology.md#2-audio-extraction)
-- [Video keyframes](../benchmarks/methodology.md#3-video-extraction)
+- [Complete document parsing](../benchmarks/extraction/document/methodology.md)
+- [Audio transcription](../benchmarks/extraction/audio/methodology.md)
+- [Video keyframes](../benchmarks/extraction/video/methodology.md)

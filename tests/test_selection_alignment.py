@@ -121,8 +121,12 @@ def test_embedding_documentation_matches_executable_registry() -> None:
     model_selection = (ROOT / "docs/benchmarks/model-selection.md").read_text(
         encoding="utf-8"
     )
-    methodology = (ROOT / "docs/benchmarks/methodology.md").read_text(encoding="utf-8")
-    metrics = (ROOT / "docs/benchmarks/metrics.md").read_text(encoding="utf-8")
+    methodology = (
+        ROOT / "docs/benchmarks/rag/chunking_embedding/methodology.md"
+    ).read_text(encoding="utf-8")
+    metrics = (ROOT / "docs/benchmarks/rag/chunking_embedding/metrics.md").read_text(
+        encoding="utf-8"
+    )
 
     assert all(candidate in model_selection for candidate in selected)
     assert PRODUCTION_EMBEDDING_MODEL in model_selection

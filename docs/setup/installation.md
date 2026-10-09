@@ -132,10 +132,11 @@ python -m experiments.benchmarks.prepare all-models
 ```
 
 `embedding-models` prepares only the six candidates used by the
-chunking--embedding matrix. `rag-models` is the aggregate RAG target and prepares
-the selected rerankers and generators. Once a semantic judge has been selected,
-calibrated, and added to the frozen evaluation contract, the aggregate target
-also prepares that judge.
+chunking–embedding matrix. `rag-models` is the aggregate target for the approved
+benchmark embeddings, rerankers, and generators. Judge setup follows the later
+calibrated evaluation contract: a hosted judge needs credentials rather than a
+local snapshot, while a self-hosted judge needs an explicit pinned preparation
+step. No unselected judge is downloaded by these commands.
 The application's provisional CPU Qwen3-1.7B snapshot is separate from the
 generation benchmark: it is not the benchmark control and is not part of the
 three-candidate generator shortlist.
@@ -296,9 +297,10 @@ ports, and benchmark data remains separate from application data.
 
 ## 6. Next steps
 
-Software, models, and source datasets are now prepared. Development/validation extraction
-benchmarks remain unavailable until the downloaded samples have been reviewed,
-annotated, checksummed, and frozen into the manifests required by the
+After the relevant preparation steps, software, model snapshots, and raw source
+pools are available. Authoritative development, validation, and locked runs
+still require reviewed, annotated, checksummed manifests and all applicable
+qualification/evaluator dependencies described in the
 [dataset guide](../benchmarks/datasets.md) and
 [pending-data checklist](../benchmarks/pending-data-review.md).
 

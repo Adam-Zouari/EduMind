@@ -1,7 +1,7 @@
 # Benchmark candidate selection
 
 [Project overview](../../README.md) · [Documentation map](../README.md) ·
-[Benchmark program](../README.md#experiments) · [Benchmark manual](methodology.md) ·
+[Benchmark program](../README.md#experiments) · [Shared methodology](methodology.md) ·
 [Selection evidence](../../experiments/benchmarks/selection_evidence.csv)
 
 Status: **public-evidence shortlist; EduMind's local benchmarks inform the engineer's final decisions**
@@ -18,7 +18,7 @@ Candidate selection follows the same practical sequence for each component:
 2. **Inspect relevant public evidence.** Prefer a common task-specific benchmark such as MTEB Retrieval, a common reranker comparison, OmniDocBench, or the Open ASR Leaderboard. General-capability evidence is used only when no current task-specific comparison covers the candidate set.
 3. **Apply basic eligibility checks.** A candidate must be downloadable, self-hostable, usable for the intended EduMind deployment, and expose the capability required by the experiment.
 4. **Enforce the target-hardware envelope.** Authoritative ASR, embedding, reranking, and generation candidates must run on the laptop's RTX 3050 4 GiB GPU in the stage's frozen supported 16-bit dtype without CPU offload, automatic device splitting, quantization, or silent fallback. Until hardware qualification is complete, every model processes one inference input at a time; runtimes with a batch setting use batch size `1`. Raw NVML peak total memory on the assigned GPU must not exceed 3,584 MiB. This includes the driver/desktop baseline and leaves a nominal 512 MiB margin on the physical 4,096 MiB device at sampled observations; the baseline is not subtracted. Close other GPU workloads and retain baseline, total/free memory, device identity, and measurement method. The check uses demanding valid development/stress inputs and frozen termination rules and remains active in development, validation, and locked execution. CPU or CUDA may be used for smoke and debugging, but those runs cannot support selection. Models that fail the authoritative gate remain recorded as exclusions rather than receiving a different execution protocol.
-5. **Keep different feasible resource scales.** After eligibility screening, the remaining models are organized into approximate parameter-size groups so the local benchmark compares compact, middle, and higher-quality options that can actually be deployed on the target hardware. A size range may remain empty when no reviewed model passes the hardware gate. These groups describe the reviewed shortlist; they were not fixed before the search.
+5. **Keep different resource scales in the shortlist.** Organize the screened models into approximate parameter-size groups so local qualification can test compact, middle, and larger options. Parameter count and public evidence do not establish GPU fit: recorded preflight determines hardware eligibility. A size range may remain empty after that gate. These groups describe the reviewed shortlist; they were not fixed before the search.
 6. **Prefer comparable evidence.** When candidates were tested under the same public protocol, the strongest eligible representatives are kept. When promising models use incompatible protocols, both may be kept and compared locally instead of comparing unlike public scores.
 7. **Keep an independent control.** Use the current baseline when it is eligible;
    otherwise use a deliberately lightweight lower bound that is not another mode
@@ -70,13 +70,17 @@ Blank values mean that the field does not apply or the information is unavailabl
 | `candidate` | A possible component to evaluate. It may be included or excluded from the runnable shortlist. |
 | `control` | The current or established baseline used to measure improvement. |
 
-`decision=include` means **run this row in the relevant EduMind benchmark**. It does not mean that the candidate has been promoted into production. `decision=exclude` means that the reviewed row is not part of the current runnable shortlist; `reason` explains why.
+`decision=include` means **include this row in the declared benchmark roster,
+subject to hardware qualification**. It does not mean that the candidate has been promoted into production. `decision=exclude` means that the reviewed row is not part of the current runnable shortlist; `reason` explains why.
 
 ### How to interpret public evidence
 
 `public_benchmark`, `public_metric`, and `public_score` must be read together. A score is meaningful only under the dataset, metric, and evaluation protocol that produced it. Public scores are compared only when all of those details and the benchmark version are identical. Results from different MTEB/RTEB tables or other protocols are evidence that a candidate is worth testing, not proof that one candidate is better than another.
 
-Every shortlisted candidate is therefore evaluated again through EduMind's frozen local benchmark. Those common local results make the final comparison.
+Every shortlisted candidate is therefore qualified locally before entering
+EduMind's frozen quality benchmark. Definitive hardware exclusions remain
+visible in the qualification report; common local results compare the
+qualified candidates.
 
 `benchmark_source_url` and `benchmark_source_revision` identify where a public score came from. `candidate_source_url` and `candidate_revision` identify the model, composite profile, or server EduMind intends to execute. These may point to different artifacts: an ASR leaderboard can establish WER while the model page establishes timestamp support and the exact checkpoint.
 
@@ -100,17 +104,20 @@ Controls are run alongside the candidates; being a control does not make a compo
 
 The benchmark includes three complete parser architectures. The selected
 Docling Standard profile comes from the development configuration screen defined
-in [methodology.md](methodology.md); configuration values and experiment design
+in [the document methodology](extraction/document/methodology.md); configuration values and experiment design
 are intentionally documented there rather than repeated in this candidate
 selection record.
 
 | Candidate | Configuration | Why it is included | Evidence |
 |---|---|---|---|
-| Docling Standard finalist | Best measured Standard configuration from the 24-combination screen | Conventional layout/OCR/table pipeline with optional targeted formula enrichment. | [Pinned Docling release](https://github.com/docling-project/docling/releases/tag/v2.117.0); [pipeline options](https://github.com/docling-project/docling/blob/f2683c0b5aa14a53b74373b0640260891cdbc1b0/docling/datamodel/pipeline_options.py) |
+| Docling Standard finalist | Engineer-selected, hardware-qualified Standard profile for each source type | Conventional layout/OCR/table pipeline with optional targeted formula enrichment. | [Pinned Docling release](https://github.com/docling-project/docling/releases/tag/v2.117.0); [pipeline options](https://github.com/docling-project/docling/blob/f2683c0b5aa14a53b74373b0640260891cdbc1b0/docling/datamodel/pipeline_options.py) |
 | Docling VLM | `VlmPipeline` with [`ibm-granite/granite-docling-258M`](https://huggingface.co/ibm-granite/granite-docling-258M/tree/982fe3b40f2fa73c365bdb1bcacf6c81b7184bfe) | Tests Docling's full-page visual parsing architecture rather than only changing Standard-pipeline options. | [Docling VLM documentation](https://docling-project.github.io/docling/usage/vision_models/); [model catalog](https://docling-project.github.io/docling/usage/model_catalog/) |
 | PaddleOCR-VL-1.6 | [`PaddlePaddle/PaddleOCR-VL-1.6`](https://github.com/PaddlePaddle/PaddleOCR/blob/2661c7c0ef5c613e8f93c6e93b2e052399f0f854/docs/version3.x/algorithm/PaddleOCR-VL/PaddleOCR-VL-1.6.en.md), weights `c5630abae1d940eafe0697512a0325494b02ab42` | Adds an independent 0.9B document-parser architecture instead of comparing only two configurations from the Docling project; it is also the strongest compact numerical row in the pinned OmniDocBench v1.6 table. | [Pinned OmniDocBench table](https://github.com/opendatalab/OmniDocBench/blob/193627ae9e97d89188468ed1ee3b7a856ff76044/README.md) |
 
-Every architecture is normalized into the same extracted-document contract and evaluated on the same text, reading-order, page-attribution, table, formula, latency, RAM, and VRAM metrics.
+On shared PDF/image inputs, qualified architectures use the same
+extracted-document contract and reference-eligible metrics. Native DOCX remains
+the separate Docling route described in the
+[document methodology](extraction/document/methodology.md).
 
 ## Audio extraction
 
@@ -126,15 +133,15 @@ The public screen uses **`avg` WER (%)** from the pinned Open ASR English short-
 Shared quality source: [Open ASR methodology](https://github.com/huggingface/open_asr_leaderboard) and the [revision-pinned English short-form result file](https://huggingface.co/datasets/hf-audio/open-asr-leaderboard-results/blob/a0c08d3ac1ef99ea7148666061839b853cbfa89a/english_short_latest.csv).
 
 Short-form public WER only creates the shortlist. Final ASR evaluation follows
-the frozen educational-audio procedure in [methodology.md](methodology.md) and
-the metric contract in [metrics.md](metrics.md).
+the frozen [audio methodology](extraction/audio/methodology.md) and
+[audio metric contract](extraction/audio/metrics.md).
 
 ## Video extraction
 
 Video extraction introduces no additional model candidate. It freezes the
 selected ASR and document parser, then compares the fixed-interval, scene, and
 hybrid keyframe-selection configurations defined in
-[methodology.md](methodology.md). This prevents model changes from being
+[the video methodology](extraction/video/methodology.md). This prevents model changes from being
 mistaken for improvements in frame selection.
 
 ## Chunking and embedding
@@ -223,7 +230,7 @@ Shared evidence: [published comparison](https://huggingface.co/blog/ettin-rerank
 No public benchmark currently compares the selected compact models under one protocol for all of EduMind's target behavior: grounded correctness, faithfulness, citations, answerability, completeness, refusal, and local latency. [ALCE](https://github.com/princeton-nlp/ALCE), [FaithJudge](https://github.com/vectara/FaithJudge), [ChatRAG-Bench](https://huggingface.co/datasets/nvidia/ChatRAG-Bench), and [FACTS Grounding](https://www.kaggle.com/benchmarks/google/facts-grounding) are relevant, but do not publish a common result for these current checkpoints.
 
 Artificial Analysis is therefore used only to choose plausible compact quality
-points. Its current Intelligence Index gives the three candidates one common
+points. The Intelligence Index values recorded at the review date give the three candidates one common
 screening reference, but it does not evaluate the control and does not select
 the final generator. The control instead has a direct same-protocol comparison
 with Qwen3-0.6B in the Falcon-H1-Tiny technical report.
@@ -232,7 +239,7 @@ with Qwen3-0.6B in the Falcon-H1-Tiny technical report.
 |---|---|---:|---|
 | ~0.6B | [`Qwen/Qwen3-0.6B`](https://huggingface.co/Qwen/Qwen3-0.6B/tree/c1899de289a04d12100db370d81485cdf75e47ca) | [AA reasoning score **5**](https://artificialanalysis.ai/models/qwen3-0.6b-instruct-reasoning) | Small established candidate and first candidate scale above the control. Its official direct and reasoning modes are both evaluated. |
 | ~0.8B | [`Qwen/Qwen3.5-0.8B`](https://huggingface.co/Qwen/Qwen3.5-0.8B/tree/2fc06364715b967f1860aea9cf38778875588b17) | [AA reasoning score **6**](https://artificialanalysis.ai/models/qwen3-5-0-8b) | Newer intermediate candidate that tests whether its quality increase is worth its latency and token cost. Its official direct and reasoning modes are both evaluated. |
-| ~1B | [`openbmb/MiniCPM5-1B`](https://huggingface.co/openbmb/MiniCPM5-1B/tree/87179e5c1f455ef22e6223592d2d61351b525bfc) | [AA reasoning score **9**](https://artificialanalysis.ai/models/minicpm5-1b) | Strongest candidate in the reviewed hardware-feasible range on the common public screen. Its official direct and reasoning modes are both evaluated. |
+| ~1B | [`openbmb/MiniCPM5-1B`](https://huggingface.co/openbmb/MiniCPM5-1B/tree/87179e5c1f455ef22e6223592d2d61351b525bfc) | [AA reasoning score **9**](https://artificialanalysis.ai/models/minicpm5-1b) | Highest recorded score among the three shortlisted checkpoints in the common public screen; local hardware eligibility still requires preflight. Its official direct and reasoning modes are both evaluated. |
 | Control | [`tiiuae/Falcon-H1-Tiny-R-90M`](https://huggingface.co/tiiuae/Falcon-H1-Tiny-R-90M/tree/7385612bf04c64405a51b29b6229d6d2ab0e72fd) | [Direct reasoning comparison](https://tiiuae-tiny-h1-blogpost.hf.space/) | Independent 91M lower-bound control. The report evaluates it and Qwen3-0.6B on the same AIME24, AIME25, LiveCodeBench v6, and MATH-500 protocol and reports the control below Qwen on all four. |
 
 Public scores provide reasoning-mode screening evidence; they do not decide

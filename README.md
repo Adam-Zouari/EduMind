@@ -25,7 +25,7 @@ Read the project in this order:
 1. [Architecture overview](docs/architecture/overview.md) explains the local application and its separation from experiments.
 2. [Dataset guide](docs/benchmarks/datasets.md) describes benchmark sources, manifests, and evidence requirements.
 3. [Model selection](docs/benchmarks/model-selection.md) records why candidates entered or left the shortlist; [selection evidence](experiments/benchmarks/selection_evidence.csv) pins their identities and revisions.
-4. [Methodology](docs/benchmarks/methodology.md) explains the experiment stages; [metrics](docs/benchmarks/metrics.md) defines what each stage measures.
+4. [Shared methodology](docs/benchmarks/methodology.md) explains the benchmark lifecycle and links to each benchmark's procedure; [metric conventions](docs/benchmarks/metrics.md) links to their scoring definitions.
 5. [Benchmark runbook](docs/benchmarks/running.md) gives preparation and execution commands.
 6. [Pending data review](docs/benchmarks/pending-data-review.md) tracks decisions that require the real, reviewed datasets before results can be trusted.
 

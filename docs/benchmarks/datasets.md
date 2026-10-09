@@ -95,8 +95,8 @@ every presentation style:
 | Source | Development | Validation | Locked test | Total | What it contributes |
 |---|---:|---:|---:|---:|---|
 | [SlideSpeech](https://www.openslr.org/144/) | 8 | 2 | 2 | 12 | Slide-based lectures and presenter-plus-slide layouts |
-| [AVLectures](https://github.com/Darshansingh11/AVLectures) | 5 | 2 | 2 | Blackboard, digital-board, and mixed lecture modes |
-| EduMind-owned recordings | 5 | 2 | 2 | Screen sharing, code editors, notebooks, and gradual UI/text changes |
+| [AVLectures](https://github.com/Darshansingh11/AVLectures) | 5 | 2 | 2 | 9 | Blackboard, digital-board, and mixed lecture modes |
+| EduMind-owned recordings | 5 | 2 | 2 | 9 | Screen sharing, code editors, notebooks, and gradual UI/text changes |
 | **Total** | **18** | **6** | **6** | **30** | |
 
 Public subtitles and OCR are **annotation seeds**, not EduMind ground truth. A
@@ -782,12 +782,55 @@ Every extraction sample requires:
 - the frozen split and preprocessing version; and
 - only human-verified reference fields, never an unreviewed model prediction.
 
-Document samples additionally contain ordered reference text, per-page text,
-an explicit `reference_capabilities` list, and only the applicable element
-records: kind, text, order, page, hierarchy, bounding box, table structure, or
-formula representation. Table/formula capability claims also include explicit
+Document samples additionally contain verified ordered reference text and an
+explicit `reference_capabilities` list. PDF/image samples claiming `pages`
+include complete per-page references; native DOCX does not require invented
+page boundaries. Element records contain only the applicable annotations:
+kind, text, order, page, hierarchy, bounding box, table structure, or formula
+representation. Table/formula capability claims also include explicit
 `has_table` and `has_formula` booleans so a verified negative is distinguishable
 from a missing annotation.
+
+Document reference review must also establish the following:
+
+- Empty text, blank pages, and empty element sequences are explicit verified
+  annotations, not defaults inserted for missing data. Include reviewed blank
+  sources and table/formula negatives within the declared corpus allocation;
+  record positive and verified-negative counts by split and source type.
+- PDF/image page references identify every physical input page, including blank
+  pages. Images count as one page. Native DOCX has no fixed visual page or box
+  annotations unless a separate rendering contract is deliberately introduced.
+- Element order and granularity are consistent across source conversions.
+  Record which element types belong to each evaluated sequence; extra predicted
+  elements of those types remain visible in Reading Order NED.
+- Boxes have finite coordinates, valid coordinate units, positive area, and
+  consistent page geometry. A degenerate reference box is invalid data, not an
+  empty-comparison convention.
+- Explicitly annotated roots have no parent; missing hierarchy annotations do
+  not establish a root. Parent IDs resolve to reference elements, required levels
+  are recorded, and parent graphs contain no contradictory relationships.
+- Every claimed table has a valid structure representation, even if every cell
+  is blank. Every claimed formula has a valid nonempty expression. Presence
+  booleans agree with the object lists. A missing expected prediction receives
+  zero recognition credit; a missing reference representation must be repaired.
+- Objects evaluated without boxes or comparison text have a verified non-text
+  identity, such as the canonical blank-table structure or a media identity.
+  Freeze its conversion alongside symbol-preserving formula/code unitization.
+  Empty text cannot identify two objects, and prose normalization cannot erase their
+  structural or mathematical identity. The metric contract specifies the
+  exact-structure fallback for box-free blank-cell tables.
+- Reference capabilities determine the same metric eligibility for every
+  candidate. Record independent source IDs so pages, clean/degraded captures, and
+  excerpts from one original document remain together in splits and bootstrap
+  draws. Their repeated inference attempts do not increase the independent count.
+
+Development, validation, and locked document comparisons score quality only
+from the first measured attempt, use all three attempts for repeatability and
+failure rates, and average quality within documents before averaging documents.
+Smoke uses one measured attempt and supplies no repeatability evidence. These
+execution results are run artifacts, not annotations added to the dataset
+manifest. The complete empty, missing, failed, and unavailable rules are in
+[the document metric contract](extraction/document/metrics.md).
 
 Speech samples additionally contain:
 
