@@ -49,6 +49,11 @@ The experiment uses the same frozen QASPER-plus-structured manifest, canonical
 chunks, questions, evidence-unit IDs, and source intervals as the preceding
 chunking/embedding decision.
 
+The [shared data-validation workflow](../../data-validation.md) checks those
+prepared inputs and source isolation before execution; its standalone/report
+interface is planned. Generated pool-collection, chunk-content, and index
+checksums are separate runtime integrity gates, not additional data annotations.
+
 The retrieval/reranking smoke fixture contains 30 frozen canonical chunks. This
 leaves ten chunks outside each top-20 pool, so smoke execution can exercise pool
 selection, exclusion, fusion, and permutation checks. The count is a smoke

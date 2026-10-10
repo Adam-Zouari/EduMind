@@ -219,13 +219,14 @@ metrics.
 
 Citation Precision, Recall, and F1 are calculated only for answerable questions,
 which always have one or more verified gold evidence units. Unanswerable
-questions are handled by answerability and refusal metrics rather than receiving
-artificially perfect citation scores.
+questions are evaluated by Refusal Validity Rate and the applicable reliability
+metrics rather than receiving artificially perfect citation scores.
 
 A citation is correct when it is a valid supplied evidence-block ID and that
 block completely covers at least one required gold evidence unit. Repeated IDs
-count once. An unknown ID is produced but incorrect and also makes the response
-malformed.
+count once. An unknown ID makes the response malformed, so all three reported
+citation scores are zero under the malformed-output rule below. Retain the
+individual citation checks in artifacts for diagnosis.
 
 ### Citation Precision
 
@@ -655,6 +656,10 @@ include refusals and failed attempts.
 
 Warm latency and token-workload summaries use the same fixed question set and
 report their observation counts. Cold load and observed RAM/VRAM peaks are
-single-run measurements and receive no fabricated interval. Null is reserved
-for explicitly ineligible or runtime-unsupported values. A missing required
-sample, artifact, or metric is a failed child, not a null score.
+single-run measurements and receive no fabricated interval. An explicitly
+inapplicable metric or an operational value with no valid observation is null,
+with its reason and observation counts retained. For example, a recorded request
+that emits no token has no TTFT observation; its failure or completion outcome
+still contributes to the applicable reliability metrics. This differs from a
+missing required attempt record, artifact, metric field, or timing instrument:
+those omissions make the evaluation incomplete, not a valid null observation.

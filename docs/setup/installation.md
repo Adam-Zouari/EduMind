@@ -280,6 +280,12 @@ Audio and video regeneration requires an FFmpeg build containing the optional
 `flite` filter. This is needed only to recreate the committed synthetic speech;
 running the existing smoke benchmarks does not require `flite`.
 
+Prepared assets still need reference and split review before benchmark execution.
+The [shared data-validation guide](../benchmarks/data-validation.md) defines the
+approved standalone checks and report-reuse interface for every suite. Its new
+commands are planned, not installed functionality; current inline runner checks
+remain necessary until that interface is implemented.
+
 ## 5. Vector databases
 
 Prepare and digest-lock the four server images:
@@ -316,7 +322,7 @@ require updating several copies.
 
 Before using a run as comparative evidence:
 
-- `prepare.py --list` names only included application and benchmark models plus documented Docling subcomponents.
+- `python -m experiments.benchmarks.prepare --list` names only included application and benchmark models plus documented Docling subcomponents.
 - `selected.json` exists and every recorded directory exists.
 - Development, validation, and locked manifests pass checksum, provenance,
   evidence-offset, and split-leakage validation.
@@ -324,7 +330,7 @@ Before using a run as comparative evidence:
 - generation candidates share the same explicit device.
 - vector servers report healthy and use actual ANN indexes.
 - the parent MLflow run reports `benchmark_complete=1`; failed candidates and partial artifacts remain visible, and smoke output is never treated as comparative evidence.
-- component winners and the complete system are frozen before applicable locked data is inspected.
+- component winners and the complete system are frozen before candidates are evaluated on their applicable locked data; offline annotation review remains separate from candidate selection.
 - Final RAG human review is imported as reporting-only evidence, not used to select another system.
 
 If a model is missing, rerun the matching preparation target. If a pinned revision no longer resolves, stop and review the selection package; do not replace it with the repository's current head.

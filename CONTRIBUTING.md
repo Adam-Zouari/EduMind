@@ -52,6 +52,9 @@ python -m pytest tests/test_benchmark_metrics.py tests/test_benchmark_datasets.p
   metric pages.
 - Put benchmark commands and operational troubleshooting in the
   [benchmark runbook](docs/benchmarks/running.md).
+- Put preparation-time data checks, reusable reports, and automatic
+  validated-input verification in the
+  [data-validation guide](docs/benchmarks/data-validation.md).
 - Put public candidate-screening evidence only in the
   [model-selection rationale](docs/benchmarks/model-selection.md).
 - Do not create a stage page that repeats these authorities. Add a page only

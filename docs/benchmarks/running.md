@@ -21,6 +21,10 @@ measurement, linear evidence-count nDCG, and shared answerable-question
 eligibility for alpha-nDCG remains pending. Documentation changes alone do not
 implement these contracts or enable the new commands. The current retrieval
 scorer still uses binary nDCG gains and narrower alpha-nDCG eligibility.
+The revised ASR empty/failure/repeatability contract, standalone full data
+validation, and automatic validated-input verification also require
+implementation. Planned validator commands are identified below; existing
+runners still use inline data checks.
 
 Start MLflow in a separate terminal:
 
@@ -46,7 +50,44 @@ for local debugging.
 
 ## 2. Follow the lifecycle
 
-Applicable model-backed benchmarks use this order:
+First prepare and review the inputs. The approved workflow has two steps:
+
+- **Full data validation:** you run the standalone validator for a prepared
+  dataset version. It checks the data rules and saves a report; rerun it after
+  relevant input or validation-requirement changes.
+- **Automatic validated-input verification:** each profile invocation checks
+  that its current input-file contents and applicable requirements match a
+  successful report. It does not repeat full validation. A mismatch stops the
+  run before loading any candidate, rather than triggering silent revalidation.
+
+Both steps are outside latency and candidate resource measurement. See the
+[data-validation guide](data-validation.md#preparation-and-execution) for the
+exact checks, example, and planned module layout. Until implementation, retain
+current inline checks and manual reference/split review rather than treating a
+missing validator as certification.
+
+Planned preparation commands (not yet executable):
+
+```powershell
+python -m experiments.benchmarks.validate audio --profile development
+python -m experiments.benchmarks.validate audio --profile all
+python -m experiments.benchmarks.validate document --profile all
+python -m experiments.benchmarks.validate all --profile all
+```
+
+One domain validator serves its applicable profiles; the coordinator uses the
+same checks for all benchmarks. Missing required inputs make a validation batch
+incomplete, not successful. `all --profile smoke` checks only applicable smoke
+fixtures when authoritative data is unavailable. Preflight uses validated
+development/stress inputs and never inspects held-out answers. Generated reports
+live under `artifacts/benchmarks/data-validation/<benchmark>/<fingerprint>.json`.
+
+Each profile uses its own inputs and matching report; validating development
+does not certify the unseen validation or locked datasets. The benchmark
+`validation` profile evaluates finalists on unseen data and is distinct from
+both preparation checks and automatic validated-input verification.
+
+After valid input preparation, applicable model-backed benchmarks use this order:
 
 ```text
 smoke-cpu + smoke-cuda -> preflight -> development -> validation -> locked
@@ -106,6 +147,10 @@ placeholders. Validation automatically reads
 decision has been consumed, preserve it and create a versioned replacement if
 the selection changes. `--shortlist PATH` and stage-specific selection options
 remain explicit overrides.
+
+A `*-locked.json` component decision records the winner chosen from validation;
+it exists before the component's locked report. Downstream benchmarks consume
+that frozen choice, not a selection made from locked-test scores.
 
 Development locates preflight by an exact SHA-256 fingerprint covering the
 candidate roster, model revisions and checksums, protocols, software locks,
@@ -261,6 +306,24 @@ After development, create `audio-validation.json`. After validation, create
 `audio-locked.json` containing exactly one ASR profile. The three authoritative
 audio manifests and their matching reliability-control splits are validated as
 one leakage-free dataset contract.
+
+The [approved ASR metric contract](extraction/audio/metrics.md) uses only the
+designated first measured output for quality, with no replacement after failure.
+Development, validation, and locked use three measured speech attempts with the
+same seed/settings and one measured attempt per control after the one warmup.
+All speech attempts supply pairwise Transcript Repeatability Success Rate;
+speech and control attempts supply Attempt Failure Rate. These are evidence
+inside each candidate run, not separate candidate-selection rounds. Confidence
+intervals resample independent sources, not the three attempts.
+
+Unexpected Empty Transcript Rate and Nonspeech False-Transcription Rate use
+valid completed eligible first outputs; crashes remain failure records, not
+empty transcripts. WER/CER/components pool completed first-output edit counts;
+their raw counts remain artifacts. Timestamp coverage retains required reference
+segments even after first-attempt failure; boundary MAE needs actual matches.
+Null fields retain reasons and support counts in artifacts even when MLflow
+omits their scalar keys. Implement these approved changes before treating runs
+as evidence under this revised contract.
 
 ## 6. Video extraction
 

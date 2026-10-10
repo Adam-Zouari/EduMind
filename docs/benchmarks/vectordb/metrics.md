@@ -26,6 +26,7 @@ pooling unlike conditions into one score.
 | Filter Correctness | Validity gate | Do all returned records satisfy every requested predicate? | Must equal 1.0 |
 | Empty-Filter Correctness | Validity gate | Does a filter with no valid match return an empty result? | Must equal 1.0 |
 | ANN and Filtered ANN Recall@1 | Secondary | Does the server preserve the single nearest result? | Higher |
+| Real-retrieval nDCG, Evidence-unit Recall, and Evidence-token Precision @3/@5 | Secondary | Does the selected retrieval stack preserve useful evidence when backed by this server? | Higher |
 | Replacement, Deletion, Persistence, and ANN-Index Correctness | Validity gate | Does the server preserve required state semantics and actually use the configured ANN index? | Must pass |
 
 ### Performance and resource measurements
@@ -103,6 +104,21 @@ aggregate is the mean over verified-empty requests.
 
 **Range and direction:** `[0, 1]`; `1.0` is required.
 
+### Real-retrieval quality
+
+**Question:** Does replacing exact search with the server's ANN search preserve
+evidence retrieval for the frozen selected stack?
+
+The selected-real workload uses the same canonical chunks, precomputed vectors,
+questions, and evidence annotations for every server finalist. It reports
+nDCG, Evidence-unit Recall, and Evidence-token Precision at `@3` and `@5` using
+the [retrieval and reranking metric definitions](../rag/retrieval_reranking/metrics.md#retrieval-quality-1).
+These are retrieval scores, not generated-answer scores or ANN neighbour recall.
+
+**Range and direction:** `[0, 1]`; higher is better. Their answerable-question
+eligibility, document-macro aggregation, and document-bootstrap intervals remain
+unchanged; the synthetic ANN query aggregation below does not replace them.
+
 ## Conformance validity gates
 
 Replacement checks require an upserted ID to expose only its new vector and
@@ -139,8 +155,10 @@ time until each mutation is visible to queries.
 
 Restart Readiness starts when restart is requested and ends when health checks
 pass and the persisted ANN index answers its verification query. First-Query
-Latency times the first successful query after readiness and is not mixed into
-warm latency percentiles.
+Latency times the first successful benchmark workload query after that readiness
+verification and is not mixed into warm latency percentiles. The verification
+query is a prerequisite, so this is not a claim that the server has answered no
+query since restart.
 
 Peak server RAM is the largest sampled resident-memory total for server
 processes or containers during the measured phase. Persistent Storage is the
@@ -149,8 +167,8 @@ measurements are labeled separately and are never added to server peaks.
 
 ## Eligibility, aggregation, and confidence intervals
 
-Search-quality metrics are calculated once per frozen query and then averaged
-within each workload cell. Filtered results are also averaged independently per
+Synthetic ANN search-quality metrics are calculated once per frozen query and
+then averaged within each workload cell. Filtered results are also averaged independently per
 selectivity band. Query identities and conditions remain aligned across servers.
 Development, validation, and locked quality intervals use 10,000 bootstrap resamples of complete
 query IDs with seed 42. A resampled query carries all of its compared server

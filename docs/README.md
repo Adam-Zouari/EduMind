@@ -54,6 +54,7 @@ records commands and current implementation limitations.
 | Why was each candidate included? | [Model-selection rationale](benchmarks/model-selection.md) |
 | Which commands prepare and run experiments? | [Benchmark runbook](benchmarks/running.md) |
 | How are benchmark datasets acquired and described? | [Benchmark dataset guide](benchmarks/datasets.md) |
+| How are prepared inputs checked before execution, and how will validation reports be reused? | [Data-validation contract and planned commands](benchmarks/data-validation.md) |
 | Which benchmark decisions remain blocked on inspecting downloaded data? | [Temporary data-review checklist](benchmarks/pending-data-review.md) |
 | What are the machine-readable model decisions and revisions? | [`selection_evidence.csv`](../experiments/benchmarks/selection_evidence.csv) |
 
@@ -69,11 +70,13 @@ Human documentation explains the system; it does not override executable
 inputs:
 
 - `config/base.yaml` defines provisional production settings.
-- `experiments/benchmarks/selection_evidence.csv` defines included model
-  identities and immutable revisions.
+- `experiments/benchmarks/selection_evidence.csv` records screening include/exclude
+  decisions, checkpoint identities/revisions, and supporting public evidence.
 - Each benchmark's `protocol.yaml` defines its settings and, where needed, its
   candidate roster; fixed adapter support is defined in code.
 - Frozen dataset manifests define samples, splits, checksums, and provenance.
+- Generated data-validation reports identify checked inputs and requirements;
+  their standalone/reuse interface is specified but not yet implemented.
 - `data/benchmarks/models/selected.json` records model revisions, prepared local
   snapshot paths, and checksums.
 - Engineer-reviewed files under `data/benchmarks/decisions/` record selections

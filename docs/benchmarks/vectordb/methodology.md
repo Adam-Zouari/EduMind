@@ -27,6 +27,12 @@ embeddings internally.
 
 ## Data and configurations
 
+The [shared data-validation workflow](../data-validation.md) checks synthetic
+and selected-real workload shapes, finite vectors, metadata/filter cases,
+reference inputs, seeds, and provenance before timed execution. Its proposed
+standalone/report interface remains pending implementation. Database health,
+index readiness, and adapter conformance are separate runtime/environment gates.
+
 | Execution profile | Workload |
 |---|---|
 | Smoke | 1,000 vectors at dimension 384; 50 queries; concurrency 1 |
@@ -98,7 +104,7 @@ source provenance must be reviewed and recorded before the locked run.
 |---|---|---|
 | Validity gate | Health, cosine behavior, dimension rejection, Filter Correctness, Empty-Filter Correctness, replacement, deletion, persistence, restart, and ANN-index verification | Determines whether results are trustworthy; these are not quality scores. |
 | Primary | ANN Recall@3/@5/@10, Filtered ANN Recall@3/@5/@10 | Measures preservation of exact neighbours at application-relevant depths, with and without metadata filters. |
-| Secondary | ANN and Filtered ANN Recall@1; complete-RAG nDCG, Evidence-unit Recall, and Evidence-token Precision at @3/@5 | Shows rank-one behavior and whether ANN results preserve real evidence retrieval. |
+| Secondary | ANN and Filtered ANN Recall@1; real-retrieval nDCG, Evidence-unit Recall, and Evidence-token Precision at @3/@5 | Shows rank-one behavior and whether ANN results preserve real evidence retrieval. |
 | Diagnostic | Unfiltered/filtered p50 latency, first query after restart | Explains typical and cold-query behavior. |
 | Operational | Unfiltered/filtered p95/p99, throughput and error rate at each concurrency, build time and vectors/second, incremental upsert/delete throughput, restart readiness, peak server RAM, persistent storage | Measures tail latency, load handling, ingestion, restart, memory, and disk cost. |
 

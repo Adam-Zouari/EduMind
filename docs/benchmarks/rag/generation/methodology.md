@@ -55,6 +55,12 @@ the end-to-end Final RAG report.
 Using frozen evidence prevents a good generator from being penalized by a poor
 retriever.
 
+The [shared data-validation workflow](../../data-validation.md) checks accepted
+answers, required facts, supplied evidence, answerability, context provenance,
+and source isolation before execution; its standalone/report interface is
+planned. Judge calibration and output-schema validation remain separate gates.
+Preparation checks do not enter generation latency or model resource windows.
+
 ## Frozen decoding and output contract
 
 Every generator uses its exact pinned local snapshot, official chat template,

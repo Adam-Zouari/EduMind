@@ -45,11 +45,28 @@ The shared rules on this page apply alongside each benchmark's specific contract
 | Video extraction | [Methodology](extraction/video/methodology.md) | [Metrics](extraction/video/metrics.md) |
 | Chunking and embedding | [Methodology](rag/chunking_embedding/methodology.md) | [Metrics](rag/chunking_embedding/metrics.md) |
 | Retrieval and reranking | [Methodology](rag/retrieval_reranking/methodology.md) | [Metrics](rag/retrieval_reranking/metrics.md) |
-| Vector databases | [Methodology](vectordb/methodology.md) | [Metrics](vectordb/metrics.md) |
 | Generation | [Methodology](rag/generation/methodology.md) | [Metrics](rag/generation/metrics.md) |
+| Vector databases | [Methodology](vectordb/methodology.md) | [Metrics](vectordb/metrics.md) |
 | Final RAG and human review | [Methodology](rag/final/methodology.md) | [Metrics](rag/final/metrics.md) |
 
 ## Benchmark execution profiles
+
+Each profile consumes reviewed inputs. The shared
+[data-validation guide](data-validation.md#preparation-and-execution) distinguishes
+full data validation, run separately during preparation, from automatic
+validated-input verification before each profile invocation. Full validation
+checks the data rules and records the checked inputs; verification confirms that
+the current file contents and applicable requirements still match that successful
+report, without rerunning the full validator. Changed or unverified inputs stop
+execution before candidates load. Each profile needs a report covering its own
+inputs; a development report does not certify a different validation dataset.
+Those checks are outside model loading, warmup, measured latency, and candidate
+resource monitoring. Valid inputs do not make every metric applicable to every
+row; task eligibility and prediction failures follow the metric contracts.
+The standalone validator/report-reuse interface is approved but still requires
+implementation; existing inline runner checks remain in place meanwhile.
+The benchmark `validation` profile means evaluating finalists on unseen data,
+not either of these data checks.
 
 An execution profile controls **which candidates may run, which dataset split
 they may see, and what decisions the result may support**. It is not a model
@@ -80,7 +97,7 @@ Final RAG requires a separate untouched holdout.
 | Phase or profile | Data | Candidates | Purpose | Result may be used for |
 |---|---|---|---|---|
 | `smoke` | Tiny committed fixtures | The protocol's smoke roster | Run separate CPU and CUDA parents to catch loading, wiring, schema, scoring, artifact, and device-path errors cheaply. | Debugging only; never ranking, tuning, qualification, or selection. |
-| `preflight` | Reviewed development/stress inputs | Every declared candidate | Qualify the exact model, protocol, software locks, CUDA device, dtype, batch size, and supported input envelope. | Hardware eligibility for development only. |
+| `preflight` | Reviewed development/stress inputs | Every declared candidate | Qualify the exact model, protocol, software locks, CUDA device, dtype, batch size, and supported input envelope. | Hardware eligibility for authoritative execution while the qualification identity and input envelope still match; never quality selection. |
 | `development` | Development manifest | Matching preflight's qualified candidates; declared CPU-only server configurations for Vector Database | Compare alternatives, inspect failures, and make all tuning or shortlist decisions. | An engineer-reviewed finalist decision for validation. |
 | `validation` | Unseen validation manifest | Only finalists recorded from a completed development run | Test whether the development conclusion holds on unseen data without reopening the search. | An engineer-reviewed final component decision. |
 | `locked` | Untouched locked-test manifest | Exactly one fully frozen selection | Produce the final unbiased estimate after every model, setting, and policy decision is fixed. | Reporting only; never further tuning or reselection. |
@@ -212,18 +229,23 @@ Benchmark progression uses two different records that must not be confused:
   qualification and determines which declared candidates are eligible to enter
   development. It does not rank quality or select a preferred candidate.
 - An engineer-decision JSON is written manually after reviewing a complete
-  development or validation comparison. It records which successful candidates
-  advance and why. It never changes benchmark settings or application
-  configuration.
+  development or validation comparison. It records which candidates with
+  complete, valid run-level evidence advance and why. It never changes benchmark
+  settings or application configuration.
 
 The complete flow is:
 
 ```text
-protocol + model lock + smoke manifest
+reviewed assets + references + frozen manifests
+-> standalone full data validation and cross-split checks
+-> successful versioned data-validation reports
+-> automatic validated-input verification before each invocation
+
+protocol + model lock + validated smoke manifest
 -> smoke-cpu and smoke-cuda
 -> wiring evidence only; no candidate advances from smoke
 
-protocol + model lock + reviewed development inputs
+protocol + model lock + validated development/stress inputs
 -> preflight
 -> machine-generated preflight_report.json
 -> exact qualified candidate roster
@@ -242,14 +264,14 @@ selected finalists + validation manifest
 
 one frozen winner + locked-test manifest
 -> locked report
--> no further tuning, selection, or promotion
+-> no further tuning or reselection from locked results
 ```
 
 Final RAG consumes the single selected configuration from each component's
 validation-winner decision. The engineer freezes their composition, including
-top-K, prompt, and context settings, before any applicable locked data is
-examined. Component locked reports are evidence about those fixed choices, not
-inputs to another finalist search.
+top-K, prompt, and context settings, before any applicable locked evaluation.
+Offline annotation review is separate from candidate selection. Component locked
+reports are evidence about those fixed choices, not inputs to another finalist search.
 
 Project-owned decisions live under `data/benchmarks/decisions/` because they are
 reviewed experimental inputs, not executable implementation. Validation
@@ -316,12 +338,15 @@ implementation:
 | Final RAG | `experiments/benchmarks/rag/final/protocol.yaml` |
 | Vector database | `experiments/benchmarks/vectordb/protocol.yaml` |
 
-These files own every setting that can change outputs, eligibility, latency,
-memory, or failure status: search ranges, parser and decoder options, cutoffs,
+These files own the editable benchmark settings that can change outputs,
+eligibility, latency, memory, or failure status: search ranges, parser and decoder
+options, cutoffs,
 the shared one-warmup rule for measured profiles, repetitions, batch sizes,
 statistical settings, hardware gates, and preflight telemetry interval, polling
 interval, qualification repetitions, and worker timeout. Preflight warmups are
-always zero.
+always zero. Fixed metric formulas, schema checks, model-architecture facts,
+numerical tolerances, and deterministic algorithm rules remain code invariants;
+the metric contract and source provenance identify the definitions used.
 Their schemas reject missing, unknown, contradictory, and non-finite values.
 The resolved protocol has a stable checksum. Parent fingerprints include all
 composed protocol checksums; workers verify the version, checksum, and resolved
@@ -342,6 +367,9 @@ Configuration files have separate responsibilities:
 - `data/benchmarks/models/selected.json` stores pinned revisions, snapshot
   locations, and checksums.
 - dataset manifests store samples, splits, annotations, and data provenance.
+- Generated data-validation reports under
+  `artifacts/benchmarks/data-validation/` attest to the exact checked inputs and
+  validation requirements; they are not selection or hardware decisions.
 - `config/base.yaml` stores provisional application behavior. Promotion is a
   deliberate manual edit after review; no benchmark modifies it.
 
@@ -381,8 +409,11 @@ EduMind / <Benchmark>
 
 Only applicable phases appear. Vector Database omits CUDA smoke and preflight
 but retains its own locked report. Final RAG has only a locked parent with one
-frozen complete-system child. Video may create separate frozen-ASR and
-visual-comparison parents within one phase.
+frozen complete-system child. Document uses source-specific parents: its locked
+invocation reports the selected PDF route, selected image route, and fixed DOCX
+route as one frozen routing policy, not three competing winners. See the
+[Document run structure](extraction/document/methodology.md#mlflow-result-structure).
+Video may create separate frozen-ASR and visual-comparison parents within one phase.
 
 Every parent and child is tagged with the benchmark, profile, concrete phase
 (`smoke-cpu`, `smoke-cuda`, or the authoritative profile), run type, device,
@@ -448,8 +479,8 @@ resampling procedure, with the independent unit appropriate to its benchmark:
 | Document | Source document, retaining all pages and capture variants. |
 | ASR | Speech or control clip; related clips remain grouped if the reviewed manifest defines their common source as the independent unit. |
 | Video | Video; related excerpts remain grouped by the reviewed original source when required. |
-| Chunking–embedding, retrieval–reranking, generation, and Final RAG | Source document with all eligible questions, repeated outputs, and pair results. |
-| Vector database | Query with its aligned requests, within one declared workload cell. |
+| Chunking–embedding, retrieval–reranking, generation, Final RAG, and real vector-server retrieval quality | Source document with all eligible questions, repeated outputs, and pair results. |
+| Vector-database ANN workloads | Query with its aligned requests, within one declared workload cell. |
 
 Resample complete units with replacement 10,000 times using bootstrap seed `42`,
 recalculate the metric's existing aggregate on every draw, and take the 2.5th

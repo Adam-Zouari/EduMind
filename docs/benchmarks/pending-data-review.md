@@ -51,6 +51,17 @@ the authoritative dataset manifests and methodology, then remove the item.
 
 ## Audio extraction
 
+- Verify transcript-field presence separately from reviewed lexical emptiness.
+  Freeze independent source groups, timed-segment coverage, positive normalized
+  reference-word totals, and planned/contributing speech/control counts per
+  split. A fully empty speech split is invalid, but legitimate individual empty
+  projections remain valid; human review must detect falsely empty annotations.
+- Check support for conditional first-output recognition/event rates and boundary
+  MAE, reference-denominator timestamp coverage, three-attempt pairwise
+  repeatability, and scheduled Attempt Failure Rate. Freeze interval support
+  before evaluation; retain undefined-draw and failure counts rather than
+  treating missing measurements as zero.
+
 - Verify the reviewed `conditions` lists: every speech clip must be either
   `clean` or `noisy`, while `accented` and `multi_speaker` may coexist with that
   acoustic label.

@@ -18,7 +18,7 @@ benchmark selection, or server lifecycle management into either subsystem.
 1. classifies and extracts the source;
 2. normalizes the typed document;
 3. creates exact-offset chunks and embeddings;
-4. atomically replaces the logical document in Chroma;
+4. replaces the logical document's chunks in Chroma;
 5. returns extraction/indexing results, warnings, timings, and progress events.
 
 `query()`:

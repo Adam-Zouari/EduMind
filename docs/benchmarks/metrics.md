@@ -21,8 +21,8 @@ The shared rules on this page apply alongside each benchmark's specific contract
 | Video extraction | [Methodology](extraction/video/methodology.md) | [Metrics](extraction/video/metrics.md) |
 | Chunking and embedding | [Methodology](rag/chunking_embedding/methodology.md) | [Metrics](rag/chunking_embedding/metrics.md) |
 | Retrieval and reranking | [Methodology](rag/retrieval_reranking/methodology.md) | [Metrics](rag/retrieval_reranking/metrics.md) |
-| Vector databases | [Methodology](vectordb/methodology.md) | [Metrics](vectordb/metrics.md) |
 | Generation | [Methodology](rag/generation/methodology.md) | [Metrics](rag/generation/metrics.md) |
+| Vector databases | [Methodology](vectordb/methodology.md) | [Metrics](vectordb/metrics.md) |
 | Final RAG and human review | [Methodology](rag/final/methodology.md) | [Metrics](rag/final/metrics.md) |
 
 ## Shared conventions
@@ -38,6 +38,14 @@ The shared rules on this page apply alongside each benchmark's specific contract
 - Source and evidence spans are half-open intervals: `[start, end)`.
 - Empty denominators use the explicit behavior stated in each benchmark's metric contract; they never produce
   fabricated zero-quality observations.
+- A valid empty comparison can have the contract's best or worst numeric value.
+  A failed request is not an observed empty output. `null` is a storage value:
+  retain `inapplicable`, `unavailable`, or `incomplete` status and its reason.
+  Exclude an undefined value only from that metric's numeric calculation, never
+  from retained sample/attempt records or other defined metrics. Report scheduled,
+  eligible, contributing, failed, and unavailable counts. MLflow omits null scalar
+  keys; artifacts preserve them. Invalid references fail
+  [data validation](data-validation.md) before candidate execution.
 - Development, validation, and locked runs retain one row per sample before aggregation.
 - p50, p95, and p99 are latency percentiles. Each throughput metric specifies
   which completed work and timed interval it uses.

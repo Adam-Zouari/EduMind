@@ -13,6 +13,13 @@ public release is a **source pool**. An authoritative run uses a smaller,
 manually reviewed manifest containing exact sample IDs, local paths, checksums,
 licenses, references, and source-family-isolated splits.
 
+After preparation, follow the [shared data-validation guide](data-validation.md)
+for per-profile checks, cross-split isolation, generated reports, and their
+verification before runs. Its standalone commands/report reuse are planned;
+current runners retain inline checks until that interface is implemented.
+Dataset annotation rules live here; prediction scoring lives in each metric
+reference, not in the validator.
+
 ## 1. Final dataset plan
 
 ### Document extraction
@@ -782,7 +789,8 @@ Every extraction sample requires:
 - the frozen split and preprocessing version; and
 - only human-verified reference fields, never an unreviewed model prediction.
 
-Document samples additionally contain verified ordered reference text and an
+Document samples with text annotations contain explicitly supplied verified
+ordered reference text (including reviewed empty text) and an
 explicit `reference_capabilities` list. PDF/image samples claiming `pages`
 include complete per-page references; native DOCX does not require invented
 page boundaries. Element records contain only the applicable annotations:
@@ -837,10 +845,23 @@ Speech samples additionally contain:
 - `duration_seconds` in `(0, 30]`;
 - a non-empty `conditions` list containing exactly one of `clean` or `noisy`,
   plus `accented` and/or `multi_speaker` when applicable; and
-- non-empty timed `reference_segments`, all inside the clip duration.
+- an explicitly supplied verified transcript and `reference_segments`: lexical
+  speech requires complete nonempty timed segments inside the clip duration;
+  a legitimately empty projected transcript can have an explicit empty list.
 
-Reliability samples contain an empty spoken reference and one of `silence`,
-`music_without_lyrics`, `background_noise`, or `environmental_sound`.
+The shared prose projection determines lexical emptiness; raw punctuation-only
+references may legitimately project to empty without being missing annotations.
+Do not reclassify their reviewed speech/control labels automatically. Every
+full authoritative speech split still requires positive normalized reference
+word content, eligible timed segments, and the declared condition coverage.
+Missing transcript/timing fields or an entirely empty speech split fail data
+preparation, not a candidate metric. Human review must detect speech incorrectly
+annotated as empty; a validator cannot infer that from an empty string alone.
+
+Reliability samples contain an explicitly reviewed empty projected spoken
+reference and one of `silence`, `music_without_lyrics`, `background_noise`, or
+`environmental_sound`. Every authoritative split includes all four categories.
+They are separate controls, not empty substitutes for missing speech references.
 
 Video samples additionally contain `duration_seconds`, `reference_transcript`,
 `reference_visual_text`, and `visual_occurrences` with text plus `start`/`end`

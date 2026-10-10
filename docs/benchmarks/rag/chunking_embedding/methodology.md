@@ -91,6 +91,12 @@ Each question stores answerability, accepted answers, evidence type, and exact
 half-open evidence offsets. The structured supplement contains table, formula,
 and mixed-evidence questions because QASPER is primarily text.
 
+The [shared data-validation workflow](../../data-validation.md) checks canonical
+text, evidence intervals/IDs, answerability, evidence types, and split isolation
+before candidates run. Its standalone/report-reuse interface is planned. Native
+model length checks on generated chunks remain runtime checks: valid source data
+does not guarantee that every candidate's generated inputs fit its tokenizer.
+
 ## Common input and output rules
 
 Every pair receives the same frozen documents, answerable questions, and

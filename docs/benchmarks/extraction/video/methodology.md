@@ -46,6 +46,12 @@ SlideSpeech, AVLectures, and EduMind-owned allocation and explains why public
 subtitles and OCR must be manually corrected rather than accepted as ground
 truth.
 
+Use the [shared data-validation workflow](../../data-validation.md) for reviewed
+transcripts, visual units/intervals, duration, source isolation, and development
+stress inputs before execution. The proposed validator/report interface remains
+pending implementation. Frozen-ASR artifact checksum validation is a separate
+runtime integrity gate; a validated manifest alone cannot certify that artifact.
+
 ## Execution
 
 The dedicated runner supports smoke, development, validation, and locked

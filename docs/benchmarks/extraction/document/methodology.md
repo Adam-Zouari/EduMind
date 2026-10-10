@@ -213,6 +213,16 @@ license, checksum, document family, source type, and available annotations. An
 authoritative run cannot be claimed until those manifests and references are
 complete.
 
+The [shared data-validation contract](../../data-validation.md) defines checks
+for claimed capabilities, reviewed blanks/negative objects, complete page
+inventories, geometry, hierarchy, and split isolation. Explicit empty text or
+element sequences must not be rejected merely for being empty, nor inserted as
+defaults for missing fields. These checks finish before candidate loading and
+measurement; they do not change document metric eligibility or scoring.
+Currently the runner checks manifests/assets/references inline before candidate
+execution. The standalone validator and matching-report reuse are planned
+changes, including alignment of those checks with legitimate empty references.
+
 OmniDocBench is one annotated source within this combined corpus, not the whole
 EduMind experiment. Its selected English pages provide verified text, reading
 order, element, table, and formula references. EduMind then evaluates its own
@@ -285,8 +295,9 @@ from `text`, `pages`, `reading_order`, `layout_boxes`, `element_types`,
 that declaration instead of assuming that every source has every annotation.
 Smoke fixtures may infer capabilities from their inline annotations. Table and
 formula capability declarations also carry explicit `has_table` and
-`has_formula` booleans so verified negatives contribute false detections while
-missing annotations remain inapplicable.
+`has_formula` booleans so invented objects on verified negatives count as false
+detections. Unclaimed tasks are inapplicable; missing annotations for a claimed
+capability are invalid inputs and must be rejected before candidate execution.
 
 OmniDocBench annotations act as ground truth for every applicable metric on its
 samples. EduMind calculates the common text, page, layout, detection,

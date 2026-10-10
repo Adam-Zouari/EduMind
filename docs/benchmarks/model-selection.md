@@ -68,7 +68,7 @@ Blank values mean that the field does not apply or the information is unavailabl
 | Purpose | Meaning |
 |---|---|
 | `candidate` | A possible component to evaluate. It may be included or excluded from the runnable shortlist. |
-| `control` | The current or established baseline used to measure improvement. |
+| `control` | A provisional baseline or deliberately lightweight reference used to measure improvement. |
 
 `decision=include` means **include this row in the declared benchmark roster,
 subject to hardware qualification**. It does not mean that the candidate has been promoted into production. `decision=exclude` means that the reviewed row is not part of the current runnable shortlist; `reason` explains why.

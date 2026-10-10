@@ -18,8 +18,9 @@ Final RAG has only the `locked` profile. The engineer records one complete syste
 assembled from the selected extraction routes, ASR/video policy where applicable,
 chunking–embedding pair, retrieval–reranking stack, vector-server profile, and
 generator model-mode configuration. Top-K is one frozen value, either `3` or `5`,
-chosen from component development and validation evidence before locked data is
-examined. The prompt, context packing, and refusal policy are also frozen.
+chosen from component development and validation evidence before any applicable
+locked evaluation. Offline annotation review is separate from candidate selection.
+The prompt, context packing, and refusal policy are also frozen.
 
 `final-rag-locked.json` identifies this composition and its upstream reviewed
 decisions. Final RAG does not cross component finalists, tune settings, or select
@@ -28,6 +29,12 @@ the one locked benchmark invocation. It includes the frozen measured
 repetitions and generation seeds; those are not additional selection rounds.
 
 ## Data and execution
+
+Validate the held-out inputs and frozen composition's requirements through the
+[shared data-validation workflow](../../data-validation.md) before execution.
+The proposed standalone/report interface remains pending implementation. Final
+RAG has only locked evaluation inputs; validation does not introduce another
+candidate comparison or authorize reviewing held-out answers during selection.
 
 The locked profile uses the held-out locked-test manifest. For every question,
 the complete path runs:

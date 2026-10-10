@@ -35,9 +35,14 @@ Audio already defines chronological order, so the benchmark evaluates the final
 ordered transcript with WER. It does not split recognition into Content F1 and
 document Reading Order NED for two-dimensional element sequences.
 
-The independent quality sample is one audio clip. Three latency repetitions of
-the same clip improve timing measurement but do not become three independent
-quality samples.
+One audio clip supplies a quality observation. Independent clips are resampling
+units; related clips from a reviewed common source travel together under the
+manifest's group ID. Three measured attempts improve timing and repeatability
+diagnosis but never become three independent quality samples.
+
+The revised ASR contract below is approved documentation; executable alignment
+of its failure accounting and repeatability remains pending. See the
+[runbook's implementation status](../../running.md#1-prepare-the-environment).
 
 ## ASR profiles
 
@@ -68,8 +73,9 @@ scores are screening context; they do not replace this frozen corpus.
 
 A small fixed reliability set contains verified silence, music without lyrics,
 background noise, and other nonspeech audio. These controls are separate from the
-90 speech clips and are used only to measure false transcription on audio that has
-no spoken reference. The reliability manifest labels its development,
+90 speech clips. They measure false transcription on audio with no spoken
+reference and contribute their request outcomes to Attempt Failure Rate, not
+speech Corpus WER/CER or speech repeatability. The reliability manifest labels its development,
 validation, and locked-test controls so each phase uses only its own subset.
 
 Every speech sample records at least:
@@ -89,9 +95,19 @@ Every authoritative split covers all four labels. They remain in the per-sample
 artifact for diagnosis and do not create extra required MLflow metric namespaces
 or a larger metric contract.
 
+Prepare and review each split through the shared
+[data-validation workflow](../../data-validation.md). It distinguishes an
+explicit reviewed empty transcript from a missing annotation, checks duration,
+required timestamps, and control categories, and rejects a full speech split
+with no normalized reference words or eligible timed segments. Individual
+legitimate empty projections remain valid. No data check runs inside measured
+transcription or candidate resource monitoring. Reusable validation reports and
+the standalone commands are the planned interface, not yet implemented.
+
 ## Common input and output rules
 
-Every candidate receives the same decoded audio waveform: mono, 16 kHz, with no
+Every candidate receives the same canonical audio: mono, 16 kHz, signed 16-bit
+PCM before model-native feature extraction, with no
 candidate-specific denoising, volume repair, prompting, or vocabulary hints.
 Model-native feature extraction and the documented deterministic decoder remain
 part of the ASR profile and are recorded. Candidate output receives only the
@@ -108,11 +124,15 @@ supports word timestamps and broader segment timestamps without truncating
 unequal arrays. Boundary MAE uses the matched span's minimum start and maximum
 end; Alignment Coverage records how much of the timed reference aligned.
 
-An empty transcript with no timestamp segments is a valid low-quality result:
-all reference words and characters are deletions, timestamp coverage is zero,
-Boundary MAE is null, and Empty Transcript Rate increments. Non-empty text with
-no timestamps remains a fatal candidate error, as does an empty transcript with
-non-empty lexical timestamp segments.
+An empty transcript with no timestamp segments is a valid completed output.
+Against required speech, all reference words/characters are deletions, coverage
+is zero, Boundary MAE is unavailable, and Unexpected Empty Transcript Rate
+records an event. Against a legitimately empty projected reference, WER/CER and
+the three error rates are zero. Timestamp metrics are inapplicable when no
+reference boundaries are required; this is not a failed alignment. Nonempty
+lexical text without required timestamps,
+empty text with lexical timestamp segments, or invalid required boundaries/schema
+are failed attempts. Recoverable failures do not cancel later scheduled attempts.
 
 ## Per-candidate execution
 
@@ -121,32 +141,48 @@ CPU process has CUDA hidden before any model runtime is imported; a CUDA process
 must provide working NVML VRAM measurement. No profile may change device or use
 CPU/GPU offloading silently.
 
-The process performs:
+For development, validation, and locked, the process performs:
 
 ```text
 load the exact pinned model
 → record cold model-load time
 → run one warmup
 → execute three measured warm attempts for every deterministically shuffled speech clip
-→ process the corresponding nonspeech reliability controls
+→ execute one measured attempt per corresponding nonspeech reliability control
 → aggregate quality, timestamp, reliability, and operational results
 → unload the model and release resources
 ```
 
+Smoke uses the same one-warmup lifecycle with one measured attempt per speech
+fixture and control, so it cannot estimate repeatability. Preflight is separate:
+zero warmups and the retained reviewed stress inference under monitoring, with
+no quality scoring. All scheduled speech clips supply repeatability in the
+three-attempt profiles; it is not a selected portion of the corpus or another
+benchmark invocation.
+
 The quality result for a clip comes from its designated first measured output.
-Repeated executions preserve raw timing measurements but are not averaged into
-additional quality samples. Their exact transcript agreement is summarized
-separately by the diagnostic Repeat Transcript Agreement Rate.
+Repeated executions preserve timing and outcome records but are not averaged
+into additional quality samples. The first attempt is selected by index, not
+success; never replace a failed first output with a successful later one.
+Transcript Repeatability Success Rate scores all three scheduled pairs: both
+attempts must return valid identical projected transcripts for pair credit.
+Attempt Failure Rate accounts for all scheduled measured speech/control requests.
+Three attempts provide three comparison pairs and distinguish full agreement,
+partial agreement, and no agreement; they do not establish statistical precision.
 
 Authoritative comparisons use the
 [frozen CUDA hardware profile](../../methodology.md#shared-mlflow-lifecycle):
 batch size `1`, the stage's supported 16-bit dtype, one whole model on the GPU,
 and no fallback, offload, device splitting, or quantization. Device, dtype,
 decoder, timestamp path, and runtime versions are recorded. Smoke and debugging
-may explicitly request CPU or CUDA but cannot support candidate selection. If
-one selected profile cannot complete under the authoritative profile, that
-parent comparison is incomplete; the engineer fixes the candidate plan and
-reruns it instead of comparing partial results.
+may explicitly request CPU or CUDA but cannot support candidate selection.
+Recorded measured-attempt failures are reliability evidence, not automatically
+an incomplete comparison. Missing scheduled records, fatal setup failures, or
+unresolved required measurement/evaluation failures make it incomplete. A fully
+accounted execution can report unavailable conditional quality values alongside
+its failure rate; it must not be presented as successful transcription of the
+entire workload. The engineer reviews evidence and decides which candidates
+advance; no measured quality threshold selects a winner automatically.
 
 Behavior-changing settings are part of each child artifact: batch size one;
 Whisper word timestamps and deterministic generation; Canary beam size one,
@@ -192,7 +228,7 @@ changes application configuration.
 | Recognition | **Corpus WER** (primary), Corpus CER | WER measures the complete ordered word transcript; CER exposes character-level spelling, name, and number errors. |
 | WER diagnostics | Word Substitution Rate, Word Deletion Rate, Word Insertion Rate | Shows whether WER comes mainly from confused, omitted, or unsupported words. These explain WER but do not replace it. |
 | Timestamps | **Timestamp Boundary MAE**, **Timestamp Alignment Coverage** | MAE measures the accuracy of aligned start/end boundaries; coverage prevents a candidate from looking accurate after aligning only easy segments. |
-| Reliability | Empty Transcript Rate, Nonspeech False-Transcription Rate, Repeat Transcript Agreement Rate | Measures complete empty output on speech, invented lexical output on verified nonspeech controls, and transcript stability across repeated runs. |
+| Reliability | Unexpected Empty Transcript Rate, Nonspeech False-Transcription Rate, Transcript Repeatability Success Rate, Attempt Failure Rate | Distinguishes valid empty/invented first outputs from execution failures and measures repeatable delivery across scheduled speech attempts. |
 | Operational | **Complete-Pipeline Real-Time Factor**, p50/p95 warm clip latency, cold model-load time, peak process-tree RAM, peak device VRAM | Measures the complete transcription and alignment cost of the frozen CUDA profile. |
 
 Content F1 and document Reading Order NED are not ASR metrics in this benchmark.
@@ -203,13 +239,17 @@ speaker identification becomes a product requirement.
 
 The exact calculations, examples, ranges, directions, and confidence-interval
 rules are defined in [audio metrics](metrics.md). Corpus WER, CER, and the three
-WER components pool edit counts across speech clips before division; they are
+WER components pool valid completed first-output edit counts before division; they are
 not averages of independently calculated clip error rates. Timestamp Boundary
 MAE and Alignment Coverage are interpreted together. Reliability controls are
 excluded from speech Corpus WER/CER and evaluated by their own false-transcription
 rate. Every authoritative split requires reviewed controls from all four
-nonspeech categories; an absent reliability subset makes its required report
-incomplete rather than providing a fabricated zero.
+nonspeech categories; absent required controls fail data preparation. The two
+output-event rates use successful eligible first outputs, with Attempt Failure
+Rate and contributing counts beside them. Recognition diagnostics exclude
+failed first outputs rather than inventing deletions; timestamp coverage retains
+eligible reference segments as unrecovered. These denominators answer different
+questions and are frozen explicitly in [audio metrics](metrics.md).
 
 ## MLflow result structure
 
@@ -260,9 +300,10 @@ word_insertion_rate
 timestamp_boundary_mae_seconds
 timestamp_alignment_coverage
 
-empty_transcript_rate
+unexpected_empty_transcript_rate
 nonspeech_false_transcription_rate
-repeat_transcript_agreement_rate
+transcript_repeatability_success_rate
+attempt_failure_rate
 
 real_time_factor
 p50_warm_clip_latency_seconds
@@ -277,48 +318,50 @@ documentation categories, but they are not repeated as MLflow prefixes.
 Applicable development, validation, and locked uncertainty bounds use the shared MLflow suffix
 [metric convention](../../methodology.md#shared-mlflow-metric-convention).
 
-Corpus WER/CER and their components, timestamp metrics, reliability rates,
-Repeat Transcript Agreement Rate, RTF, and sufficiently supported warm latency
-estimates receive clip-bootstrap intervals. One cold-load observation and
-observed peak RAM/VRAM do not receive fabricated intervals. Every bootstrap
-draw contributes to every metric that is defined for that draw. A draw with no
-aligned timestamp segment still
-contributes zero Alignment Coverage and contributes normally to recognition,
-reliability, and latency intervals; only its undefined Boundary MAE is omitted.
-If the complete candidate has no valid timestamp alignment,
-`timestamp_boundary_mae_seconds` is stored as null and the run remains
-successful; `timestamp_alignment_coverage=0` makes the failure visible. No
-confidence interval is emitted for the undefined MAE. Because MLflow's scalar
-metric store does not accept null, the scalar key is absent there while
-`candidate.json` and `summary.json` preserve the field as null. The interval
-artifact records the number of contributing resamples.
+Eligible defined recognition, timestamp, reliability, RTF, and sufficiently
+supported warm-latency values receive 10,000 independent-source bootstrap
+resamples with seed 42 and percentile 95% bounds. Each draw preserves clips and
+all their attempts, then recalculates the same pooled/conditional statistic;
+controls are resampled separately. Confidence intervals describe source-sample
+uncertainty, not variation across the three attempts. Loading and observed
+resource peaks have no fabricated intervals. Undefined conditional draws retain
+defined/undefined counts; insufficient support keeps null bounds with a reason.
+The complete procedure is in [audio metrics](metrics.md#audio-confidence-intervals).
 
-Each successful child stores three artifacts:
+Each candidate retains these artifacts, including observed records when execution
+cannot finish:
 
 | Artifact | Contents and purpose |
 |---|---|
-| `samples.parquet` | One row per speech or nonspeech sample with sample ID, condition labels, duration, word/character edit counts, reference lengths, timestamp alignment counts and error totals, reliability and repeat-agreement flags, warnings, and the designated quality-pass latency. It makes every aggregate traceable. |
-| `timings.parquet` | One row per speech clip and measured repetition with latency, duration, RTF, and device. It preserves the observations used for p50, p95, and operational analysis. |
-| `candidate.json` | Resolved runtime parameters, candidate status, fingerprint, aggregate metrics, confidence intervals, operational values, and artifact references. |
+| `samples.parquet` | One row per speech/control sample with source/group IDs, labels, duration, designated-first-attempt status, known reference lengths, raw word/character edit counts when available, timestamp denominators/matches/errors, event eligibility/flags, repeatability score, and warnings. Unavailable predicted edit counts remain null. |
+| `timings.parquet` | One row per scheduled speech/control measured attempt: index, success/failure/not-executed status, error, elapsed time, duration, valid completed latency where available, and device. Canonical transcript hashes allow pairwise agreement audit without uploading raw predictions. |
+| `candidate.json` | Resolved runtime parameters, execution status, fingerprint, all metric fields with value/status/reason/support counts, intervals, operational values, and artifact references. |
 
-Fields that do not apply to a row are absent or null, not fabricated as zero.
+The fixed artifact schema uses null plus status/reason for inapplicable or
+unavailable values, not omitted required fields or fabricated zeros.
 Raw audio and candidate predictions are not uploaded to MLflow. The frozen
 speech manifest is uploaded and contains the verified reference transcripts,
 source identifiers, and checksums needed to reproduce scoring.
 
-Every successful development, validation, or locked child must contain all 16 aggregate
-metric fields. Timestamp Boundary MAE is the sole nullable field, under the rule
-above. A CPU profile may report zero VRAM only when execution confirms that no
+Every completed development, validation, or locked child retains all 17 aggregate
+metric fields in JSON, even when a conditional value is null. Required artifact
+fields are not omitted to hide failures. MLflow receives only numeric scalars;
+artifacts retain nulls, reasons, scheduled/contributing/failure counts, and
+planned/contributing reference lengths. Historical runs preserve their recorded
+metric names and protocol versions, not a reinterpretation under this contract.
+A CPU profile may report zero VRAM only when execution confirms that no
 GPU process was used; unavailable instrumentation is not converted to zero.
 CUDA children record `vram_measurement_method="nvml-device-total"` and the
 assigned device's raw peak memory use under the shared hardware contract.
 Per-process byte availability on Windows WDDM is not required. Device placement
 is verified independently; a missing device-memory measurement fails the CUDA
 child rather than producing a fabricated zero.
-If a candidate crashes, lacks required timestamp output, or cannot produce the
-required artifacts or aggregates, its child remains visible as failed and the
-parent is incomplete. The engineer repairs the problem and reruns the complete
-comparison rather than selecting from partial evidence.
+An observed request crash or invalid required timestamp output is an attempt
+failure. If a worker cannot continue, retain observed outcomes and mark the
+remaining requests not executed; do not invent failure records or a complete
+repeatability score. Missing required records/artifacts or unresolved telemetry
+make the comparison incomplete. Fully recorded attempt failures remain visible
+reliability evidence rather than silently excluding difficult clips.
 
 The engineer reviews the completed child runs and per-sample artifacts. No
 weighted overall score is calculated. Finalist and winner choices are written
