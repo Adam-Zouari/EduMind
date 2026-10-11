@@ -5,9 +5,11 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Mapping
+from contextlib import nullcontext
 from html.parser import HTMLParser
 from importlib.metadata import version
 from typing import Any
+from unittest.mock import patch
 
 from edumind.extraction.contracts import (
     ExtractedDocument,
@@ -177,19 +179,33 @@ class ExperimentalDocumentExtractor:
         paddleocr_version = version("paddleocr")
         if paddleocr_version != "3.7.0" or paddle.__version__ != "3.3.1":
             raise MissingDependencyError(
-                "PaddleOCR 3.7.0 with PaddlePaddle 3.3.1 is required; found "
+                "PaddleOCR 3.7.0 with PaddlePaddle GPU 3.3.1 is required; found "
                 f"PaddleOCR {paddleocr_version} with PaddlePaddle {paddle.__version__}"
             )
+        if request.profile.device == "cuda" and not paddle.is_compiled_with_cuda():
+            raise MissingDependencyError("CUDA extraction requires paddlepaddle-gpu")
+        # A GPU build can default to gpu:0 even when the worker hides CUDA.
+        # Set the framework device before PaddleX creates/restores device guards.
+        paddle.set_device("gpu:0" if request.profile.device == "cuda" else "cpu")
         key = request.profile.fingerprint
         if key not in self._runtimes:
-            self._runtimes[key] = PaddleOCRVL(
-                pipeline_version=str(request.options["pipeline_version"]),
-                vl_rec_backend=str(request.options["recognition_backend"]),
-                vl_rec_model_dir=str(model_path),
-                device="gpu"
-                if request.profile and request.profile.device == "cuda"
-                else "cpu",
-            )
+            capability_check = nullcontext()
+            if request.profile.device == "cpu":
+                from paddlex.utils import env as paddle_env
+
+                # PaddleX 3.7.0 mistakes a CUDA-compiled wheel for a visible GPU
+                # while constructing CPU SigLIP attention. Skip only this probe;
+                # model placement and the framework's CUDA APIs stay unchanged.
+                capability_check = patch.object(
+                    paddle_env, "is_cuda_available", return_value=False
+                )
+            with capability_check:
+                self._runtimes[key] = PaddleOCRVL(
+                    pipeline_version=str(request.options["pipeline_version"]),
+                    vl_rec_backend=str(request.options["recognition_backend"]),
+                    vl_rec_model_dir=str(model_path),
+                    device="gpu" if request.profile.device == "cuda" else "cpu",
+                )
         return self._runtimes[key]
 
 

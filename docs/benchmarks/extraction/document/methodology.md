@@ -21,6 +21,21 @@ OCR is not tested as an isolated product. It is tested inside the complete
 document pipeline because OCR text and boxes influence layout, reading order,
 page attribution, tables, and formulas.
 
+Document extraction runs as an isolated workload without an artificial VRAM
+cap in any profile, including preflight. GPU-backed parser components must
+remain on the requested GPU without framework offloading or silent CPU fallback;
+native DOCX and Tesseract retain their explicit CPU routes. Peak VRAM remains
+measured; actual OOM, placement violations, and missing required telemetry remain
+failures. CPU smoke reports Peak VRAM as unavailable, not zero.
+
+RapidOCR's CUDA placement check inspects the optimized ONNX Runtime graph at
+initialization. CPU shape bookkeeping is permitted only when dimension-derived
+integer values flow through verified shape operations into shape arguments,
+not model feature computation. Learned computation stays on CUDA, and runtime
+CPU retry is disabled. Graph verification is part of cold initialization,
+requires no extra inference, and records its graph checksum and permitted CPU
+nodes in placement evidence. Unverifiable graphs fail closed.
+
 ## Terminology and unit of comparison
 
 An **extraction profile** is one complete executable parser configuration. The

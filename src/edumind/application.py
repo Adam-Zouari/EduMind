@@ -9,6 +9,7 @@ from enum import Enum
 from pathlib import Path
 
 from edumind.common.config import load_settings
+from edumind.common.gpu import exclusive_model_workload
 from edumind.extraction import ExtractedDocument, ExtractionPipeline, ExtractionProfile
 from edumind.rag.pipeline import RAGPipeline
 from edumind.rag.types import AnswerResult, IngestReport, RetrievalHit
@@ -66,6 +67,7 @@ class EduMindPipeline:
         self.rag = rag or RAGPipeline(settings=settings, use_llm=use_llm)
         self.generation_required = use_llm
 
+    @exclusive_model_workload()
     def process_file(
         self,
         file_path: str | Path,
@@ -81,7 +83,11 @@ class EduMindPipeline:
         self._emit(
             progress, PipelineStage.EXTRACTING, "Extracting source content", 0.15
         )
-        document = self.extraction.extract(file_path, profile=profile)
+        self.rag.unload()
+        try:
+            document = self.extraction.extract(file_path, profile=profile)
+        finally:
+            self.extraction.unload()
         if source_name is not None:
             logical_name = Path(source_name).name
             document = replace(
@@ -109,6 +115,7 @@ class EduMindPipeline:
             tuple(warning.message for warning in document.warnings),
         )
 
+    @exclusive_model_workload()
     def query(
         self,
         query: str,
@@ -174,6 +181,7 @@ class EduMindPipeline:
             "generation_ready": generation_ready,
         }
 
+    @exclusive_model_workload()
     def reset_index(self) -> None:
         self.rag.reset()
 

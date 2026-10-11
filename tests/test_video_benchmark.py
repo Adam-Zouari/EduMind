@@ -37,6 +37,42 @@ AUDIO_PROTOCOL = load_audio_protocol()
 DOCUMENT_PROTOCOL = load_document_protocol()
 
 
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_frozen_asr_has_no_memory_cap_in_smoke_or_preflight(
+    monkeypatch, tmp_path, device
+):
+    from experiments.benchmarks.extraction.video import frozen_asr, preflight
+
+    calls = []
+
+    def launch(_worker, payload, **kwargs):
+        assert kwargs.get("vram_limit_mb") is None
+        assert kwargs["require_vram_measurement"] == (payload["device"] == "cuda")
+        calls.append(payload)
+        return {}
+
+    monkeypatch.setattr(frozen_asr, "run_json_worker", launch)
+    monkeypatch.setattr(preflight, "run_json_worker", launch)
+    monkeypatch.setattr(frozen_asr, "model_identity", lambda *_args: ({}, {}))
+    monkeypatch.setattr(frozen_asr, "execution_identity", dict)
+    frozen_asr.create_frozen_asr_artifact(
+        tmp_path / "frozen.json",
+        items=[],
+        manifest_checksum="manifest",
+        protocol=VIDEO_PROTOCOL,
+        audio_protocol=AUDIO_PROTOCOL,
+        audio_candidate="whisper-small-en-control",
+        audio_decision_path=tmp_path,
+        device=device,
+        ffmpeg_version="ffmpeg",
+        profile_name="smoke",
+    )
+    preflight._run_frozen_asr_probe(
+        "whisper-small-en-control", {}, {}, VIDEO_PROTOCOL, AUDIO_PROTOCOL
+    )
+    assert [call.get("mode") for call in calls] == [None, "preflight"]
+
+
 def test_video_smoke_uses_a_device_specific_frozen_asr_artifact(monkeypatch) -> None:
     commands = []
 

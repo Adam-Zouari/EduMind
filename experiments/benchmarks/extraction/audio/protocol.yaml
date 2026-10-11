@@ -1,5 +1,5 @@
 schema_version: 1
-protocol_version: audio-asr-v5
+protocol_version: audio-asr-v6
 seed: 42
 
 audio:
@@ -69,7 +69,6 @@ selection:
   maximum_finalists: 3
 
 resources:
-  authoritative_peak_vram_mb: 3584
   allow_fallback: false
   allow_offload: false
   allow_quantization: false

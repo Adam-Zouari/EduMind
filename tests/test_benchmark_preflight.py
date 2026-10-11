@@ -177,7 +177,7 @@ def test_preflight_continues_after_definitive_hardware_exclusions(tmp_path) -> N
 
     candidates = ("limit", "qualified", "oom", "offload")
     result = run_preflight(
-        benchmark="audio",
+        benchmark="chunking-embedding",
         candidates=candidates,
         fingerprint="exact-fingerprint",
         context={"protocols": {}},
@@ -274,7 +274,7 @@ def test_worker_supervisor_stops_only_the_process_over_the_vram_limit(
     monkeypatch.setattr(benchmark_process, "_terminate_process_tree", terminated.append)
     with pytest.raises(WorkerResourceLimitError, match="exceeded"):
         benchmark_process.run_json_worker(
-            ROOT / "experiments/benchmarks/extraction/audio/worker.py",
+            ROOT / "experiments/benchmarks/rag/chunking_embedding/worker.py",
             {},
             device="cuda",
             prefix="supervisor-test-",
@@ -284,6 +284,108 @@ def test_worker_supervisor_stops_only_the_process_over_the_vram_limit(
         )
     assert terminated == [123]
     assert events == ["monitor-entered", "worker-started"]
+
+
+def test_uncapped_worker_preserves_high_vram_without_termination(tmp_path, monkeypatch):
+    class Monitor:
+        peak_vram_mb = 3900.0
+        vram_measurement_method = "nvml-device-total"
+
+        def __init__(self, **kwargs):
+            assert kwargs["require_vram"]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def samples(self):
+            return [{"vram_mb": self.peak_vram_mb}]
+
+        def metrics(self):
+            return {"peak_vram_mb": self.peak_vram_mb}
+
+    def launch(command, **kwargs):
+        Path(command[-1]).write_text("{}", encoding="utf-8")
+        return SimpleNamespace(
+            pid=123, returncode=0, poll=lambda: 0, communicate=lambda: ("", "")
+        )
+
+    stopped = []
+    monkeypatch.setattr(benchmark_process, "ResourceMonitor", Monitor)
+    monkeypatch.setattr(benchmark_process.subprocess, "Popen", launch)
+    monkeypatch.setattr(benchmark_process, "_terminate_process_tree", stopped.append)
+    output = benchmark_process.run_json_worker(
+        ROOT / "experiments/benchmarks/extraction/audio/worker.py",
+        {},
+        device="cuda",
+        prefix="uncapped-",
+        error_label="test",
+        temporary_root=tmp_path,
+        require_vram_measurement=True,
+    )
+    assert not stopped
+    assert output["_worker_supervision"]["peak_vram_mb"] == 3900.0
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+@pytest.mark.parametrize("mode", [None, "preflight"])
+def test_audio_workers_have_no_cap_but_require_cuda_telemetry(
+    tmp_path, monkeypatch, device, mode
+):
+    from experiments.benchmarks.extraction.audio import runner
+
+    def launch(_worker, payload, **kwargs):
+        assert kwargs.get("vram_limit_mb") is None
+        assert kwargs["require_vram_measurement"] == (device == "cuda")
+        assert payload.get("mode") == mode
+        return {}
+
+    monkeypatch.setattr(runner, "run_json_worker", launch)
+    runner._run_worker(
+        "whisper-small-en-control",
+        {},
+        [],
+        [],
+        device=device,
+        profile="smoke",
+        directory=tmp_path,
+        protocol=audio(),
+        mode=mode,
+    )
+
+
+def test_extraction_protocol_removes_cap_without_changing_rag_caps():
+    from copy import deepcopy
+
+    from experiments.benchmarks.extraction.audio.protocol import protocol_from_mapping
+
+    settings = deepcopy(audio().meta.resolved)
+    assert "authoritative_peak_vram_mb" not in settings["resources"]
+    settings["resources"]["authoritative_peak_vram_mb"] = 3584
+    with pytest.raises(ValueError, match="unknown"):
+        protocol_from_mapping(settings)
+    assert chunking().authoritative_peak_vram_mb == 3584
+    assert retrieval().authoritative_peak_vram_mb == 3584
+
+
+@pytest.mark.parametrize("state", ["verified", "missing", "stale", "fallback"])
+def test_onnx_cuda_placement_requires_current_graph_evidence(state):
+    native = object()
+    session = SimpleNamespace(
+        get_providers=lambda: ["CUDAExecutionProvider", "CPUExecutionProvider"],
+        _sess=native,
+        _edumind_verified_native_session=object() if state == "stale" else native,
+        _edumind_cuda_graph=None
+        if state == "missing"
+        else {"verification": "optimized-ort-graph-v1", "cpu_shape_nodes": []},
+        _enable_fallback=state == "fallback",
+    )
+    result = inspect_model_placement(session)
+    assert result["status"] == (
+        "qualified" if state == "verified" else "placement_unverifiable"
+    )
 
 
 def test_process_tree_termination_tolerates_an_already_exited_worker(

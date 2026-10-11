@@ -160,8 +160,10 @@ size, exact stress manifest, and tested input envelope. It never chooses an
 arbitrary latest run. Use `--preflight-run-id ID` to select an exact MLflow run,
 or `--preflight-report PATH` for local no-MLflow debugging.
 
-Definitive hardware exclusions (`vram_limit_exceeded`, `gpu_oom`, or
-`offload_detected`) are omitted from development and remain in its provenance.
+Definitive hardware exclusions (`gpu_oom` or `offload_detected`) are omitted from
+development and remain in its provenance. `vram_limit_exceeded` additionally
+applies to capped non-extraction families; no extraction phase enforces a
+3.5 GiB cutoff or threshold warning.
 `measurement_unavailable`, unverifiable placement, and infrastructure failures
 block development until preflight is rerun successfully.
 
@@ -190,9 +192,11 @@ Before a CUDA comparison, close other GPU workloads and record the assigned
 GPU's identity, idle memory use, and total/free capacity. Monitor raw NVML
 device `memory.used` from before model loading through the final inference;
 record `nvml-device-total` and keep all samples. Do not subtract the idle baseline
-or infer process bytes from it. For capped model-backed paths, stop the worker
-if a sampled device total exceeds `3,584 MiB`; document/video visual paths report
-the peak without this shared cap. Offload inspection remains a separate check.
+or infer process bytes from it. Extraction reports the peak without an artificial
+cap in every phase, including preflight and frozen video ASR. Its workers still
+retain OOM, timeout, telemetry, and placement failure evidence. Capped RAG paths
+stop workers at their protocol's `3,584 MiB` limit. Offload inspection remains a
+separate check.
 If unrelated GPU activity changes the baseline during a comparison, rerun the
 affected measurement under controlled conditions. A preflight made under the
 former process/delta policy cannot qualify this device-total contract.

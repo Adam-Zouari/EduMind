@@ -43,14 +43,16 @@ provisional CPU application and for smoke/debug checks. Authoritative developmen
 validation, and locked ASR, embedding, learned-reranking, and generation runs use the
 RTX 3050, batch size `1`, a stage-frozen supported 16-bit dtype, and one whole
 model on the GPU. They permit no fallback, offload, automatic device splitting,
-or quantization, and sampled peak total memory on the assigned GPU must not
-exceed `3,584 MiB`. Measure raw NVML `memory.used`, including driver/desktop
+or quantization. Extraction (document, ASR, video visual processing, and frozen
+video ASR) uses the isolated GPU without an artificial VRAM cap in any profile,
+including preflight. Actual OOM, offloading, and unavailable required telemetry
+remain failures. Embedding, learned-reranking, and generation retain their
+`3,584 MiB` limit. Measure raw NVML `memory.used`, including driver/desktop
 allocations, without subtracting the idle baseline. Close other GPU workloads
 and keep background usage stable across candidates; record GPU identity,
 baseline, total/free memory, and the `nvml-device-total` measurement method.
 This whole-device contract is defined in the
-[methodology](../benchmarks/methodology.md); the measurement implementation is
-pending alignment, as recorded in the [runbook](../benchmarks/running.md).
+[methodology](../benchmarks/methodology.md) and [runbook](../benchmarks/running.md).
 
 ## 2. Create an isolated Python environment
 
@@ -81,6 +83,46 @@ python -m pip check
 The version numbers must stay aligned with `requirements/app.lock`. A CUDA
 benchmark is valid only when the requested model remains on `cuda` and the run
 records a non-zero measured VRAM peak; there is no CPU fallback.
+
+The Windows Python 3.12 benchmark lock installs PaddlePaddle GPU 3.3.1 from
+[Paddle's official CUDA 11.8 distribution](https://www.paddlepaddle.org.cn/packages/stable/cu118/paddlepaddle-gpu/).
+It uses cuDNN 8 DLLs, separate from PyTorch's cuDNN 9 DLLs. Do not substitute
+the CUDA 12.9 Paddle wheel in this shared Windows environment: its cuDNN 9
+libraries conflict with the pinned PyTorch CUDA build.
+The application lock installs ONNX Runtime GPU 1.30.0 and RapidOCR 3.9.2. These
+GPU distributions also support explicit CPU smoke. Never co-install their CPU
+distributions: they share Python package directories. The Chroma HTTP client is
+`chromadb-client`; the database server remains in Docker.
+
+When upgrading an existing environment that used the CPU packages, remove them
+first, then reinstall the locks and the CUDA PyTorch build above:
+
+```powershell
+python -m pip uninstall -y onnxruntime paddlepaddle chromadb
+python -m pip install --force-reinstall --no-deps onnxruntime-gpu==1.30.0 chromadb-client==1.5.9
+python -m pip install -r requirements/app.lock -r requirements/benchmarks.lock
+python -c "import torch, onnxruntime as ort, paddle; print(ort.get_available_providers()); print(paddle.__version__, paddle.is_compiled_with_cuda())"
+python -m pip check
+```
+
+If a CUDA 12 Paddle wheel was previously installed, uninstall it and its
+`nvidia-*-cu12` packages before installing the benchmark lock; CUDA 11 and
+CUDA 12 NVIDIA packages share Python directories. This project's ONNX Runtime
+GPU 1.30.0 uses the pinned CUDA 13 PyTorch libraries. Do not remove libraries
+needed by unrelated packages in another environment.
+
+A listed CUDA provider or CUDA-enabled Paddle build is an installation check,
+not proof of candidate eligibility. Real smoke and preflight also verify model
+placement and inference. RapidOCR verifies the actual device assignments in
+ONNX Runtime's optimized graph during model initialization. CPU operations are
+allowed only when their dataflow proves shape bookkeeping, not learned model
+computation. For example, the prepared recognition graph uses CPU `Slice` and
+`Concat` nodes to construct a GPU `Reshape` argument from tensor dimensions.
+Operator names alone do not establish this exception. Unknown assignments,
+CPU feature/weight computation, and automatic CPU retry after a CUDA error are
+rejected. The placement artifact records the graph checksum and permitted CPU
+shape nodes; no extra inference or warmup is required for verification.
+Tesseract and native DOCX parsing remain explicit CPU-only routes.
 
 Source edits are immediately visible because the repository is installed in editable mode. Rebuilding a wheel is not part of the development workflow.
 

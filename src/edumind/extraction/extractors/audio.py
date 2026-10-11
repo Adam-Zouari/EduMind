@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from edumind.common.gpu import release_runtime_memory
+
 from ..contracts import (
     ExtractedDocument,
     ExtractionRequest,
@@ -92,6 +94,11 @@ class WhisperExtractor:
                 ],
             )
         return [transcript.text], []
+
+    def unload(self) -> None:
+        """Release ASR before the independent video visual stage begins."""
+        self._runtime = None
+        release_runtime_memory()
 
 
 def model_directory(request: ExtractionRequest) -> Path:

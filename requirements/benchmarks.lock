@@ -13,9 +13,13 @@ datasets==5.0.0
 huggingface-hub==1.23.0
 rank-bm25==0.2.2
 paddleocr==3.7.0
-paddlepaddle==3.3.1
+# Official Windows CUDA 11.8/cuDNN 8 build, avoiding PyTorch's cuDNN 9 DLLs.
+# Do not install paddlepaddle or the CUDA 12.9 Paddle build alongside it.
+paddlepaddle-gpu @ https://paddle-whl.cdn.bcebos.com/stable/cu118/paddlepaddle-gpu/paddlepaddle_gpu-3.3.1-cp312-cp312-win_amd64.whl
+# cuDNN's runtime compiler dependency must match the same CUDA build.
+nvidia-cuda-nvrtc-cu11==11.8.89
 paddlex[ocr]==3.7.0
-docling[easyocr,rapidocr,vlm]==2.117.0
+docling[easyocr,vlm]==2.117.0
 nemo_toolkit[asr]==3.0.0
 moss-transcribe-diarize @ git+https://github.com/OpenMOSS/MOSS-Transcribe-Diarize.git@e607537b1b870475e7898969d40b864de8b691b6
 accelerate==1.12.0

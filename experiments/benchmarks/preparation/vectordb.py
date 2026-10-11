@@ -42,7 +42,7 @@ def prepare_vectordb(output_path: Path) -> Path:
     packages = {
         package: version(package)
         for package in (
-            "chromadb",
+            "chromadb-client",
             "qdrant-client",
             "weaviate-client",
             "psycopg",

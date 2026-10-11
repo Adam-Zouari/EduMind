@@ -173,7 +173,11 @@ partial agreement, and no agreement; they do not establish statistical precision
 Authoritative comparisons use the
 [frozen CUDA hardware profile](../../methodology.md#shared-mlflow-lifecycle):
 batch size `1`, the stage's supported 16-bit dtype, one whole model on the GPU,
-and no fallback, offload, device splitting, or quantization. Device, dtype,
+and no fallback, offload, device splitting, or quantization.
+Peak VRAM is measured without an artificial VRAM cap in smoke,
+preflight, development, validation, and locked execution. Actual OOM remains an
+execution failure. Extraction runs as an isolated workload; measured memory
+use alone does not disqualify a candidate. Device, dtype, placement,
 decoder, timestamp path, and runtime versions are recorded. Smoke and debugging
 may explicitly request CPU or CUDA but cannot support candidate selection.
 Recorded measured-attempt failures are reliability evidence, not automatically

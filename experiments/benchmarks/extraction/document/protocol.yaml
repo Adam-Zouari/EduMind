@@ -1,5 +1,5 @@
 schema_version: 1
-protocol_version: document-v5
+protocol_version: document-v7
 seed: 42
 
 candidate_factors:

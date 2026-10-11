@@ -99,7 +99,14 @@ class VideoExtractor:
                         audio_engine, audio_revision
                     )
                 audio_extractor = self._audio_extractors[audio_engine]
-                audio = audio_extractor.extract(audio_request, SourceKind.AUDIO)
+                try:
+                    audio = audio_extractor.extract(audio_request, SourceKind.AUDIO)
+                finally:
+                    # Production ASR exposes unload; injected stateless extractors
+                    # need not implement a model lifecycle.
+                    unload = getattr(audio_extractor, "unload", None)
+                    if callable(unload):
+                        unload()
                 keyframe_policy = self._keyframe_policy(request.options)
                 frames = self._extract_frames(
                     request.source_path, directory, keyframe_policy

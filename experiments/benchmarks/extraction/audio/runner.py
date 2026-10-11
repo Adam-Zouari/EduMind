@@ -297,9 +297,6 @@ def run(
                 profile=profile,
                 directory=canonical_directory,
                 protocol=protocol,
-                vram_limit_mb=protocol.authoritative_peak_vram_mb
-                if device == "cuda"
-                else None,
             )
             expected = {
                 (str(item["id"]), repetition)
@@ -418,11 +415,6 @@ def run(
             paired_comparisons=False,
             candidate_artifact_name="candidate.json",
             nullable_metrics=tuple(METRIC_DIRECTIONS),
-            operational_maximums=(
-                {"peak_vram_mb": protocol.authoritative_peak_vram_mb}
-                if execution.hardware_required
-                else None
-            ),
             run_name_prefix=(f"smoke-{device}" if profile == "smoke" else profile),
         )
 
@@ -470,7 +462,6 @@ def run_preflight_profile(
                 directory=directory,
                 protocol=protocol,
                 mode="preflight",
-                vram_limit_mb=protocol.authoritative_peak_vram_mb,
             )
 
         context = {
@@ -501,7 +492,6 @@ def _run_worker(
     directory,
     protocol,
     mode=None,
-    vram_limit_mb=None,
 ):
     safe = "".join(character if character.isalnum() else "-" for character in candidate)
     return run_json_worker(
@@ -520,7 +510,7 @@ def _run_worker(
         prefix=f"{safe}-",
         error_label="ASR worker",
         temporary_root=directory,
-        vram_limit_mb=vram_limit_mb,
+        require_vram_measurement=device == "cuda",
         telemetry_interval_seconds=protocol.preflight.telemetry_interval_seconds,
         poll_interval_seconds=protocol.preflight.poll_interval_seconds,
         timeout_seconds=protocol.preflight.worker_timeout_seconds,
@@ -579,7 +569,6 @@ def _qualification_identity(protocol: AudioProtocol, model_lock, manifest, stres
                 alias: protocol.dtype(alias, "cuda") for alias in protocol.candidates
             },
             "batch_size": execution.batch_size,
-            "vram_limit_mb": protocol.authoritative_peak_vram_mb,
             "preflight": asdict(protocol.preflight),
         },
         input_envelope={

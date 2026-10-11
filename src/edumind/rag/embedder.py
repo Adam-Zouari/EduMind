@@ -53,6 +53,10 @@ class Embedder:
         for device in {self.spec.document_device, self.spec.query_device}:
             self._model(device)
 
+    def unload(self) -> None:
+        """Release cached weights before an exclusive extraction workload."""
+        self._models.clear()
+
     def placement_report(self, expected_device: str) -> dict[str, object]:
         return inspect_model_placement(
             *self._models.values(), expected_device=expected_device

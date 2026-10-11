@@ -6,6 +6,8 @@ from collections.abc import Iterable, Mapping
 from os import PathLike
 from types import ModuleType
 
+from .onnx_placement import verified_cuda_graph
+
 
 def inspect_model_placement(
     *models: object,
@@ -21,6 +23,7 @@ def inspect_model_placement(
     device_maps: list[dict[str, str]] = []
     offload_hooks: list[str] = []
     provider_sets: list[list[str]] = []
+    onnx_cuda_graphs: list[dict[str, object]] = []
     inspection_errors: list[str] = []
     tensor_count = 0
     inspected_objects = 0
@@ -61,6 +64,14 @@ def inspect_model_placement(
                 provider_sets.append(providers)
                 primary = providers[0].casefold()
                 devices.add("cuda" if "cuda" in primary else "cpu")
+                if expected_device == "cuda" and "cuda" in primary:
+                    report = verified_cuda_graph(model)
+                    if report is None:
+                        inspection_errors.append(
+                            "ONNX CUDA graph is unverified, stale, or permits runtime fallback"
+                        )
+                    else:
+                        onnx_cuda_graphs.append(dict(report))
     forbidden_devices = {"disk", "meta"}
     if expected_device != "cpu":
         forbidden_devices.add("cpu")
@@ -84,6 +95,7 @@ def inspect_model_placement(
         "device_maps": device_maps,
         "offload_hooks": sorted(set(offload_hooks)),
         "provider_sets": provider_sets,
+        "onnx_cuda_graphs": onnx_cuda_graphs,
         "inspection_errors": inspection_errors,
         "inspected_object_count": inspected_objects,
         "verified": verified,

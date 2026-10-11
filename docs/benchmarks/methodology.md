@@ -154,14 +154,20 @@ or steady-state latency evidence. Because the worker terminates, none of its
 runtime state carries into development.
 
 Preflight has one parent and one child per candidate in the benchmark's normal
-MLflow experiment. ASR, embedding, learned-reranker, generation, and video-ASR
-workers are stopped when sampled total memory on the assigned GPU exceeds
-3,584 MiB. Document and video visual parsers instead report VRAM without a shared
-cap. Their loaded backend state is inspected
+MLflow experiment. Extraction workers (document, ASR, and both video components)
+have no artificial VRAM threshold in any phase. They retain resource telemetry,
+placement checks, OOM handling, and worker timeouts. Embedding, learned-reranker,
+and generation paths retain their separately frozen 3,584 MiB limits.
+Loaded backend state is inspected
 through available parameters and buffers, Paddle places, Hugging Face device
 maps, Accelerate hooks, ONNX execution providers, and disk/meta placement. A
 backend whose placement cannot be observed is blocked as
 `placement_unverifiable`. CPU tokenization and media decoding are not offloading.
+Verified ONNX shape bookkeeping is also permitted: inspect the initialized
+optimized graph, prove the CPU values derive from dimensions and feed only shape
+arguments, and retain the permitted nodes and graph checksum in placement
+evidence. CPU learned/feature computation and automatic CPU runtime retry remain
+prohibited. This check runs during initialization without extra inference.
 
 A measured model-backed `smoke`, `development`, `validation`, or `locked` worker
 uses a different lifecycle:
@@ -195,8 +201,9 @@ uses zero. Vector-server startup, index readiness, and warm query measurement
 follow the [Vector Database methodology](vectordb/methodology.md), not the model
 constructor lifecycle.
 
-`vram_limit_exceeded`, `gpu_oom`, and `offload_detected` are definitive hardware
-exclusions. Missing measurement, unverifiable placement, and infrastructure or
+`gpu_oom` and `offload_detected` are definitive hardware exclusions;
+`vram_limit_exceeded` additionally applies only to benchmark families with an
+explicit protocol cap, not extraction. Missing measurement, unverifiable placement, and infrastructure or
 execution failures block development; they never silently eliminate a
 candidate. Development resolves an exact preflight fingerprint and runs only
 its `qualified_candidates`. Validation and locked reuse that qualification only
@@ -445,7 +452,8 @@ Authoritative development, validation, and locked comparisons for ASR, embedding
 learned reranking, and generation use the laptop's RTX 3050 through CUDA. Each
 stage freezes one supported 16-bit dtype, keeps the whole active model on that
 GPU, and forbids CPU fallback, CPU/GPU offload, automatic device splitting, and
-quantization. Peak Device VRAM must not exceed `3,584 MiB`. Smoke executes both
+quantization. Embedding, learned-reranking, and generation retain a `3,584 MiB`
+Peak Device VRAM limit; extraction does not. Smoke executes both
 CPU and CUDA by default, but neither result is selection evidence.
 Document and video parser backends follow their separately recorded lifecycle
 and device contracts because not every parser runtime exposes the same backend.
@@ -461,16 +469,24 @@ retained first stress inference. Report the largest observed device total, not
 per-process bytes or an increase above baseline. Record GPU identity, idle
 memory, total/free memory, and timestamped samples. The idle baseline is not
 subtracted: driver and desktop allocations consume the same physical budget.
-The 3,584 MiB device-total limit leaves a nominal 512 MiB margin on a 4,096 MiB
-GPU at the observed samples, not a separate 3,584 MiB allowance for model weights.
+For capped RAG families, the 3,584 MiB device-total limit leaves a nominal 512 MiB
+margin on a 4,096 MiB GPU at the observed samples, not a separate 3,584 MiB
+allowance for model weights.
 
 Close other GPU workloads before running and keep the background baseline
 stable across candidates. If unrelated GPU activity changes during a comparison,
 the affected measurement must be rerun under a controlled environment rather
 than attributed to the candidate. Whole-device VRAM does not prove model
 placement; the independent pre/post-inference offload inspection still applies.
-Document and video visual backends report this same measurement without an
-artificial shared cap. Video's frozen ASR is measured separately and unloaded
+Document, ASR, and both video components report this same measurement without
+an artificial cap, threshold warning, or threshold-based exclusion. This applies
+to smoke, preflight, development, validation, and locked execution. Extraction
+is an isolated workload: no other application model inference or resident model
+weights should compete for its available GPU memory. Hardware feasibility means
+completing the supported demanding inputs with verified placement and no OOM;
+quality and latency remain separate selection evidence. GPU-only refers to
+framework placement, not a guarantee about Windows driver-level paging.
+Video's frozen ASR is measured separately and unloaded
 before a fresh visual worker. Qualification evidence from a process-attributed
 or baseline-delta memory policy is not reusable under the device-total contract.
 

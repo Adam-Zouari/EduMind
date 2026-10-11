@@ -54,7 +54,6 @@ class AudioProtocol:
     smoke_reliability_categories: frozenset[str]
     confidence_level: float
     maximum_finalists: int
-    authoritative_peak_vram_mb: float
     minimum_ci_sources: int | None
     minimum_latency_ci_sources: int | None
 
@@ -251,18 +250,11 @@ def protocol_from_mapping(
         root["resources"],
         "resources",
         {
-            "authoritative_peak_vram_mb",
             "allow_fallback",
             "allow_offload",
             "allow_quantization",
             "allow_device_splitting",
         },
-    )
-    peak = number(
-        resources["authoritative_peak_vram_mb"],
-        "resources.authoritative_peak_vram_mb",
-        minimum=0,
-        minimum_exclusive=True,
     )
     policy = {
         name: boolean(resources[name], f"resources.{name}")
@@ -291,7 +283,6 @@ def protocol_from_mapping(
         smoke_reliability,
         confidence,
         maximum_finalists,
-        peak,
         support["minimum_ci_sources"],
         support["minimum_latency_ci_sources"],
     )

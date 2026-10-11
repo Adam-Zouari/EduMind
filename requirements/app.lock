@@ -2,7 +2,7 @@
 numpy==2.2.6
 PyYAML==6.0.2
 python-dotenv==1.2.2
-chromadb==1.5.9
+chromadb-client==1.5.9
 sentence-transformers==5.6.0
 transformers==5.13.0
 torch==2.11.0
@@ -13,6 +13,9 @@ streamlit==1.59.1
 # Provisional production extraction path.
 pillow==12.3.0
 pymupdf==1.28.0
-docling[rapidocr]==2.117.0
+docling==2.117.0
+rapidocr==3.9.2
+# GPU build also supports explicit CPU execution; never co-install onnxruntime.
+onnxruntime-gpu==1.30.0
 soundfile==0.13.1
 librosa==0.11.0

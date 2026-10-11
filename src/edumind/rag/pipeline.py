@@ -8,6 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from edumind.common.config import Settings, load_settings
+from edumind.common.gpu import release_runtime_memory
 from edumind.common.models import load_model_lock, require_model
 from edumind.extraction import ExtractedDocument
 
@@ -275,6 +276,13 @@ class RAGPipeline:
             "vector_ready": vector_ready,
             "index_compatibility_key": manifest.compatibility_key if manifest else None,
         }
+
+    def unload(self) -> None:
+        """Release answering/indexing models; reload lazily on the next request."""
+        self.embedder.unload()
+        if self.llm_generator is not None:
+            self.llm_generator.unload()
+        release_runtime_memory()
 
     def reset(self) -> None:
         self.vector_store.reset_collection()

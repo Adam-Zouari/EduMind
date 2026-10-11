@@ -333,7 +333,15 @@ def execute(payload):
             "canonical_numeric_precision": "full-precision",
             "vram_measurement_method": monitor.vram_measurement_method,
             "package_versions": package_versions(
-                ("docling", "paddleocr", "paddlepaddle", "torch", "transformers")
+                (
+                    "docling",
+                    "paddleocr",
+                    "paddlepaddle-gpu",
+                    "onnxruntime-gpu",
+                    "rapidocr",
+                    "torch",
+                    "transformers",
+                )
             ),
         },
     }

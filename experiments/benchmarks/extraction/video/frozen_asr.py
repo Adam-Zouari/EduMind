@@ -115,9 +115,7 @@ def create_frozen_asr_artifact(
         device=device,
         prefix="edumind-frozen-asr-",
         error_label="Frozen video ASR worker",
-        vram_limit_mb=audio_protocol.authoritative_peak_vram_mb
-        if device == "cuda"
-        else None,
+        require_vram_measurement=device == "cuda",
         telemetry_interval_seconds=protocol.preflight.telemetry_interval_seconds,
         poll_interval_seconds=protocol.preflight.poll_interval_seconds,
         timeout_seconds=protocol.preflight.worker_timeout_seconds,

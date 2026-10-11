@@ -8,6 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from edumind.common.config import Settings, load_settings
+from edumind.common.gpu import release_runtime_memory
 from edumind.common.models import load_model_lock, require_model
 
 from .cache import ExtractionCache
@@ -197,6 +198,10 @@ class ExtractionPipeline:
 
     def supported_sources(self) -> dict[str, list[str]]:
         return {kind.value: self.registry.names(kind) for kind in SourceKind}
+
+    def unload(self) -> None:
+        self.registry.unload()
+        release_runtime_memory()
 
     def readiness(self) -> dict[str, object]:
         errors: dict[str, str] = {}

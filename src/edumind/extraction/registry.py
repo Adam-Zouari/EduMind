@@ -44,3 +44,7 @@ class ExtractorRegistry:
             for name, item in self._registrations.items()
             if kind is None or kind in item.kinds
         )
+
+    def unload(self) -> None:
+        """Release model-owning extractors after an application ingestion stage."""
+        self._instances.clear()

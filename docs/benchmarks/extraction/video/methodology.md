@@ -13,6 +13,16 @@ On this page:
 With the image parser and ASR fixed, which keyframe policy recovers useful
 on-screen text at useful times without unnecessary processing and duplicate output?
 
+Visual extraction and frozen ASR execute sequentially in separate workers on
+the isolated GPU. Neither has an artificial VRAM cap in any phase, including
+preflight. GPU-backed model weights cannot offload or silently fall back to CPU.
+Peak VRAM is still measured; actual OOM, placement violations, and unavailable
+required telemetry remain failures. CPU smoke reports Peak VRAM as unavailable.
+
+RapidOCR visual parsing uses the document backend's verified CPU shape-only
+exception. Shape bookkeeping does not qualify CPU model computation or weight
+offloading; its optimized-graph evidence is retained with visual placement.
+
 The runner implements the metric contract, grouped run structure, and execution
 flow below. Reviewed authoritative datasets and data-derived protocol selections
 remain separate prerequisites.

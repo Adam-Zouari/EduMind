@@ -7,6 +7,8 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
+from edumind.common.onnx_placement import cuda_shape_session, verified_cuda_graph
+
 from ..contracts import ExtractedDocument, ExtractionRequest, SourceKind
 from ..errors import ExtractionBackendError, MissingDependencyError
 from ..structured import build_docling_document
@@ -96,7 +98,14 @@ class DoclingExtractor:
         ocr_options: Any
         if ocr_engine == "rapidocr":
             ocr_options = RapidOcrOptions(
-                lang=[str(options.get("language", "english"))], mode=ocr_mode
+                lang=[str(options.get("language", "english"))],
+                mode=ocr_mode,
+                # RapidOCR 3.x reads acceleration from EngineConfig, not the
+                # per-stage use_cuda flags emitted by this pinned Docling release.
+                rapidocr_params={
+                    "EngineConfig.onnxruntime.use_cuda": request.profile.device
+                    == "cuda",
+                },
             )
         elif ocr_engine == "tesseract":
             ocr_options = TesseractCliOcrOptions(lang=["eng"], mode=ocr_mode)
@@ -134,9 +143,46 @@ class DoclingExtractor:
                 InputFormat.IMAGE: ImageFormatOption(pipeline_options=pipeline),
             }
             self._runtimes[key] = DocumentConverter(format_options=formats)
-        return self._runtimes[key], (
+        input_format = (
             InputFormat.IMAGE if kind is SourceKind.IMAGE else InputFormat.PDF
         )
+        converter = self._runtimes[key]
+        if (
+            request.profile.device == "cuda"
+            and ocr_engine == "rapidocr"
+            and bool(options.get("do_ocr", True))
+            and kind is not SourceKind.DOCX
+        ):
+            _require_cuda_ocr(converter, input_format)
+        return converter, input_format
+
+
+def _require_cuda_ocr(converter, input_format) -> None:
+    """Require CUDA computation, allowing only verified CPU shape bookkeeping."""
+    import onnxruntime as ort
+    import torch
+
+    _ = torch.__version__  # load the matching CUDA/cuDNN DLLs before ONNX sessions
+    ort.preload_dlls()
+    converter.initialize_pipeline(input_format)
+    readers = []
+    for pipeline in converter.initialized_pipelines.values():
+        if not hasattr(pipeline, "ocr_model"):
+            continue  # A converter may also cache a native DOCX pipeline.
+        reader = getattr(pipeline.ocr_model, "reader", None)
+        if reader is None:
+            raise RuntimeError("Initialized RapidOCR pipeline exposes no reader")
+        readers.append(reader)
+    if not readers:
+        raise RuntimeError("Initialized RapidOCR pipeline exposes no reader")
+    for reader in readers:
+        for name in ("text_det", "text_cls", "text_rec"):
+            runtime = getattr(reader, name).session
+            session = runtime.session
+            if verified_cuda_graph(session) is not None:
+                continue
+            # Do not replace or cache a session until graph verification succeeds.
+            runtime.session = cuda_shape_session(session)
 
 
 def required_directory(request: ExtractionRequest, key: str, label: str) -> Path:
