@@ -214,7 +214,7 @@ declared shared holdout policy.
 |---|---|
 | Document | Claimed reference capabilities, physical page inventory, element order/identity, boxes/types/hierarchy, explicit table/formula positives and negatives, and scorer-compatible reference representations. |
 | ASR | Canonical audio decoding, positive duration within 30 seconds with the frozen manifest tolerance, speech/control labels, transcripts, required timed segments, condition coverage, and separate reliability-control splits. |
-| Video | Duration, transcript and visible-text annotations, nonempty timed visual units within their intervals, reviewed reappearances, and development/stress input coverage. Frozen-ASR artifacts have separate manifest/protocol integrity checks before visual execution. |
+| Video | Positive duration, explicit spoken/visible annotations including reviewed negatives, nonempty timed visual lines with stable occurrence IDs and valid intervals, genuine reappearances, claimed spoken timings, reviewed nonspeech units, source grouping, and development/stress coverage. Frozen-ASR artifacts have separate manifest/protocol/sample-membership integrity gates before visual execution. |
 | Chunking and embedding | Canonical source text, exact evidence intervals, unique evidence IDs, answerability, evidence types, and source-group isolation. Generated chunks and native-model input lengths are checked during candidate execution. |
 | Retrieval and reranking | The same reviewed RAG inputs and selected upstream data identities. Runtime pool collection, chunk-content, and dense/BM25 index checksums remain artifact-integrity gates, not data annotations. |
 | Generation | Required facts, accepted answers, supplied evidence for answerable questions, unanswerable labels, and frozen context provenance. Judge calibration/readiness and predicted-output validation are separate gates. |
@@ -276,6 +276,32 @@ sanity check, not a ban on individual empty projections or an evaluation rule
 reapplied to bootstrap draws. Reviewed nonspeech controls have empty projected
 spoken references and cover silence, music without lyrics, background noise,
 and environmental sound in each authoritative split.
+
+### Video references and frozen audio
+
+Review spoken and visible annotation against every selected video. An explicit
+empty annotation can be valid; omission cannot establish silence or text-free
+video. Complete visible-line unitization is shared with prediction scoring.
+Each timed line has nonempty projected text, a stable occurrence ID, and finite
+`0 <= start < end <= duration` boundaries for `[start, end)` visibility. A genuine
+reappearance is a new occurrence. Reject inconsistent occurrence/text inventory
+or missing claimed intervals before inference.
+
+Spoken timestamp eligibility is declared separately from visual timing. Claimed
+spoken segments must satisfy the reviewed audio annotation contract. Freeze one
+nonspeech event unit type (whole videos or actual supplied ASR windows) and its
+required allocation before evaluation. Review the entire supplied unit, including
+window overlap, as nonspeech; a quiet subinterval does not certify a window that
+also contains speech. Genuinely silent videos need no global positive-word quota.
+Do not apply the standalone 30-second clip cap to a long video; validate that its
+frozen windowing/stitching requirements can be executed.
+
+Full validation does not create or certify a FrozenASRArtifact. At runtime,
+check its producing run, selected-model decision, model lock, manifest and
+composed protocol identities, exact video membership, and recorded per-video/
+window statuses. Failed windows cannot masquerade as complete video transcripts;
+missing records are an integrity/completeness problem. These gates finish before
+visual candidate monitoring and do not become visual latency or quality metrics.
 
 ## Data validity and metric applicability
 

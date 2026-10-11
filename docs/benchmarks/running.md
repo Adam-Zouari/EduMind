@@ -21,7 +21,9 @@ measurement, linear evidence-count nDCG, and shared answerable-question
 eligibility for alpha-nDCG remains pending. Documentation changes alone do not
 implement these contracts or enable the new commands. The current retrieval
 scorer still uses binary nDCG gains and narrower alpha-nDCG eligibility.
-The revised ASR empty/failure/repeatability contract, standalone full data
+The revised extraction first-attempt failure/VRAM/display-name rules, ASR
+empty/repeatability contract, video occurrence-aware duplication/reliability,
+expanded frozen-ASR reporting, grouped video parents, standalone full data
 validation, and automatic validated-input verification also require
 implementation. Planned validator commands are identified below; existing
 runners still use inline data checks.
@@ -275,9 +277,10 @@ attempt per fixture; preflight has no warmup and does not measure repeatability.
 - Repeatability Success Rate compares all three scheduled output pairs;
   Attempt Failure Rate counts failed attempts. `A, A, failure` gives `1/3` for
   both rates while keeping the first `A` as the quality output.
-- Quality is document-macro averaged, including expected-object misses and
-  first-attempt failure penalties. No reference tables/formulas means no
-  reconstruction task, but verified-negative detection remains applicable.
+- Quality is document-macro averaged from valid completed first outputs, including
+  missed expected objects in those outputs. Failed first attempts have unavailable
+  quality; report them and contributing counts beside every aggregate. No reference
+  tables/formulas means no reconstruction task; verified-negative detection applies.
 - Confidence intervals are calculated after execution by resampling saved
   independent document results 10,000 times with seed `42`. Quality intervals
   use first-attempt scores; repeatability/failure intervals use each document's
@@ -319,56 +322,85 @@ intervals resample independent sources, not the three attempts.
 Unexpected Empty Transcript Rate and Nonspeech False-Transcription Rate use
 valid completed eligible first outputs; crashes remain failure records, not
 empty transcripts. WER/CER/components pool completed first-output edit counts;
-their raw counts remain artifacts. Timestamp coverage retains required reference
-segments even after first-attempt failure; boundary MAE needs actual matches.
+their raw counts remain artifacts. Both timestamp metrics are unavailable after
+first-attempt failure; valid empty timed outputs give coverage zero and unavailable
+MAE. Keep planned/contributing reference counts and failures beside these values.
 Null fields retain reasons and support counts in artifacts even when MLflow
 omits their scalar keys. Implement these approved changes before treating runs
 as evidence under this revised contract.
 
 ## 6. Video extraction
 
-Video freezes audio once per split, then reuses it for visual candidates.
-Project defaults resolve the selected ASR, selected document image parser,
-manifest, and frozen-ASR artifact path.
+**Approved grouped interface, pending runner alignment:** normal phase execution
+prepares all shared audio and then runs visual candidates under one comparison
+parent. Do not assume current independent `--phase frozen-asr` invocations already
+create this hierarchy. Project defaults resolve the selected ASR, selected image
+parser, phase manifest, and frozen-artifact location.
+
+Target commands:
 
 ```powershell
 python -m experiments.benchmarks.extraction.video.run --profile smoke
 python -m experiments.benchmarks.extraction.video.run --profile preflight
-python -m experiments.benchmarks.extraction.video.run --profile development --phase frozen-asr
-python -m experiments.benchmarks.extraction.video.run --profile development --phase fixed
 python -m experiments.benchmarks.extraction.video.run --profile development --phase scene
 ```
 
-The default smoke command creates each device-specific frozen-ASR artifact
-before running that device's visual candidates. Pass an explicit `--phase` only
-to debug one half of that sequence.
+Smoke creates `smoke-cpu` and `smoke-cuda`, each with its own frozen-ASR
+preparation child and visual smoke children. No device fallback is allowed.
+The preliminary scene command creates `development-scene-selection`, with
+shared audio and the qualified scene thresholds. Every unique video is decoded
+once and each required ASR window transcribed once during measured preparation.
+The separate warmup is excluded. "Once" does not mean one inference for the
+entire split.
 
-Review the scene parent, set `selected_scene_threshold` and
-`selected_scene_source_run_id` in the video protocol, increment its version,
-rerun video preflight, and regenerate frozen ASR because the protocol checksum
-changed. Run all nine visual configurations under the final protocol checksum;
-the earlier scene run remains the threshold-selection evidence. Then run:
+Review the preliminary scene parent. Set `selected_scene_threshold` and
+`selected_scene_source_run_id` in the video protocol and increment its version.
+Refresh preflight; the main comparison regenerates frozen ASR because the composed
+checksum changed, then evaluates all qualified members of the final nine-policy
+roster under that checksum:
 
 ```powershell
 python -m experiments.benchmarks.extraction.video.run --profile preflight
-python -m experiments.benchmarks.extraction.video.run --profile development --phase frozen-asr
 python -m experiments.benchmarks.extraction.video.run --profile development --phase all
 ```
 
-Create `video-validation.json`, regenerate the validation frozen-ASR artifact,
-and run the finalists. After validation, create `video-locked.json` with exactly
-one winner and repeat on locked data:
+Create `data/benchmarks/decisions/video-validation.json` after reviewing the
+complete main development comparison. Evaluate its finalists on validation,
+then record one validation winner in `video-locked.json`:
 
 ```powershell
-python -m experiments.benchmarks.extraction.video.run --profile validation --phase frozen-asr
 python -m experiments.benchmarks.extraction.video.run --profile validation --phase all
-python -m experiments.benchmarks.extraction.video.run --profile locked --phase frozen-asr
 python -m experiments.benchmarks.extraction.video.run --profile locked --phase all
 ```
 
-Frozen-ASR reuse rejects any manifest, video-protocol, audio-protocol, or sample
-identity mismatch. Every visual candidate references the artifact and never
-invokes ASR.
+Each parent contains one phase-specific `frozen-asr — <selected candidate>`
+preparation child and its visual candidate children. Locked has one visual
+competitor, not a new ASR competition. A visual child covers every phase video;
+per-video/window/repetition results are artifacts, not nested runs. Complete ASR
+models are unloaded before fresh visual workers begin.
+
+Audio artifact reuse checks the actual producer, selected-model decision,
+model lock, manifest, composed protocols, and exact sample membership. Retain
+per-video/window statuses: failed required windows cannot become complete
+transcripts. Reused measurements retain their producing run and execution scope;
+do not claim a new cold-load/latency/resource observation without new execution.
+No visual child invokes ASR or copies its aggregate metrics.
+
+Visual development/validation/locked use one warmup and three measured attempts
+per video, with quality only from attempt 1. Failed first outputs have unavailable
+quality; later success cannot replace them. Repeatability and failure rates use
+scheduled outcomes. Warm visual timing includes the full selector/frame/parser
+path but excludes audio, loading, warmup, input verification, and offline scoring.
+Selected-frame counts record selection, not parser acceptance.
+
+The shared audio child reports WER/CER, word-error components, applicable spoken
+timestamps, empty/nonspeech behavior, window failures, audio RTF, p50/p95 complete
+audio-processing latency, cold load, and RAM/VRAM. Each window is executed once,
+so audio repeatability is not measured. Confidence intervals use supported
+independent video/source groups, not windows or additional inference. Limited
+p95 support retains a descriptive value with null bounds/reason. See
+[video metrics](extraction/video/metrics.md) and
+[the run hierarchy](extraction/video/methodology.md#mlflow-result-structure).
 
 ## 7. Chunking–embedding
 

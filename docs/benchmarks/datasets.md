@@ -730,17 +730,21 @@ selected video before retaining or redistributing a clip.
 
 For each of the 30 selected videos:
 
-1. choose a stable educational interval containing multiple meaningful visual
-   changes;
+1. choose a stable educational interval meeting the reviewed visual-coverage
+   plan, including explicitly reviewed text-free negatives where applicable;
 2. preserve the original video ID, source URL, interval, and original checksum;
 3. create one canonical local clip and checksum that exact clip;
 4. verify the spoken transcript against the audio;
 5. use the supplied OCR only as a starting point, then manually transcribe all
    educationally useful visible text;
-6. record when each distinct visible-text segment first becomes available and
-   when it disappears;
-7. mark repeated text so duplicate extraction can be scored correctly; and
-8. assign the entire source video to one split.
+6. assign a stable ID and a half-open visibility interval `[start, end)` to
+   each nonempty projected visible line occurrence;
+7. assign a new occurrence ID when text disappears and genuinely reappears, so
+   repeated output within one appearance can be distinguished from new appearances;
+8. review spoken timing annotations wherever audio timestamp metrics are claimed,
+   and label the declared nonspeech units against their actual audio, including
+   window overlap; and
+9. assign the entire source video to one split.
 
 A practical review interval is two to five minutes: long enough to contain slide
 changes and repeated scenes, but short enough for the nine development
@@ -864,9 +868,14 @@ reference and one of `silence`, `music_without_lyrics`, `background_noise`, or
 They are separate controls, not empty substitutes for missing speech references.
 
 Video samples additionally contain `duration_seconds`, `reference_transcript`,
-`reference_visual_text`, and `visual_occurrences` with text plus `start`/`end`
-for each verified appearance, along with annotations identifying intentional
-reappearance. The video protocol is a separate versioned input: its checksum
+`reference_visual_text`, and `visual_occurrences` with a stable occurrence ID,
+text, and `start`/`end` for each verified appearance. Use `[start, end)` visibility
+intervals and a new ID for genuine reappearance. Explicitly reviewed empty
+transcript/visual fields are valid negatives, not missing annotations. Claimed
+spoken timing metrics require reviewed spoken segments; visual intervals do not
+supply those boundaries. Reviewed nonspeech units use the single video-protocol
+unit type and actual input boundaries, including overlap. Their allocation and
+CI support are resolved in [pending-data-review](pending-data-review.md#video-extraction). The video protocol is a separate versioned input: its checksum
 and the manifest checksum are recorded together in normal run provenance, but
 the protocol is not stored in or bound into the manifest. The transcript is
 retained for the frozen-ASR diagnostic, but spoken and visible

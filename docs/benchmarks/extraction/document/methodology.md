@@ -338,9 +338,8 @@ The exact formulas, eligibility rules, ranges, and directions are defined in
 the candidate's recovered matches or supported features. Missing expected
 elements contribute zero to attribute/reconstruction scores, while a genuinely
 absent reference task is inapplicable. Valid empty comparisons use explicit
-best/worst conventions; a crash is not a valid empty result. Scored failure
-penalties, inapplicable tasks, unavailable evaluations, incomplete execution,
-and invalid references have distinct statuses and reasons. Evaluator failures
+best/worst conventions; a crash is not a valid empty result. Defined quality scores, inapplicable tasks, unavailable evaluations, incomplete
+execution, and invalid references have distinct statuses and reasons. Evaluator failures
 are repaired or rescored from saved predictions rather than labelled poor
 extractions. Quality failures do not automatically select or disqualify candidates.
 
@@ -412,9 +411,9 @@ worker; it does not warm a later comparison.
 
 All attempts use the same settings and inference seed. Never replace the
 predesignated first output with a later success or best result. A later failure
-does not erase a valid first output. A failed first attempt receives the
-applicable bounded quality penalties; unavailable CER/WER diagnostics explicitly
-report completed-output coverage. Attempt all remaining requests after
+does not erase a valid first output. All applicable output-dependent quality
+metrics are null/unavailable after a failed first attempt; quality aggregates
+explicitly report completed-output coverage and failures. Attempt all remaining requests after
 recoverable failures. A fatal interruption that prevents required requests is
 incomplete, not a set of fabricated observed failures. Loading/warmup failures
 are setup failures, not failed observations for every unexecuted document.
@@ -423,7 +422,7 @@ Repeatability Success Rate compares the three scheduled pairs for each document,
 counting only pairs of valid identical outputs. Attempt Failure Rate records
 the fraction of failed measured attempts. For `A, A, failure`, both rates are
 `1/3` and quality comes from the first `A`. For `failure, A, A`, the rates are
-unchanged but quality receives first-attempt failure penalties. Matching error
+unchanged but quality is null/unavailable. Matching error
 messages never earn agreement credit. Identical incorrect outputs can repeat
 successfully; their quality scores remain incorrect. No cached previous
 extraction may substitute for a measured request. All output and canonicalization
@@ -460,23 +459,32 @@ configuration or architecture selection.
 ## MLflow result structure
 
 Document runs use `EduMind / Document`. CPU/CUDA smoke parents and one
-all-candidate preflight parent precede the comparisons below. A document command with
-`--source all` creates three independent **parent runs**, because PDF, image,
-and DOCX execute different valid configuration sets. Each parent is one fair
-comparison; it is not a parser result itself. The standard configuration tree
-is:
+all-candidate preflight parent precede the comparisons below. Human-readable
+parent names omit timestamps and redundant benchmark prefixes; run IDs and
+recorded timestamps retain invocation identity. Smoke parents use
+`smoke-cpu-<format>` and `smoke-cuda-<format>` for applicable paths. `<format>` is
+`pdf`, `image`, or `docx`, not a dataset/provider. `config` identifies the Docling
+Standard setting screen; `parsers` identifies the architecture comparison.
+Both are development comparisons, not new profiles. The configuration screen
+with `--source all` creates three independent **parent runs**, because PDF,
+image, and DOCX execute different valid configuration sets. The architecture
+comparison creates PDF and image parents; the fixed native-DOCX route reuses
+its development evidence. Validation and locked again evaluate all three
+formats on their own unseen splits. Each parent is one fair comparison, not
+a parser result itself. The Standard configuration tree is:
 
 ```text
 MLflow experiment: EduMind / Document
-├── parent: extraction-document-configuration-pdf-<timestamp>
+├── parent: development-config-pdf
 │   └── up to 24 children: one per qualified PDF extraction profile
-├── parent: extraction-document-configuration-image-<timestamp>
+├── parent: development-config-image
 │   └── up to 12 children: one per qualified full-page image profile
-└── parent: extraction-document-configuration-docx-<timestamp>
+└── parent: development-docx
     └── 1 child run: native Docling ingestion
 ```
 
-`--source pdf`, `--source image`, or `--source docx` runs only that parent. After
+`--source pdf`, `--source image`, or `--source docx` restricts execution to that
+format's applicable comparison. After
 the configuration screen, development architecture parents compare the selected
 Standard profile with Granite Docling and PaddleOCR-VL. Validation parents then
 contain only the architecture finalists recorded by the engineer. The DOCX
@@ -487,22 +495,21 @@ children.
 
 ```text
 MLflow experiment: EduMind / Document
-├── parent: extraction-document-architecture-development-pdf-<timestamp>
+├── parent: development-parsers-pdf
 │   ├── child: <selected PDF Docling Standard profile>
 │   ├── child: docling-vlm-granite-258m
 │   └── child: paddleocr-vl-1.6
-├── parent: extraction-document-architecture-development-image-<timestamp>
+├── parent: development-parsers-image
 │   ├── child: <selected image Docling Standard profile>
 │   ├── child: docling-vlm-granite-258m
 │   └── child: paddleocr-vl-1.6
-└── parent: extraction-document-architecture-development-docx-<timestamp>
-    └── child: docling-standard-native
+└── native DOCX: reuse development-docx evidence; no duplicate parser comparison
 ```
 
 The corresponding validation parents use
-`extraction-document-architecture-validation-<source>-<timestamp>` and contain
+`validation-<format>` and contain
 only the recorded finalists for that source. Locked parents use
-`extraction-document-architecture-locked-<source>-<timestamp>` and contain one
+`locked-<format>` and contain one
 validation winner for PDF or image, or the fixed native-Docling route for DOCX.
 
 The parent run stores:
@@ -518,11 +525,12 @@ The parent run stores:
 
 Paired comparisons use aligned document-level scalar results, including layout,
 table, and formula detection precision/recall/F1 under document-macro aggregation.
-Reference-fixed eligibility and first-attempt failure penalties preserve the
-same comparison cohort for main quality metrics. Completed-output diagnostics
-and successful-completion latency comparisons explicitly identify their common
-observed cohort and exclusions; missing evaluations never become normal
-authoritative comparisons by silently dropping documents.
+Reference eligibility stays fixed, but failed first outputs can make the actual
+scored cohorts differ. Quality and successful-completion latency comparisons use
+aligned samples defined for both candidates and identify that common cohort,
+its independent-source count, and all exclusions. Failure/repeatability evidence
+retains scheduled outcomes. A conditional comparison is not a claim about the
+entire planned workload; missing required evaluations cannot be silently dropped.
 
 Each nested child run represents exactly one extraction profile. Its run name is
 the complete configuration identifier, for example:
@@ -705,4 +713,6 @@ policy in a separate decision file. The benchmark never modifies production
 configuration automatically.
 
 The approved document-parser profile is frozen before video and
-downstream extraction are evaluated.
+downstream extraction are evaluated. The revised first-attempt failure and
+display-name contract is approved documentation; align executable runners before
+claiming compliance under this version.

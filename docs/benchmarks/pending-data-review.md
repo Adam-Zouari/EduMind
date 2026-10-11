@@ -56,8 +56,8 @@ the authoritative dataset manifests and methodology, then remove the item.
   reference-word totals, and planned/contributing speech/control counts per
   split. A fully empty speech split is invalid, but legitimate individual empty
   projections remain valid; human review must detect falsely empty annotations.
-- Check support for conditional first-output recognition/event rates and boundary
-  MAE, reference-denominator timestamp coverage, three-attempt pairwise
+- Check support for completed-first-output recognition/event rates and boundary
+  MAE, completed-output reference-denominator timestamp coverage, three-attempt pairwise
   repeatability, and scheduled Attempt Failure Rate. Freeze interval support
   before evaluation; retain undefined-draw and failure counts rather than
   treating missing measurements as zero.
@@ -85,12 +85,27 @@ the authoritative dataset manifests and methodology, then remove the item.
   and run the complete nine-configuration comparison under the final checksum.
 - Confirm that SlideSpeech and the other selected sources are downloadable under
   the recorded terms and that the chosen assets can be checksum-pinned.
-- Verify how many independent validation and locked videos are available before
-  treating p95 latency or bootstrap intervals as stable evidence.
-- Freeze consistent visible-line segmentation for reference text and timed
-  occurrences under `normalized_lines_distinct_v1`; each timed unit must have
-  nonempty comparison text and a verified visibility interval. Do not convert
-  reference lines and predicted lines at different granularities.
+- Verify independent video/source-group counts separately from window/attempt
+  counts. Freeze CI support requirements for visual quality/reliability, frozen-ASR
+  recognition/timestamps/event/failure rates, audio/visual RTF, and frame counts.
+  Review p50/p95 support separately, especially on the six-video validation and
+  locked splits. Limited support keeps descriptive point estimates with null
+  bounds/reasons; p50 can remain the main summary, not an arithmetic mean.
+  Ten thousand bootstrap resamples do not add independent evidence.
+- Freeze consistent visible-line segmentation under `normalized_lines_distinct_v1`.
+  Each timed unit has nonempty projected text, a stable occurrence ID, and a
+  verified `[start, end)` interval. Review explicit text-free negatives and
+  genuine reappearances. Do not convert reference/prediction at different
+  granularities or count a first capture of a new appearance as duplication.
+- Freeze canonical visual repeatability representation: selected-frame times,
+  frame/text ordering, normalized numeric precision, and stable ID mapping.
+  Identical errors never agree; every measured attempt must execute extraction.
+- Review spoken reference timestamps independently of visual intervals. Freeze
+  which videos claim the spoken timing task, retaining legitimate silent videos.
+  Define one nonspeech event unit type and required per-split reviewed allocation
+  using whole nonspeech videos or actual ASR windows including overlap. Do not
+  fabricate counts, infer labels from missing text, or import standalone speech
+  quotas/control-category requirements into video.
 - Define the annotation labels needed to diagnose slide, screen-recording,
   presenter, gradual-change, and repeated-scene behavior from the real corpus.
 - Publish one complete video-manifest row after the source interval, visible-text

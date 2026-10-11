@@ -243,8 +243,8 @@ remain outside the benchmark.
 
 Peak RAM is the largest sampled resident-memory total across the worker and its
 child processes. Peak Device VRAM uses the shared raw NVML device-total contract.
-A confirmed CPU-only run may report zero VRAM; missing GPU instrumentation is reported as
-unavailable, not converted to zero.
+CPU-only execution records VRAM as null/inapplicable; missing required CUDA
+instrumentation records null/unavailable, never zero.
 
 ### Index build and storage
 

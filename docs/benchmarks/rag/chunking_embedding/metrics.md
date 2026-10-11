@@ -260,9 +260,8 @@ Peak RAM is the largest sampled resident-memory total across the benchmark
 worker and its child processes. Peak Device VRAM uses the shared raw NVML
 device-total contract. The artifact identifies the measurement method.
 
-**Range and direction:** non-negative MiB; lower is better at equal quality. A
-confirmed CPU-only run may report zero VRAM; unavailable GPU instrumentation is
-not converted to zero.
+**Range and direction:** non-negative MiB; lower is better at equal quality. CPU-only execution records VRAM as null/inapplicable; missing required CUDA
+instrumentation records null/unavailable, never zero.
 
 ## Workload and storage descriptors
 

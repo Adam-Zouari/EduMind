@@ -258,17 +258,17 @@ reporting-only parent contains exactly one validation winner:
 
 ```text
 MLflow experiment: EduMind / Chunking–Embedding
-├── parent: rag-chunking-embedding-smoke-cpu-<timestamp>
+├── parent: smoke-cpu
 │   └── one child per smoke-tested pair on CPU
-├── parent: rag-chunking-embedding-smoke-cuda-<timestamp>
+├── parent: smoke-cuda
 │   └── one child per smoke-tested pair on CUDA
-├── parent: chunking-embedding-preflight-<timestamp>
+├── parent: preflight
 │   └── one qualification child per declared pair
-├── parent: rag-chunking-embedding-development-<timestamp>
+├── parent: development
 │   └── up to 48 children: one per hardware-qualified planned pair
-├── parent: rag-chunking-embedding-validation-<timestamp>
+├── parent: validation
 │   └── up to three child runs: one per engineer-selected finalist pair
-└── parent: rag-chunking-embedding-locked-<timestamp>
+└── parent: locked
     └── one child for the selected pair
 ```
 

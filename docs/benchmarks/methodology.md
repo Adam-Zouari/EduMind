@@ -387,23 +387,24 @@ runner never chooses a winner or changes the application configuration.
 ## Shared MLflow lifecycle
 
 Each benchmark has its own MLflow experiment. A parent represents one fair
-comparison or qualification invocation; each direct child represents one
-candidate. Runs are not nested by extraction/RAG category because that would
+comparison or qualification invocation; candidate children represent complete
+configurations. Video also has an explicitly typed shared input-preparation
+child for frozen ASR; it is not a competing visual candidate. Runs are not nested by extraction/RAG category because that would
 mix unrelated candidate sets and metric contracts in the same experiment.
 
 ```text
 EduMind / <Benchmark>
-|- parent: <benchmark>-smoke-cpu-<timestamp>
+|- parent: smoke-cpu
 |  `- child per smoke candidate
-|- parent: <benchmark>-smoke-cuda-<timestamp>
+|- parent: smoke-cuda
 |  `- child per smoke candidate
-|- parent: <benchmark>-preflight-<timestamp>
+|- parent: preflight
 |  `- child per declared candidate
-|- parent: <benchmark>-development-<timestamp>
+|- parent: development
 |  `- child per qualified candidate
-|- parent: <benchmark>-validation-<timestamp>
+|- parent: validation
 |  `- child per selected finalist
-`- parent: <benchmark>-locked-<timestamp>
+`- parent: locked
    `- one selected candidate child
 ```
 
@@ -413,7 +414,17 @@ frozen complete-system child. Document uses source-specific parents: its locked
 invocation reports the selected PDF route, selected image route, and fixed DOCX
 route as one frozen routing policy, not three competing winners. See the
 [Document run structure](extraction/document/methodology.md#mlflow-result-structure).
-Video may create separate frozen-ASR and visual-comparison parents within one phase.
+Video groups its frozen-ASR preparation child and visual candidates under one
+comparison parent. The preliminary scene-selection comparison has its own
+`development-scene-selection` parent; the main `development` parent compares the
+final fixed/scene/hybrid roster. Document keeps source-format-specific and
+configuration/parser comparison parents rather than an extra phase wrapper.
+
+Human-readable run names omit timestamps and redundant experiment names.
+MLflow run IDs, recorded execution timestamps, protocol checksums, and local
+artifact identifiers still distinguish invocations. Repeated parent display
+names are allowed; never resolve provenance by display name alone. Full candidate
+IDs remain in parameters even when display labels are shortened.
 
 Every parent and child is tagged with the benchmark, profile, concrete phase
 (`smoke-cpu`, `smoke-cuda`, or the authoritative profile), run type, device,
@@ -489,7 +500,9 @@ extraction uses document-macro quality, ASR uses corpus WER/CER, and other
 benchmarks retain their own quality and latency definitions. Paired comparisons
 resample aligned units together and recalculate both candidates on each draw.
 Repeated attempts are retained inside their unit, not treated as additional
-independent evidence.
+independent evidence. These resamples perform arithmetic on saved measurements,
+not extra model inference. More resamples stabilize the numerical calculation;
+only additional representative independent inputs add new source evidence.
 
 The minimum independent support for each conditional or slice interval is
 frozen after manifest review and before authoritative evaluation. An undefined

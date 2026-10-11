@@ -39,7 +39,11 @@ The shared rules on this page apply alongside each benchmark's specific contract
 - Empty denominators use the explicit behavior stated in each benchmark's metric contract; they never produce
   fabricated zero-quality observations.
 - A valid empty comparison can have the contract's best or worst numeric value.
-  A failed request is not an observed empty output. `null` is a storage value:
+  A failed request is not an observed empty output. Extraction quality uses
+  the designated first measured attempt; failure makes applicable output-dependent
+  quality unavailable, never a fabricated zero or best/worst score. Later success
+  cannot replace that output. Failure/repeatability metrics and genuinely completed
+  measurements retain their own definitions. `null` is a storage value:
   retain `inapplicable`, `unavailable`, or `incomplete` status and its reason.
   Exclude an undefined value only from that metric's numeric calculation, never
   from retained sample/attempt records or other defined metrics. Report scheduled,
@@ -47,8 +51,13 @@ The shared rules on this page apply alongside each benchmark's specific contract
   keys; artifacts preserve them. Invalid references fail
   [data validation](data-validation.md) before candidate execution.
 - Development, validation, and locked runs retain one row per sample before aggregation.
-- p50, p95, and p99 are latency percentiles. Each throughput metric specifies
-  which completed work and timed interval it uses.
+- p50, p95, and p99 are latency percentiles calculated directly from successful
+  measured latencies, using linear interpolation between sorted observations.
+  With one observation, each percentile equals that observation; with none,
+  latency is unavailable. A percentile is not an arithmetic mean or a confidence
+  bound. Each benchmark defines its observation unit and support requirements;
+  a small dataset can retain descriptive percentiles without reliable tail
+  inference. Each throughput metric specifies its completed work and timed interval.
 - Eligible development, validation, and locked sample-based aggregates use 10,000
   bootstrap resamples with seed 42 and 95% confidence intervals. Counts,
   statuses, fixed identifiers, and single operational observations do not
@@ -81,9 +90,10 @@ measurement method (`nvml-device-total`), GPU identity, idle baseline, total/fre
 memory, and resource samples. The baseline is explanatory and is not deducted.
 GPU background activity must remain controlled across candidates. Missing
 required CUDA telemetry invalidates the measurement rather than producing zero.
-A confirmed CPU-only zero-VRAM report is an execution marker, not a measurement
-of the machine's GPU. Peak Process-Tree RAM continues to measure the worker and
-its children.
+A CPU-only execution records Peak Device VRAM as `null/inapplicable`, not zero.
+Missing required CUDA telemetry records `null/unavailable`; these are different
+reasons for the same storage value. Peak Process-Tree RAM continues to measure
+the worker and its children.
 
 ## Aggregation and interpretation
 

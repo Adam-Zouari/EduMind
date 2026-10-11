@@ -200,20 +200,24 @@ Every per-document metric value retains its result status and reason:
 
 | Status | Meaning and treatment |
 |---|---|
-| `scored` | A numeric observation or explicitly labelled failure penalty; included in its document aggregate. |
+| `scored` | A defined numeric result under that metric's contract; output-dependent quality requires a valid completed first output. |
 | `inapplicable` | No reference task exists; retain null and the eligibility reason. |
 | `unavailable` | A measurement or evaluator could not produce the required value; retain null, reason, and coverage counts. |
 | `incomplete` | Scheduled execution or required attempt records are missing; do not fabricate observations. |
 | `invalid_reference` | Reference annotations violate the contract; repair before evaluation. |
 
-A failed first attempt is not a successfully extracted empty document. For
-applicable bounded end-to-end quality metrics, record a failure penalty of zero;
-Reading Order NED receives one. Genuinely inapplicable reference tasks stay
-inapplicable. CER/WER have no finite universal worst value, so a failed attempt
-has unavailable error diagnostics rather than an invented maximum. Their
-aggregates explicitly describe completed valid first-attempt outputs and report
-the excluded failure count. These diagnostics do not replace the failure-inclusive
-main quality metrics.
+A failed first attempt is not a successfully extracted empty document. Every
+applicable output-dependent quality metric is null/unavailable, including
+bounded content/layout/reconstruction scores and Reading Order NED. Genuinely
+inapplicable reference tasks stay inapplicable. Quality aggregates describe
+valid completed first outputs and retain scheduled, reference-eligible, scored,
+failed, and unavailable counts. Attempt Failure Rate and repeatability retain
+their own numeric rules; completed measurements can survive later failure.
+Do not replace missing quality with a later successful output.
+
+The revised failure contract is approved documentation and requires runner
+alignment before new runs can claim compliance. A complete set of recorded
+attempt failures is reliability evidence, not successful recovery of the corpus.
 
 Known malformed predicted table/formula reconstructions receive zero
 reconstruction credit where applicable. An official evaluator crash, timeout,
@@ -295,7 +299,7 @@ High precision means the extractor rarely adds incorrect text.
 
 **Range and direction:** `[0, 1]`; higher is better. Valid empty/empty comparison
 receives one; either one-sided empty comparison receives zero under the shared
-document convention. A failed first attempt receives a labelled zero penalty.
+document convention. An applicable failed first attempt is null/unavailable.
 
 ### Content Recall
 
@@ -325,8 +329,8 @@ Content Recall    = 2 / 4 = 0.50
 Everything extracted is correct, but half of the reference content is missing.
 
 **Range and direction:** `[0, 1]`; higher is better. Valid empty/empty comparison
-receives one; either one-sided empty comparison receives zero. A failed first
-attempt receives a labelled zero penalty.
+receives one; either one-sided empty comparison receives zero. An applicable
+failed first attempt is null/unavailable.
 
 ### Content F1
 
@@ -356,8 +360,8 @@ Content F1 = (2 × 1.00 × 0.50) / (1.00 + 0.50) = 0.67
 
 **Range and direction:** `[0, 1]`; higher is better. Valid empty/empty comparison
 receives one. Either one-sided empty comparison receives zero, as does a
-nonempty comparison with no overlap. A failed first attempt receives a labelled
-zero penalty.
+nonempty comparison with no overlap. An applicable failed first attempt is
+null/unavailable.
 
 ### Character Error Rate (CER)
 
@@ -470,8 +474,9 @@ equivalence to OmniDocBench's matched-element reading-order evaluation.
 **Range and direction:** `[0, 1]`; lower is better. Valid empty/empty sequences
 receive zero; exactly one empty sequence receives one. One correct element with
 no extras receives zero, but one match out of a longer reference is not perfect.
-No reference reading-order annotation makes the task inapplicable. A failed
-first attempt receives a labelled penalty of one.
+An unclaimed reading-order capability makes the task inapplicable; missing
+claimed annotations are invalid data. An applicable failed first attempt is
+null/unavailable.
 
 ## Pages
 
@@ -517,8 +522,9 @@ not establish that all content on those pages was recovered correctly.
 
 **Range and direction:** `[0, 1]`; higher is better. If the source is verified
 entirely blank, valid empty output receives one and unsupported usable content
-receives zero. Missing page annotations make the metric inapplicable. A failed
-first attempt receives a labelled zero penalty.
+receives zero. An unclaimed page capability makes the metric inapplicable;
+missing claimed page annotations are invalid data. An applicable failed first
+attempt is null/unavailable.
 
 ### Page Content F1
 
@@ -587,8 +593,8 @@ reference elements are recovered and seven have the right page, recall is
 
 **Range and direction:** `[0, 1]`; higher is better. No eligible reference
 content-bearing page elements makes the task inapplicable. Zero recovered
-elements with a nonempty eligible reference receives zero. A failed first attempt
-receives a labelled zero penalty when the task is applicable.
+elements with a nonempty eligible reference receives zero. An applicable failed
+first attempt is null/unavailable.
 
 ### Duplicate Page Rate
 
@@ -796,8 +802,8 @@ Recall is `5 / 10 = 0.50`. A detected heading labelled as a paragraph receives
 no type credit. Predicting no elements receives zero, not an undefined score.
 
 **Range and direction:** `[0, 1]`; higher is better. No type-annotated reference
-elements makes the task inapplicable. A failed first attempt receives a labelled
-zero penalty when the task is applicable.
+elements makes the task inapplicable. An applicable failed first attempt is
+null/unavailable.
 
 ### Hierarchy Preservation Rate
 
@@ -831,8 +837,7 @@ claimed relationships correct, the rate is `3 / 10 = 0.30`.
 
 **Range and direction:** `[0, 1]`; higher is better. No hierarchy-annotated
 reference elements makes the task inapplicable. Missing all eligible elements
-receives zero. A failed first attempt receives a labelled zero penalty when
-the task is applicable.
+receives zero. An applicable failed first attempt is null/unavailable.
 
 ### Mean Bounding-Box Intersection over Union (IoU)
 
@@ -871,8 +876,8 @@ but not interchangeable with, thresholded Layout Recall.
 
 **Range and direction:** `[0, 1]`; higher is better. No valid reference boxes
 makes the task inapplicable, including native DOCX without fixed visual geometry.
-A nonempty box reference with no matches receives zero. A failed first attempt
-receives a labelled zero penalty when the task is applicable.
+A nonempty box reference with no matches receives zero. An applicable failed
+first attempt is null/unavailable.
 
 ## Tables
 
@@ -1057,7 +1062,7 @@ eligible documents. Unmatched extra tables are handled by detection precision.
 **Range and direction:** `[0, 1]`; higher is better. A missed table receives
 zero, including a real table with blank cells. No reference table makes the task
 inapplicable. A known invalid predicted tree receives zero; an evaluator failure
-is unavailable, not zero. Applicable failed first attempts receive zero penalties.
+is unavailable, not zero. Applicable failed first attempts are null/unavailable.
 
 ### TEDS-S
 
@@ -1092,7 +1097,7 @@ Table Content Recall means the shape is right but text is missing.
 **Range and direction:** `[0, 1]`; higher is better. A missed table receives
 zero, including a real table with blank cells. No reference table makes the task
 inapplicable. A known invalid predicted tree receives zero; an evaluator failure
-is unavailable. Applicable failed first attempts receive zero penalties.
+is unavailable. Applicable failed first attempts are null/unavailable.
 
 The benchmark uses the pinned official scorer rather than a custom
 approximation. OmniDocBench documents TEDS and TEDS-S in its
@@ -1254,7 +1259,7 @@ CDM and ExpRate@CDM therefore answer different questions. Macro-average the
 document exact-match fractions equally; a missed formula contributes zero.
 With no reference formulas, both recognition tasks are inapplicable. A missing
 or known invalid predicted formula receives zero; an official evaluator failure
-is unavailable. Applicable failed first attempts receive zero penalties. An
+is unavailable. Applicable failed first attempts are null/unavailable. An
 empty or invalid claimed reference formula must be repaired before evaluation.
 
 **Range and direction:** `[0, 1]`; higher is better.
@@ -1412,7 +1417,7 @@ failure. An evaluator failure is separate from extraction-attempt failure.
 **Example:** For `A, A, failure`, Attempt Failure Rate is `1 / 3`, Repeatability
 Success Rate is `1 / 3`, and quality comes only from the first `A`. For
 `failure, A, A`, the same reliability rates apply but first-attempt quality
-receives the applicable failure penalties. Macro-average document failure
+is null/unavailable. Macro-average document failure
 fractions; with three attempts for every document this also equals total failed
 attempts divided by total scheduled attempts.
 
@@ -1582,6 +1587,8 @@ contract, including loading, warmup, and measured extraction.
 Device VRAM `1,800 MiB`; an idle baseline is not subtracted.
 
 **Range and direction:** Non-negative MiB; lower is better at equal quality.
+CPU execution records null/inapplicable; missing required CUDA telemetry records
+null/unavailable. Retain measured samples after failure with their lifecycle scope.
 
 ### Peak Temporary Disk
 
@@ -1684,8 +1691,10 @@ seed 42:
 4. Use the 2.5th and 97.5th percentiles as the 95% interval bounds.
 
 Document-group metrics resample only the samples in that group. Conditional
-tasks such as table reconstruction or formula recognition use the reference-fixed
-eligible documents. Verified-negative detection documents already have defined
+tasks such as table reconstruction or formula recognition draw from reference-fixed
+eligible source records, including failed or unavailable first outputs. Do not
+prefilter to successful outputs before drawing. Within each draw, aggregate only
+defined numeric values and retain contributing counts and undefined-draw reasons. Verified-negative detection documents already have defined
 per-document scores under the empty convention; they are not dropped from
 bootstrap draws. Preserve all dependent pages, objects, capture variants, and
 attempts within their declared independent source unit.

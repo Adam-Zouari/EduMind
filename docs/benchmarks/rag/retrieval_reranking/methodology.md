@@ -239,17 +239,17 @@ validation winner and is reporting-only.
 
 ```text
 MLflow experiment: EduMind / Retrieval–Reranking
-├── parent: rag-retrieval-reranking-smoke-cpu-<timestamp>
-├── parent: rag-retrieval-reranking-smoke-cuda-<timestamp>
-├── parent: retrieval-reranking-preflight-<timestamp>
+├── parent: smoke-cpu
+├── parent: smoke-cuda
+├── parent: preflight
 │   └── one qualification child per declared stack
-├── parent: rag-retrieval-reranking-development-<timestamp>
+├── parent: development
 │   ├── up to 5 Dense children
 │   ├── up to 5 BM25 children
 │   └── up to 5 RRF children
-├── parent: rag-retrieval-reranking-validation-<timestamp>
+├── parent: validation
 │   └── exactly the engineer-selected finalists
-└── parent: rag-retrieval-reranking-locked-<timestamp>
+└── parent: locked
     └── one selected stack
 ```
 

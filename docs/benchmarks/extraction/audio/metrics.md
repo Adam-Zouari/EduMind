@@ -83,14 +83,15 @@ repeatability, and failure evidence, not additional quality scores.
 Corpus WER/CER and the three word-error rates pool counts from valid completed
 first speech outputs. A recorded failed first attempt has unavailable edit
 diagnostics, not an invented empty transcript or arbitrary maximum error.
-Timestamp coverage still counts its eligible reference segments as unrecovered.
+Timestamp metrics are also unavailable after a failed first attempt. Retain its
+known reference denominators as planned support, not scored recovery failures.
 Always report scheduled and contributing clips/source groups, failed first
 attempts, and planned versus contributing reference words/characters. The
 conditional recognition result cannot stand in for workload-wide reliability.
 
 | Status | Value and treatment |
 |---|---|
-| `scored` | Numeric result, including an explicit zero-denominator convention or labelled recovery-failure penalty. |
+| `scored` | Numeric result, including an explicit completed-output empty-denominator convention. |
 | `inapplicable` | No reference task exists; null with its eligibility reason. |
 | `unavailable` | A required value cannot be measured, such as boundary MAE with no matches or WER after a failed first attempt; null with reason and support counts. |
 | `incomplete` | Scheduled execution or required records are missing; no fabricated observation. |
@@ -303,17 +304,19 @@ shows how much of the timed reference actually contributed. The two metrics are
 therefore interpreted together: low MAE and high coverage. When no segments
 align, MAE is undefined rather than fabricated as zero, while coverage is zero.
 
-Pool matched boundary-error totals for MAE; pool matched and required segment
-counts for coverage. A failed first attempt contributes zero recovered segments
-and its full eligible reference denominator to coverage, with an explicit
-failure-penalty flag. It contributes no invented boundary error to MAE. This
-keeps boundary precision conditional while exposing omissions through coverage.
+Pool actual matched boundary-error totals for MAE. Pool matched and required
+segment counts from valid completed first outputs for coverage, including zero
+matches from valid empty outputs. A failed first attempt contributes neither a
+fabricated boundary error nor a scored zero-coverage observation. Keep its known
+reference count in planned support and report contributing, failed, and unavailable
+clips alongside both metrics. Coverage diagnoses missed alignment among completed
+outputs; Attempt Failure Rate diagnoses execution failures.
 
 | Case | Boundary MAE | Alignment Coverage | Explanation |
 |---|---|---|---|
 | Two required segments, one aligns | Mean of its two boundary errors | 0.5 | Accuracy of the match and recovery of the task are separate. |
 | Required segments, no matches or valid empty output | null, unavailable | 0 | There is no measured boundary error, but required segments were not recovered. |
-| Required segments, first attempt fails | null, unavailable | 0, failure penalty | No valid prediction; recovery still failed. |
+| Required segments, first attempt fails | null, unavailable | null, unavailable | No valid prediction exists; retain the failure and planned reference count. |
 | Legitimately no required timed segments | null, inapplicable | null, inapplicable | There is no spoken timing task, unlike an empty prediction for a real task. |
 | Claimed required timing annotation missing | No scoring | No scoring | Reject invalid data before execution. |
 
@@ -520,8 +523,8 @@ profile; silent device fallback is invalid.
 at `2,100 MiB` produce those two reported peaks.
 
 **Range and direction:** Non-negative MiB; lower is better at equal quality. A
-confirmed CPU-only profile reports zero VRAM; unavailable measurement is not
-converted to zero. Retained samples after a failure may establish an observed
+CPU-only profile records VRAM as null/inapplicable; missing CUDA measurement is
+null/unavailable, never zero. Retained samples after a failure may establish an observed
 partial-window peak, explicitly labelled with its scope; they cannot establish
 a missing completed-window measurement. Candidate monitoring excludes data
 preparation/validation and includes loading, warmup, and measured inference.
@@ -554,7 +557,7 @@ WER is relatively low. No weighted overall score combines these values.
 | Value | 95% confidence interval? | Rule |
 |---|---:|---|
 | Development, validation, and locked WER, CER, and substitution/deletion/insertion rates | When defined and sufficiently supported | Resample all declared speech units, then recalculate pooled valid-first-output counts. |
-| Development, validation, and locked Timestamp Alignment Coverage | When applicable and sufficiently supported | Retain all eligible reference segments, including first-attempt recovery failures. |
+| Development, validation, and locked Timestamp Alignment Coverage | When defined and sufficiently supported | Recalculate matched/required counts from valid completed first outputs; retain failures and planned denominators separately. |
 | Development, validation, and locked Timestamp Boundary MAE | When defined and sufficiently supported | Resample all speech units, then use their actual matched boundary totals. |
 | Development, validation, and locked Unexpected Empty Transcript Rate | When defined and sufficiently supported | Recalculate the valid completed eligible first-output denominator in each draw. |
 | Development, validation, and locked Nonspeech False-Transcription Rate | When defined and sufficiently supported | Resample controls separately and recalculate their completed first-output denominator. |
@@ -581,8 +584,9 @@ Development, validation, and locked runs use 10,000 bootstrap resamples with see
    unmatched clips before drawing, or treat repetitions as independent clips.
 4. Use the 2.5th and 97.5th percentiles as the 95% bounds.
 
-A draw with no timestamp match but eligible timed references contributes zero
-Alignment Coverage; its Boundary MAE is undefined. A draw with no valid first
+A draw with valid completed timed outputs but no matches contributes zero
+Alignment Coverage; its Boundary MAE is undefined. A draw with no valid completed
+timed outputs has unavailable coverage as well as MAE. A draw with no valid first
 outputs cannot contribute a recognition or corresponding event-rate value,
 but still contributes defined failure/repeatability evidence. Legitimate
 zero-reference contributing subsets use the empty-reference conventions;
@@ -595,9 +599,9 @@ support after data review and before evaluation; insufficient support retains
 the point estimate with null bounds and a reason. Degenerate calculated bounds
 are flagged, not interpreted as proof of certainty.
 
-If no reference segment aligns anywhere in the complete candidate run,
-Timestamp Boundary MAE is stored as null and Alignment Coverage is `0` when a
-timed reference task exists. Complete execution with those outcomes is not a
+If valid completed first outputs contain a timed reference task but no segment
+aligns, Timestamp Boundary MAE is null and Alignment Coverage is `0`. If no valid
+completed first timed output exists, both values are unavailable. Complete execution with those outcomes is not a
 missing-record failure. This reports the absence of a measurable boundary without
 inventing either a perfect or infinitely bad time error. The null is preserved
 in `candidate.json` and `summary.json`; its MLflow scalar key is absent because

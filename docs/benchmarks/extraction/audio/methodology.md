@@ -195,8 +195,12 @@ recorded with them.
 
 ```text
 smoke:
-all runnable ASR paths on tiny committed speech and nonspeech fixtures
+separate CPU and CUDA runs on tiny committed speech and nonspeech fixtures
 → verify loading, transcription, timestamps, scoring, artifacts, and cleanup
+
+preflight:
+fresh CUDA worker per declared ASR profile → reviewed demanding development/stress input
+→ exact hardware qualification, with no warmup or quality ranking
 
 development:
 all hardware-qualified members of the four-profile ASR roster on 54 speech clips
@@ -247,28 +251,31 @@ rate. Every authoritative split requires reviewed controls from all four
 nonspeech categories; absent required controls fail data preparation. The two
 output-event rates use successful eligible first outputs, with Attempt Failure
 Rate and contributing counts beside them. Recognition diagnostics exclude
-failed first outputs rather than inventing deletions; timestamp coverage retains
-eligible reference segments as unrecovered. These denominators answer different
+failed first outputs rather than inventing deletions; both timestamp metrics
+are unavailable for those failed outputs. Planned reference counts stay in
+artifacts, while scored timestamp coverage uses valid completed first outputs. These denominators answer different
 questions and are frozen explicitly in [audio metrics](metrics.md).
 
 ## MLflow result structure
 
-Audio uses its own MLflow experiment. Smoke creates separate CPU and CUDA
-parents, and preflight creates one qualification parent before development:
+Audio uses its own MLflow experiment. Display names omit timestamps and redundant
+benchmark prefixes; MLflow run IDs and recorded timestamps identify individual
+invocations. Smoke creates separate CPU and CUDA parents, and preflight creates
+one qualification parent before development:
 
 ```text
 MLflow experiment: EduMind / ASR
-├── parent: asr-smoke-cpu-<timestamp>
+├── parent: smoke-cpu
 │   └── one child per smoke-tested ASR profile on CPU
-├── parent: asr-smoke-cuda-<timestamp>
+├── parent: smoke-cuda
 │   └── one child per smoke-tested ASR profile on CUDA
-├── parent: audio-preflight-<timestamp>
+├── parent: preflight
 │   └── one qualification child per declared ASR profile
-├── parent: asr-development-<timestamp>
+├── parent: development
 │   └── one child per hardware-qualified ASR profile
-├── parent: asr-validation-<timestamp>
+├── parent: validation
 │   └── one child per engineer-selected finalist
-└── parent: asr-locked-<timestamp>
+└── parent: locked
     └── one child for the selected ASR profile
 ```
 
@@ -349,8 +356,8 @@ fields are not omitted to hide failures. MLflow receives only numeric scalars;
 artifacts retain nulls, reasons, scheduled/contributing/failure counts, and
 planned/contributing reference lengths. Historical runs preserve their recorded
 metric names and protocol versions, not a reinterpretation under this contract.
-A CPU profile may report zero VRAM only when execution confirms that no
-GPU process was used; unavailable instrumentation is not converted to zero.
+A CPU profile records VRAM as null/inapplicable. Missing CUDA instrumentation
+records null/unavailable, not zero.
 CUDA children record `vram_measurement_method="nvml-device-total"` and the
 assigned device's raw peak memory use under the shared hardware contract.
 Per-process byte availability on Windows WDDM is not required. Device placement

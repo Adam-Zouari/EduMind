@@ -287,17 +287,17 @@ Generation uses `EduMind / Generation`:
 
 ```text
 MLflow experiment: EduMind / Generation
-|- parent: generation-smoke-cpu-<timestamp>
+|- parent: smoke-cpu
 |  `- one child per model-mode configuration
-|- parent: generation-smoke-cuda-<timestamp>
+|- parent: smoke-cuda
 |  `- one child per model-mode configuration
-|- parent: generation-preflight-<timestamp>
+|- parent: preflight
 |  `- one qualification child per model-mode configuration
-|- parent: generation-development-<timestamp>
+|- parent: development
 |  `- one child per hardware-qualified configuration
-|- parent: generation-validation-<timestamp>
+|- parent: validation
 |  `- one child per engineer-selected finalist
-`- parent: generation-locked-<timestamp>
+`- parent: locked
    `- one selected model-mode child
 ```
 
