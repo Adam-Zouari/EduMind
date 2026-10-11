@@ -219,9 +219,11 @@ inventories, geometry, hierarchy, and split isolation. Explicit empty text or
 element sequences must not be rejected merely for being empty, nor inserted as
 defaults for missing fields. These checks finish before candidate loading and
 measurement; they do not change document metric eligibility or scoring.
-Currently the runner checks manifests/assets/references inline before candidate
-execution. The standalone validator and matching-report reuse are planned
-changes, including alignment of those checks with legitimate empty references.
+Run `python -m experiments.benchmarks.validate document --profile <profile>`
+after data preparation. Before candidate execution, the runner verifies the
+matching sealed report against actual input bytes and applicable requirements;
+it does not repeat full validation. Legitimate reviewed empty references remain
+valid.
 
 OmniDocBench is one annotated source within this combined corpus, not the whole
 EduMind experiment. Its selected English pages provide verified text, reading
@@ -293,6 +295,10 @@ Every authoritative reference declares a `reference_capabilities` list drawn
 from `text`, `pages`, `reading_order`, `layout_boxes`, `element_types`,
 `hierarchy`, `tables`, and `formulas`. Validation and metric eligibility follow
 that declaration instead of assuming that every source has every annotation.
+Full data validation also checks that claimed table and formula references
+score perfectly against themselves in the pinned official Docker evaluators.
+This reference check happens outside candidate measurements; profile startup
+only verifies the sealed validation report and current input identity.
 Smoke fixtures may infer capabilities from their inline annotations. Table and
 formula capability declarations also carry explicit `has_table` and
 `has_formula` booleans so invented objects on verified negatives count as false

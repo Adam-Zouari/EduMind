@@ -65,9 +65,7 @@ under [Timestamp quality](#timestamp-quality-1).
 | Peak Process-Tree RAM | Operational | How much total system memory does the candidate require? | Lower |
 | Peak Device VRAM | Operational | How much total GPU memory is occupied during candidate execution? | Lower |
 
-These 17 metrics define the approved ASR evaluation contract. Runner alignment
-with the revised failure, empty-output, and repeatability rules remains pending;
-documentation alone does not implement them. Technical-Term
+These 17 metrics define the implemented ASR evaluation contract. Technical-Term
 Accuracy is excluded because EduMind has no fixed subject vocabulary;
 diarization metrics remain out of scope until speaker identification becomes a
 product requirement.

@@ -1,5 +1,5 @@
 schema_version: 1
-protocol_version: document-v4
+protocol_version: document-v5
 seed: 42
 
 candidate_factors:
@@ -37,6 +37,8 @@ datasets:
 
 statistics:
   confidence_level: 0.95
+  minimum_ci_sources: null
+  minimum_latency_ci_sources: null
 
 evaluators:
   timeout_seconds: 3600
@@ -59,7 +61,7 @@ preflight:
 
 profiles:
   smoke:
-    warmups: 2
+    warmups: 1
     repetitions: 1
     bootstrap_resamples: 0
     device: cpu
@@ -68,7 +70,7 @@ profiles:
     hardware_required: false
     devices: [cpu, cuda]
   development:
-    warmups: 2
+    warmups: 1
     repetitions: 3
     bootstrap_resamples: 10000
     device: cuda
@@ -76,7 +78,7 @@ profiles:
     batch_size: 1
     hardware_required: true
   validation:
-    warmups: 2
+    warmups: 1
     repetitions: 3
     bootstrap_resamples: 10000
     device: cuda
@@ -84,7 +86,7 @@ profiles:
     batch_size: 1
     hardware_required: true
   locked:
-    warmups: 2
+    warmups: 1
     repetitions: 3
     bootstrap_resamples: 10000
     device: cuda

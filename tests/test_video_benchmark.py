@@ -27,7 +27,6 @@ from experiments.benchmarks.extraction.video.frozen_asr_worker import (
 from experiments.benchmarks.extraction.video.metrics import (
     aggregate_quality,
     score_video,
-    stitch_text,
 )
 from experiments.benchmarks.extraction.video.protocol import load_protocol
 from experiments.benchmarks.extraction.video.runner import _candidates
@@ -53,21 +52,12 @@ def test_video_smoke_uses_a_device_specific_frozen_asr_artifact(monkeypatch) -> 
     )
     arguments = SimpleNamespace(phase="all", frozen_asr=None)
     assert video_runner._run_smoke_devices(arguments, ("cpu", "cuda")) == 0
-    artifacts = [
-        Path(command[command.index("--frozen-asr") + 1]) for command in commands
+    assert len(commands) == 2
+    assert [command[command.index("--device") + 1] for command in commands] == [
+        "cpu",
+        "cuda",
     ]
-    assert [path.name for path in artifacts] == [
-        "smoke-cpu.json",
-        "smoke-cpu.json",
-        "smoke-cuda.json",
-        "smoke-cuda.json",
-    ]
-    assert [command[command.index("--phase") + 1] for command in commands] == [
-        "frozen-asr",
-        "all",
-        "frozen-asr",
-        "all",
-    ]
+    assert all("--frozen-asr" not in command for command in commands)
 
 
 def test_all_nine_video_configurations_include_frame_zero_and_vfr() -> None:
@@ -113,8 +103,8 @@ def test_video_metrics_use_distinct_content_and_one_to_one_occurrences() -> None
         "duration_seconds": 10.0,
         "reference_visual_text": ["Alpha", "Alpha"],
         "visual_occurrences": [
-            {"text": "Alpha", "start": 0.0, "end": 5.0},
-            {"text": "Alpha", "start": 0.0, "end": 5.0},
+            {"id": "occ-1", "text": "Alpha", "start": 0.0, "end": 5.0},
+            {"id": "occ-2", "text": "Alpha", "start": 0.0, "end": 5.0},
         ],
     }
     settings = {
@@ -123,12 +113,12 @@ def test_video_metrics_use_distinct_content_and_one_to_one_occurrences() -> None
     }
     scores = score_video(
         item,
-        [{"text": "Alpha\nAlpha", "timestamp": 1.0}],
+        [{"text": "Alpha", "timestamp": 1.0}],
         settings,
     )
     assert scores["visual_content_precision"] == 1.0
     assert scores["visual_content_recall"] == 1.0
-    assert scores["duplicate_visual_text_rate"] == 0.5
+    assert scores["duplicate_visual_text_rate"] == 0.0
     assert scores["timed_visual_occurrence_coverage"] == 0.5
     assert scores["mean_visual_first_detection_delay_seconds"] == 1.0
 
@@ -143,7 +133,9 @@ def test_video_occurrence_matching_never_leaks_outside_verified_interval() -> No
         "id": "video",
         "duration_seconds": 3.0,
         "reference_visual_text": ["alpha"],
-        "visual_occurrences": [{"text": "alpha", "start": 1.0, "end": 2.0}],
+        "visual_occurrences": [
+            {"id": "occ-3", "text": "alpha", "start": 1.0, "end": 2.0}
+        ],
     }
     settings = {
         "content_f1_threshold": 0.5,
@@ -160,8 +152,8 @@ def test_video_occurrence_matching_minimizes_raw_detection_delay() -> None:
         "duration_seconds": 100.0,
         "reference_visual_text": ["alpha"],
         "visual_occurrences": [
-            {"text": "alpha", "start": 0.0, "end": 100.0},
-            {"text": "alpha", "start": 9.0, "end": 10.0},
+            {"id": "occ-4", "text": "alpha", "start": 0.0, "end": 100.0},
+            {"id": "occ-5", "text": "alpha", "start": 9.0, "end": 10.01},
         ],
     }
     settings = {
@@ -175,17 +167,9 @@ def test_video_occurrence_matching_minimizes_raw_detection_delay() -> None:
 
 def test_video_window_stitching_and_bounds_are_deterministic() -> None:
     assert _window_starts(65.0, 30.0, 2.0) == [0.0, 28.0, 56.0]
-    assert (
-        stitch_text(
-            "alpha beta gamma",
-            "beta gamma delta",
-            maximum_overlap_tokens=8,
-        )
-        == "alpha beta gamma delta"
-    )
     stitched = _stitch_segments(
-        [{"text": "alpha beta", "start": 0.0, "end": 2.0}],
-        [{"text": "beta gamma", "start": 1.0, "end": 3.0}],
+        [{"id": "occ-6", "text": "alpha beta", "start": 0.0, "end": 2.0}],
+        [{"id": "occ-7", "text": "beta gamma", "start": 1.0, "end": 3.0}],
         8,
     )
     assert [row["text"] for row in stitched] == ["alpha", "beta", "gamma"]
@@ -212,7 +196,7 @@ def test_frozen_asr_windows_slice_one_canonical_decode(tmp_path) -> None:
         assert audio.getnframes() == 8_000
 
 
-def test_video_aggregates_recompute_from_pooled_counts() -> None:
+def test_video_aggregates_macro_average_video_values() -> None:
     settings = {
         "content_f1_threshold": 0.5,
         "frame_timestamp_tolerance_seconds": 0.0,
@@ -222,7 +206,9 @@ def test_video_aggregates_recompute_from_pooled_counts() -> None:
             "id": "many",
             "duration_seconds": 5.0,
             "reference_visual_text": ["A", "B", "C"],
-            "visual_occurrences": [{"text": "A", "start": 0.0, "end": 2.0}],
+            "visual_occurrences": [
+                {"id": "occ-8", "text": "A", "start": 0.0, "end": 2.0}
+            ],
         },
         [{"text": "A\nB\nC", "timestamp": 1.0}],
         settings,
@@ -232,62 +218,26 @@ def test_video_aggregates_recompute_from_pooled_counts() -> None:
             "id": "one",
             "duration_seconds": 5.0,
             "reference_visual_text": ["D"],
-            "visual_occurrences": [{"text": "D", "start": 0.0, "end": 2.0}],
+            "visual_occurrences": [
+                {"id": "occ-9", "text": "D", "start": 0.0, "end": 2.0}
+            ],
         },
         [],
         settings,
     )
     aggregate = aggregate_quality([many, one])
-    assert aggregate["visual_content_recall"] == 0.75
+    assert aggregate["visual_content_recall"] == 0.5
     assert aggregate["timed_visual_occurrence_coverage"] == 0.5
 
 
 def test_frozen_asr_artifact_is_reused_only_for_matching_protocol(tmp_path) -> None:
     path = tmp_path / "frozen.json"
-    atomic_write_json(
-        path,
-        {
-            "schema_version": 1,
-            "artifact_type": "FrozenASRArtifact",
-            "run_id": "asr-run",
-            "manifest_checksum": "manifest",
-            "protocol_checksum": "protocol",
-            "audio_protocol_checksum": "audio-protocol",
-            "model_decision_fingerprint": "decision",
-            "audio_candidate": "asr",
-            "model_path": "model",
-            "model_revision": "revision",
-            "selection_revision": "selection",
-            "model_cache_manifest_sha256": "cache",
-            "ffmpeg_version": "ffmpeg test",
-            "ffmpeg_commands": [],
-            "metrics": {
-                "word_error_rate": 0.0,
-                "real_time_factor": 0.1,
-                "total_latency_seconds": 0.1,
-                "cold_model_load_seconds": 0.1,
-                "peak_process_tree_ram_mb": 1.0,
-                "peak_vram_mb": 0.0,
-            },
-            "parameters": {"candidate": "asr"},
-            "videos": [
-                {
-                    "sample_id": "one",
-                    "duration_seconds": 1.0,
-                    "latency_seconds": 0.1,
-                    "real_time_factor": 0.1,
-                    "transcript": "alpha",
-                    "segments": [{"text": "alpha", "start": 0.0, "end": 1.0}],
-                    "windows": [{"index": 0, "start": 0.0, "end": 1.0}],
-                }
-            ],
-        },
-    )
+    atomic_write_json(path, _frozen_payload("one"))
     artifact, checksum = load_frozen_asr_artifact(
         path,
         manifest_checksum="manifest",
-        protocol_checksum="protocol",
-        audio_protocol_checksum="audio-protocol",
+        protocol_checksum=VIDEO_PROTOCOL.meta.checksum,
+        audio_protocol_checksum=AUDIO_PROTOCOL.meta.checksum,
         timestamp_tolerance_seconds=0.1,
         sample_ids=["one"],
     )
@@ -298,7 +248,7 @@ def test_frozen_asr_artifact_is_reused_only_for_matching_protocol(tmp_path) -> N
             path,
             manifest_checksum="manifest",
             protocol_checksum="different",
-            audio_protocol_checksum="audio-protocol",
+            audio_protocol_checksum=AUDIO_PROTOCOL.meta.checksum,
             timestamp_tolerance_seconds=0.1,
             sample_ids=["one"],
         )
@@ -371,16 +321,24 @@ def test_visual_worker_uses_current_candidate_temp_root(monkeypatch, tmp_path) -
     stale = tmp_path / "removed-previous-candidate"
     current.mkdir()
     monkeypatch.setenv("TEMP", str(current))
-    monkeypatch.setattr(runner.tempfile, "tempdir", str(stale))
+    monkeypatch.setattr(process.tempfile, "tempdir", str(stale))
 
-    def fake_run(command, **_kwargs):
+    def fake_popen(command, **_kwargs):
         output = Path(command[-1])
         assert current in output.parents
         output.write_text("{}", encoding="utf-8")
-        return SimpleNamespace(returncode=0, stderr="", stdout="")
+        return SimpleNamespace(returncode=0, communicate=lambda **_kwargs: ("", ""))
 
-    monkeypatch.setattr(process.subprocess, "run", fake_run)
-    assert runner._run_visual_worker("video-fixed-5s", [], device="cpu") == {}
+    monkeypatch.setattr(process.subprocess, "Popen", fake_popen)
+    assert (
+        runner._run_visual_worker(
+            "video-fixed-5s",
+            [],
+            device="cpu",
+            protocol=VIDEO_PROTOCOL.meta.worker_payload(),
+        )
+        == {}
+    )
 
 
 def test_mocked_visual_phase_runs_through_artifact_writer(
@@ -406,6 +364,22 @@ def test_mocked_visual_phase_runs_through_artifact_writer(
             }
         },
     )
+    atomic_write_json(frozen_path, _frozen_payload("video"))
+    item = {
+        "id": "video",
+        "duration_seconds": 1.0,
+        "kind": "video",
+        "source_path": str(tmp_path / "video.mp4"),
+    }
+    monkeypatch.setattr(runner, "verified_inputs", lambda *args: (manifest_path, {}))
+    monkeypatch.setattr(
+        runner,
+        "load_manifest",
+        lambda *args: SimpleNamespace(
+            name="smoke", fingerprint="manifest", samples=(item,)
+        ),
+    )
+    monkeypatch.setattr(runner, "model_identity", lambda *args: ({}, {}))
     monkeypatch.setattr(
         runner,
         "_run_visual_worker",
@@ -439,11 +413,16 @@ def test_mocked_visual_phase_runs_through_artifact_writer(
                 "mean_visual_first_detection_delay_seconds": 0.0,
                 "timed_visual_occurrence_coverage": 1.0,
                 "duplicate_visual_text_rate": 0.0,
+                "repeatability_success_rate": None,
+                "attempt_failure_rate": 0.0,
             },
             "parameters": {"candidate": "video-fixed-5s"},
             "intervals": {},
             "timings": [{"sample_id": "video", "latency_seconds": 0.1}],
             "ffmpeg_commands": [{"command": ["ffmpeg"]}],
+            "outputs": {"attempts": []},
+            "resource_samples": [],
+            "gpu_identity": {},
         },
     )
 
@@ -454,7 +433,7 @@ def test_mocked_visual_phase_runs_through_artifact_writer(
     result = runner.run_visual_benchmark(
         "smoke",
         ("video-fixed-5s",),
-        items=[{"id": "video"}],
+        items=[item],
         manifest_path=manifest_path,
         manifest_name="smoke",
         manifest_checksum="manifest",
@@ -462,8 +441,8 @@ def test_mocked_visual_phase_runs_through_artifact_writer(
         audio_protocol=AUDIO_PROTOCOL,
         document_protocol=DOCUMENT_PROTOCOL,
         frozen_asr_path=frozen_path,
-        frozen_asr={"run_id": "asr"},
-        frozen_asr_checksum="frozen",
+        audio_candidate="whisper-small-en-control",
+        audio_decision=manifest_path,
         image_candidate="docling-standard",
         image_decision=None,
         decision_files={},
@@ -471,6 +450,248 @@ def test_mocked_visual_phase_runs_through_artifact_writer(
         ffmpeg_version="ffmpeg test",
         no_mlflow=True,
     )
-    assert result.complete
+    assert result.complete, result.completion_problems
+    assert len(result.candidates) == 2
+    assert result.candidates[0].parameters["run_type"] == "preparation"
+    assert "word_error_rate" not in result.candidates[1].metrics
     assert (result.artifact_directory / "summary.json").is_file()
     assert (result.artifact_directory / "document_protocol.json").is_file()
+
+
+def _frozen_payload(sample_id):
+    from experiments.benchmarks.extraction.video.frozen_asr import execution_identity
+    from experiments.benchmarks.extraction.video.frozen_asr_worker import (
+        METRIC_DIRECTIONS,
+    )
+
+    return {
+        "schema_version": 2,
+        "artifact_type": "FrozenASRArtifact",
+        "execution_identity": execution_identity(),
+        "run_id": "asr-run",
+        "manifest_checksum": "manifest",
+        "protocol_checksum": VIDEO_PROTOCOL.meta.checksum,
+        "audio_protocol_checksum": AUDIO_PROTOCOL.meta.checksum,
+        "protocol_version": VIDEO_PROTOCOL.meta.version,
+        "audio_protocol_version": AUDIO_PROTOCOL.meta.version,
+        "protocol": VIDEO_PROTOCOL.meta.worker_payload(),
+        "audio_protocol": AUDIO_PROTOCOL.meta.worker_payload(),
+        "model_decision_fingerprint": "decision",
+        "audio_candidate": "asr",
+        "model_path": "model",
+        "model_revision": "revision",
+        "selection_revision": "selection",
+        "model_cache_manifest_sha256": "cache",
+        "ffmpeg_version": "ffmpeg test",
+        "ffmpeg_commands": [],
+        "device": "cpu",
+        "profile": "smoke",
+        "metrics": {
+            name: None if name == "peak_vram_mb" else 0.0 for name in METRIC_DIRECTIONS
+        },
+        "intervals": {},
+        "parameters": {"device": "cpu"},
+        "resource_samples": [],
+        "gpu_identity": {},
+        "videos": [
+            {
+                "sample_id": sample_id,
+                "duration_seconds": 1.0,
+                "latency_seconds": 0.1,
+                "success": True,
+                "error": None,
+                "scheduled_window_count": 1,
+                "transcript": "alpha",
+                "segments": [{"text": "alpha", "start": 0.0, "end": 1.0}],
+                "windows": [
+                    {
+                        "index": 0,
+                        "start": 0.0,
+                        "end": 1.0,
+                        "success": True,
+                        "error": None,
+                        "latency_seconds": 0.1,
+                        "transcript": "alpha",
+                        "segments": [{"text": "alpha", "start": 0.0, "end": 1.0}],
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def test_duplicate_text_is_exact_and_scoped_to_visibility_occurrence():
+    item = {
+        "id": "chapter",
+        "duration_seconds": 30,
+        "reference_visual_text": ["Chapter 1"],
+        "visual_occurrences": [
+            {"id": "first", "text": "Chapter 1", "start": 10, "end": 20},
+            {"id": "again", "text": "Chapter 1", "start": 20, "end": 30},
+        ],
+    }
+    settings = VIDEO_PROTOCOL.occurrence_matching
+    row = score_video(
+        item,
+        [
+            {"timestamp": 10, "text": "Chapter"},
+            {"timestamp": 12, "text": "Chapter 1"},
+            {"timestamp": 14, "text": "Chapter 1"},
+        ],
+        settings,
+    )
+    assert row["duplicate_visual_text_rate"] == pytest.approx(1 / 3)
+    reappearance = score_video(
+        item,
+        [
+            {"timestamp": 12, "text": "Chapter 1"},
+            {"timestamp": 22, "text": "Chapter 1"},
+        ],
+        settings,
+    )
+    assert reappearance["duplicate_visual_text_rate"] == 0
+    assert reappearance["timed_visual_occurrence_coverage"] == 1
+    unassigned = score_video(item, [{"timestamp": 1, "text": "Chapter 1"}], settings)
+    assert unassigned["duplicate_visual_text_rate"] is None
+
+
+def test_text_free_video_has_perfect_content_but_no_timed_task():
+    row = score_video(
+        {
+            "id": "blank",
+            "duration_seconds": 1,
+            "reference_visual_text": [],
+            "visual_occurrences": [],
+        },
+        [],
+        VIDEO_PROTOCOL.occurrence_matching,
+    )
+    assert row["visual_content_f1"] == 1
+    assert row["timed_visual_occurrence_coverage"] is None
+    assert row["duplicate_visual_text_rate"] is None
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_frozen_asr_decodes_each_video_once_and_preserves_window_failures(
+    tmp_path, monkeypatch, failure
+):
+    import wave
+
+    from experiments.benchmarks.extraction.audio.adapters import Transcript
+    from experiments.benchmarks.extraction.video import frozen_asr_worker as worker
+
+    decoded, requests = [], []
+
+    def decode(item, destination, protocol):
+        decoded.append((item["id"], destination))
+        with wave.open(str(destination), "wb") as output:
+            output.setnchannels(1)
+            output.setsampwidth(2)
+            output.setframerate(16000)
+            output.writeframes(b"\0\0" * (65 * 16000))
+        return ["ffmpeg", str(item["id"])]
+
+    class Runtime:
+        def load(self):
+            pass
+
+        def close(self):
+            pass
+
+        def parameters(self):
+            return {}
+
+        def transcribe(self, path):
+            requests.append(path.stem)
+            if failure and path.stem == "1":
+                raise RuntimeError("injected window failure")
+            return Transcript("alpha", ({"text": "alpha", "start": 0, "end": 1},))
+
+    monkeypatch.setattr(worker, "build_runtime", lambda *_args: Runtime())
+    monkeypatch.setattr(worker, "_decode", decode)
+    monkeypatch.setattr(worker, "seed_deterministically", lambda *_args: None)
+    items = [
+        {
+            "id": name,
+            "duration_seconds": 65.0,
+            "reference_transcript": "alpha alpha alpha",
+            "reference_segments": [
+                {"text": "alpha", "start": start, "end": start + 1}
+                for start in (0, 28, 56)
+            ],
+        }
+        for name in ("one", "two")
+    ]
+    output = worker.execute(
+        {
+            "protocol": VIDEO_PROTOCOL.meta.worker_payload(),
+            "audio_protocol": AUDIO_PROTOCOL.meta.worker_payload(),
+            "profile": "smoke",
+            "device": "cpu",
+            "candidate": "mock",
+            "model_lock": {},
+            "items": items,
+        }
+    )
+    assert sum(path.name == "full.wav" for _, path in decoded) == 2
+    assert requests == ["warmup", "0", "1", "2", "0", "1", "2"]
+    assert all(len(row["windows"]) == 3 for row in output["videos"])
+    assert output["metrics"]["word_error_rate"] == (None if failure else 0)
+    assert output["metrics"]["attempt_failure_rate"] == pytest.approx(
+        1 / 3 if failure else 0
+    )
+    assert output["metrics"]["peak_vram_mb"] is None
+    assert all(row["success"] != failure for row in output["videos"])
+
+
+@pytest.mark.parametrize(
+    "field,value,match",
+    [
+        ("device", "cuda", "device mismatch"),
+        ("model_revision", "another", "model revision mismatch"),
+        ("duration_seconds", 2.0, "duration differs"),
+        ("scheduled_window_count", 2, "scheduled window count"),
+        ("execution_identity", {}, "execution/software identity mismatch"),
+    ],
+)
+def test_frozen_asr_rejects_execution_identity_and_inventory_drift(
+    tmp_path, field, value, match
+):
+    payload = _frozen_payload("one")
+    if field in {"duration_seconds", "scheduled_window_count"}:
+        payload["videos"][0][field] = value
+    else:
+        payload[field] = value
+    path = tmp_path / "frozen.json"
+    atomic_write_json(path, payload)
+    with pytest.raises(ValueError, match=match):
+        load_frozen_asr_artifact(
+            path,
+            manifest_checksum="manifest",
+            protocol_checksum=VIDEO_PROTOCOL.meta.checksum,
+            audio_protocol_checksum=AUDIO_PROTOCOL.meta.checksum,
+            timestamp_tolerance_seconds=0.1,
+            sample_ids=["one"],
+            expected_device="cpu",
+            expected_identity={"model_revision": "revision"},
+            expected_durations={"one": 1.0},
+        )
+
+
+def test_overlap_stitching_retains_legitimate_reappearance_and_native_timestamp_order():
+    result = _stitch_segments(
+        [{"text": "again", "start": 1, "end": 2}],
+        [{"text": "again", "start": 28, "end": 29}],
+        64,
+        overlap_start=28,
+        overlap_end=30,
+    )
+    assert [row["text"] for row in result] == ["again", "again"]
+    result = _stitch_segments(
+        [{"text": "left", "start": 29, "end": 30}],
+        [{"text": "right", "start": 28, "end": 29}],
+        64,
+        overlap_start=28,
+        overlap_end=30,
+    )
+    assert [row["start"] for row in result] == [28, 29]

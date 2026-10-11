@@ -8,10 +8,10 @@ It does not run candidates, qualify hardware, score predictions, or select model
 Automatic checks establish consistency, not annotation truth: a reviewer must
 still check transcripts, blank sources, evidence, and labels against the assets.
 
-**Implementation status:** this page defines the approved validator interface
-and report-reuse contract. The standalone coordinator and reusable reports still
-require implementation. Current runners perform their existing inline checks;
-the commands below are planned, not available commands.
+**Implementation status:** standalone validation and sealed report verification
+are implemented for Document, ASR (`audio`), and Video. Their runners require a
+matching successful report before execution. The remaining benchmark validators
+below define planned interfaces; they are not yet executable.
 
 ## Preparation and execution
 
@@ -113,9 +113,9 @@ datasets or their cross-split isolation.
 
 ## Folder and command interface
 
-The proposed implementation reuses schema, checksum, evidence-span, and leakage
-primitives in `common/datasets.py`. Domain modules exist only for real
-domain-specific checks.
+The coordinator reuses manifest/schema primitives in `common/datasets.py` and
+report identity, sealing, and inventory checks in `common/data_validation.py`.
+Domain modules contain the domain-specific checks.
 
 When suites share an identical input contract, reuse its validator rather than
 adding a forwarding-only module. The tree shows domain ownership; each added
@@ -125,16 +125,17 @@ module must contain real checks beyond the shared primitives.
 experiments/benchmarks/
 ├── validate.py                    # one public coordinator
 ├── common/datasets.py             # shared data-validation primitives
+├── common/data_validation.py      # sealed report identity and verification
 ├── extraction/
 │   ├── document/validation.py
 │   ├── audio/validation.py
 │   └── video/validation.py
 ├── rag/
-│   ├── chunking_embedding/validation.py
-│   ├── retrieval_reranking/validation.py
-│   ├── generation/validation.py
-│   └── final/validation.py
-└── vectordb/validation.py
+│   ├── chunking_embedding/validation.py  # planned
+│   ├── retrieval_reranking/validation.py # planned
+│   ├── generation/validation.py          # planned
+│   └── final/validation.py               # planned
+└── vectordb/validation.py                # planned
 
 artifacts/benchmarks/data-validation/
 └── <benchmark>/<fingerprint>.json  # generated reports, not committed data
@@ -144,27 +145,39 @@ The existing generic manifest-validation helpers feed this coordinator rather
 than becoming a second full validator. Sealing a manifest checksum is not proof
 that its references, corpus coverage, or split isolation passed validation.
 
-Planned commands, from the repository root:
+Available extraction commands, from the repository root:
 
 ```powershell
 python -m experiments.benchmarks.validate audio --profile development
 python -m experiments.benchmarks.validate audio --profile all
 python -m experiments.benchmarks.validate document --profile all
 python -m experiments.benchmarks.validate video --profile all
+python -m experiments.benchmarks.validate all --profile smoke
+python -m experiments.benchmarks.validate all --profile all
+```
+
+`all` currently coordinates the three extraction validators. It reports missing
+authoritative inputs as failures, while `--profile smoke` checks their fixtures.
+Use `--manifest` and `--protocol` for a single benchmark/profile override;
+`--inventory` supplies the frozen cross-split manifests, and ASR also accepts
+`--reliability-manifest`. Verification hashes actual inputs and validates the
+report's content seal; it neither repairs inputs nor creates a passed report.
+
+Planned commands for the remaining benchmarks:
+
+```powershell
 python -m experiments.benchmarks.validate chunking-embedding --profile all
 python -m experiments.benchmarks.validate retrieval-reranking --profile all
 python -m experiments.benchmarks.validate generation --profile all
 python -m experiments.benchmarks.validate final-rag --profile locked
 python -m experiments.benchmarks.validate vectordb --profile all
-python -m experiments.benchmarks.validate all --profile all
 ```
 
 `--profile smoke|development|validation|locked` chooses one applicable dataset;
 `all` validates every applicable dataset and the cross-split inventory. Final
 RAG has only locked evaluation inputs; non-locked integration fixtures are not
-another Final RAG selection profile. A smoke-only preparation check can use
-`python -m experiments.benchmarks.validate all --profile smoke`; suites without
-that profile are explicitly reported as not applicable. Missing required
+another Final RAG selection profile. In the extended coordinator, suites without
+an applicable profile will be reported as not applicable. Missing required
 authoritative data is an error, never a silent skip or a successful all-data
 report. This permits smoke checks while authoritative datasets are unpopulated.
 

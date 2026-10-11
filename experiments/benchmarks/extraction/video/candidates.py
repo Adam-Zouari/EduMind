@@ -67,7 +67,10 @@ def parse_candidate(value: str, protocol: VideoProtocol) -> VideoCandidate:
     try:
         if len(parts) == 3 and parts[:2] == ["video", "fixed"]:
             seconds = int(parts[2].removesuffix("s"))
-            if seconds in protocol.fixed_intervals:
+            if (
+                seconds in protocol.fixed_intervals
+                and value == f"video-fixed-{seconds}s"
+            ):
                 return VideoCandidate(
                     value,
                     "fixed",

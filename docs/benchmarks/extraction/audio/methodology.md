@@ -40,9 +40,8 @@ units; related clips from a reviewed common source travel together under the
 manifest's group ID. Three measured attempts improve timing and repeatability
 diagnosis but never become three independent quality samples.
 
-The revised ASR contract below is approved documentation; executable alignment
-of its failure accounting and repeatability remains pending. See the
-[runbook's implementation status](../../running.md#1-prepare-the-environment).
+The runner implements the failure and repeatability contract below. See the
+[runbook](../../running.md#1-prepare-the-environment) for execution prerequisites.
 
 ## ASR profiles
 
@@ -101,8 +100,9 @@ explicit reviewed empty transcript from a missing annotation, checks duration,
 required timestamps, and control categories, and rejects a full speech split
 with no normalized reference words or eligible timed segments. Individual
 legitimate empty projections remain valid. No data check runs inside measured
-transcription or candidate resource monitoring. Reusable validation reports and
-the standalone commands are the planned interface, not yet implemented.
+transcription or candidate resource monitoring. Run
+`python -m experiments.benchmarks.validate audio --profile <profile>` after
+preparing the inputs; execution automatically verifies its matching sealed report.
 
 ## Common input and output rules
 

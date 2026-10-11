@@ -20,9 +20,8 @@ parser and ASR fixed. Visual quality measures useful on-screen text and its
 capture time. Frozen-ASR diagnostics describe the shared audio input separately;
 they never contribute to visual scores or rank keyframe policies.
 
-**Implementation status:** this page defines the approved metric contract.
-Occurrence-aware duplication, revised failure/repeatability accounting, expanded
-frozen-ASR reporting, and grouped MLflow runs still require implementation.
+The runner implements occurrence-aware duplication, first-attempt failure and
+repeatability accounting, frozen-ASR diagnostics, and grouped MLflow runs.
 See the [runbook](../../running.md#1-prepare-the-environment).
 
 ## Metric summary

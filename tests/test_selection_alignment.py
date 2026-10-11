@@ -242,7 +242,7 @@ def test_document_stage_requests_only_its_candidate_models(monkeypatch) -> None:
     assert (
         benchmark._model_lock(
             (
-                "docling-standard-native|ocr=rapidocr|mode=full_page|table=fast|formula=off",
+                "docling-standard-native",
                 "docling-vlm-granite-258m",
                 "docling-vlm-granite-258m",
             )

@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import time
 from collections.abc import Mapping
 from dataclasses import asdict
 from pathlib import Path
 
-from edumind.common.artifacts import sha256_file
 from edumind.common.paths import PROJECT_ROOT
-from edumind.extraction import ExtractionPipeline, ExtractionProfile, SourceKind
 from experiments.benchmarks.common.contracts import BenchmarkPlan, BenchmarkResult
 from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
 from experiments.benchmarks.common.preflight import (
@@ -27,20 +24,18 @@ from experiments.benchmarks.extraction.document.metrics import (
     METRIC_DIRECTIONS,
     load_reference_data,
     validate_official_evaluators,
-    validate_reference,
 )
 from experiments.benchmarks.extraction.document.official_metrics import (
     official_image_digest,
 )
 from experiments.benchmarks.extraction.document.profiles import (
-    lock_paths,
     parse_document_profile,
 )
 from experiments.benchmarks.extraction.document.protocol import (
     DEFAULT_PROTOCOL_PATH,
     load_protocol,
 )
-from experiments.benchmarks.extraction.registry import build_experiment_registry
+from experiments.benchmarks.extraction.document.validation import verified_inputs
 from experiments.benchmarks.preparation.evaluators import OMNIDOCBENCH_REVISION
 from experiments.benchmarks.preparation.models import load_selected_model_lock
 
@@ -61,6 +56,9 @@ def run(
 ) -> BenchmarkResult:
     protocol = load_protocol(protocol_path)
     execution = protocol.profile(profile)
+    data_report_path, data_report = verified_inputs(
+        manifest_path or _manifest(profile), profile, protocol
+    )
     manifest = load_manifest(manifest_path or _manifest(profile))
     require_manifest_split(
         manifest,
@@ -68,7 +66,7 @@ def run(
         "locked-test" if profile == "locked" else profile,
     )
     selected = [
-        item
+        {**item, **data_report["metadata"]["samples"][str(item["id"])]}
         for item in manifest.samples
         if item.get("kind") in {"image", "pdf", "docx"}
         and (document_kind is None or item.get("kind") == document_kind)
@@ -81,22 +79,9 @@ def run(
             f"Document {profile} requires at least {minimum} frozen samples; "
             f"manifest contains {len(selected)}"
         )
-    _validate_assets(
-        selected,
-        require_checksums=True,
-        require_provenance=profile in {"development", "validation", "locked"},
-    )
     loaded_references = {
         str(item["id"]): load_reference_data(item) for item in selected
     }
-    for item in selected:
-        payload, reference = loaded_references[str(item["id"])]
-        validate_reference(
-            item,
-            authoritative=profile in {"development", "validation", "locked"},
-            payload=payload,
-            reference=reference,
-        )
     references = {
         sample_id: reference for sample_id, (_, reference) in loaded_references.items()
     }
@@ -111,6 +96,12 @@ def run(
             + ", ".join(sorted(unknown_component_options))
         )
     component_options.setdefault("device", execution.device)
+    if str(component_options["device"]) not in (
+        execution.devices or (execution.device,)
+    ):
+        raise ValueError(
+            "Document device override violates the frozen execution profile"
+        )
     comparison = document_comparison or (
         f"architecture-{profile}"
         if profile in {"validation", "locked"}
@@ -132,9 +123,13 @@ def run(
     qualification_path = None
     qualification = None
     if profile != "smoke":
+        if profile != "development":
+            verified_inputs(_manifest("development"), "development", protocol)
         qualification_lock = _model_lock(declared)
         qualification_manifest = (
-            manifest if profile == "development" else load_manifest(_manifest("development"))
+            manifest
+            if profile == "development"
+            else load_manifest(_manifest("development"))
         )
         qualification_stress = _stress_documents(qualification_manifest)
         fingerprint, _ = _qualification_identity(
@@ -186,7 +181,6 @@ def run(
         )
 
     def evaluate(candidate: str):
-        pipeline = ExtractionPipeline(registry=build_experiment_registry())
         return runner.evaluate_candidate(
             candidate,
             selected,
@@ -194,8 +188,6 @@ def run(
             model_lock,
             component_options,
             references,
-            pipeline,
-            lambda *args: extract_once(*args, protocol=protocol),
             protocol,
         )
 
@@ -207,7 +199,11 @@ def run(
         directions=directions,
         primary_metric=runner.primary_metrics(directions),
         required_metrics=runner.required_metrics(directions),
+        nullable_metrics=runner.required_metrics(directions),
         paired_metrics=runner.paired_metrics(directions),
+        paired_group_key="source_group_id",
+        monitor_resources=False,
+        candidate_artifact_name="candidate.json",
         revisions={
             **{
                 name: str(value.get("revision", ""))
@@ -225,6 +221,7 @@ def run(
         decision_files=decision_files,
         input_artifacts={
             "manifest": (manifest_path or _manifest(profile)).resolve(),
+            "data_validation": data_report_path,
             **(
                 {"preflight_report": qualification_path}
                 if qualification_path is not None
@@ -234,9 +231,13 @@ def run(
         protocols={"document": protocol.meta},
         no_mlflow=no_mlflow,
         run_name_prefix=(
-            f"document-{comparison}-{document_kind or 'all'}-smoke-{requested_device}"
+            f"smoke-{requested_device}-{document_kind or 'all'}"
             if profile == "smoke"
-            else f"document-{comparison}-{document_kind or 'all'}-{profile}"
+            else (
+                f"development-{'config' if comparison == 'configuration' else 'parsers'}-{document_kind or 'all'}"
+                if profile == "development" and document_kind != "docx"
+                else f"{profile}-{document_kind or 'all'}"
+            )
         ),
     )
 
@@ -250,13 +251,8 @@ def run_preflight_profile(
     protocol = load_protocol(protocol_path)
     path = (manifest_path or _manifest("development")).resolve()
     manifest = load_manifest(path)
+    data_report_path, _ = verified_inputs(path, "development", protocol)
     require_manifest_split(manifest, "development", "development")
-    items = [
-        item
-        for item in manifest.samples
-        if item.get("kind") in {"image", "pdf", "docx"}
-    ]
-    _validate_assets(items, require_checksums=True, require_provenance=True)
     stress = _stress_documents(manifest)
     candidates = declared_document_candidates(protocol)
     model_lock = _model_lock(candidates)
@@ -273,15 +269,15 @@ def run_preflight_profile(
         candidate_items = _preflight_items(candidate, stress)
         model_backed = candidate != "docling-standard-native"
         result = run_json_worker(
-            Path(__file__).with_name("preflight_worker.py"),
+            Path(__file__).with_name("worker.py"),
             {
                 "candidate": candidate,
                 "items": candidate_items,
                 "model_lock": model_lock,
                 "protocol": protocol.meta.worker_payload(),
-                "warmups": protocol.preflight.warmups,
-                "repetitions": protocol.preflight.repetitions,
-                "placement_required": model_backed,
+                "profile": "development",
+                "mode": "preflight",
+                "device": "cuda",
             },
             device="cuda",
             prefix="edumind-document-preflight-",
@@ -307,13 +303,15 @@ def run_preflight_profile(
             "stress_manifest": str(path),
             "stress_manifest_checksum": manifest.fingerprint,
             "stress_sample_ids": [str(item["id"]) for item in stress],
+            "data_validation_report": str(data_report_path),
         },
         probe=probe,
         required_groups={
             kind: tuple(
                 candidate
                 for candidate in candidates
-                if kind in {str(item["kind"]) for item in _preflight_items(candidate, stress)}
+                if kind
+                in {str(item["kind"]) for item in _preflight_items(candidate, stress)}
             )
             for kind in ("pdf", "image", "docx")
         },
@@ -365,9 +363,9 @@ def _qualification_identity(protocol, model_lock, candidates, manifest, stress):
             **stress_input_identity(manifest, stress),
             "source_types": ["image", "pdf", "docx"],
             "source_sizes_bytes": {
-                str(item["kind"]): (
-                    PROJECT_ROOT / str(item["source_path"])
-                ).stat().st_size
+                str(item["kind"]): (PROJECT_ROOT / str(item["source_path"]))
+                .stat()
+                .st_size
                 for item in stress
             },
         },
@@ -380,7 +378,6 @@ def _stress_documents(manifest):
         for item in manifest.samples
         if item.get("kind") in {"image", "pdf", "docx"}
     ]
-    _validate_assets(items, require_checksums=True, require_provenance=True)
     return tuple(
         max(
             (item for item in items if item.get("kind") == kind),
@@ -388,73 +385,6 @@ def _stress_documents(manifest):
         )
         for kind in ("image", "pdf", "docx")
     )
-
-
-def extract_once(candidate, item, model_lock, component_options, pipeline, *, protocol):
-    started = time.perf_counter()
-    kind = SourceKind(str(item["kind"]))
-    document_profile = parse_document_profile(candidate)
-    lock_entry = model_lock.get(document_profile.lock_candidate, {})
-    options = dict(component_options)
-    options.update(protocol.parser_options(document_profile.runtime_engine))
-    options.update(document_profile.options)
-    options.update(lock_paths(lock_entry))
-    document = pipeline.extract(
-        PROJECT_ROOT / str(item["source_path"]),
-        source_kind=kind,
-        profile=ExtractionProfile(
-            name=f"benchmark-{candidate}",
-            engine=document_profile.runtime_engine,
-            engine_revision=str(lock_entry.get("revision", "system")),
-            preprocessing="raw",
-            normalization="none",
-            routing="direct",
-            device=str(component_options["device"]),
-            options=options,
-        ),
-        use_cache=False,
-    )
-    return document, time.perf_counter() - started
-
-
-def _validate_assets(
-    samples, *, require_checksums: bool, require_provenance: bool
-) -> None:
-    for item in samples:
-        path = PROJECT_ROOT / str(item.get("source_path", ""))
-        expected = item.get("asset_sha256")
-        if require_checksums and not expected:
-            raise ValueError(
-                f"Extraction sample {item.get('id')} has no asset_sha256. Prepare smoke "
-                "fixtures or the licensed public-asset manifest before running it."
-            )
-        if require_provenance:
-            missing = [
-                key
-                for key in ("source_license", "source_revision", "document_family")
-                if not item.get(key)
-            ]
-            if missing:
-                raise ValueError(
-                    f"Extraction sample {item.get('id')} lacks authoritative provenance: "
-                    f"{', '.join(missing)}"
-                )
-        if not path.is_file():
-            raise FileNotFoundError(f"Extraction asset is missing: {path}")
-        if expected and sha256_file(path) != str(expected):
-            raise ValueError(f"Extraction asset checksum mismatch: {path}")
-        reference_path = item.get("reference_path")
-        if reference_path:
-            reference = PROJECT_ROOT / str(reference_path)
-            if not reference.is_file():
-                raise FileNotFoundError(f"Extraction reference is missing: {reference}")
-            expected_reference = item.get("reference_sha256")
-            if require_checksums and not expected_reference:
-                raise ValueError(
-                    f"Extraction sample {item.get('id')} has no reference_sha256"
-                )
-            if expected_reference and sha256_file(reference) != str(expected_reference):
-                raise ValueError(f"Extraction reference checksum mismatch: {reference}")
 
 
 def _model_lock(candidates: tuple[str, ...]) -> dict[str, dict[str, object]]:

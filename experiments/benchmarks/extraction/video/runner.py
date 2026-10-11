@@ -1,19 +1,14 @@
-"""Dedicated orchestration for frozen-ASR and visual-only video benchmarks."""
+"""Video comparisons: one audio-preparation child followed by visual-only children."""
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
+import random
 import subprocess
 import sys
-import tempfile
-from collections.abc import Sequence
 from pathlib import Path
 
-import numpy as np
-
-from edumind.common.artifacts import sha256_file
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.arguments import (
     LIFECYCLE_PROFILES,
@@ -21,12 +16,17 @@ from experiments.benchmarks.common.arguments import (
     execution_devices,
     without_option_values,
 )
-from experiments.benchmarks.common.contracts import BenchmarkPlan, SampleResult
-from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
-from experiments.benchmarks.common.decisions import load_engineer_decision
-from experiments.benchmarks.common.preflight import (
-    eligible_candidates,
+from experiments.benchmarks.common.contracts import (
+    BenchmarkPlan,
+    CandidateExecutionError,
+    SampleResult,
 )
+from experiments.benchmarks.common.data_validation import (
+    manifest_path as _default_manifest,
+)
+from experiments.benchmarks.common.datasets import load_manifest
+from experiments.benchmarks.common.decisions import load_engineer_decision
+from experiments.benchmarks.common.preflight import eligible_candidates
 from experiments.benchmarks.common.preflight_reports import resolve_preflight_report
 from experiments.benchmarks.common.process import run_json_worker
 from experiments.benchmarks.common.runner import run_benchmark
@@ -34,9 +34,7 @@ from experiments.benchmarks.extraction.audio.adapters import profiles as audio_p
 from experiments.benchmarks.extraction.audio.protocol import (
     DEFAULT_PROTOCOL_PATH as DEFAULT_AUDIO_PROTOCOL_PATH,
 )
-from experiments.benchmarks.extraction.audio.protocol import (
-    AudioProtocol,
-)
+from experiments.benchmarks.extraction.audio.protocol import AudioProtocol
 from experiments.benchmarks.extraction.audio.protocol import (
     load_protocol as load_audio_protocol,
 )
@@ -47,40 +45,41 @@ from experiments.benchmarks.extraction.document.profiles import (
 from experiments.benchmarks.extraction.document.protocol import (
     DEFAULT_PROTOCOL_PATH as DEFAULT_DOCUMENT_PROTOCOL_PATH,
 )
-from experiments.benchmarks.extraction.document.protocol import (
-    DocumentProtocol,
-)
+from experiments.benchmarks.extraction.document.protocol import DocumentProtocol
 from experiments.benchmarks.extraction.document.protocol import (
     load_protocol as load_document_protocol,
 )
 from experiments.benchmarks.extraction.document.runner import (
     validate_prepared_components,
 )
-from experiments.benchmarks.extraction.media import ffmpeg_version, media_duration
+from experiments.benchmarks.extraction.media import ffmpeg_version
 from experiments.benchmarks.extraction.video.candidates import (
     all_candidates,
-    fixed_candidates,
-    hybrid_candidates,
-    parse_candidate,
     scene_candidates,
 )
 from experiments.benchmarks.extraction.video.frozen_asr import (
     create_frozen_asr_artifact,
     load_frozen_asr_artifact,
+    model_identity,
 )
-from experiments.benchmarks.extraction.video.metrics import METRIC_DIRECTIONS
+from experiments.benchmarks.extraction.video.frozen_asr_worker import (
+    METRIC_DIRECTIONS as ASR_DIRECTIONS,
+)
+from experiments.benchmarks.extraction.video.metrics import (
+    METRIC_DIRECTIONS,
+    QUALITY_DIRECTIONS,
+)
 from experiments.benchmarks.extraction.video.preflight import (
     run_video_preflight,
     video_qualification_identity,
 )
 from experiments.benchmarks.extraction.video.protocol import (
     DEFAULT_PROTOCOL_PATH,
-    VideoProtocol,
     load_protocol,
+    protocol_from_worker,
 )
-from experiments.benchmarks.preparation.models import (
-    load_selected_model_lock,
-)
+from experiments.benchmarks.extraction.video.validation import verified_inputs
+from experiments.benchmarks.preparation.models import load_selected_model_lock
 
 PROFILE_STAGE = {
     "smoke": "video-smoke",
@@ -90,18 +89,12 @@ PROFILE_STAGE = {
 }
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Benchmark visual video extraction")
-    parser.add_argument(
-        "--profile",
-        choices=LIFECYCLE_PROFILES,
-        default="smoke",
+def main():
+    parser = argparse.ArgumentParser(
+        description="Benchmark frozen-ASR inputs and visual video policies"
     )
-    parser.add_argument(
-        "--phase",
-        choices=("frozen-asr", "fixed", "scene", "hybrid", "all"),
-        default="all",
-    )
+    parser.add_argument("--profile", choices=LIFECYCLE_PROFILES, default="smoke")
+    parser.add_argument("--phase", choices=("all", "scene-selection"), default="all")
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--protocol", type=Path, default=DEFAULT_PROTOCOL_PATH)
     parser.add_argument(
@@ -110,65 +103,53 @@ def main() -> int:
     parser.add_argument(
         "--document-protocol", type=Path, default=DEFAULT_DOCUMENT_PROTOCOL_PATH
     )
-    parser.add_argument("--frozen-asr", type=Path)
+    parser.add_argument(
+        "--frozen-asr",
+        type=Path,
+        help="Explicitly reuse an exactly matching existing artifact",
+    )
     parser.add_argument("--shortlist", type=Path)
     parser.add_argument("--document-selection", type=Path)
     parser.add_argument("--audio-selection", type=Path)
-    parser.add_argument(
-        "--image-candidate", help="Smoke-only selected document profile"
-    )
-    parser.add_argument("--audio-candidate", help="Smoke-only selected ASR profile")
+    parser.add_argument("--image-candidate", help="Smoke-only image parser override")
+    parser.add_argument("--audio-candidate", help="Smoke-only ASR override")
     parser.add_argument("--device", choices=("cpu", "cuda", "both"))
     parser.add_argument("--preflight-report", type=Path)
     parser.add_argument("--preflight-run-id")
     parser.add_argument("--no-mlflow", action="store_true")
     arguments = parser.parse_args()
-
-    if arguments.profile == "preflight":
-        ignored = []
-        if arguments.phase != "all":
-            ignored.append("--phase")
-        for option, value in (
-            ("--frozen-asr", arguments.frozen_asr),
-            ("--shortlist", arguments.shortlist),
-            ("--image-candidate", arguments.image_candidate),
-            ("--audio-candidate", arguments.audio_candidate),
-            ("--preflight-report", arguments.preflight_report),
-            ("--preflight-run-id", arguments.preflight_run_id),
-        ):
-            if value is not None:
-                ignored.append(option)
-        if ignored:
-            parser.error(
-                "Video preflight qualifies frozen ASR and every visual policy; it "
-                "does not accept: " + ", ".join(ignored)
-            )
-
-    protocol = load_protocol(arguments.protocol)
-    audio_protocol = load_audio_protocol(arguments.audio_protocol)
-    document_protocol = load_document_protocol(arguments.document_protocol)
+    if arguments.phase == "scene-selection" and arguments.profile != "development":
+        parser.error("Preliminary scene selection is a development-only comparison")
+    if arguments.profile == "preflight" and any(
+        (
+            arguments.frozen_asr,
+            arguments.shortlist,
+            arguments.image_candidate,
+            arguments.audio_candidate,
+            arguments.preflight_report,
+            arguments.preflight_run_id,
+        )
+    ):
+        parser.error(
+            "Preflight qualifies the declared roster; selection/reuse overrides are not evaluation inputs"
+        )
+    protocol, audio_protocol, document_protocol = (
+        load_protocol(arguments.protocol),
+        load_audio_protocol(arguments.audio_protocol),
+        load_document_protocol(arguments.document_protocol),
+    )
     if arguments.profile == "smoke" and arguments.device in {None, "both"}:
         return _run_smoke_devices(arguments, protocol.profile("smoke").devices)
-    profile_for_data = (
-        "development" if arguments.profile == "preflight" else arguments.profile
-    )
-    execution = (
-        audio_protocol.profile(profile_for_data)
-        if arguments.phase == "frozen-asr"
-        else protocol.profile(profile_for_data)
-    )
-    try:
-        devices = execution_devices(
-            arguments.profile,
-            arguments.device,
-            smoke_devices=protocol.profile("smoke").devices,
-            authoritative_device=execution.device,
-        )
-    except ValueError as exc:
-        parser.error(str(exc))
-    device = devices[0]
-
-    if arguments.profile != "smoke":
+    profile = "development" if arguments.profile == "preflight" else arguments.profile
+    device = execution_devices(
+        arguments.profile,
+        arguments.device,
+        smoke_devices=protocol.profile("smoke").devices,
+        authoritative_device=protocol.profile(profile).device,
+    )[0]
+    if profile != "smoke":
+        if arguments.image_candidate or arguments.audio_candidate:
+            parser.error("Direct model overrides are smoke-only")
         arguments.audio_selection = arguments.audio_selection or default_decision_path(
             "audio", "locked"
         )
@@ -176,28 +157,18 @@ def main() -> int:
             arguments.document_selection
             or default_decision_path("document-image", "locked")
         )
-        arguments.shortlist = arguments.shortlist or default_decision_path(
-            "video", arguments.profile
-        )
-    if arguments.frozen_asr is None:
-        arguments.frozen_asr = (
-            PROJECT_ROOT
-            / "artifacts/benchmarks/video/frozen-asr"
-            / f"{profile_for_data}.json"
-        )
-
-    manifest_path = (arguments.manifest or _manifest(profile_for_data)).resolve()
+        if profile in {"validation", "locked"}:
+            arguments.shortlist = arguments.shortlist or default_decision_path(
+                "video", profile
+            )
+    manifest_path = (arguments.manifest or _manifest(profile)).resolve()
+    validation_path, _ = verified_inputs(manifest_path, profile, protocol)
     manifest = load_manifest(manifest_path)
-    expected_split = {
-        "smoke": "smoke",
-        "development": "development",
-        "validation": "validation",
-        "locked": "locked-test",
-    }[profile_for_data]
-    require_manifest_split(manifest, profile_for_data, expected_split)
-    items = [dict(item) for item in manifest.samples if item.get("kind") == "video"]
-    _validate_manifest(items, profile_for_data, protocol)
-    ffmpeg_identity = ffmpeg_version()
+    items = [
+        {**item, "source_path": str((PROJECT_ROOT / item["source_path"]).resolve())}
+        for item in manifest.samples
+        if item.get("kind") == "video"
+    ]
     audio_candidate, audio_decision = _selected_audio(arguments, audio_protocol)
     image_candidate, image_decision = _selected_image(arguments, document_protocol)
     if arguments.profile == "preflight":
@@ -212,6 +183,7 @@ def main() -> int:
             audio_decision=audio_decision,
             image_candidate=image_candidate,
             image_decision=image_decision,
+            data_validation_report=validation_path,
             no_mlflow=arguments.no_mlflow,
         )
         print(
@@ -219,32 +191,22 @@ def main() -> int:
                 {
                     "run_id": result.run_id,
                     "ready_for_development": result.ready_for_development,
-                    "qualified_candidates": result.qualified_candidates,
-                    "excluded_candidates": result.excluded_candidates,
-                    "blocked_candidates": result.blocked_candidates,
                     "artifacts": str(result.artifact_directory),
                 },
                 indent=2,
             )
         )
         return 0 if result.ready_for_development else 2
-
-    qualification_path = None
-    qualification = None
-    if arguments.profile != "smoke":
-        qualification_manifest = (
-            manifest
-            if arguments.profile == "development"
-            else load_manifest(_manifest("development"))
+    candidates, decisions = _candidates(arguments, protocol)
+    qualification = qualification_path = None
+    if profile != "smoke":
+        development_path = (
+            manifest_path if profile == "development" else _manifest("development")
         )
-        qualification_items = [
-            dict(item)
-            for item in qualification_manifest.samples
-            if item.get("kind") == "video"
-        ]
-        _validate_manifest(qualification_items, "development", protocol)
-        qualification_stress = max(
-            qualification_items,
+        verified_inputs(development_path, "development", protocol)
+        development = load_manifest(development_path)
+        stress = max(
+            (item for item in development.samples if item.get("kind") == "video"),
             key=lambda item: float(item["duration_seconds"]),
         )
         declared, fingerprint, _ = video_qualification_identity(
@@ -253,8 +215,8 @@ def main() -> int:
             document_protocol,
             audio_candidate,
             image_candidate,
-            qualification_manifest,
-            qualification_stress,
+            development,
+            stress,
         )
         qualification_path, qualification = resolve_preflight_report(
             benchmark="video",
@@ -263,68 +225,19 @@ def main() -> int:
             explicit=arguments.preflight_report,
             run_id=arguments.preflight_run_id,
         )
-        if f"frozen-asr|{audio_candidate}" not in set(
-            qualification["qualified_candidates"]
-        ):
-            raise ValueError("Selected frozen ASR did not pass video GPU preflight")
-    if arguments.phase == "frozen-asr":
-        artifact_path = create_frozen_asr_artifact(
-            arguments.frozen_asr,
-            items=items,
-            manifest_checksum=manifest.fingerprint,
-            protocol=protocol,
-            audio_protocol=audio_protocol,
-            audio_candidate=audio_candidate,
-            audio_decision_path=audio_decision,
-            device=device,
-            ffmpeg_version=ffmpeg_identity,
-            profile_name=arguments.profile,
-        )
-        asr_result = _record_frozen_asr(
-            artifact_path,
-            profile=arguments.profile,
-            manifest_path=manifest_path,
-            manifest_name=manifest.name,
-            manifest_checksum=manifest.fingerprint,
-            protocol=protocol,
-            audio_protocol=audio_protocol,
-            audio_decision=audio_decision,
-            preflight_report=qualification_path,
-            preflight=qualification,
-            no_mlflow=arguments.no_mlflow,
-        )
-        print(
-            json.dumps(
-                {
-                    "frozen_asr": str(arguments.frozen_asr.resolve()),
-                    "run_id": asr_result.run_id,
-                    "complete": asr_result.complete,
-                    "artifacts": str(asr_result.artifact_directory),
-                },
-                indent=2,
+        if f"frozen-asr|{audio_candidate}" not in qualification["qualified_candidates"]:
+            raise ValueError("Selected frozen ASR did not pass video preflight")
+        candidates = tuple(
+            value.removeprefix("visual|")
+            for value in eligible_candidates(
+                tuple(f"visual|{candidate}" for candidate in candidates),
+                qualification,
+                profile=profile,
+                label="Video visual",
             )
         )
-        return 0 if asr_result.complete else 2
-
-    frozen, frozen_checksum = load_frozen_asr_artifact(
-        arguments.frozen_asr,
-        manifest_checksum=manifest.fingerprint,
-        protocol_checksum=protocol.meta.checksum,
-        audio_protocol_checksum=audio_protocol.meta.checksum,
-        timestamp_tolerance_seconds=protocol.manifest_duration_tolerance_seconds,
-        sample_ids=[str(item["id"]) for item in items],
-    )
-    candidates, candidate_decisions = _candidates(arguments, protocol)
-    if qualification is not None:
-        eligible = eligible_candidates(
-            tuple(f"visual|{candidate}" for candidate in candidates),
-            qualification,
-            profile=arguments.profile,
-            label="Video visual",
-        )
-        candidates = tuple(candidate.removeprefix("visual|") for candidate in eligible)
     result = run_visual_benchmark(
-        arguments.profile,
+        profile,
         candidates,
         items=items,
         manifest_path=manifest_path,
@@ -333,17 +246,19 @@ def main() -> int:
         protocol=protocol,
         audio_protocol=audio_protocol,
         document_protocol=document_protocol,
-        frozen_asr_path=arguments.frozen_asr.resolve(),
-        frozen_asr=frozen,
-        frozen_asr_checksum=frozen_checksum,
+        frozen_asr_path=arguments.frozen_asr,
         image_candidate=image_candidate,
         image_decision=image_decision,
-        decision_files=candidate_decisions,
+        audio_candidate=audio_candidate,
+        audio_decision=audio_decision,
+        decision_files=decisions,
         device=device,
-        ffmpeg_version=ffmpeg_identity,
+        ffmpeg_version=ffmpeg_version(),
         no_mlflow=arguments.no_mlflow,
         preflight_report=qualification_path,
         preflight=qualification,
+        data_validation_report=validation_path,
+        scene_selection=arguments.phase == "scene-selection",
     )
     print(
         json.dumps(
@@ -366,177 +281,308 @@ def run_visual_benchmark(
     manifest_path,
     manifest_name,
     manifest_checksum,
-    protocol: VideoProtocol,
-    audio_protocol: AudioProtocol,
-    document_protocol: DocumentProtocol,
+    protocol,
+    audio_protocol,
+    document_protocol,
     frozen_asr_path,
-    frozen_asr,
-    frozen_asr_checksum,
     image_candidate,
     image_decision,
+    audio_candidate,
+    audio_decision,
     decision_files,
     device,
     ffmpeg_version,
     no_mlflow,
     preflight_report=None,
     preflight=None,
+    data_validation_report=None,
+    scene_selection=False,
 ):
+    report_path, _ = verified_inputs(manifest_path, profile, protocol)
+    if (
+        data_validation_report is not None
+        and Path(data_validation_report).resolve() != report_path.resolve()
+    ):
+        raise ValueError(
+            "Video data-validation report differs from the verified report"
+        )
+    data_validation_report = report_path
+    current_manifest = load_manifest(manifest_path)
+    expected_items = [
+        {**item, "source_path": str((PROJECT_ROOT / item["source_path"]).resolve())}
+        for item in current_manifest.samples
+        if item.get("kind") == "video"
+    ]
+    if (
+        manifest_checksum != current_manifest.fingerprint
+        or manifest_name != current_manifest.name
+        or sorted(items, key=lambda row: str(row["id"]))
+        != sorted(expected_items, key=lambda row: str(row["id"]))
+    ):
+        raise ValueError("Video execution inputs differ from the validated manifest")
     execution = protocol.profile(profile)
     document_profile = parse_document_profile(image_candidate)
     document_protocol.validate_candidate_factors(document_profile.factors)
     engine = document_profile.runtime_engine
     if device not in document_protocol.backend_devices[engine]:
-        raise ValueError(
-            f"{engine} cannot run on {device}; allowed devices: "
-            + ", ".join(document_protocol.backend_devices[engine])
-        )
+        raise ValueError(f"{engine} does not support {device}")
+    if device not in (execution.devices or (execution.device,)):
+        raise ValueError("Video device violates the execution profile")
+    image_lock = load_selected_model_lock(
+        PROJECT_ROOT / "data/benchmarks/models/selected.json",
+        candidates=(document_profile.lock_candidate,),
+    )
+    entry = image_lock[document_profile.lock_candidate]
+    validate_prepared_components(image_candidate, entry, document_protocol)
     image_options = {
         **document_protocol.parser_options(engine),
         **document_profile.options,
+        **lock_paths(entry),
     }
-    lock_name = document_profile.lock_candidate
-    lock = load_selected_model_lock(
-        PROJECT_ROOT / "data/benchmarks/models/selected.json",
-        candidates=(lock_name,),
+    _, expected_identity = model_identity(
+        audio_candidate, audio_decision, audio_protocol
     )
-    entry = lock[lock_name]
-    validate_prepared_components(image_candidate, entry, document_protocol)
-    image_options.update(lock_paths(entry))
-    stage = PROFILE_STAGE[profile]
-    strategies = {
-        parse_candidate(candidate, protocol).strategy for candidate in candidates
-    }
-    if profile == "development" and len(strategies) == 1:
-        stage = f"{stage}-{next(iter(strategies))}"
+    stage = (
+        "video-development-scene-selection"
+        if scene_selection
+        else PROFILE_STAGE[profile]
+    )
+    preparation = f"frozen-asr — {audio_candidate}"
+    ordered = list(candidates)
+    random.Random(protocol.meta.seed).shuffle(ordered)
     plan = BenchmarkPlan(
         "extraction",
         stage,
         profile,
         manifest_name,
-        tuple(candidates),
+        (preparation, *ordered),
         seed=protocol.meta.seed,
         repetitions=execution.repetitions,
-        bootstrap_resamples=execution.bootstrap_resamples,
         warmups=execution.warmups,
+        bootstrap_resamples=execution.bootstrap_resamples,
         settings={
             "device": device,
-            "frozen_asr_run_id": frozen_asr["run_id"],
-            "frozen_asr_checksum": frozen_asr_checksum,
+            "audio_candidate": audio_candidate,
             "image_candidate": image_candidate,
             "ffmpeg_version": ffmpeg_version,
-            "preflight_run_id": (preflight.get("mlflow_run_id") if preflight else None),
-            "preflight_fingerprint": (
-                preflight.get("qualification_fingerprint") if preflight else None
-            ),
-            "hardware_exclusions": (
-                preflight.get("excluded_candidates", []) if preflight else []
-            ),
+            "selected_scene_source_run_id": protocol.selected_scene_source_run_id,
+            "preflight_run_id": preflight.get("mlflow_run_id") if preflight else None,
+            "preflight_fingerprint": preflight.get("qualification_fingerprint")
+            if preflight
+            else None,
+            "hardware_exclusions": preflight.get("excluded_candidates", [])
+            if preflight
+            else [],
         },
     )
+    frozen = {}
 
-    def evaluate(candidate: str):
+    def evaluate(candidate, context):
+        if candidate == preparation:
+            # Output directory belongs to this child; default execution never selects a stale/latest file.
+            path = (
+                frozen_asr_path
+                or Path(context["artifact_directory"]) / "frozen_asr.json"
+            )
+            if frozen_asr_path is None:
+                create_frozen_asr_artifact(
+                    path,
+                    items=items,
+                    manifest_checksum=manifest_checksum,
+                    protocol=protocol,
+                    audio_protocol=audio_protocol,
+                    audio_candidate=audio_candidate,
+                    audio_decision_path=audio_decision,
+                    device=device,
+                    ffmpeg_version=ffmpeg_version,
+                    profile_name=profile,
+                    producer_run_id=context["mlflow_run_id"],
+                )
+            artifact, checksum = load_frozen_asr_artifact(
+                path,
+                manifest_checksum=manifest_checksum,
+                protocol_checksum=protocol.meta.checksum,
+                audio_protocol_checksum=audio_protocol.meta.checksum,
+                timestamp_tolerance_seconds=audio_protocol.timestamp_tolerance_seconds,
+                sample_ids=[str(item["id"]) for item in items],
+                expected_identity=expected_identity,
+                expected_device=device,
+                expected_profile=profile,
+                expected_durations={
+                    str(item["id"]): float(item["duration_seconds"]) for item in items
+                },
+                expected_ffmpeg_version=ffmpeg_version,
+            )
+            if any(
+                len(row["windows"]) != row["scheduled_window_count"]
+                for row in artifact["videos"]
+            ):
+                raise CandidateExecutionError(
+                    "Frozen ASR preparation has an incomplete window inventory",
+                    metrics=artifact["metrics"],
+                    artifacts={"outputs": artifact},
+                )
+            frozen.update(path=path, checksum=checksum, artifact=artifact)
+            rows = artifact["videos"]
+            samples = [
+                SampleResult(
+                    str(row["sample_id"]),
+                    row.get("metric_values", {}),
+                    row["latency_seconds"] if row["success"] else None,
+                    {
+                        "success": row["success"],
+                        "reason": row["error"],
+                        "window_count": len(row["windows"]),
+                        "metric_statuses": row.get("metric_statuses", {}),
+                    },
+                )
+                for row in rows
+            ]
+            return (
+                samples,
+                {},
+                artifact["metrics"],
+                {
+                    **artifact["parameters"],
+                    "run_type": "preparation",
+                    **expected_identity,
+                    "frozen_asr_run_id": artifact["run_id"],
+                    "frozen_asr_checksum": checksum,
+                },
+                artifact["intervals"],
+                {
+                    "outputs": artifact,
+                    "samples": _flat_rows(
+                        rows, ("windows", "segments", "nonspeech_units")
+                    ),
+                    "windows": [
+                        {
+                            "sample_id": row["sample_id"],
+                            **{
+                                key: value
+                                for key, value in window.items()
+                                if key != "segments"
+                            },
+                        }
+                        for row in rows
+                        for window in row["windows"]
+                    ],
+                    "resource_samples": artifact["resource_samples"],
+                    "gpu_identity": artifact["gpu_identity"],
+                    "ffmpeg_commands": artifact["ffmpeg_commands"],
+                },
+            )
+        if not frozen:
+            raise RuntimeError(
+                "Frozen-ASR preparation did not deliver a validated artifact"
+            )
         output = _run_visual_worker(
             candidate,
             items,
             image_engine=engine,
             image_candidate=image_candidate,
-            image_revision=str(entry.get("revision", "")),
+            image_revision=str(entry["revision"]),
             image_options=image_options,
             device=device,
-            warmups=plan.warmups,
-            repetitions=plan.repetitions,
-            bootstrap_resamples=plan.bootstrap_resamples,
-            seed=plan.seed,
+            profile=profile,
             protocol=protocol.meta.worker_payload(),
             document_protocol=document_protocol.meta.worker_payload(),
+            audio_protocol=audio_protocol.meta.worker_payload(),
+            frozen_asr_path=str(frozen["path"]),
+            frozen_asr_checksum=frozen["checksum"],
+            manifest_checksum=manifest_checksum,
+            frozen_asr_identity=expected_identity,
         )
         rows = output["samples"]
+        if sorted(row["sample_id"] for row in rows) != sorted(
+            str(item["id"]) for item in items
+        ):
+            raise ValueError("Visual worker sample inventory differs from the manifest")
         samples = [
             SampleResult(
                 str(row["sample_id"]),
+                {name: row.get(name) for name in QUALITY_DIRECTIONS},
+                row["quality_latency_seconds"],
                 {
-                    name: float(row[name])
-                    for name in (
-                        "visual_content_precision",
-                        "visual_content_recall",
-                        "visual_content_f1",
-                        "mean_visual_first_detection_delay_seconds",
-                        "timed_visual_occurrence_coverage",
-                        "duplicate_visual_text_rate",
-                    )
-                    if row.get(name) is not None
-                },
-                float(row["quality_latency_seconds"]),
-                {
-                    "selected_frame_count": row["selected_frame_count"],
-                    "frozen_asr_run_id": frozen_asr["run_id"],
+                    key: value
+                    for key, value in row.items()
+                    if key not in QUALITY_DIRECTIONS and key != "predictions"
                 },
             )
             for row in rows
         ]
-        parameters = {
-            **output["parameters"],
-            "image_candidate": image_candidate,
-            "image_model_path": entry.get("model_path", ""),
-            "image_model_cache_manifest_sha256": entry.get(
-                "model_cache_manifest_sha256", ""
-            ),
-            "image_paddle_cache_manifest_sha256": entry.get(
-                "paddle_cache_manifest_sha256", ""
-            ),
-            "image_prepared_components": entry.get("prepared_components", []),
-            "image_system_components": entry.get("system_components", {}),
-            "manifest_checksum": manifest_checksum,
-            "protocol_checksum": protocol.meta.checksum,
-            "frozen_asr_run_id": frozen_asr["run_id"],
-            "frozen_asr_checksum": frozen_asr_checksum,
-            "ffmpeg_version": ffmpeg_version,
-        }
         return (
             samples,
             output["operational"],
             output["metrics"],
-            parameters,
+            {
+                **output["parameters"],
+                "image_model_identity": entry,
+                "frozen_asr_run_id": frozen["artifact"]["run_id"],
+                "frozen_asr_checksum": frozen["checksum"],
+            },
             output["intervals"],
             {
-                "samples": rows,
+                "samples": _flat_rows(rows, ("predictions",)),
                 "timings": output["timings"],
+                "outputs": output["outputs"],
                 "ffmpeg_commands": output["ffmpeg_commands"],
+                "resource_samples": output["resource_samples"],
+                "gpu_identity": output["gpu_identity"],
+                "placement": {
+                    "before": output.get("placement_before"),
+                    "after": output.get("placement_after"),
+                },
             },
         )
 
-    all_directions = METRIC_DIRECTIONS
-    decisions = dict(decision_files)
-    if image_decision:
-        decisions["document"] = image_decision
+    directions = {**METRIC_DIRECTIONS, **ASR_DIRECTIONS}
+    contracts = {
+        preparation: tuple(ASR_DIRECTIONS),
+        **{candidate: tuple(METRIC_DIRECTIONS) for candidate in candidates},
+    }
+    decisions = {
+        **decision_files,
+        "audio": audio_decision,
+        **({"document": image_decision} if image_decision else {}),
+    }
     return run_benchmark(
         plan,
         evaluate,
         dataset_checksum=manifest_checksum,
-        directions=all_directions,
+        directions=directions,
         primary_metric=(
             "visual_content_f1",
             "mean_visual_first_detection_delay_seconds",
             "timed_visual_occurrence_coverage",
         ),
-        required_metrics=tuple(all_directions),
+        required_metrics=tuple(directions),
+        nullable_metrics=tuple(directions),
+        candidate_metric_contracts=contracts,
+        candidate_run_names={
+            candidate: candidate.removeprefix("video-") for candidate in candidates
+        },
         paired_metrics=(),
+        paired_comparisons=False,
+        operational_prefix="",
+        monitor_resources=False,
+        evaluator_receives_context=True,
+        shuffle_candidates=False,
+        candidate_artifact_name="candidate.json",
         revisions={
-            "image_parser": str(
-                entry.get("selection_revision", entry.get("revision", ""))
-            ),
+            "image_parser": str(entry.get("selection_revision", entry["revision"])),
             "ffmpeg": ffmpeg_version,
-            "frozen_asr": frozen_asr_checksum,
         },
         decision_files=decisions,
         input_artifacts={
             "manifest": manifest_path,
-            "frozen_asr": frozen_asr_path,
+            **({"preflight_report": preflight_report} if preflight_report else {}),
             **(
-                {"preflight_report": preflight_report}
-                if preflight_report is not None
+                {"data_validation": data_validation_report}
+                if data_validation_report
                 else {}
             ),
+            **({"frozen_asr": frozen_asr_path} if frozen_asr_path else {}),
         },
         protocols={
             "video": protocol.meta,
@@ -544,248 +590,66 @@ def run_visual_benchmark(
             "document": document_protocol.meta,
         },
         no_mlflow=no_mlflow,
-        monitor_resources=False,
-        operational_prefix="",
-        paired_comparisons=False,
-        candidate_artifact_name="candidate.json",
-        nullable_metrics=(
-            "mean_visual_first_detection_delay_seconds",
-            "duplicate_visual_text_rate",
-        ),
-        run_name_prefix=(
-            f"video-visual-smoke-{device}"
-            if profile == "smoke"
-            else f"video-visual-{stage.removeprefix('video-')}"
-        ),
+        run_name_prefix=f"smoke-{device}"
+        if profile == "smoke"
+        else "development-scene-selection"
+        if scene_selection
+        else profile,
     )
 
 
+def _flat_rows(rows, excluded):
+    return [
+        {key: value for key, value in row.items() if key not in excluded}
+        for row in rows
+    ]
+
+
 def _run_visual_worker(candidate, items, **settings):
-    temporary_root = Path(os.environ.get("TEMP", tempfile.gettempdir()))
+    protocol = protocol_from_worker(settings["protocol"])
     return run_json_worker(
         Path(__file__).with_name("visual_worker.py"),
         {"candidate": candidate, "items": items, **settings},
         device=str(settings["device"]),
         prefix="edumind-video-candidate-",
         error_label="Visual video worker",
-        temporary_root=temporary_root,
+        telemetry_interval_seconds=protocol.preflight.telemetry_interval_seconds,
+        poll_interval_seconds=protocol.preflight.poll_interval_seconds,
+        timeout_seconds=protocol.preflight.worker_timeout_seconds,
     )
 
 
-def _record_frozen_asr(
-    artifact_path,
-    *,
-    profile,
-    manifest_path,
-    manifest_name,
-    manifest_checksum,
-    protocol: VideoProtocol,
-    audio_protocol: AudioProtocol,
-    audio_decision,
-    preflight_report,
-    preflight,
-    no_mlflow,
-):
-    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
-    artifact_checksum = sha256_file(artifact_path)
-    candidate = str(artifact["audio_candidate"])
-    videos = artifact["videos"]
-    metrics = artifact["metrics"]
-    plan = BenchmarkPlan(
-        "extraction",
-        f"video-input-asr-{PROFILE_STAGE[profile].removeprefix('video-')}",
-        profile,
-        manifest_name,
-        (candidate,),
-        seed=protocol.meta.seed,
-        repetitions=protocol.frozen_asr_repetitions,
-        bootstrap_resamples=protocol.profile(profile).bootstrap_resamples,
-        warmups=protocol.profile(profile).warmups,
-        settings={
-            "device": artifact["parameters"].get("device", "not-recorded"),
-            "frozen_asr_checksum": artifact_checksum,
-            "preflight_run_id": (preflight.get("mlflow_run_id") if preflight else None),
-            "preflight_fingerprint": (
-                preflight.get("qualification_fingerprint") if preflight else None
-            ),
-            "hardware_exclusions": (
-                preflight.get("excluded_candidates", []) if preflight else []
-            ),
-        },
-    )
-    directions_map = {
-        "word_error_rate": "min",
-        "real_time_factor": "min",
-        "total_latency_seconds": "min",
-        "cold_model_load_seconds": "min",
-        "peak_process_tree_ram_mb": "min",
-        "peak_vram_mb": "min",
-    }
-
-    def evaluate(_candidate):
-        sample_results = []
-        for row in videos:
-            reference_count = int(row["reference_word_count"])
-            errors = sum(
-                int(row[name])
-                for name in ("word_substitutions", "word_deletions", "word_insertions")
-            )
-            sample_results.append(
-                SampleResult(
-                    str(row["sample_id"]),
-                    (
-                        {"word_error_rate": errors / reference_count}
-                        if reference_count
-                        else {}
-                    ),
-                    float(row["latency_seconds"]),
-                    {"window_count": len(row["windows"])},
-                )
-            )
-        intervals = _frozen_asr_intervals(
-            videos,
-            resamples=plan.bootstrap_resamples,
-            seed=plan.seed,
-            confidence=protocol.confidence_level,
-        )
-        operational = {
-            name: float(metrics[name])
-            for name in (
-                "real_time_factor",
-                "total_latency_seconds",
-                "cold_model_load_seconds",
-                "peak_process_tree_ram_mb",
-                "peak_vram_mb",
-            )
-        }
-        return (
-            sample_results,
-            operational,
-            {"word_error_rate": metrics["word_error_rate"]},
-            {
-                **artifact["parameters"],
-                "model_revision": artifact["model_revision"],
-                "selection_revision": artifact["selection_revision"],
-                "model_path": artifact["model_path"],
-                "model_cache_manifest_sha256": artifact["model_cache_manifest_sha256"],
-                "submodels": artifact.get("submodels", []),
-                "protocol_checksum": protocol.meta.checksum,
-                "frozen_asr_checksum": artifact_checksum,
-            },
-            intervals,
-            {"samples": videos, "ffmpeg_commands": artifact["ffmpeg_commands"]},
-        )
-
-    return run_benchmark(
-        plan,
-        evaluate,
-        dataset_checksum=manifest_checksum,
-        directions=directions_map,
-        primary_metric=("word_error_rate", "real_time_factor"),
-        required_metrics=tuple(directions_map),
-        paired_metrics=(),
-        revisions={
-            candidate: str(artifact["selection_revision"]),
-            "ffmpeg": artifact["ffmpeg_version"],
-        },
-        decision_files={"audio": audio_decision},
-        input_artifacts={
-            "manifest": manifest_path,
-            "frozen_asr": artifact_path,
-            **(
-                {"preflight_report": preflight_report}
-                if preflight_report is not None
-                else {}
-            ),
-        },
-        protocols={"video": protocol.meta, "audio": audio_protocol.meta},
-        no_mlflow=no_mlflow,
-        monitor_resources=False,
-        operational_prefix="",
-        paired_comparisons=False,
-        candidate_artifact_name="candidate.json",
-        nullable_metrics=("word_error_rate",),
-        run_name_prefix=(
-            f"video-frozen-asr-smoke-{artifact['parameters'].get('device', 'unknown')}"
-            if profile == "smoke"
-            else f"video-frozen-asr-{profile}"
-        ),
-    )
-
-
-def _frozen_asr_intervals(videos, *, resamples, seed, confidence):
-    if not resamples or len(videos) < 2:
-        return {}
-    rng = np.random.default_rng(seed)
-    draws = []
-    for _ in range(resamples):
-        sample = [videos[index] for index in rng.integers(0, len(videos), len(videos))]
-        references = sum(int(row["reference_word_count"]) for row in sample)
-        if not references:
-            continue
-        errors = sum(
-            int(row[name])
-            for row in sample
-            for name in ("word_substitutions", "word_deletions", "word_insertions")
-        )
-        draws.append(errors / references)
-    if not draws:
-        return {}
-    alpha = (1.0 - confidence) / 2.0
-    return {
-        "word_error_rate": {
-            "lower": float(np.quantile(draws, alpha)),
-            "upper": float(np.quantile(draws, 1.0 - alpha)),
-            "confidence": confidence,
-            "resamples": len(draws),
-        }
-    }
-
-
-def _run_smoke_devices(arguments, devices: Sequence[str]) -> int:
-    forwarded = without_option_values(
-        sys.argv[1:], ("--device", "--frozen-asr", "--phase")
-    )
-    default_artifact = PROJECT_ROOT / "artifacts/benchmarks/video/frozen-asr/smoke.json"
-    base_artifact = arguments.frozen_asr or default_artifact
-    return_codes = []
-    phases = ("frozen-asr", "all") if arguments.phase == "all" else (arguments.phase,)
+def _run_smoke_devices(arguments, devices):
+    forwarded = without_option_values(sys.argv[1:], ("--device", "--frozen-asr"))
+    codes = []
     for device in devices:
-        artifact = base_artifact.with_name(
-            f"{base_artifact.stem}-{device}{base_artifact.suffix}"
-        )
-        for phase in phases:
-            completed = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "experiments.benchmarks.extraction.video.run",
-                    *forwarded,
-                    "--phase",
-                    phase,
-                    "--device",
-                    device,
-                    "--frozen-asr",
-                    str(artifact),
-                ],
-                check=False,
+        command = [
+            sys.executable,
+            "-m",
+            "experiments.benchmarks.extraction.video.run",
+            *forwarded,
+            "--device",
+            device,
+        ]
+        if arguments.frozen_asr:
+            path = arguments.frozen_asr.with_name(
+                f"{arguments.frozen_asr.stem}-{device}{arguments.frozen_asr.suffix}"
             )
-            return_codes.append(completed.returncode)
-            if completed.returncode:
-                break
-    return 0 if all(code == 0 for code in return_codes) else 2
+            command.extend(("--frozen-asr", str(path)))
+        codes.append(subprocess.run(command, check=False).returncode)
+    return 0 if all(code == 0 for code in codes) else 2
 
 
-def _candidates(arguments, protocol: VideoProtocol):
+def _candidates(arguments, protocol):
     if arguments.profile in {"validation", "locked"}:
-        if arguments.shortlist is None:
-            raise ValueError(f"Video {arguments.profile} requires --shortlist")
+        if arguments.phase != "all" or arguments.shortlist is None:
+            raise ValueError(
+                "Validation/locked requires the complete comparison and its engineer shortlist decision"
+            )
         decision = load_engineer_decision(
             arguments.shortlist,
             exact=1 if arguments.profile == "locked" else None,
-            maximum=(
-                1 if arguments.profile == "locked" else protocol.maximum_finalists
-            ),
+            maximum=1 if arguments.profile == "locked" else protocol.maximum_finalists,
             expected_source=(
                 "extraction",
                 "video-development"
@@ -794,37 +658,29 @@ def _candidates(arguments, protocol: VideoProtocol):
                 "development" if arguments.profile == "validation" else "validation",
             ),
         )
-        for candidate in decision.selected_candidates:
-            parse_candidate(candidate, protocol)
-        return decision.selected_candidates, {"shortlist": arguments.shortlist}
-    if arguments.shortlist is not None:
-        raise ValueError(
-            "Video smoke/development candidate grids do not accept --shortlist"
+        declared = set(
+            all_candidates(protocol, protocol.hybrid_threshold(arguments.profile))
         )
-    if arguments.phase == "fixed":
-        return fixed_candidates(protocol), {}
-    if arguments.phase == "scene":
+        if not set(decision.selected_candidates) <= declared:
+            raise ValueError(
+                "Selected video candidate is outside the frozen protocol roster"
+            )
+        return decision.selected_candidates, {"shortlist": arguments.shortlist}
+    if arguments.shortlist:
+        raise ValueError("Development/smoke grids do not accept a shortlist")
+    if arguments.phase == "scene-selection":
         return scene_candidates(protocol), {}
-    threshold = protocol.hybrid_threshold(arguments.profile)
-    if arguments.phase == "hybrid":
-        return hybrid_candidates(protocol, threshold), {}
-    return all_candidates(protocol, threshold), {}
+    return all_candidates(protocol, protocol.hybrid_threshold(arguments.profile)), {}
 
 
 def _selected_audio(arguments, protocol: AudioProtocol):
     candidates = audio_profiles(protocol)
     if arguments.profile == "smoke" and arguments.audio_candidate:
-        if arguments.audio_selection:
-            raise ValueError("Choose either --audio-candidate or --audio-selection")
-        if arguments.audio_candidate not in candidates:
-            raise ValueError("Unknown smoke ASR candidate")
-        # The synthetic decision fingerprint remains an explicit local input.
-        path = protocol.meta.source_path
-        return arguments.audio_candidate, path
+        if arguments.audio_selection or arguments.audio_candidate not in candidates:
+            raise ValueError("Choose one valid smoke ASR override")
+        return arguments.audio_candidate, protocol.meta.source_path
     if arguments.profile == "smoke" and arguments.audio_selection is None:
         return next(iter(candidates)), protocol.meta.source_path
-    if arguments.audio_selection is None:
-        raise ValueError("Frozen ASR creation requires --audio-selection")
     decision = load_engineer_decision(
         arguments.audio_selection,
         exact=1,
@@ -832,6 +688,8 @@ def _selected_audio(arguments, protocol: AudioProtocol):
         if arguments.profile != "smoke"
         else None,
     )
+    if decision.selected_candidates[0] not in candidates:
+        raise ValueError("Selected audio candidate is not declared")
     return decision.selected_candidates[0], arguments.audio_selection
 
 
@@ -839,11 +697,10 @@ def _selected_image(arguments, protocol: DocumentProtocol):
     if arguments.profile == "smoke" and arguments.image_candidate:
         if arguments.document_selection:
             raise ValueError("Choose either --image-candidate or --document-selection")
+        parse_document_profile(arguments.image_candidate)
         return arguments.image_candidate, None
     if arguments.profile == "smoke" and arguments.document_selection is None:
         return protocol.configuration_candidates("smoke", image=True)[0], None
-    if arguments.document_selection is None:
-        raise ValueError("Visual video execution requires --document-selection")
     decision = load_engineer_decision(
         arguments.document_selection,
         exact=1,
@@ -855,92 +712,9 @@ def _selected_image(arguments, protocol: DocumentProtocol):
         if arguments.profile != "smoke"
         else None,
     )
+    parse_document_profile(decision.selected_candidates[0])
     return decision.selected_candidates[0], arguments.document_selection
 
 
-def _validate_manifest(items, profile: str, protocol: VideoProtocol) -> None:
-    if not items:
-        raise ValueError("Video manifest contains no video samples")
-    expected = protocol.video_counts[profile]
-    if len(items) != expected:
-        raise ValueError(f"Video {profile} requires exactly {expected} samples")
-    for item in items:
-        missing = [
-            name
-            for name in (
-                "id",
-                "source_path",
-                "asset_sha256",
-                "duration_seconds",
-                "reference_transcript",
-                "reference_visual_text",
-                "visual_occurrences",
-            )
-            if name not in item
-        ]
-        if profile != "smoke":
-            missing.extend(
-                name
-                for name in ("source_license", "source_revision", "document_family")
-                if not item.get(name)
-            )
-        if missing:
-            raise ValueError(
-                f"Video sample {item.get('id')} lacks fields: {', '.join(sorted(set(missing)))}"
-            )
-        source = (PROJECT_ROOT / str(item["source_path"])).resolve()
-        if not source.is_file() or sha256_file(source) != str(item["asset_sha256"]):
-            raise ValueError(f"Video sample {item.get('id')} has an invalid asset")
-        item["source_path"] = str(source)
-        duration = float(item["duration_seconds"])
-        if duration <= 0:
-            raise ValueError(f"Video sample {item.get('id')} has invalid duration")
-        observed_duration = media_duration(source)
-        if (
-            abs(observed_duration - duration)
-            > protocol.manifest_duration_tolerance_seconds
-        ):
-            raise ValueError(
-                f"Video sample {item.get('id')} duration differs from the asset by more than "
-                f"{protocol.manifest_duration_tolerance_seconds}s"
-            )
-        if (
-            not isinstance(item["visual_occurrences"], Sequence)
-            or isinstance(item["visual_occurrences"], (str, bytes))
-            or not item["visual_occurrences"]
-        ):
-            raise ValueError(f"Video sample {item.get('id')} has malformed occurrences")
-        visual_text = item["reference_visual_text"]
-        if isinstance(visual_text, str):
-            has_visual_text = bool(visual_text.strip())
-        elif isinstance(visual_text, Sequence):
-            has_visual_text = bool(visual_text) and all(
-                isinstance(value, str) and value.strip() for value in visual_text
-            )
-        else:
-            has_visual_text = False
-        if not has_visual_text:
-            raise ValueError(
-                f"Video sample {item.get('id')} has no verified visual text"
-            )
-        for occurrence in item["visual_occurrences"]:
-            if (
-                not isinstance(occurrence, dict)
-                or not str(occurrence.get("text", "")).strip()
-            ):
-                raise ValueError(
-                    f"Video sample {item.get('id')} has a malformed occurrence"
-                )
-            start = float(occurrence.get("start", -1))
-            end = float(occurrence.get("end", -1))
-            if start < 0 or end < start or end > duration + 1e-6:
-                raise ValueError(
-                    f"Video sample {item.get('id')} has invalid occurrence bounds"
-                )
-
-
-def _manifest(profile: str) -> Path:
-    if profile == "smoke":
-        return PROJECT_ROOT / "data/benchmarks/extraction/smoke.json"
-    split = "locked-test" if profile == "locked" else profile
-    return PROJECT_ROOT / f"data/benchmarks/extraction/video-{split}.json"
+def _manifest(profile):
+    return _default_manifest("video", profile)

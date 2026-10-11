@@ -20,8 +20,8 @@ class CandidateExecutionError(RuntimeError):
         artifacts: Mapping[str, object] | None = None,
         samples: tuple[SampleResult, ...] = (),
         metrics: Mapping[str, float | None] | None = None,
-        intervals: Mapping[str, Mapping[str, float]] | None = None,
-        operational: Mapping[str, float] | None = None,
+        intervals: Mapping[str, Mapping[str, object]] | None = None,
+        operational: Mapping[str, float | None] | None = None,
     ) -> None:
         super().__init__(message)
         self.parameters = dict(parameters or {})
@@ -69,8 +69,8 @@ class BenchmarkPlan:
 @dataclass(frozen=True)
 class SampleResult:
     sample_id: str
-    metrics: Mapping[str, float]
-    latency_seconds: float
+    metrics: Mapping[str, float | None]
+    latency_seconds: float | None
     metadata: Mapping[str, object] = field(default_factory=dict)
 
 
@@ -80,9 +80,9 @@ class CandidateResult:
     status: str
     fingerprint: str
     metrics: Mapping[str, float | None]
-    intervals: Mapping[str, Mapping[str, float]]
+    intervals: Mapping[str, Mapping[str, object]]
     samples: tuple[SampleResult, ...]
-    operational: Mapping[str, float]
+    operational: Mapping[str, float | None]
     error: str | None = None
     mlflow_run_id: str | None = None
     parameters: Mapping[str, object] = field(default_factory=dict)

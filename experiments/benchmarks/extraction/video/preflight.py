@@ -44,6 +44,7 @@ def run_video_preflight(
     image_candidate,
     image_decision,
     no_mlflow,
+    data_validation_report,
 ):
     stress = max(items, key=lambda item: float(item["duration_seconds"]))
     declared, fingerprint, context = video_qualification_identity(
@@ -110,14 +111,13 @@ def run_video_preflight(
             "stress_sample_id": str(stress["id"]),
             "audio_decision": str(audio_decision),
             "image_decision": str(image_decision),
+            "data_validation_report": str(data_validation_report),
         },
         probe=probe,
         required_groups={
             "frozen-asr": (f"frozen-asr|{audio_candidate}",),
             "visual": tuple(
-                candidate
-                for candidate in declared
-                if candidate.startswith("visual|")
+                candidate for candidate in declared if candidate.startswith("visual|")
             ),
         },
         decision_files={"audio": audio_decision, "document": image_decision},
@@ -134,13 +134,17 @@ def video_qualification_identity(
     manifest,
     stress,
 ):
-    threshold = protocol.selected_scene_threshold or protocol.smoke_scene_threshold
+    threshold = protocol.selected_scene_threshold
     visual_candidates = tuple(
         dict.fromkeys(
             (
                 *fixed_candidates(protocol),
                 *scene_candidates(protocol),
-                *hybrid_candidates(protocol, threshold),
+                *(
+                    hybrid_candidates(protocol, threshold)
+                    if threshold is not None
+                    else ()
+                ),
             )
         )
     )
@@ -187,9 +191,7 @@ def video_qualification_identity(
     return declared, fingerprint, context
 
 
-def _run_frozen_asr_probe(
-    candidate, stress, audio_lock, protocol, audio_protocol
-):
+def _run_frozen_asr_probe(candidate, stress, audio_lock, protocol, audio_protocol):
     return run_json_worker(
         Path(__file__).with_name("frozen_asr_worker.py"),
         {
@@ -197,12 +199,6 @@ def _run_frozen_asr_probe(
             "model_lock": audio_lock,
             "items": [stress],
             "device": "cuda",
-            "warmups": protocol.preflight.warmups,
-            "window_length_seconds": protocol.window_length_seconds,
-            "overlap_seconds": protocol.overlap_seconds,
-            "maximum_overlap_tokens": int(
-                protocol.stitching["maximum_overlap_tokens"]
-            ),
             "protocol": protocol.meta.worker_payload(),
             "audio_protocol": audio_protocol.meta.worker_payload(),
             "mode": "preflight",
@@ -238,10 +234,6 @@ def _run_visual_probe(
             "image_revision": str(image_entry.get("revision", "")),
             "image_options": image_options,
             "device": "cuda",
-            "warmups": protocol.preflight.warmups,
-            "repetitions": protocol.preflight.repetitions,
-            "bootstrap_resamples": protocol.preflight.bootstrap_resamples,
-            "seed": protocol.meta.seed,
             "protocol": protocol.meta.worker_payload(),
             "document_protocol": document_protocol.meta.worker_payload(),
             "mode": "preflight",

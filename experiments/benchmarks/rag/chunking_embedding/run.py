@@ -283,7 +283,7 @@ def _run_evaluation(
         resource_artifact_name="resources",
         resource_monitor_options={
             "require_vram": device == "cuda",
-            "report_zero_vram": device == "cpu",
+            "device": device,
         },
         monitor_temporary_disk=False,
         paired_group_key="document_id",

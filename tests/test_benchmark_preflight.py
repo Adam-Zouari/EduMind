@@ -155,7 +155,7 @@ def _qualified() -> dict[str, object]:
     return {
         "placement": {"status": "qualified"},
         "peak_vram_mb": 100.0,
-        "vram_measurement_method": "nvml-process-tree",
+        "vram_measurement_method": "nvml-device-total",
     }
 
 
@@ -243,7 +243,7 @@ def test_worker_supervisor_stops_only_the_process_over_the_vram_limit(
     class Monitor:
         interval_seconds = 0.05
         peak_vram_mb = 3600.0
-        vram_measurement_method = "nvml-process-tree"
+        vram_measurement_method = "nvml-device-total"
 
         def __init__(self, **_options):
             pass
@@ -262,8 +262,11 @@ def test_worker_supervisor_stops_only_the_process_over_the_vram_limit(
             return [{"vram_mb": self.peak_vram_mb}]
 
     terminated = []
+
     def popen(*_args, **_kwargs):
         events.append("worker-started")
+        assert _kwargs["stdout"] != benchmark_process.subprocess.PIPE
+        assert _kwargs["stderr"] != benchmark_process.subprocess.PIPE
         return Process()
 
     monkeypatch.setattr(benchmark_process.subprocess, "Popen", popen)

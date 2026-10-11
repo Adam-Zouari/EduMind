@@ -55,9 +55,15 @@ class AudioProtocol:
     confidence_level: float
     maximum_finalists: int
     authoritative_peak_vram_mb: float
+    minimum_ci_sources: int | None
+    minimum_latency_ci_sources: int | None
 
     def profile(self, name: str):
         return self.meta.profile(name)
+
+    @property
+    def timestamp_tolerance_seconds(self) -> float:
+        return float(self.audio["manifest_duration_tolerance_seconds"])
 
     @property
     def batch_size(self) -> int:
@@ -218,7 +224,17 @@ def protocol_from_mapping(
         raise ValueError(
             "Smoke reliability categories must be a subset of authoritative categories"
         )
-    statistics = strict_object(root["statistics"], "statistics", {"confidence_level"})
+    statistics = strict_object(
+        root["statistics"],
+        "statistics",
+        {"confidence_level", "minimum_ci_sources", "minimum_latency_ci_sources"},
+    )
+    support = {
+        name: integer(statistics[name], f"statistics.{name}", minimum=2)
+        if statistics[name] is not None
+        else None
+        for name in ("minimum_ci_sources", "minimum_latency_ci_sources")
+    }
     confidence = number(
         statistics["confidence_level"],
         "statistics.confidence_level",
@@ -276,6 +292,8 @@ def protocol_from_mapping(
         confidence,
         maximum_finalists,
         peak,
+        support["minimum_ci_sources"],
+        support["minimum_latency_ci_sources"],
     )
 
 

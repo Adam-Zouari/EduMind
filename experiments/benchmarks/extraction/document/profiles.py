@@ -39,10 +39,14 @@ def parse_document_profile(candidate: str) -> DocumentProfile:
         raise ValueError(f"Unknown document benchmark engine: {requested_engine}")
     factors: dict[str, str] = {}
     options: dict[str, object] = {}
+    if len(parts) > 1 and requested_engine != "docling-standard":
+        raise ValueError("Only Docling standard accepts configuration factors")
     for factor in parts[1:]:
         key, separator, value = factor.partition("=")
         if not separator or key not in FACTOR_OPTIONS:
             raise ValueError(f"Unknown document-profile factor: {factor}")
+        if key in factors:
+            raise ValueError(f"Duplicate document-profile factor: {key}")
         factors[key] = value
         options[FACTOR_OPTIONS[key]] = value == "on" if key == "formula" else value
     return DocumentProfile(

@@ -16,17 +16,14 @@ running.
 The separate Generation and Vector Database locked stages and the locked-only
 Final RAG workflow below define the approved target interface. Runner alignment
 for those stages, the revised generation scoring/timing rules and full-development
-workload, frozen vector-index finalist selection, whole-device CUDA memory
-measurement, linear evidence-count nDCG, and shared answerable-question
+workload, frozen vector-index finalist selection, linear evidence-count nDCG, and shared answerable-question
 eligibility for alpha-nDCG remains pending. Documentation changes alone do not
 implement these contracts or enable the new commands. The current retrieval
 scorer still uses binary nDCG gains and narrower alpha-nDCG eligibility.
-The revised extraction first-attempt failure/VRAM/display-name rules, ASR
-empty/repeatability contract, video occurrence-aware duplication/reliability,
-expanded frozen-ASR reporting, grouped video parents, standalone full data
-validation, and automatic validated-input verification also require
-implementation. Planned validator commands are identified below; existing
-runners still use inline data checks.
+Document, ASR, and Video implement their revised metric, failure, repeatability,
+resource, and display-name contracts. Their standalone data validators and
+automatic sealed-report verification are available. Video uses grouped parents
+with separate shared-audio preparation and visual children.
 
 Start MLflow in a separate terminal:
 
@@ -64,21 +61,23 @@ First prepare and review the inputs. The approved workflow has two steps:
 
 Both steps are outside latency and candidate resource measurement. See the
 [data-validation guide](data-validation.md#preparation-and-execution) for the
-exact checks, example, and planned module layout. Until implementation, retain
-current inline checks and manual reference/split review rather than treating a
-missing validator as certification.
+exact checks, example, and module layout. Full validation is available for the
+three extraction benchmarks; other suites retain their current input checks
+until their approved validators are implemented. Human annotation review remains
+necessary.
 
-Planned preparation commands (not yet executable):
+Extraction preparation commands:
 
 ```powershell
 python -m experiments.benchmarks.validate audio --profile development
 python -m experiments.benchmarks.validate audio --profile all
 python -m experiments.benchmarks.validate document --profile all
+python -m experiments.benchmarks.validate video --profile all
 python -m experiments.benchmarks.validate all --profile all
 ```
 
 One domain validator serves its applicable profiles; the coordinator uses the
-same checks for all benchmarks. Missing required inputs make a validation batch
+same checks across the implemented extraction benchmarks. Missing required inputs make a validation batch
 incomplete, not successful. `all --profile smoke` checks only applicable smoke
 fixtures when authoritative data is unavailable. Preflight uses validated
 development/stress inputs and never inspects held-out answers. Generated reports
@@ -326,23 +325,20 @@ their raw counts remain artifacts. Both timestamp metrics are unavailable after
 first-attempt failure; valid empty timed outputs give coverage zero and unavailable
 MAE. Keep planned/contributing reference counts and failures beside these values.
 Null fields retain reasons and support counts in artifacts even when MLflow
-omits their scalar keys. Implement these approved changes before treating runs
-as evidence under this revised contract.
+omits their scalar keys.
 
 ## 6. Video extraction
 
-**Approved grouped interface, pending runner alignment:** normal phase execution
-prepares all shared audio and then runs visual candidates under one comparison
-parent. Do not assume current independent `--phase frozen-asr` invocations already
-create this hierarchy. Project defaults resolve the selected ASR, selected image
+Normal phase execution prepares all shared audio and then runs visual candidates
+under one comparison parent. Project defaults resolve the selected ASR, selected image
 parser, phase manifest, and frozen-artifact location.
 
-Target commands:
+Commands:
 
 ```powershell
 python -m experiments.benchmarks.extraction.video.run --profile smoke
 python -m experiments.benchmarks.extraction.video.run --profile preflight
-python -m experiments.benchmarks.extraction.video.run --profile development --phase scene
+python -m experiments.benchmarks.extraction.video.run --profile development --phase scene-selection
 ```
 
 Smoke creates `smoke-cpu` and `smoke-cuda`, each with its own frozen-ASR

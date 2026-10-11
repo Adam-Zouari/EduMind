@@ -132,19 +132,9 @@ def context_precision_at_k(relevance: Sequence[float], k: int) -> float:
 
 
 def levenshtein(reference: Sequence[object], hypothesis: Sequence[object]) -> int:
-    previous = list(range(len(hypothesis) + 1))
-    for row, reference_item in enumerate(reference, start=1):
-        current = [row]
-        for column, hypothesis_item in enumerate(hypothesis, start=1):
-            current.append(
-                min(
-                    current[-1] + 1,
-                    previous[column] + 1,
-                    previous[column - 1] + (reference_item != hypothesis_item),
-                )
-            )
-        previous = current
-    return previous[-1]
+    from rapidfuzz.distance import Levenshtein
+
+    return int(Levenshtein.distance(reference, hypothesis))
 
 
 def character_error_rate(reference: str, hypothesis: str) -> float:

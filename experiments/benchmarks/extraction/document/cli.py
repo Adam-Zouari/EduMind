@@ -130,6 +130,16 @@ def _document_main(arguments, directory: Path) -> int:
     results = []
     for device in devices:
         for source in sources:
+            if (
+                source == "docx"
+                and arguments.profile == "development"
+                and arguments.comparison == "architecture"
+            ):
+                if arguments.source == "docx":
+                    raise ValueError(
+                        "Native DOCX has no parser comparison; reuse development-docx configuration evidence"
+                    )
+                continue
             candidates, decisions = _document_candidates(source, arguments, protocol)
             results.append(
                 (

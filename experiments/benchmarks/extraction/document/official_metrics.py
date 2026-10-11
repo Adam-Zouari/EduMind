@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
+from uuid import uuid4
 
 from edumind.common.artifacts import atomic_write_json
 from edumind.common.paths import PROJECT_ROOT
@@ -55,10 +57,13 @@ def score_official_metrics(
                 ],
             },
         )
+        container_name = f"edumind-scorer-{uuid4().hex}"
         command = [
             "docker",
             "run",
             "--rm",
+            "--name",
+            container_name,
             "--network",
             "none",
             "--workdir",
@@ -93,6 +98,15 @@ def score_official_metrics(
             detail = (exc.stderr or exc.stdout or "no container output").strip()
             raise RuntimeError(f"OmniDocBench scorer failed: {detail[-3000:]}") from exc
         except subprocess.TimeoutExpired as exc:
+            try:
+                subprocess.run(
+                    ["docker", "rm", "--force", container_name],
+                    check=False,
+                    capture_output=True,
+                    timeout=timeout_seconds,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                pass  # Preserve the scorer timeout if Docker cleanup also fails.
             raise RuntimeError(
                 f"OmniDocBench scorer exceeded its {timeout_seconds:g}-second timeout"
             ) from exc
@@ -104,11 +118,21 @@ def score_official_metrics(
                     -1000:
                 ]
             )
-        result = json.loads(output.read_text(encoding="utf-8"))
-    tables = [tuple(map(float, values)) for values in result.get("tables", [])]
-    formulas = [float(value) for value in result.get("formulas", [])]
+        try:
+            result = json.loads(output.read_text(encoding="utf-8"))
+            tables = [tuple(map(float, values)) for values in result["tables"]]
+            formulas = [float(value) for value in result["formulas"]]
+        except (ValueError, KeyError, TypeError) as exc:
+            raise RuntimeError(
+                "OmniDocBench scorer returned malformed results"
+            ) from exc
     if len(tables) != len(table_pairs) or len(formulas) != len(formula_pairs):
         raise RuntimeError("OmniDocBench scorer returned an incomplete result")
+    if any(len(values) != 2 for values in tables) or any(
+        not math.isfinite(value) or not 0 <= value <= 1
+        for value in [*formulas, *(value for values in tables for value in values)]
+    ):
+        raise RuntimeError("OmniDocBench scorer returned invalid scores")
     return tables, formulas
 
 

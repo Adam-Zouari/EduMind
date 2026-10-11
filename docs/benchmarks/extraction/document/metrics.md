@@ -215,8 +215,7 @@ failed, and unavailable counts. Attempt Failure Rate and repeatability retain
 their own numeric rules; completed measurements can survive later failure.
 Do not replace missing quality with a later successful output.
 
-The revised failure contract is approved documentation and requires runner
-alignment before new runs can claim compliance. A complete set of recorded
+The runner preserves this failure contract. A complete set of recorded
 attempt failures is reliability evidence, not successful recovery of the corpus.
 
 Known malformed predicted table/formula reconstructions receive zero

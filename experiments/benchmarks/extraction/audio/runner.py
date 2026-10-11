@@ -5,20 +5,22 @@ from __future__ import annotations
 import argparse
 import json
 import tempfile
-from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from pathlib import Path
 
-from edumind.common.artifacts import sha256_file, stable_hash
+from edumind.common.artifacts import stable_hash
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.arguments import (
     LIFECYCLE_PROFILES,
     default_decision_path,
     execution_devices,
 )
-from experiments.benchmarks.common.contracts import BenchmarkPlan, SampleResult
+from experiments.benchmarks.common.contracts import (
+    BenchmarkPlan,
+    CandidateExecutionError,
+    SampleResult,
+)
 from experiments.benchmarks.common.datasets import (
-    assert_no_split_leakage,
     load_manifest,
     require_manifest_split,
 )
@@ -36,16 +38,17 @@ from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.extraction.audio.evaluate import (
     METRIC_DIRECTIONS,
     PRIMARY_METRICS,
-    normalize_transcript,
 )
 from experiments.benchmarks.extraction.audio.protocol import (
     DEFAULT_PROTOCOL_PATH,
     AudioProtocol,
     load_protocol,
 )
+from experiments.benchmarks.extraction.audio.validation import (
+    canonicalize,
+    verified_inputs,
+)
 from experiments.benchmarks.extraction.media import (
-    canonical_wav_duration,
-    decode_canonical_audio,
     ffmpeg_version,
 )
 from experiments.benchmarks.preparation.models import (
@@ -177,21 +180,20 @@ def run(
         )
     speech_path = (manifest_path or _speech_manifest(profile)).resolve()
     controls_path = (reliability_path or _reliability_manifest(profile)).resolve()
+    data_report_path, _ = verified_inputs(
+        speech_path, profile, protocol, controls_path=controls_path
+    )
     speech_manifest = load_manifest(speech_path)
     reliability_manifest = load_manifest(controls_path)
     speech = [item for item in speech_manifest.samples if item.get("kind") == "audio"]
     split = "locked-test" if profile == "locked" else profile
-    _validate_reliability_split_isolation(reliability_manifest.samples)
     require_manifest_split(speech_manifest, profile, split)
     controls = [
         item
         for item in reliability_manifest.samples
         if item.get("kind") == "audio_reliability" and item.get("split") == split
     ]
-    _validate_manifest_rows(speech, controls, profile, protocol)
     _validate_candidates(candidates, protocol)
-    if profile != "smoke":
-        assert_no_split_leakage(_audio_split_manifests(speech_path, split))
     declared = tuple(protocol.candidates)
     lock_candidates = declared if profile != "smoke" else candidates
     required_models = tuple(
@@ -214,9 +216,6 @@ def run(
             for item in qualification_manifest.samples
             if item.get("kind") == "audio"
         ]
-        _validate_manifest_rows(
-            qualification_speech, None, "development", protocol
-        )
         qualification_stress = max(
             qualification_speech,
             key=lambda item: float(item["duration_seconds"]),
@@ -242,10 +241,10 @@ def run(
     temporary_root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=temporary_root) as raw_directory:
         canonical_directory = Path(raw_directory)
-        canonical_speech = _canonicalize(
+        canonical_speech = canonicalize(
             speech, canonical_directory / "speech", protocol
         )
-        canonical_controls = _canonicalize(
+        canonical_controls = canonicalize(
             controls, canonical_directory / "reliability", protocol
         )
         ffmpeg_identity = ffmpeg_version()
@@ -295,21 +294,45 @@ def run(
                 canonical_speech,
                 canonical_controls,
                 device=device,
-                warmups=plan.warmups,
-                repetitions=plan.repetitions,
-                bootstrap_resamples=plan.bootstrap_resamples,
-                seed=plan.seed,
+                profile=profile,
                 directory=canonical_directory,
                 protocol=protocol,
+                vram_limit_mb=protocol.authoritative_peak_vram_mb
+                if device == "cuda"
+                else None,
             )
+            expected = {
+                (str(item["id"]), repetition)
+                for item in canonical_speech
+                for repetition in range(1, execution.repetitions + 1)
+            }
+            expected.update((str(item["id"]), 1) for item in canonical_controls)
+            observed = [
+                (str(row["sample_id"]), int(row["repetition"]))
+                for row in output["timings"]
+            ]
+            if len(observed) != len(set(observed)) or set(observed) != expected:
+                raise CandidateExecutionError(
+                    "Incomplete ASR attempt inventory",
+                    artifacts={"worker_evidence": output},
+                )
+            sample_ids = [str(row["sample_id"]) for row in output["samples"]]
+            if sorted(sample_ids) != sorted({sample_id for sample_id, _ in expected}):
+                raise CandidateExecutionError(
+                    "Incomplete ASR sample inventory",
+                    artifacts={"worker_evidence": output},
+                )
             sample_results = [
                 SampleResult(
                     str(row["sample_id"]),
-                    {},
-                    float(row["quality_latency_seconds"]),
+                    row["metric_values"],
+                    float(row["quality_latency_seconds"])
+                    if row["quality_latency_seconds"] is not None
+                    else None,
                     {
                         "sample_type": row["sample_type"],
                         "conditions": row["conditions"],
+                        "metric_statuses": row["metric_statuses"],
                     },
                 )
                 for row in output["samples"]
@@ -330,7 +353,7 @@ def run(
                 "reliability_manifest_checksum": reliability_manifest.fingerprint,
             }
             operational = {
-                name: float(metrics.pop(name))
+                name: metrics.pop(name)
                 for name in (
                     "real_time_factor",
                     "p50_warm_clip_latency_seconds",
@@ -346,7 +369,12 @@ def run(
                 metrics,
                 parameters,
                 output["intervals"],
-                {"samples": output["samples"], "timings": output["timings"]},
+                {
+                    "samples": output["samples"],
+                    "timings": output["timings"],
+                    "resource_samples": output["resource_samples"],
+                    "gpu_identity": output["gpu_identity"],
+                },
             )
 
         revisions = {
@@ -375,6 +403,7 @@ def run(
             decision_files={"shortlist": decision_file} if decision_file else None,
             input_artifacts={
                 "speech": speech_path,
+                "data_validation": data_report_path,
                 "reliability": controls_path,
                 **(
                     {"preflight_report": qualification_path}
@@ -388,15 +417,13 @@ def run(
             operational_prefix="",
             paired_comparisons=False,
             candidate_artifact_name="candidate.json",
-            nullable_metrics=("timestamp_boundary_mae_seconds",),
+            nullable_metrics=tuple(METRIC_DIRECTIONS),
             operational_maximums=(
                 {"peak_vram_mb": protocol.authoritative_peak_vram_mb}
                 if execution.hardware_required
                 else None
             ),
-            run_name_prefix=(
-                f"asr-smoke-{device}" if profile == "smoke" else f"asr-{profile}"
-            ),
+            run_name_prefix=(f"smoke-{device}" if profile == "smoke" else profile),
         )
 
 
@@ -412,10 +439,10 @@ def run_preflight_profile(
         raise ValueError("ASR preflight requires CUDA")
     protocol = load_protocol(protocol_path)
     speech_path = (manifest_path or _speech_manifest("development")).resolve()
+    data_report_path, _ = verified_inputs(speech_path, "development", protocol)
     speech_manifest = load_manifest(speech_path)
     require_manifest_split(speech_manifest, "development", "development")
     speech = [item for item in speech_manifest.samples if item.get("kind") == "audio"]
-    _validate_manifest_rows(speech, None, "development", protocol)
     stress = max(speech, key=lambda item: float(item["duration_seconds"]))
     model_ids = tuple(
         protocol.candidate(candidate).model_id for candidate in candidates
@@ -430,7 +457,7 @@ def run_preflight_profile(
     temporary_root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=temporary_root) as raw_directory:
         directory = Path(raw_directory)
-        canonical = _canonicalize((stress,), directory / "speech", protocol)
+        canonical = canonicalize((stress,), directory / "speech", protocol)
 
         def probe(candidate: str):
             return _run_worker(
@@ -439,10 +466,7 @@ def run_preflight_profile(
                 canonical,
                 (),
                 device="cuda",
-                warmups=protocol.preflight.warmups,
-                repetitions=protocol.preflight.repetitions,
-                bootstrap_resamples=protocol.preflight.bootstrap_resamples,
-                seed=protocol.meta.seed,
+                profile="development",
                 directory=directory,
                 protocol=protocol,
                 mode="preflight",
@@ -454,6 +478,7 @@ def run_preflight_profile(
             "stress_manifest": str(speech_path),
             "stress_manifest_checksum": speech_manifest.fingerprint,
             "stress_sample_id": stress["id"],
+            "data_validation_report": str(data_report_path),
         }
         return run_preflight(
             benchmark="audio",
@@ -472,10 +497,7 @@ def _run_worker(
     controls,
     *,
     device,
-    warmups,
-    repetitions,
-    bootstrap_resamples,
-    seed,
+    profile,
     directory,
     protocol,
     mode=None,
@@ -490,10 +512,7 @@ def _run_worker(
             "speech": speech,
             "reliability": controls,
             "device": device,
-            "warmups": warmups,
-            "repetitions": repetitions,
-            "bootstrap_resamples": bootstrap_resamples,
-            "seed": seed,
+            "profile": profile,
             "protocol": protocol.meta.worker_payload(),
             **({"mode": mode} if mode else {}),
         },
@@ -502,273 +521,10 @@ def _run_worker(
         error_label="ASR worker",
         temporary_root=directory,
         vram_limit_mb=vram_limit_mb,
-        telemetry_interval_seconds=(
-            protocol.preflight.telemetry_interval_seconds
-            if mode == "preflight"
-            else 0.05
-        ),
-        poll_interval_seconds=(
-            protocol.preflight.poll_interval_seconds
-            if mode == "preflight"
-            else 0.05
-        ),
-        timeout_seconds=(
-            protocol.preflight.worker_timeout_seconds
-            if mode == "preflight"
-            else None
-        ),
+        telemetry_interval_seconds=protocol.preflight.telemetry_interval_seconds,
+        poll_interval_seconds=protocol.preflight.poll_interval_seconds,
+        timeout_seconds=protocol.preflight.worker_timeout_seconds,
     )
-
-
-def _canonicalize(
-    samples: Sequence[Mapping[str, object]],
-    directory: Path,
-    protocol: AudioProtocol,
-):
-    directory.mkdir(parents=True, exist_ok=True)
-    result = []
-    for index, raw in enumerate(samples):
-        item = dict(raw)
-        source = PROJECT_ROOT / str(item["source_path"])
-        expected = str(item.get("asset_sha256", ""))
-        if not source.is_file() or not expected or sha256_file(source) != expected:
-            raise ValueError(
-                f"Missing or invalid audio asset for {item.get('id')}: {source}"
-            )
-        destination = directory / f"{index:04d}.wav"
-        command = decode_canonical_audio(
-            source,
-            destination,
-            sample_rate_hz=int(protocol.audio["sample_rate_hz"]),
-            channels=int(protocol.audio["channels"]),
-        )
-        duration = canonical_wav_duration(
-            destination,
-            sample_rate_hz=int(protocol.audio["sample_rate_hz"]),
-            channels=int(protocol.audio["channels"]),
-            sample_width_bytes=int(protocol.audio["sample_width_bytes"]),
-        )
-        maximum_duration = float(protocol.audio["maximum_duration_seconds"])
-        tolerance = float(protocol.audio["manifest_duration_tolerance_seconds"])
-        if duration > maximum_duration + 1e-6:
-            raise ValueError(
-                f"Audio sample {item['id']} exceeds the {maximum_duration:g}-second limit"
-            )
-        if abs(duration - float(item["duration_seconds"])) > tolerance:
-            raise ValueError(
-                f"Audio sample {item['id']} duration differs from its manifest by more than "
-                f"{protocol.audio['manifest_duration_tolerance_seconds']}s"
-            )
-        item.update(
-            {
-                "canonical_path": str(destination.resolve()),
-                "canonical_sha256": sha256_file(destination),
-                "ffmpeg_command": command,
-                "duration_seconds": duration,
-            }
-        )
-        result.append(item)
-    return result
-
-
-def _validate_manifest_rows(
-    speech, controls, profile: str, protocol: AudioProtocol
-) -> None:
-    required_count = protocol.speech_counts[profile]
-    if len(speech) != required_count:
-        raise ValueError(
-            f"ASR {profile} requires exactly {required_count} speech clips"
-        )
-    authoritative = profile != "smoke"
-    observed_conditions: set[str] = set()
-    expected_split = {
-        "development": "development",
-        "validation": "validation",
-        "locked": "locked-test",
-    }.get(profile, "smoke")
-    for item in speech:
-        missing = [
-            field
-            for field in (
-                "id",
-                "source_path",
-                "asset_sha256",
-                "reference",
-                "duration_seconds",
-                "reference_segments",
-            )
-            if not item.get(field)
-        ]
-        if authoritative:
-            missing.extend(
-                field
-                for field in (
-                    "source_license",
-                    "source_revision",
-                    "split",
-                    "document_family",
-                    "conditions",
-                )
-                if not item.get(field)
-            )
-        if missing:
-            raise ValueError(
-                f"ASR speech sample {item.get('id')} lacks: {', '.join(missing)}"
-            )
-        if authoritative and item["split"] != expected_split:
-            raise ValueError(
-                f"ASR speech sample {item['id']} belongs to {item['split']}, not {expected_split}"
-            )
-        if authoritative:
-            raw_conditions = item["conditions"]
-            if (
-                not isinstance(raw_conditions, list)
-                or not raw_conditions
-                or not all(isinstance(value, str) and value for value in raw_conditions)
-            ):
-                raise ValueError(
-                    f"ASR speech sample {item['id']} conditions must be a non-empty string list"
-                )
-            conditions = set(raw_conditions)
-            unknown = conditions - protocol.required_conditions
-            if unknown:
-                raise ValueError(
-                    f"ASR speech sample {item['id']} has unknown conditions: "
-                    + ", ".join(sorted(unknown))
-                )
-            for group in protocol.exclusive_condition_groups:
-                observed = conditions & group
-                if len(observed) != 1:
-                    raise ValueError(
-                        f"ASR speech sample {item['id']} must contain exactly one of "
-                        + ", ".join(sorted(group))
-                    )
-            observed_conditions.update(conditions)
-        duration = float(item["duration_seconds"])
-        maximum_duration = float(protocol.audio["maximum_duration_seconds"])
-        if duration <= 0 or duration > maximum_duration:
-            raise ValueError(
-                f"ASR speech sample {item['id']} must be between 0 and "
-                f"{maximum_duration:g} seconds"
-            )
-        _validate_reference_segments(item, duration)
-    if authoritative:
-        missing_conditions = protocol.required_conditions - observed_conditions
-        if missing_conditions:
-            raise ValueError(
-                "ASR speech split lacks required conditions: "
-                + ", ".join(sorted(missing_conditions))
-            )
-    if controls is None:
-        return
-    if not controls:
-        raise ValueError("ASR benchmark requires nonspeech reliability controls")
-    kinds = {str(item.get("nonspeech_kind")) for item in controls}
-    required_kinds = (
-        protocol.reliability_categories
-        if authoritative
-        else protocol.smoke_reliability_categories
-    )
-    if not required_kinds <= kinds:
-        raise ValueError(
-            "ASR reliability controls lack: "
-            + ", ".join(sorted(required_kinds - kinds))
-        )
-    for item in controls:
-        missing = [
-            field
-            for field in (
-                "id",
-                "source_path",
-                "asset_sha256",
-                "nonspeech_kind",
-                "split",
-            )
-            if not item.get(field)
-        ]
-        if authoritative:
-            missing.extend(
-                field
-                for field in ("source_license", "source_revision")
-                if not item.get(field)
-            )
-        if missing:
-            raise ValueError(
-                f"Nonspeech control {item.get('id')} lacks: {', '.join(missing)}"
-            )
-        if item.get("reference") not in {"", None}:
-            raise ValueError(
-                f"Nonspeech control {item.get('id')} must have an empty reference"
-            )
-        duration = float(item.get("duration_seconds", 0))
-        if duration <= 0 or duration > float(
-            protocol.audio["maximum_duration_seconds"]
-        ):
-            raise ValueError(f"Nonspeech control {item.get('id')} has invalid duration")
-
-
-def _validate_reliability_split_isolation(
-    samples: Sequence[Mapping[str, object]],
-) -> None:
-    seen_ids: dict[str, str] = {}
-    seen_assets: dict[str, tuple[str, str]] = {}
-    for item in samples:
-        if item.get("kind") != "audio_reliability":
-            continue
-        sample_id = str(item.get("id", ""))
-        split = str(item.get("split", ""))
-        checksum = str(item.get("asset_sha256", ""))
-        if not sample_id or not split or not checksum:
-            raise ValueError(
-                f"Nonspeech control {item.get('id')} lacks ID, split, or asset checksum"
-            )
-        if sample_id in seen_ids:
-            raise ValueError(
-                f"Duplicate ASR reliability sample ID {sample_id!r} occurs in "
-                f"{seen_ids[sample_id]} and {split}"
-            )
-        previous = seen_assets.get(checksum)
-        if previous is not None:
-            previous_id, previous_split = previous
-            raise ValueError(
-                "Duplicate ASR reliability asset checksum "
-                f"{checksum!r} occurs in {previous_id}/{previous_split} and "
-                f"{sample_id}/{split}"
-            )
-        seen_ids[sample_id] = split
-        seen_assets[checksum] = (sample_id, split)
-
-
-def _validate_reference_segments(item: Mapping[str, object], duration: float) -> None:
-    segments = item.get("reference_segments")
-    if (
-        not isinstance(segments, Sequence)
-        or isinstance(segments, (str, bytes))
-        or not segments
-    ):
-        raise ValueError(
-            f"ASR speech sample {item['id']} lacks timed reference segments"
-        )
-    previous_end = 0.0
-    segment_texts: list[str] = []
-    for segment in segments:
-        if not isinstance(segment, Mapping) or not str(segment.get("text", "")).strip():
-            raise ValueError(
-                f"ASR speech sample {item['id']} has a malformed reference segment"
-            )
-        segment_texts.append(str(segment["text"]))
-        start, end = float(segment.get("start", -1)), float(segment.get("end", -1))
-        if start < previous_end or end <= start or end > duration + 1e-6:
-            raise ValueError(
-                f"ASR speech sample {item['id']} has invalid segment boundaries"
-            )
-        previous_end = end
-    if normalize_transcript(" ".join(segment_texts)) != normalize_transcript(
-        str(item.get("reference", ""))
-    ):
-        raise ValueError(
-            f"ASR speech sample {item['id']} reference does not match its timed segments"
-        )
 
 
 def _validate_candidates(candidates, protocol: AudioProtocol) -> None:
@@ -777,25 +533,6 @@ def _validate_candidates(candidates, protocol: AudioProtocol) -> None:
     unknown = sorted(set(candidates) - set(protocol.candidates))
     if unknown:
         raise ValueError("Unknown ASR candidates: " + ", ".join(unknown))
-
-
-def _audio_split_manifests(current_path: Path, current_split: str):
-    names = {
-        "development": "audio-development.json",
-        "validation": "audio-validation.json",
-        "locked-test": "audio-locked-test.json",
-    }
-    paths = {
-        split: current_path if split == current_split else current_path.parent / name
-        for split, name in names.items()
-    }
-    missing = [str(path) for path in paths.values() if not path.is_file()]
-    if missing:
-        raise ValueError(
-            "Authoritative ASR runs require all three frozen split manifests; missing: "
-            + ", ".join(missing)
-        )
-    return tuple(load_manifest(paths[split]) for split in names)
 
 
 def _candidates(
@@ -824,9 +561,7 @@ def _candidates(
     ).selected_candidates
 
 
-def _qualification_identity(
-    protocol: AudioProtocol, model_lock, manifest, stress
-):
+def _qualification_identity(protocol: AudioProtocol, model_lock, manifest, stress):
     execution = protocol.profile("development")
     locked_models = model_lock_fingerprints(model_lock)
     revisions = {

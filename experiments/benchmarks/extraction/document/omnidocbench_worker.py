@@ -17,6 +17,7 @@ def main(input_path: Path, output_path: Path) -> None:
 
     tables = payload.get("tables", [])
     if tables:
+        from lxml.etree import ParserError
         from metrics.table_metric import TEDS
 
         full = TEDS(structure_only=False)
@@ -27,12 +28,18 @@ def main(input_path: Path, output_path: Path) -> None:
             if not reference or not prediction:
                 result["tables"].append([0.0, 0.0])
                 continue
-            result["tables"].append(
-                [
+            # Validate the reference separately so a malformed prediction is a
+            # quality zero, not confused with a broken reference or evaluator.
+            if full.evaluate(_html(reference), _html(reference)) != 1.0:
+                raise ValueError("Invalid official table reference")
+            try:
+                scores = [
                     float(full.evaluate(_html(prediction), _html(reference))),
                     float(structure.evaluate(_html(prediction), _html(reference))),
                 ]
-            )
+            except (ValueError, ParserError, ZeroDivisionError):
+                scores = [0.0, 0.0]
+            result["tables"].append(scores)
 
     formulas = payload.get("formulas", [])
     if formulas:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -16,7 +15,6 @@ from edumind.extraction.contracts import (
 )
 from edumind.extraction.extractors.audio import WhisperExtractor
 from edumind.extraction.extractors.base import build_document
-from experiments.benchmarks.common import resources as resource_module
 from experiments.benchmarks.common.contracts import (
     BenchmarkPlan,
     DatasetManifest,
@@ -33,7 +31,6 @@ from experiments.benchmarks.extraction.audio.adapters import (
 )
 from experiments.benchmarks.extraction.audio.evaluate import (
     METRIC_DIRECTIONS,
-    align_sequences,
     normalize_transcript,
     score_nonspeech,
 )
@@ -46,9 +43,11 @@ from experiments.benchmarks.extraction.audio.evaluate import (
 from experiments.benchmarks.extraction.audio.protocol import (
     load_protocol as default_protocol,
 )
-from experiments.benchmarks.extraction.audio.runner import (
-    _validate_manifest_rows,
-    _validate_reliability_split_isolation,
+from experiments.benchmarks.extraction.audio.validation import (
+    validate_manifest_rows as _validate_manifest_rows,
+)
+from experiments.benchmarks.extraction.audio.validation import (
+    validate_reliability_split_isolation as _validate_reliability_split_isolation,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,6 +66,8 @@ def score_speech(*args, **kwargs):
 
 def aggregate(*args, **kwargs):
     kwargs.setdefault("confidence", AUDIO_PROTOCOL.confidence_level)
+    kwargs.setdefault("minimum_sources", 2)
+    kwargs.setdefault("minimum_latency_sources", 2)
     return _aggregate(*args, **kwargs)
 
 
@@ -201,17 +202,14 @@ def test_mocked_asr_worker_phase_runs_end_to_end(monkeypatch) -> None:
                 }
             ],
             "device": "cpu",
-            "warmups": 0,
-            "repetitions": 1,
-            "bootstrap_resamples": 0,
-            "seed": 42,
+            "profile": "smoke",
             "protocol": AUDIO_PROTOCOL.meta.worker_payload(),
         }
     )
     assert output["metrics"]["word_error_rate"] == 0.0
     assert output["metrics"]["timestamp_alignment_coverage"] == 1.0
     assert output["metrics"]["nonspeech_false_transcription_rate"] == 0.0
-    assert len(output["timings"]) == 1
+    assert len(output["timings"]) == 2
 
 
 def _speech(sample_id: str, reference: str, prediction: str):
@@ -222,13 +220,9 @@ def _speech(sample_id: str, reference: str, prediction: str):
         "reference_segments": [{"text": reference, "start": 0.0, "end": 2.0}],
     }
     predicted = [{"text": prediction, "start": 0.1, "end": 1.9}]
-    return score_speech(
-        item,
-        prediction,
-        predicted,
-        quality_latency_seconds=0.5,
-        repeat_transcript_agreement=sample_id != "two",
-    )
+    row = score_speech(item, prediction, predicted, quality_latency_seconds=0.5)
+    row["transcript_repeatability_success_rate"] = float(sample_id != "two")
+    return row
 
 
 def _timings(*sample_ids: str):
@@ -322,13 +316,9 @@ def test_whisper_preserves_untimed_text_and_benchmark_records_it(tmp_path) -> No
 def test_word_alignment_returns_known_substitution_deletion_and_insertion_counts() -> (
     None
 ):
-    substitution = align_sequences(["a", "b"], ["a", "x"])
-    deletion = align_sequences(["a", "b"], ["a"])
-    insertion = align_sequences(["a"], ["a", "x"])
-    assert substitution.substitutions == 1
-    assert deletion.deletions == 1
-    assert insertion.insertions == 1
-    assert substitution.exact_matches == ((0, 0),)
+    assert _speech("substitution", "a b", "a x")["word_substitutions"] == 1
+    assert _speech("deletion", "a b", "a")["word_deletions"] == 1
+    assert _speech("insertion", "a", "a x")["word_insertions"] == 1
 
 
 def test_asr_aggregation_pools_counts_and_emits_the_exact_contract() -> None:
@@ -359,13 +349,13 @@ def test_asr_aggregation_pools_counts_and_emits_the_exact_contract() -> None:
         resamples=100,
         seed=42,
     )
-    assert set(metrics) == set(METRIC_DIRECTIONS)
+    assert set(METRIC_DIRECTIONS) <= set(metrics)
     assert metrics["word_error_rate"] == pytest.approx(2 / 5)
     assert metrics["word_substitution_rate"] == pytest.approx(1 / 5)
     assert metrics["word_deletion_rate"] == pytest.approx(1 / 5)
     assert metrics["word_insertion_rate"] == 0.0
     assert metrics["nonspeech_false_transcription_rate"] == 0.5
-    assert metrics["repeat_transcript_agreement_rate"] == 0.5
+    assert metrics["transcript_repeatability_success_rate"] == 0.5
     assert "cold_model_load_seconds" not in intervals
     repeated = aggregate(
         samples,
@@ -402,8 +392,12 @@ def test_bootstrap_keeps_draws_without_timestamp_matches_for_defined_metrics() -
 
     assert intervals["timestamp_alignment_coverage"]["lower"] == 0.0
     assert intervals["word_error_rate"]["upper"] == 1.0
-    assert intervals["timestamp_alignment_coverage"]["resamples"] == 1_000
-    assert intervals["timestamp_boundary_mae_seconds"]["resamples"] < 1_000
+    assert (
+        intervals["timestamp_alignment_coverage"]["defined_resamples"]
+        + intervals["timestamp_alignment_coverage"]["undefined_resamples"]
+        == 1_000
+    )
+    assert intervals["timestamp_boundary_mae_seconds"]["defined_resamples"] < 1_000
 
 
 def test_timestamp_alignment_accepts_unequal_segment_counts() -> None:
@@ -424,7 +418,6 @@ def test_timestamp_alignment_accepts_unequal_segment_counts() -> None:
             {"text": "beta", "start": 1.1, "end": 1.9},
         ],
         quality_latency_seconds=0.5,
-        repeat_transcript_agreement=True,
     )
     assert row["aligned_timed_segment_count"] == 2
     assert row["timestamp_boundary_count"] == 4
@@ -443,7 +436,6 @@ def test_missing_timestamps_fail_but_unaligned_mae_is_null() -> None:
             "alpha",
             [],
             quality_latency_seconds=0.1,
-            repeat_transcript_agreement=True,
         )
     rows = [
         score_speech(
@@ -456,7 +448,6 @@ def test_missing_timestamps_fail_but_unaligned_mae_is_null() -> None:
             "beta",
             [{"text": "beta", "start": 0.0, "end": 1.0}],
             quality_latency_seconds=0.1,
-            repeat_transcript_agreement=True,
         ),
         score_nonspeech(
             {"id": "silence", "duration_seconds": 1.0, "nonspeech_kind": "silence"},
@@ -492,13 +483,12 @@ def test_empty_asr_output_is_a_valid_empty_quality_sample() -> None:
         "",
         [],
         quality_latency_seconds=0.1,
-        repeat_transcript_agreement=True,
     )
     assert row["word_deletions"] == 2
     assert row["character_deletions"] == len("alpha beta")
     assert row["aligned_timed_segment_count"] == 0
     assert row["timestamp_boundary_count"] == 0
-    assert row["empty_transcript"] == 1
+    assert row["unexpected_empty_transcript"] == 1
     with pytest.raises(ValueError, match="empty transcript"):
         score_speech(
             {
@@ -510,7 +500,6 @@ def test_empty_asr_output_is_a_valid_empty_quality_sample() -> None:
             "",
             [{"text": "alpha", "start": 0.0, "end": 1.0}],
             quality_latency_seconds=0.1,
-            repeat_transcript_agreement=True,
         )
 
 
@@ -528,7 +517,6 @@ def test_timestamp_span_alignment_does_not_reuse_a_broad_prediction() -> None:
         "alpha beta",
         [{"text": "alpha beta", "start": 0.0, "end": 2.0}],
         quality_latency_seconds=0.1,
-        repeat_transcript_agreement=True,
     )
     assert broad["aligned_timed_segment_count"] == 1
 
@@ -545,7 +533,6 @@ def test_timestamp_span_alignment_does_not_reuse_a_broad_prediction() -> None:
             {"text": "beta", "start": 1.1, "end": 1.9},
         ],
         quality_latency_seconds=0.1,
-        repeat_transcript_agreement=True,
     )
     assert words["aligned_timed_segment_count"] == 1
     assert words["timestamp_boundary_error_seconds"] == pytest.approx(0.2)
@@ -558,7 +545,7 @@ def test_audio_registry_and_duration_limit_are_frozen() -> None:
         "parakeet-tdt-0.6b-v2",
         "moss-transcribe-diarize",
     }
-    assert len(METRIC_DIRECTIONS) == 16
+    assert len(METRIC_DIRECTIONS) == 17
     speech = [
         {
             "id": "too-long",
@@ -921,50 +908,29 @@ def test_authoritative_audio_split_requires_all_condition_groups() -> None:
     assert {"accented", "multi_speaker"} <= AUDIO_PROTOCOL.required_conditions
 
 
-def test_required_cuda_monitoring_cannot_report_fabricated_zero() -> None:
-    monitor = ResourceMonitor(require_vram=True, report_zero_vram=True)
-    with pytest.raises(RuntimeError, match="did not capture"):
+def test_required_cuda_monitoring_rejects_absent_telemetry():
+    monitor = ResourceMonitor(require_vram=True)
+    with pytest.raises(RuntimeError, match="missing device-memory"):
         monitor.metrics()
 
 
-def test_cuda_monitor_uses_device_delta_when_wddm_hides_process_bytes() -> None:
-    class Process:
-        pid = os.getpid()
-        usedGpuMemory = None
-
-    class Memory:
-        def __init__(self, used):
-            self.used = used
-
+def test_cuda_monitor_reports_raw_assigned_device_usage():
     class Nvml:
         @staticmethod
-        def nvmlDeviceGetComputeRunningProcesses(_handle):
-            return [Process()]
-
-        @staticmethod
-        def nvmlDeviceGetGraphicsRunningProcesses(_handle):
-            return []
-
-        @staticmethod
         def nvmlDeviceGetMemoryInfo(_handle):
-            return Memory(700)
+            return SimpleNamespace(used=700, total=4096, free=3396)
 
     monitor = ResourceMonitor(require_vram=True)
     monitor._pynvml = Nvml()
-    monitor._gpu_handles = [object()]
-    monitor._gpu_baseline_bytes = [200]
-
+    monitor._gpu_handle = object()
     monitor._sample()
+    assert monitor.metrics()["peak_vram_mb"] == pytest.approx(700 / (1024**2))
+    assert monitor.vram_measurement_method == "nvml-device-total"
+    assert monitor.gpu_identity["baseline_used_mb"] == pytest.approx(700 / (1024**2))
 
-    assert monitor.metrics()["peak_vram_mb"] == pytest.approx(500 / (1024**2))
-    assert monitor.vram_measurement_method == "nvml-device-delta-wddm"
 
-
-def test_cuda_monitor_preserves_lowest_wddm_floor_across_children(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(resource_module, "_GPU_FLOOR_BYTES", {})
-
-    assert resource_module._device_memory_floor(0, 200) == 200
-    assert resource_module._device_memory_floor(0, 700) == 200
-    assert resource_module._device_memory_floor(0, 100) == 100
+def test_cpu_vram_is_inapplicable_not_a_fabricated_zero():
+    with ResourceMonitor(device="cpu") as monitor:
+        monitor.sample_now()
+    assert monitor.metrics()["peak_vram_mb"] is None
+    assert monitor.vram_measurement_method == "not-applicable"

@@ -48,6 +48,10 @@ class VideoProtocol:
     manifest_duration_tolerance_seconds: float
     confidence_level: float
     maximum_finalists: int
+    minimum_ci_sources: int | None
+    minimum_latency_ci_sources: int | None
+    nonspeech_unit_type: str | None
+    required_nonspeech_units: int | None
 
     def profile(self, name: str):
         return self.meta.profile(name)
@@ -229,7 +233,12 @@ def protocol_from_mapping(
     datasets = strict_object(
         root["datasets"],
         "datasets",
-        {"video_counts", "manifest_duration_tolerance_seconds"},
+        {
+            "video_counts",
+            "manifest_duration_tolerance_seconds",
+            "nonspeech_unit_type",
+            "required_nonspeech_units",
+        },
     )
     counts = strict_object(
         datasets["video_counts"],
@@ -245,7 +254,39 @@ def protocol_from_mapping(
         "datasets.manifest_duration_tolerance_seconds",
         minimum=0,
     )
-    statistics = strict_object(root["statistics"], "statistics", {"confidence_level"})
+    nonspeech_type = (
+        None
+        if datasets["nonspeech_unit_type"] is None
+        else choice(
+            datasets["nonspeech_unit_type"],
+            "datasets.nonspeech_unit_type",
+            {"whole_video", "asr_window"},
+        )
+    )
+    nonspeech_count = (
+        None
+        if datasets["required_nonspeech_units"] is None
+        else integer(
+            datasets["required_nonspeech_units"],
+            "datasets.required_nonspeech_units",
+            minimum=1,
+        )
+    )
+    if (nonspeech_type is None) != (nonspeech_count is None):
+        raise ValueError(
+            "Nonspeech unit type and required count must be frozen together"
+        )
+    statistics = strict_object(
+        root["statistics"],
+        "statistics",
+        {"confidence_level", "minimum_ci_sources", "minimum_latency_ci_sources"},
+    )
+    support = {
+        name: integer(statistics[name], f"statistics.{name}", minimum=2)
+        if statistics[name] is not None
+        else None
+        for name in ("minimum_ci_sources", "minimum_latency_ci_sources")
+    }
     confidence = number(
         statistics["confidence_level"],
         "statistics.confidence_level",
@@ -284,6 +325,10 @@ def protocol_from_mapping(
         duration_tolerance,
         confidence,
         maximum_finalists,
+        support["minimum_ci_sources"],
+        support["minimum_latency_ci_sources"],
+        nonspeech_type,
+        nonspeech_count,
     )
 
 

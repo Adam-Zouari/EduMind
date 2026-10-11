@@ -173,7 +173,7 @@ def test_extraction_text_metrics_have_known_ranges_and_directions() -> None:
     )
     assert result.metrics["text.content_precision"] == 0.5
     assert result.metrics["text.content_recall"] == 0.5
-    assert result.metrics["reliability.structured_output_determinism"] == 1.0
+    assert result.metrics["reliability.repeatability_success_rate"] == 1.0
 
     equivalent = score_document(
         {"id": "projection", "kind": "docx", "reference": "CAFÉ—based"},
@@ -212,14 +212,15 @@ def test_document_metrics_use_element_order_and_grouped_aggregates() -> None:
         repeated_documents=(document, document),
     )
     assert result.metrics["layout.element_f1"] == 1.0
-    assert result.metrics["text.reading_order_accuracy"] == 0.0
+    assert result.metrics["text.reading_order_ned"] == 1.0
     metrics, intervals = aggregate_evaluations(
         [result, result], resamples=50, seed=42, confidence=0.95
     )
     assert metrics["text.content_f1"] == 1.0
     assert metrics["text.docx.content_f1"] == 1.0
     assert metrics["text.docx_native.content_f1"] == 1.0
-    assert intervals["text.content_f1"]["lower"] == 1.0
+    assert intervals["text.content_f1"]["lower"] is None
+    assert intervals["text.content_f1"]["reason"] == "ci_support_not_frozen"
 
 
 def test_table_metrics_separate_detection_content_and_tree_similarity(
@@ -331,7 +332,7 @@ def test_page_metrics_detect_wrong_page_attribution() -> None:
         document,
     )
     assert scores.metrics["pages.page_coverage"] == 0.0
-    assert scores.metrics["pages.page_attribution_accuracy"] == 0.0
+    assert scores.metrics["pages.page_attribution_recall"] == 0.0
     assert scores.metrics["pages.page_content_f1"] == 0.0
 
 
@@ -527,7 +528,7 @@ def test_visual_layout_table_and_formula_never_match_across_pages() -> None:
     assert result.metrics["tables.detection_f1"] == 0.0
     assert result.metrics["formulas.detection_f1"] == 0.0
     # Page attribution remains content-first and therefore still observes the wrong page.
-    assert result.metrics["pages.page_attribution_accuracy"] == 0.0
+    assert result.metrics["pages.page_attribution_recall"] == 0.0
 
 
 def test_unclaimed_layout_boxes_do_not_change_content_matching() -> None:
@@ -562,8 +563,9 @@ def test_unclaimed_layout_boxes_do_not_change_content_matching() -> None:
         document,
     )
     assert result.metrics["layout.element_f1"] == 1.0
-    assert result.metrics["layout.element_type_accuracy"] == 1.0
-    assert "layout.mean_bounding_box_iou" not in result.metrics
+    assert result.metrics["layout.element_type_recall"] == 1.0
+    assert result.metrics["layout.mean_bounding_box_iou"] is None
+    assert result.statuses["layout.mean_bounding_box_iou"]["status"] == "inapplicable"
 
 
 def test_authoritative_reference_capabilities_are_explicit_and_conditional(
@@ -594,7 +596,7 @@ def test_authoritative_reference_rejects_contradictory_structured_negatives(
     path = tmp_path / "reference.json"
     path.write_text(
         '{"reference_capabilities":["tables"],"has_table":false,'
-        '"elements":[{"kind":"table","text":"A","html":"<table><tr><td>A</td></tr></table>"}]}',
+        '"elements":[{"id":"table-1","kind":"table","text":"A","html":"<table><tr><td>A</td></tr></table>"}]}',
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="has_table:false"):
@@ -653,70 +655,89 @@ def test_docling_candidate_requires_every_behavior_component() -> None:
     )
 
 
-def test_document_runner_keeps_all_attempts_and_empties_partial_failure(
-    monkeypatch,
-) -> None:
+@pytest.mark.parametrize(
+    "outcomes,quality,repeat",
+    [
+        ((True, False, True), 1.0, 1 / 3),
+        ((False, True, True), None, 1 / 3),
+        ((False, False, False), None, 0.0),
+    ],
+)
+def test_document_runner_preserves_first_attempt_quality(
+    monkeypatch, outcomes, quality, repeat
+):
     from experiments.benchmarks.common.contracts import BenchmarkPlan
     from experiments.benchmarks.extraction.document import runner
 
-    first_document = _document(
-        "alpha",
-        (ExtractedSegment("alpha", 0, 5, page_number=1),),
-        kind=SourceKind.PDF,
+    document = _document(
+        "alpha", (ExtractedSegment("alpha", 0, 5, page_number=1),), kind=SourceKind.PDF
     )
-    second_document = _document(
-        "alpha\nbeta",
-        (
-            ExtractedSegment("alpha", 0, 5, page_number=1),
-            ExtractedSegment("beta", 6, 10, page_number=2),
+    attempts = [
+        {
+            "sample_id": "sample",
+            "repetition": index,
+            "latency_seconds": 0.1,
+            "success": success,
+            "error": None if success else "injected failure",
+            "document": document.to_dict() if success else None,
+        }
+        for index, success in enumerate(outcomes, 1)
+    ]
+    monkeypatch.setattr(
+        runner,
+        "run_json_worker",
+        lambda *_args, **_kwargs: {
+            "attempts": attempts,
+            "measured_batch_seconds": 0.4,
+            "operational": {
+                "cold_model_load_seconds": 0.02,
+                "first_item_latency_seconds": 0.01,
+                "peak_vram_mb": None,
+                "peak_process_tree_ram_mb": 10,
+            },
+            "parameters": {},
+            "resource_samples": [],
+        },
+    )
+    samples, operational, aggregate, _, _, artifacts = runner.evaluate_candidate(
+        "docling-standard-native",
+        [
+            {
+                "id": "sample",
+                "kind": "pdf",
+                "reference": "alpha",
+                "physical_page_count": 2,
+            }
+        ],
+        BenchmarkPlan(
+            "extraction",
+            "document-test",
+            "development",
+            "fixture",
+            ("candidate",),
+            seed=42,
+            repetitions=3,
+            warmups=1,
+            bootstrap_resamples=0,
         ),
-        kind=SourceKind.PDF,
-    )
-    outcomes = iter(
-        [(first_document, 0.1), RuntimeError("second failed"), (second_document, 0.2)]
-    )
-
-    def extract_once(*_args):
-        value = next(outcomes)
-        if isinstance(value, Exception):
-            raise value
-        document, latency = value
-        return document, latency
-
-    monkeypatch.setattr(runner, "_cold_latency", lambda *_args: 0.01)
-    clock = iter((0.0, 1.0, 1.1, 2.0))
-    monkeypatch.setattr(runner.time, "perf_counter", lambda: next(clock))
-    samples, _operational, aggregate, _parameters, _intervals, artifacts = (
-        runner.evaluate_candidate(
-            "docling-standard-native",
-            [{"id": "sample", "kind": "pdf", "reference": "alpha"}],
-            BenchmarkPlan(
-                "extraction",
-                "document-test",
-                "development",
-                "fixture",
-                ("candidate",),
-                seed=default_document_protocol().meta.seed,
-                repetitions=3,
-                warmups=0,
-                bootstrap_resamples=0,
-            ),
-            {},
-            {"device": "cpu"},
-            {"sample": load_reference({"reference": "alpha"})},
-            None,
-            extract_once,
-            default_document_protocol(),
-        )
+        {},
+        {"device": "cpu"},
+        {"sample": load_reference({"reference": "alpha"})},
+        default_document_protocol(),
     )
     assert len(artifacts["timings"]) == 3
-    assert [row["success"] for row in artifacts["timings"]] == [True, False, True]
-    assert samples[0].metrics["text.content_f1"] == 0.0
-    assert samples[0].metrics["reliability.candidate_failure_rate"] == 1.0
-    assert samples[0].metrics["reliability.structured_output_determinism"] == 0.0
-    assert aggregate["reliability.candidate_failure_rate"] == 1.0
-    assert _operational["batch_pages_per_minute"] == pytest.approx(450.0)
-    assert _operational["p50_warm_latency_per_page_seconds"] == pytest.approx(0.1)
+    assert samples[0].metrics["text.content_f1"] == quality
+    assert samples[0].metrics["reliability.attempt_failure_rate"] == pytest.approx(
+        outcomes.count(False) / 3
+    )
+    assert samples[0].metrics["reliability.repeatability_success_rate"] == repeat
+    assert aggregate["text.content_f1"] == quality
+    assert operational["batch_pages_per_minute"] == pytest.approx(
+        60 * outcomes.count(True) * 2 / 0.4
+    )
+    assert operational["p50_warm_latency_per_page_seconds"] == (
+        0.05 if any(outcomes) else None
+    )
 
 
 def test_document_configuration_matrix_has_no_duplicate_image_modes() -> None:

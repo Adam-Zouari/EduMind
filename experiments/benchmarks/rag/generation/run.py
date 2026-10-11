@@ -133,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
                 no_mlflow=arguments.no_mlflow,
                 resource_monitor_options={
                     "require_vram": device == "cuda",
-                    "report_zero_vram": device == "cpu",
+                    "device": device,
                 },
                 operational_maximums=(
                     {

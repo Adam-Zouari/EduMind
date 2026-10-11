@@ -163,6 +163,8 @@ class ExtractedDocument:
     def to_dict(self) -> dict[str, object]:
         payload = asdict(self)
         payload["source_kind"] = self.source_kind.value
+        for row, segment in zip(payload["segments"], self.segments, strict=True):
+            row["kind"] = segment.kind.value
         return payload
 
     @classmethod

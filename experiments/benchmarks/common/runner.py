@@ -93,6 +93,8 @@ def run_benchmark(
     | None = None,
     operational_maximums: Mapping[str, float] | None = None,
     protocols: Mapping[str, ProtocolMetadata] | None = None,
+    candidate_metric_contracts: Mapping[str, Sequence[str]] | None = None,
+    candidate_run_names: Mapping[str, str] | None = None,
 ) -> BenchmarkResult:
     if not plan.candidates:
         raise ValueError("A benchmark plan must contain at least one candidate")
@@ -101,10 +103,16 @@ def run_benchmark(
     primary_metrics, required, paired, metric_contract = _prepare_metric_contract(
         directions, primary_metric, required_metrics, paired_metrics, nullable_metrics
     )
-    run_name = (
-        f"{run_name_prefix or f'{plan.suite}-{plan.stage}'}-"
-        f"{time.strftime('%Y%m%d-%H%M%S')}"
-    )
+    contracts = dict(candidate_metric_contracts or {})
+    names = dict(candidate_run_names or {})
+    if (set(contracts) | set(names)) - set(plan.candidates):
+        raise ValueError("Candidate contracts/names reference undeclared candidates")
+    if any(not fields or set(fields) - set(required) for fields in contracts.values()):
+        raise ValueError(
+            "Candidate metric contract contains missing or undeclared metrics"
+        )
+    metric_contract["candidate_metrics"] = contracts
+    run_name = run_name_prefix or f"{plan.suite}-{plan.stage}"
     run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     directory = artifact_root / plan.suite / plan.stage / run_id
     protocol_values = dict(protocols or {})
@@ -153,7 +161,11 @@ def run_benchmark(
     }
     plan_path = directory / "plan.json"
     provenance_path = directory / "provenance.json"
-    plan_payload = {**asdict(plan), "metric_contract": metric_contract}
+    plan_payload = {
+        **asdict(plan),
+        "metric_contract": metric_contract,
+        "candidate_run_names": names,
+    }
     atomic_write_json(plan_path, plan_payload)
     atomic_write_json(provenance_path, provenance)
     metric_contract_path = directory / "metric_contract.json"
@@ -260,6 +272,9 @@ def run_benchmark(
         for decision_name, decision_path in (decision_files or {}).items():
             tracking.artifact(decision_path, f"engineer-decisions/{decision_name}")
         for candidate in order:
+            candidate_required = tuple(
+                (candidate_metric_contracts or {}).get(candidate, required)
+            )
             results.append(
                 _run_candidate(
                     plan,
@@ -268,11 +283,13 @@ def run_benchmark(
                     directory,
                     tracking,
                     run_fingerprint,
-                    required,
+                    candidate_required,
                     monitor_resources,
                     operational_prefix,
                     candidate_artifact_name,
-                    nullable_metrics,
+                    tuple(
+                        name for name in nullable_metrics if name in candidate_required
+                    ),
                     sample_artifact_name,
                     resource_artifact_name,
                     resource_monitor_options,
@@ -283,6 +300,7 @@ def run_benchmark(
                     confidence_level,
                     dataset_checksum,
                     decision_fingerprint,
+                    (candidate_run_names or {}).get(candidate, candidate),
                 )
             )
 
@@ -453,6 +471,7 @@ def _run_candidate(
     confidence_level,
     dataset_checksum,
     decision_fingerprint,
+    display_name,
 ) -> CandidateResult:
     samples: list[SampleResult] = []
     metrics: dict[str, float | None] = {}
@@ -484,11 +503,19 @@ def _run_candidate(
         {"execution_settings": dict(plan.settings)} if plan.settings else {}
     )
     candidate_parameters.update(execution_parameters)
-    with tracking.run(candidate, nested=True) as child_run_id:
+    with tracking.run(display_name, nested=True) as child_run_id:
 
         def evaluate():
             return (
-                evaluator(candidate, {"mlflow_run_id": child_run_id})
+                evaluator(
+                    candidate,
+                    {
+                        "mlflow_run_id": child_run_id,
+                        "artifact_directory": str(
+                            directory / "candidates" / _safe(candidate)
+                        ),
+                    },
+                )
                 if evaluator_receives_context
                 else evaluator(candidate)
             )
@@ -567,6 +594,12 @@ def _run_candidate(
                     resource_parameters["vram_measurement_method"] = (
                         resources.vram_measurement_method
                     )
+                    if resources.vram_measurement_method == "not-applicable":
+                        nullable_metrics = (
+                            *nullable_metrics,
+                            f"{operational_prefix}peak_vram_mb",
+                        )
+                        resource_parameters["peak_vram_status"] = "inapplicable"
                     try:
                         operational.update(resources.metrics())
                     except RuntimeError:
@@ -585,6 +618,8 @@ def _run_candidate(
                 }
             candidate_parameters.update(resource_parameters)
             tracking.parameters(candidate_parameters)
+            if candidate_parameters.get("run_type"):
+                tracking.tags({"run_type": str(candidate_parameters["run_type"])})
             candidate_intervals = dict(evaluated[4]) if len(evaluated) >= 5 else {}
             artifact_tables = dict(evaluated[5]) if len(evaluated) >= 6 else {}
             if resource_artifact_name and resource_rows:
@@ -908,7 +943,9 @@ def _validate_operational_maximums(
     exceeded = [
         f"{name}={operational[name]:.6g}>{maximum:.6g}"
         for name, maximum in maximums.items()
-        if name in operational and operational[name] > maximum
+        if name in operational
+        and operational[name] is not None
+        and operational[name] > maximum
     ]
     if exceeded:
         raise ValueError("Operational limit exceeded: " + ", ".join(exceeded))
@@ -1064,6 +1101,8 @@ def _paired_comparisons(
                     for sample_id in shared_ids
                     if metric in left_samples[sample_id].metrics
                     and metric in right_samples[sample_id].metrics
+                    and left_samples[sample_id].metrics[metric] is not None
+                    and right_samples[sample_id].metrics[metric] is not None
                 ]
                 if not paired_ids:
                     continue

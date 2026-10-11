@@ -112,9 +112,17 @@ def prepare_smoke_fixtures(root: Path, *, modality: str = "all") -> Path:
             duration = media_duration(destination)
             sample["duration_seconds"] = duration
             sample["reference_transcript"] = text
+            sample["reference_segments"] = [
+                {"text": text, "start": 0.0, "end": duration}
+            ]
             sample["reference_visual_text"] = [text]
             sample["visual_occurrences"] = [
-                {"text": text, "start": 0.0, "end": duration}
+                {
+                    "id": f"{sample['id']}-visible-1",
+                    "text": text,
+                    "start": 0.0,
+                    "end": duration,
+                }
             ]
         sample["asset_sha256"] = sha256_file(destination)
     payload["checksum"] = manifest_content_checksum(payload["samples"])

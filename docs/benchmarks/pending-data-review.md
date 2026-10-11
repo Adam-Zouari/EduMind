@@ -102,7 +102,9 @@ the authoritative dataset manifests and methodology, then remove the item.
   Identical errors never agree; every measured attempt must execute extraction.
 - Review spoken reference timestamps independently of visual intervals. Freeze
   which videos claim the spoken timing task, retaining legitimate silent videos.
-  Define one nonspeech event unit type and required per-split reviewed allocation
+  Freeze `datasets.nonspeech_unit_type` (`whole_video` or `asr_window`) and
+  `datasets.required_nonspeech_units` in video `protocol.yaml`: one nonspeech
+  event unit type and required per-split reviewed allocation
   using whole nonspeech videos or actual ASR windows including overlap. Do not
   fabricate counts, infer labels from missing text, or import standalone speech
   quotas/control-category requirements into video.

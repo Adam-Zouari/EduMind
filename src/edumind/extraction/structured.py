@@ -32,7 +32,7 @@ def build_docling_document(
 
     elements: list[dict[str, object]] = []
     for order, (item, level) in enumerate(
-        document.iterate_items(with_groups=True, traverse_pictures=True)
+        document.iterate_items(with_groups=False, traverse_pictures=True)
     ):
         label = _enum_value(getattr(item, "label", None)) or _enum_value(
             getattr(item, "name", None)
@@ -40,11 +40,14 @@ def build_docling_document(
         text, structured = _docling_content(item, document, label)
         page_number, bounding_box, provenance = _docling_provenance(item, document)
         parent = getattr(item, "parent", None)
+        parent_id = str(getattr(parent, "cref", "")) or None
+        if parent_id in {"#/body", "#/furniture"}:
+            parent_id = None
         elements.append(
             {
                 "text": text,
                 "element_id": str(getattr(item, "self_ref", f"element-{order}")),
-                "parent_id": str(getattr(parent, "cref", "")) or None,
+                "parent_id": parent_id,
                 "order": order,
                 "page_number": page_number,
                 "bounding_box": bounding_box,
@@ -114,9 +117,14 @@ def build_structured_document(
                     dict(structured) if isinstance(structured, Mapping) else {}
                 ),
                 metadata=(
-                    dict(element_metadata)
-                    if isinstance(element_metadata, Mapping)
-                    else {}
+                    {
+                        **(
+                            dict(element_metadata)
+                            if isinstance(element_metadata, Mapping)
+                            else {}
+                        ),
+                        "parent_annotated": "parent_id" in raw,
+                    }
                 ),
             )
         )
@@ -174,8 +182,11 @@ def _docling_content(
                 for column in range(column_start, min(column_end, len(rows[row]))):
                     rows[row][column] = value
         html = str(item.export_to_html(document, add_caption=False))
-        markdown = str(item.export_to_markdown(document)).strip()
-        return markdown, {"rows": rows, "cells": cells, "html": html}
+        return " ".join(str(cell["text"]) for cell in cells), {
+            "rows": rows,
+            "cells": cells,
+            "html": html,
+        }
     text = str(getattr(item, "text", "") or getattr(item, "orig", "") or "").strip()
     if label == "formula":
         return text, {"latex": text}

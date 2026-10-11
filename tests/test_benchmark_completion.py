@@ -19,7 +19,6 @@ from experiments.benchmarks.common.contracts import (
 )
 from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.runner import run_benchmark
-from experiments.benchmarks.extraction.document import runner as document_runner
 from experiments.benchmarks.rag.generation.protocol import (
     load_protocol as load_generation_protocol,
 )
@@ -27,18 +26,19 @@ from experiments.benchmarks.rag.generation.protocol import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.mark.parametrize("domain", ("audio", "document"))
 def test_worker_launcher_uses_repository_module(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, domain: str
 ) -> None:
     launched = []
 
-    def fake_run(command, **options):
+    def fake_popen(command, **options):
         launched.append((command, options))
         Path(command[-1]).write_text('{"status":"success"}', encoding="utf-8")
-        return SimpleNamespace(returncode=0, stderr="", stdout="")
+        return SimpleNamespace(returncode=0, communicate=lambda **_kwargs: ("", ""))
 
-    monkeypatch.setattr(benchmark_process.subprocess, "run", fake_run)
-    script = ROOT / "experiments/benchmarks/extraction/audio/worker.py"
+    monkeypatch.setattr(benchmark_process.subprocess, "Popen", fake_popen)
+    script = ROOT / f"experiments/benchmarks/extraction/{domain}/worker.py"
     result = benchmark_process.run_json_worker(
         script,
         {},
@@ -52,32 +52,7 @@ def test_worker_launcher_uses_repository_module(
     assert command[:3] == [
         sys.executable,
         "-m",
-        "experiments.benchmarks.extraction.audio.worker",
-    ]
-    assert options["cwd"] == ROOT
-
-
-def test_document_cold_worker_launches_as_module(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    launched = []
-
-    def fake_run(command, **options):
-        launched.append((command, options))
-        return SimpleNamespace(stdout="EDUMIND_FIRST_ITEM_COMPLETE", stderr="")
-
-    monkeypatch.setenv("TEMP", str(tmp_path))
-    monkeypatch.setattr(document_runner.subprocess, "run", fake_run)
-    protocol = SimpleNamespace(meta=SimpleNamespace(worker_payload=dict))
-    assert (
-        document_runner._cold_latency("candidate", {"id": "sample"}, {}, {}, protocol)
-        >= 0
-    )
-    command, options = launched[0]
-    assert command[:3] == [
-        sys.executable,
-        "-m",
-        "experiments.benchmarks.extraction.document.cold_worker",
+        f"experiments.benchmarks.extraction.{domain}.worker",
     ]
     assert options["cwd"] == ROOT
 
@@ -507,7 +482,7 @@ def test_incomplete_candidate_and_parent_are_marked_failed_in_tracking(
 
     assert not result.complete
     assert tracking.failed[0] == "incomplete"
-    assert tracking.failed[1].startswith("test-suite-completion-")
+    assert tracking.failed[1] == "test-suite-completion"
 
 
 def test_protocol_identity_and_resolved_settings_are_recorded_for_parent_and_child(

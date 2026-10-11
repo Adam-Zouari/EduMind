@@ -124,6 +124,8 @@ class BaseRuntime:
                     "nemo_toolkit",
                     "moss-transcribe-diarize",
                     "soundfile",
+                    "jiwer",
+                    "rapidfuzz",
                 )
             ),
         }

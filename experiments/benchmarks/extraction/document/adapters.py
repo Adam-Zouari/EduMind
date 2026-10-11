@@ -118,8 +118,10 @@ class ExperimentalDocumentExtractor:
         options.repo_id = str(model_path)
         options.revision = request.profile.engine_revision
         options.load_in_8bit = bool(request.options["load_in_8bit"])
+        options.scale = float(request.options["image_scale"])
         pipeline = VlmPipelineOptions(
             vlm_options=options,
+            images_scale=float(request.options["image_scale"]),
             artifacts_path=model_path.parent,
             accelerator_options=AcceleratorOptions(device=request.profile.device),
         )
@@ -143,16 +145,14 @@ class ExperimentalDocumentExtractor:
         runtime = self._paddle_runtime(request)
         elements: list[dict[str, object]] = []
         warnings: list[ExtractionWarning] = []
+        page_count = 0
         for result in runtime.predict(str(request.source_path)):
+            page_count += 1
             payload = getattr(result, "json", None)
             payload = payload() if callable(payload) else payload or {}
             blocks = _paddle_blocks(payload, warnings=warnings)
-            if not blocks:
-                raise RuntimeError(
-                    "PaddleOCR-VL result contains no native parsing blocks"
-                )
             elements.extend(blocks)
-        if not elements:
+        if not page_count:
             raise RuntimeError("PaddleOCR-VL-1.6 produced no pages")
         for order, element in enumerate(elements):
             element["order"] = order
@@ -167,12 +167,13 @@ class ExperimentalDocumentExtractor:
             # On Windows, Paddle adds DLL search paths whose shared-library names
             # conflict with PyTorch. PaddleX imports ModelScope (and therefore
             # PyTorch), so load PyTorch's DLLs before importing Paddle.
-            import paddle
             import torch
+
+            _ = torch.__version__
+            import paddle
             from paddleocr import PaddleOCRVL
         except (ImportError, ModuleNotFoundError) as exc:
             raise MissingDependencyError("PaddleX OCR extras are required") from exc
-        _ = torch.__version__
         paddleocr_version = version("paddleocr")
         if paddleocr_version != "3.7.0" or paddle.__version__ != "3.3.1":
             raise MissingDependencyError(
@@ -200,14 +201,14 @@ def _paddle_blocks(
     """Read native Paddle blocks; do not infer structure from rendered Markdown."""
 
     if not isinstance(value, Mapping):
-        return []
+        raise ValueError("Paddle page result must be an object")
     if isinstance(value.get("res"), Mapping):
         value = value["res"]
     raw_page_index = value.get("page_index")
     page_number = 1 if raw_page_index is None else int(raw_page_index) + 1
-    raw_blocks = value.get("parsing_res_list", [])
+    raw_blocks = value.get("parsing_res_list")
     if not isinstance(raw_blocks, list):
-        return []
+        raise ValueError("Paddle page result must contain a native parsing block list")
     page_size = _page_size(value)
     result: list[dict[str, object]] = []
     for index, raw in enumerate(raw_blocks):
@@ -310,11 +311,20 @@ class _TableHTMLParser(HTMLParser):
         self._row: list[str] | None = None
         self._cell_parts: list[str] | None = None
         self._cell_attrs: dict[str, str] = {}
+        self._occupied: set[tuple[int, int]] = set()
+        self._column = 0
 
     def handle_starttag(self, tag: str, attrs) -> None:
         if tag.casefold() == "tr":
+            if self._cell_parts is not None:
+                self.handle_endtag("td")
+            if self._row is not None:
+                self.handle_endtag("tr")
             self._row = []
+            self._column = 0
         elif tag.casefold() in {"td", "th"}:
+            if self._cell_parts is not None:
+                self.handle_endtag("td")
             if self._row is None:
                 self._row = []
             self._cell_parts = []
@@ -329,16 +339,26 @@ class _TableHTMLParser(HTMLParser):
         if lowered in {"td", "th"} and self._cell_parts is not None:
             value = " ".join("".join(self._cell_parts).split())
             assert self._row is not None
-            column = len(self._row)
             row = len(self.rows)
+            while (row, self._column) in self._occupied:
+                self._column += 1
+            column = self._column
+            row_span = _positive_span(self._cell_attrs.get("rowspan"))
+            column_span = _positive_span(self._cell_attrs.get("colspan"))
+            self._occupied.update(
+                (r, c)
+                for r in range(row, row + row_span)
+                for c in range(column, column + column_span)
+            )
+            self._column += column_span
             self._row.append(value)
             self.cells.append(
                 {
                     "text": value,
                     "row": row,
                     "column": column,
-                    "row_span": _positive_span(self._cell_attrs.get("rowspan")),
-                    "column_span": _positive_span(self._cell_attrs.get("colspan")),
+                    "row_span": row_span,
+                    "column_span": column_span,
                     "header": lowered == "th",
                 }
             )

@@ -22,6 +22,8 @@ accelerate==1.12.0
 
 # Document element matching. Official TEDS/TEDS-S/CDM run in their Docker image.
 scipy==1.15.2
+jiwer==4.0.0
+rapidfuzz==3.14.6
 
 # Four vector-server clients. The servers themselves run from Docker images.
 qdrant-client==1.18.0

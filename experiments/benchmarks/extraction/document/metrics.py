@@ -14,10 +14,16 @@ from edumind.common.paths import PROJECT_ROOT
 from edumind.extraction import ExtractedDocument, ExtractedSegment, SegmentKind
 from experiments.benchmarks.common.metrics import (
     character_error_rate,
+    levenshtein,
     normalize_prose,
     normalized_tokens,
     precision_recall_f1,
     word_error_rate,
+)
+from experiments.benchmarks.extraction.scoring import (
+    attempt_rates,
+    bootstrap_sources,
+    source_id,
 )
 
 from .official_metrics import score_official_metrics, validate_official_runtime
@@ -28,16 +34,16 @@ METRIC_DIRECTIONS = {
     "text.content_f1": "max",
     "text.character_error_rate": "min",
     "text.word_error_rate": "min",
-    "text.reading_order_accuracy": "max",
+    "text.reading_order_ned": "min",
     "pages.page_coverage": "max",
     "pages.page_content_f1": "max",
-    "pages.page_attribution_accuracy": "max",
+    "pages.page_attribution_recall": "max",
     "pages.duplicate_page_rate": "min",
     "layout.element_precision": "max",
     "layout.element_recall": "max",
     "layout.element_f1": "max",
-    "layout.element_type_accuracy": "max",
-    "layout.hierarchy_accuracy": "max",
+    "layout.element_type_recall": "max",
+    "layout.hierarchy_preservation_rate": "max",
     "layout.mean_bounding_box_iou": "max",
     "tables.detection_precision": "max",
     "tables.detection_recall": "max",
@@ -52,10 +58,11 @@ METRIC_DIRECTIONS = {
     "formulas.detection_f1": "max",
     "formulas.recognition_similarity": "max",
     "formulas.exact_match": "max",
-    "reliability.empty_output_rate": "min",
+    "reliability.unexpected_empty_output_rate": "min",
     "reliability.duplicate_content_rate": "min",
-    "reliability.structured_output_determinism": "max",
-    "reliability.candidate_failure_rate": "min",
+    "reliability.repeatability_success_rate": "max",
+    "reliability.attempt_failure_rate": "min",
+    "operational.cold_model_load_seconds": "min",
     "operational.first_item_latency_seconds": "min",
     "operational.p50_warm_latency_per_page_seconds": "min",
     "operational.p95_warm_latency_per_page_seconds": "min",
@@ -103,6 +110,9 @@ class ReferenceElement:
     bounding_box: tuple[float, float, float, float] | None = None
     parent_id: str | None = None
     hierarchy_level: int | None = None
+    parent_annotated: bool = False
+    level_annotated: bool = False
+    identity: str | None = None
     html: str | None = None
     latex: str | None = None
 
@@ -118,7 +128,10 @@ class ReferenceDocument:
 @dataclass
 class DocumentEvaluation:
     groups: tuple[str, ...]
-    metrics: dict[str, float] = field(default_factory=dict)
+    metrics: dict[str, float | None] = field(default_factory=dict)
+    statuses: dict[str, dict[str, str | None]] = field(default_factory=dict)
+    sample_id: str = ""
+    source_group_id: str = ""
     counts: dict[str, tuple[int, int, int]] = field(default_factory=dict)
     table_content_scores: list[tuple[float, float, float]] = field(default_factory=list)
     table_pairs: list[tuple[str, str]] = field(default_factory=list)
@@ -159,7 +172,27 @@ def validate_reference(
         )
     if raw_capabilities is not None:
         _validate_capability_list(raw_capabilities, item.get("id"))
-    if "text" in reference.capabilities and not reference.text.strip():
+    if authoritative:
+        raw = payload.get("elements", payload.get("reference_elements", []))
+        for element in raw:
+            if (
+                not isinstance(element, Mapping)
+                or not isinstance(element.get("id", element.get("element_id")), str)
+                or not element.get("id", element.get("element_id"))
+            ):
+                raise ValueError(
+                    "Authoritative reference elements require stable nonempty IDs"
+                )
+            if (
+                "reading_order" in reference.capabilities
+                and type(element.get("order")) is not int
+            ):
+                raise ValueError(
+                    "Authoritative reading order requires explicit integer positions"
+                )
+    if "text" in reference.capabilities and not isinstance(
+        payload.get("text", payload.get("reference")), str
+    ):
         raise ValueError(
             f"Document sample {item.get('id')} has no verified reference text"
         )
@@ -176,10 +209,56 @@ def validate_reference(
         "element_types",
         "hierarchy",
     }
-    if reference.capabilities & layout_capabilities and not reference.elements:
+    raw_elements = payload.get("elements", payload.get("reference_elements"))
+    if reference.capabilities & layout_capabilities and not isinstance(
+        raw_elements, (list, tuple)
+    ):
         raise ValueError(
-            f"Document sample {item.get('id')} claims layout capabilities without elements"
+            f"Document sample {item.get('id')} claims layout capabilities without an element annotation list"
         )
+    identifiers = [element.element_id for element in reference.elements]
+    if len(identifiers) != len(set(identifiers)):
+        raise ValueError("Reference element IDs must be unique")
+    if "reading_order" in reference.capabilities:
+        orders = [element.order for element in reference.elements]
+        if len(orders) != len(set(orders)):
+            raise ValueError("Reference reading-order positions must be unique")
+    for element in reference.elements:
+        if (
+            element.level_annotated
+            and "hierarchy" in reference.capabilities
+            and (element.hierarchy_level is None or element.hierarchy_level < 0)
+        ):
+            raise ValueError("Claimed hierarchy levels must be nonnegative integers")
+        if element.page_number is not None and element.page_number < 1:
+            raise ValueError("Reference page numbers must be positive")
+        if (
+            "pages" in reference.capabilities
+            and element.page_number is not None
+            and element.page_number not in reference.pages
+        ):
+            raise ValueError("Reference element page is absent from verified pages")
+        if (
+            "hierarchy" in reference.capabilities
+            and element.parent_id is not None
+            and (
+                element.parent_id not in identifiers
+                or element.parent_id == element.element_id
+            )
+        ):
+            raise ValueError(
+                "Reference parent IDs must refer to another annotated element"
+            )
+    parents = {element.element_id: element.parent_id for element in reference.elements}
+    if "hierarchy" in reference.capabilities:
+        for identifier in identifiers:
+            visited = set()
+            current = identifier
+            while current is not None:
+                if current in visited:
+                    raise ValueError("Reference hierarchy contains a cycle")
+                visited.add(current)
+                current = parents.get(current)
     if "tables" in reference.capabilities:
         table_presence = _presence(payload, item, "has_table")
         if table_presence is None and authoritative:
@@ -207,6 +286,12 @@ def validate_reference(
                 f"Document sample {item.get('id')} lacks official table references: "
                 + ", ".join(missing_table_html[:10])
             )
+        from .adapters import _parse_table_html
+
+        if any(not _parse_table_html(element.html)[1] for element in table_elements):
+            raise ValueError(
+                "Document table references must contain parseable HTML cells"
+            )
     if "formulas" in reference.capabilities:
         formula_presence = _presence(payload, item, "has_formula")
         if formula_presence is None and authoritative:
@@ -227,16 +312,22 @@ def validate_reference(
                 f"Document sample {item.get('id')} sets has_formula:false with formula references"
             )
         missing_formula_latex = [
-            element.element_id for element in formula_elements if not element.latex
+            element.element_id
+            for element in formula_elements
+            if not (element.latex or "").strip()
         ]
         if missing_formula_latex:
             raise ValueError(
                 f"Document sample {item.get('id')} lacks official formula references: "
                 + ", ".join(missing_formula_latex[:10])
             )
-    if "hierarchy" in reference.capabilities and not any(
-        element.parent_id is not None or element.hierarchy_level is not None
-        for element in reference.elements
+    if (
+        "hierarchy" in reference.capabilities
+        and reference.elements
+        and not any(
+            element.parent_annotated or element.level_annotated
+            for element in reference.elements
+        )
     ):
         raise ValueError(
             f"Document sample {item.get('id')} claims hierarchy without hierarchy annotations"
@@ -297,6 +388,13 @@ def apply_official_metrics(
     table_results, formula_results = score_official_metrics(
         table_pairs, formula_pairs, timeout_seconds=timeout_seconds
     )
+    if len(table_results) != len(table_pairs) or len(formula_results) != len(
+        formula_pairs
+    ):
+        raise RuntimeError("Official evaluator returned an incomplete result")
+    values = [value for pair in table_results for value in pair] + formula_results
+    if any(not np.isfinite(value) or not 0 <= value <= 1 for value in values):
+        raise RuntimeError("Official evaluator returned invalid scores")
     table_offset = 0
     formula_offset = 0
     for record in records:
@@ -306,7 +404,7 @@ def apply_official_metrics(
             record.table_scores = [
                 (*content, teds, teds_s)
                 for content, (teds, teds_s) in zip(
-                    record.table_content_scores, official
+                    record.table_content_scores, official, strict=True
                 )
             ]
             record.metrics["tables.teds"] = float(
@@ -328,6 +426,9 @@ def apply_official_metrics(
                 np.mean([value == 1.0 for value in record.formula_scores])
             )
             formula_offset += formula_count
+        for name, value in record.metrics.items():
+            if value is not None:
+                record.statuses[name] = {"status": "scored", "reason": None}
 
 
 def score_document(
@@ -335,184 +436,327 @@ def score_document(
     document: ExtractedDocument | None,
     *,
     reference: ReferenceDocument | None = None,
-    repeated_documents: Sequence[ExtractedDocument] = (),
+    repeated_documents: Sequence[ExtractedDocument | None] = (),
     failed: bool = False,
     element_matching_threshold: float,
     duplicate_content_threshold: float,
 ) -> DocumentEvaluation:
     reference = reference or load_reference(item)
-    kind = str(item["kind"])
-    groups = _document_groups(item)
-    result = DocumentEvaluation(groups)
-    hypothesis = document.text if document else ""
-    if "text" in reference.capabilities:
-        result.metrics.update(_text_metrics(reference, hypothesis))
-    predicted = tuple(document.segments) if document else ()
-
-    if "pages" in reference.capabilities:
-        result.metrics.update(
-            _page_metrics(reference, predicted, duplicate_content_threshold)
-        )
-        # Page attribution follows content matches and then checks the page label.
-        # Matching by box alone could count unrelated text at the same coordinates.
-        page_matches = _match_elements(
-            reference.elements,
-            predicted,
-            visual=False,
-            threshold=element_matching_threshold,
-        )
-        attributed = [
-            (reference.elements[left], predicted[right])
-            for left, right, _ in page_matches
-            if reference.elements[left].page_number is not None
-            and predicted[right].page_number is not None
-        ]
-        if attributed:
-            result.metrics["pages.page_attribution_accuracy"] = sum(
-                expected.page_number == observed.page_number
-                for expected, observed in attributed
-            ) / len(attributed)
-
-    layout_references = tuple(
-        element for element in reference.elements if element.kind in LAYOUT_KINDS
+    result = DocumentEvaluation(
+        _document_groups(item),
+        sample_id=str(item["id"]),
+        source_group_id=source_id(item),
     )
-    layout_predictions = tuple(
-        segment
-        for segment in predicted
-        if segment.kind in LAYOUT_KINDS
-        and (segment.text.strip() or segment.bounding_box is not None)
-    )
-    layout_enabled = bool(
-        reference.capabilities
-        & {"reading_order", "layout_boxes", "element_types", "hierarchy"}
-    )
-    if layout_enabled:
-        matches = _match_elements(
-            layout_references,
-            layout_predictions,
-            visual=kind in VISUAL_KINDS,
-            use_boxes="layout_boxes" in reference.capabilities,
-            threshold=element_matching_threshold,
+    predicted = tuple(document.segments) if document is not None else ()
+    applicable = _eligible_metrics(reference)
+    result.metrics = {
+        name: None for name in METRIC_DIRECTIONS if not name.startswith("operational.")
+    }
+    if document is not None and not failed:
+        if "text" in reference.capabilities:
+            result.metrics.update(_text_metrics(reference, document.text))
+            result.metrics["reliability.duplicate_content_rate"] = (
+                _duplicate_content_rate(reference.text, document.text)
+            )
+        if "pages" in reference.capabilities:
+            result.metrics.update(
+                _page_metrics(
+                    reference,
+                    predicted,
+                    duplicate_content_threshold,
+                    element_matching_threshold,
+                )
+            )
+            expected = tuple(
+                e
+                for e in reference.elements
+                if e.page_number is not None and _element_tokens(e)
+            )
+            matches = _match_elements(
+                expected, predicted, visual=False, threshold=element_matching_threshold
+            )
+            if expected:
+                result.metrics["pages.page_attribution_recall"] = sum(
+                    expected[left].page_number == predicted[right].page_number
+                    for left, right, _ in matches
+                ) / len(expected)
+        layout_references = tuple(
+            e for e in reference.elements if e.kind in LAYOUT_KINDS
         )
-        result.counts["layout"] = (
-            len(matches),
-            len(layout_predictions) - len(matches),
-            len(layout_references) - len(matches),
-        )
-        result.metrics.update(
-            _layout_metrics(
+        layout_predictions = tuple(e for e in predicted if e.kind in LAYOUT_KINDS)
+        if reference.capabilities & {
+            "reading_order",
+            "layout_boxes",
+            "element_types",
+            "hierarchy",
+        }:
+            matches = _match_elements(
                 layout_references,
                 layout_predictions,
-                matches,
-                capabilities=reference.capabilities,
+                visual=str(item["kind"]) in VISUAL_KINDS,
+                use_boxes="layout_boxes" in reference.capabilities,
+                threshold=element_matching_threshold,
             )
-        )
-        if "reading_order" in reference.capabilities:
-            reading_order = _reading_order(
-                matches, layout_references, layout_predictions
+            result.counts["layout"] = (
+                len(matches),
+                len(layout_predictions) - len(matches),
+                len(layout_references) - len(matches),
             )
-            if reading_order is not None:
-                result.metrics["text.reading_order_accuracy"] = reading_order
-
-    if "tables" in reference.capabilities:
-        _score_structured_kind(
-            result,
-            reference,
-            predicted,
-            SegmentKind.TABLE,
-            kind,
-            element_matching_threshold,
+            result.metrics.update(
+                _layout_metrics(
+                    layout_references,
+                    layout_predictions,
+                    matches,
+                    capabilities=reference.capabilities,
+                )
+            )
+        if reference.capabilities & {"reading_order", "hierarchy"}:
+            matches = _match_elements(
+                reference.elements,
+                predicted,
+                visual=str(item["kind"]) in VISUAL_KINDS,
+                use_boxes="layout_boxes" in reference.capabilities,
+                threshold=element_matching_threshold,
+            )
+            if "reading_order" in reference.capabilities:
+                result.metrics["text.reading_order_ned"] = _reading_order(
+                    matches, reference.elements, predicted
+                )
+            if "hierarchy" in reference.capabilities:
+                result.metrics["layout.hierarchy_preservation_rate"] = (
+                    _hierarchy_preservation(reference.elements, predicted, matches)
+                )
+        for capability, target in (
+            ("tables", SegmentKind.TABLE),
+            ("formulas", SegmentKind.FORMULA),
+        ):
+            if capability in reference.capabilities:
+                _score_structured_kind(
+                    result,
+                    reference,
+                    predicted,
+                    target,
+                    str(item["kind"]),
+                    element_matching_threshold,
+                )
+    expected_content = bool(
+        normalized_tokens(reference.text)
+        or any(_usable_element(e) for e in reference.elements)
+    )
+    observed_content = bool(
+        document is not None
+        and (
+            normalized_tokens(document.text)
+            or any(_usable_element(e) for e in predicted)
         )
-    if "formulas" in reference.capabilities:
-        _score_structured_kind(
-            result,
-            reference,
-            predicted,
-            SegmentKind.FORMULA,
-            kind,
-            element_matching_threshold,
-        )
-    result.metrics["reliability.empty_output_rate"] = float(not hypothesis.strip())
-    if "text" in reference.capabilities:
-        duplicate_rate = _duplicate_content_rate(reference.text, hypothesis)
-        if duplicate_rate is not None:
-            result.metrics["reliability.duplicate_content_rate"] = duplicate_rate
-    result.metrics["reliability.candidate_failure_rate"] = float(failed)
-    if failed:
-        result.metrics["reliability.structured_output_determinism"] = 0.0
-    elif repeated_documents:
-        fingerprints = {_document_fingerprint(value) for value in repeated_documents}
-        result.metrics["reliability.structured_output_determinism"] = float(
-            len(fingerprints) == 1
-        )
+    )
+    result.metrics["reliability.unexpected_empty_output_rate"] = float(
+        document is not None
+        and not failed
+        and expected_content
+        and not observed_content
+    )
+    fingerprints = [
+        _document_fingerprint(value) if value is not None else None
+        for value in repeated_documents
+    ]
+    if not fingerprints:
+        fingerprints = [
+            _document_fingerprint(document)
+            if document is not None and not failed
+            else None
+        ]
+    for name, value in attempt_rates(fingerprints).items():
+        result.metrics[f"reliability.{name}"] = value
+    for name, value in result.metrics.items():
+        if value is not None:
+            status, reason = "scored", None
+        elif (
+            name == "reliability.repeatability_success_rate" and len(fingerprints) == 1
+        ):
+            status, reason = "inapplicable", "repeatability_not_measured"
+        elif name not in applicable:
+            status, reason = "inapplicable", "no_reference_task"
+        else:
+            status, reason = (
+                "unavailable",
+                "first_attempt_failed"
+                if failed or document is None
+                else "evaluation_pending",
+            )
+        result.statuses[name] = {"status": status, "reason": reason}
     return result
 
 
+def _eligible_metrics(reference: ReferenceDocument) -> set[str]:
+    result = {
+        name
+        for name in METRIC_DIRECTIONS
+        if name.startswith("reliability.")
+        and name != "reliability.duplicate_content_rate"
+    }
+    capabilities = reference.capabilities
+    if "text" in capabilities:
+        result.update(
+            name
+            for name in METRIC_DIRECTIONS
+            if name.startswith("text.") and name != "text.reading_order_ned"
+        )
+        result.add("reliability.duplicate_content_rate")
+    if "reading_order" in capabilities:
+        result.add("text.reading_order_ned")
+    if "pages" in capabilities:
+        result.update(
+            {
+                "pages.page_coverage",
+                "pages.page_content_f1",
+                "pages.duplicate_page_rate",
+            }
+        )
+        if any(
+            e.page_number is not None and _element_tokens(e) for e in reference.elements
+        ):
+            result.add("pages.page_attribution_recall")
+    layout = [e for e in reference.elements if e.kind in LAYOUT_KINDS]
+    if capabilities & {"reading_order", "layout_boxes", "element_types", "hierarchy"}:
+        result.update(
+            {"layout.element_precision", "layout.element_recall", "layout.element_f1"}
+        )
+    if layout and "element_types" in capabilities:
+        result.add("layout.element_type_recall")
+    if layout and "layout_boxes" in capabilities:
+        result.add("layout.mean_bounding_box_iou")
+    if "hierarchy" in capabilities and any(
+        e.parent_annotated or e.level_annotated for e in reference.elements
+    ):
+        result.add("layout.hierarchy_preservation_rate")
+    for capability, kind in (
+        ("tables", SegmentKind.TABLE),
+        ("formulas", SegmentKind.FORMULA),
+    ):
+        if capability in capabilities:
+            result.update(
+                name
+                for name in METRIC_DIRECTIONS
+                if name.startswith(f"{capability}.detection_")
+            )
+            if any(e.kind is kind for e in reference.elements):
+                result.update(
+                    name
+                    for name in METRIC_DIRECTIONS
+                    if name.startswith(f"{capability}.")
+                )
+    return result
+
+
+def _usable_element(element) -> bool:
+    return bool(
+        _element_tokens(element)
+        or _element_identity(element)
+        or element.kind is SegmentKind.FIGURE
+        and _valid_box(element.bounding_box)
+    )
+
+
 def aggregate_evaluations(
-    records: Sequence[DocumentEvaluation],
-    *,
-    resamples: int,
-    seed: int,
-    confidence: float,
-) -> tuple[dict[str, float], dict[str, dict[str, float]]]:
-    metrics: dict[str, float] = {}
-    intervals: dict[str, dict[str, float]] = {}
-    tail = (1.0 - confidence) / 2.0
-    group_names = sorted(set().union(*(record.groups for record in records)))
+    records, *, resamples, seed, confidence, minimum_sources=None
+):
+    metrics, intervals = {}, {}
+    group_names = sorted({group for record in records for group in record.groups})
     for group in (None, *group_names):
         selected = [
             record for record in records if group is None or group in record.groups
         ]
         if not selected:
             continue
-        estimates = _aggregate_group(selected)
         prefix = "" if group is None else f"{group}."
+        estimates = _aggregate_group(selected)
         for name, value in estimates.items():
             qualified = _grouped_name(name, prefix)
             metrics[qualified] = value
-            metrics[f"{qualified}.sample_count"] = float(
-                sum(_contributes(record, name) for record in selected)
-            )
-        if resamples and len(selected) >= 2:
-            rng = np.random.default_rng(seed)
-            draws: dict[str, list[float]] = {name: [] for name in estimates}
-            for _ in range(resamples):
-                sample = [
-                    selected[index]
-                    for index in rng.integers(0, len(selected), len(selected))
-                ]
-                values = _aggregate_group(sample)
-                for name in estimates:
-                    if name in values:
-                        draws[name].append(values[name])
-            for name, values in draws.items():
-                if len(values) < 2:
-                    continue
-                qualified = _grouped_name(name, prefix)
-                intervals[qualified] = {
-                    "estimate": metrics[qualified],
-                    "lower": float(np.quantile(values, tail)),
-                    "upper": float(np.quantile(values, 1.0 - tail)),
-                    "confidence": confidence,
-                    "defined_resamples": float(len(values)),
+            contributors = [
+                record for record in selected if record.metrics.get(name) is not None
+            ]
+            eligible = [
+                record
+                for record in selected
+                if record.statuses.get(name, {}).get("status") != "inapplicable"
+            ]
+            metrics.update(
+                {
+                    f"{qualified}.sample_count": float(len(contributors)),
+                    f"{qualified}.scheduled_count": float(len(selected)),
+                    f"{qualified}.eligible_count": float(len(eligible)),
+                    f"{qualified}.unavailable_count": float(
+                        len(eligible) - len(contributors)
+                    ),
+                    f"{qualified}.independent_source_count": float(
+                        len({record.source_group_id for record in contributors})
+                    ),
+                    f"{qualified}.failed_first_attempt_count": float(
+                        sum(
+                            record.statuses.get(name, {}).get("reason")
+                            == "first_attempt_failed"
+                            for record in selected
+                        )
+                    ),
                 }
+            )
+        rows = [
+            {"source_group_id": record.source_group_id or str(index), "record": record}
+            for index, record in enumerate(selected)
+        ]
+        bounds = bootstrap_sources(
+            rows,
+            lambda values: _aggregate_group([row["record"] for row in values]),
+            resamples=resamples,
+            seed=seed,
+            confidence=confidence,
+            minimum_sources=minimum_sources,
+        )
+        intervals.update(
+            {_grouped_name(name, prefix): value for name, value in bounds.items()}
+        )
     return metrics, intervals
 
 
 def _reference_from_mapping(payload: Mapping[str, object]) -> ReferenceDocument:
+    raw_capabilities = payload.get("reference_capabilities")
+    if raw_capabilities is not None:
+        _validate_capability_list(raw_capabilities, payload.get("id"))
     text = _canonical(str(payload.get("text", payload.get("reference", ""))))
     raw_pages = payload.get("pages", payload.get("reference_page_texts", []))
+    if raw_capabilities is not None and "pages" not in raw_capabilities:
+        raw_pages = []
     pages: dict[int, str] = {}
     if isinstance(raw_pages, Mapping):
-        pages = {int(key): _canonical(str(value)) for key, value in raw_pages.items()}
+        for key, value in raw_pages.items():
+            page = _optional_int(key)
+            if page is None or page < 1 or page in pages or not isinstance(value, str):
+                raise ValueError(
+                    "Reference pages require unique positive IDs and explicit text"
+                )
+            pages[page] = _canonical(value)
     elif isinstance(raw_pages, Sequence) and not isinstance(raw_pages, (str, bytes)):
         for index, value in enumerate(raw_pages, 1):
             if isinstance(value, Mapping):
-                pages[int(value.get("page_number", index))] = _canonical(
-                    str(value.get("text", ""))
-                )
+                page = _optional_int(value.get("page_number", index))
+                if (
+                    page is None
+                    or page < 1
+                    or page in pages
+                    or not isinstance(value.get("text"), str)
+                ):
+                    raise ValueError(
+                        "Reference pages require unique positive IDs and explicit text"
+                    )
+                pages[page] = _canonical(value["text"])
             else:
-                pages[index] = _canonical(str(value))
+                if not isinstance(value, str):
+                    raise ValueError(
+                        "Reference page text must be explicit, including verified blanks"
+                    )
+                pages[index] = _canonical(value)
     raw_elements = payload.get("elements", payload.get("reference_elements", []))
     elements: list[ReferenceElement] = []
     if isinstance(raw_elements, Sequence) and not isinstance(
@@ -520,7 +764,7 @@ def _reference_from_mapping(payload: Mapping[str, object]) -> ReferenceDocument:
     ):
         for index, value in enumerate(raw_elements):
             if not isinstance(value, Mapping):
-                continue
+                raise ValueError("Reference elements must be objects")
             kind = _kind(value.get("kind", "text"))
             elements.append(
                 ReferenceElement(
@@ -531,16 +775,20 @@ def _reference_from_mapping(payload: Mapping[str, object]) -> ReferenceDocument:
                     text=_canonical(str(value.get("text", ""))),
                     order=int(value.get("order", index)),
                     page_number=_optional_int(value.get("page_number")),
-                    bounding_box=_box(value.get("bounding_box")),
+                    bounding_box=_box(value.get("bounding_box"))
+                    if raw_capabilities is None or "layout_boxes" in raw_capabilities
+                    else None,
                     parent_id=_optional_string(value.get("parent_id")),
                     hierarchy_level=_optional_int(value.get("hierarchy_level")),
+                    parent_annotated="parent_id" in value,
+                    level_annotated="hierarchy_level" in value,
+                    identity=_optional_string(value.get("identity")),
                     html=_optional_string(value.get("html")),
                     latex=_optional_string(value.get("latex")),
                 )
             )
     if not pages and payload.get("kind") == "image":
         pages[1] = text
-    raw_capabilities = payload.get("reference_capabilities")
     capabilities = (
         frozenset(str(value) for value in raw_capabilities)
         if isinstance(raw_capabilities, Sequence)
@@ -564,121 +812,156 @@ def _text_metrics(reference: ReferenceDocument, hypothesis: str) -> dict[str, fl
 
 
 def _page_metrics(
-    reference: ReferenceDocument,
-    predicted: Sequence[ExtractedSegment],
-    duplicate_content_threshold: float,
-) -> dict[str, float]:
+    reference, predicted, duplicate_content_threshold, element_matching_threshold
+):
     predicted_pages: dict[int, str] = {}
     for segment in predicted:
-        if segment.page_number is None or not segment.text.strip():
-            continue
-        predicted_pages.setdefault(segment.page_number, "")
-        predicted_pages[segment.page_number] += (
-            "\n" if predicted_pages[segment.page_number] else ""
-        ) + segment.text
-    page_ids = sorted(set(reference.pages) | set(predicted_pages))
-    page_f1 = {
-        page: _content_f1(reference.pages.get(page, ""), predicted_pages.get(page, ""))
-        for page in page_ids
+        if segment.page_number is not None:
+            predicted_pages.setdefault(segment.page_number, "")
+            predicted_pages[segment.page_number] += "\n" + segment.text
+    expected_pages = set(reference.pages)
+    page_ids = expected_pages | set(predicted_pages)
+    f1_values = [
+        _content_f1(reference.pages[page], predicted_pages.get(page, ""))
+        if page in expected_pages
+        else 0.0
+        for page in sorted(page_ids)
+    ]
+    content_pages = {
+        page for page, text in reference.pages.items() if normalized_tokens(text)
+    } | {
+        e.page_number
+        for e in reference.elements
+        if e.page_number is not None and _usable_element(e)
     }
-    coverage = sum(page_f1.get(page, 0.0) > 0.0 for page in reference.pages) / len(
-        reference.pages
-    )
-    predicted_texts = [value for value in predicted_pages.values() if value.strip()]
-    reference_texts = [value for value in reference.pages.values() if value.strip()]
-    duplicates = _unsupported_near_duplicates(
-        predicted_texts, reference_texts, duplicate_content_threshold
-    )
-    result = {
-        "pages.page_coverage": coverage,
-        "pages.page_content_f1": float(np.mean(list(page_f1.values())))
-        if page_f1
+    covered = set()
+    for page in content_pages:
+        expected = [
+            e
+            for e in reference.elements
+            if e.page_number == page and _usable_element(e)
+        ]
+        if not expected and normalized_tokens(reference.pages.get(page, "")):
+            expected = [
+                ReferenceElement(
+                    str(page),
+                    SegmentKind.TEXT,
+                    text=reference.pages[page],
+                    page_number=page,
+                )
+            ]
+        observed = [e for e in predicted if e.page_number == page]
+        if _match_elements(
+            expected,
+            observed,
+            visual=True,
+            use_boxes="layout_boxes" in reference.capabilities,
+            threshold=element_matching_threshold,
+        ):
+            covered.add(page)
+    observed_usable = any(_usable_element(e) for e in predicted)
+    expected_texts = [
+        text for text in reference.pages.values() if normalized_tokens(text)
+    ]
+    observed_texts = [
+        text for text in predicted_pages.values() if normalized_tokens(text)
+    ]
+    return {
+        "pages.page_coverage": len(covered) / len(content_pages)
+        if content_pages
+        else float(not observed_usable),
+        "pages.page_content_f1": float(np.mean(f1_values)),
+        "pages.duplicate_page_rate": _unsupported_near_duplicates(
+            observed_texts, expected_texts, duplicate_content_threshold
+        )
+        / len(observed_texts)
+        if observed_texts
         else 0.0,
     }
-    if predicted_pages:
-        result["pages.duplicate_page_rate"] = duplicates / len(predicted_pages)
-    return result
 
 
-def _unsupported_near_duplicates(
-    predicted: Sequence[str], reference: Sequence[str], threshold: float
-) -> int:
-    groups: list[list[str]] = []
-    for text in predicted:
-        for group in groups:
-            if _content_f1(group[0], text) >= threshold:
-                group.append(text)
-                break
-        else:
-            groups.append([text])
-    return sum(
-        max(
-            0,
-            len(group)
-            - max(
-                1,
-                sum(
-                    _content_f1(group[0], expected) >= threshold
-                    for expected in reference
-                ),
-            ),
+def _unsupported_near_duplicates(predicted, reference, threshold):
+    expected = [
+        ReferenceElement(str(index), SegmentKind.TEXT, text=text)
+        for index, text in enumerate(reference)
+    ]
+    observed = [
+        ReferenceElement(str(index), SegmentKind.TEXT, text=text)
+        for index, text in enumerate(predicted)
+    ]
+    supported = {
+        right
+        for _, right, _ in _match_elements(
+            expected, observed, visual=False, threshold=threshold
         )
-        for group in groups
-    )
-
-
-def _layout_metrics(
-    references, predictions, matches, *, capabilities: frozenset[str]
-) -> dict[str, float]:
-    tp, fp, fn = (
-        len(matches),
-        len(predictions) - len(matches),
-        len(references) - len(matches),
-    )
-    precision, recall, f1 = precision_recall_f1(tp, fp, fn)
-    result = {
-        "layout.element_precision": precision,
-        "layout.element_recall": recall,
-        "layout.element_f1": f1,
     }
-    if matches and "element_types" in capabilities:
-        result["layout.element_type_accuracy"] = sum(
+    representatives = [predicted[index] for index in sorted(supported)]
+    duplicates = 0
+    for index, text in enumerate(predicted):
+        if index in supported:
+            continue
+        if any(_content_f1(text, value) >= threshold for value in representatives):
+            duplicates += 1
+        else:
+            representatives.append(text)
+    return duplicates
+
+
+def _layout_metrics(references, predictions, matches, *, capabilities):
+    result = dict(
+        zip(
+            ("layout.element_precision", "layout.element_recall", "layout.element_f1"),
+            _detection_scores(
+                len(matches),
+                len(predictions) - len(matches),
+                len(references) - len(matches),
+            ),
+            strict=True,
+        )
+    )
+    if references and "element_types" in capabilities:
+        result["layout.element_type_recall"] = sum(
             references[left].kind is predictions[right].kind
             for left, right, _ in matches
-        ) / len(matches)
-    if matches and "hierarchy" in capabilities:
-        hierarchy = []
-        reference_to_prediction = {
-            references[left].element_id: predictions[right].element_id
+        ) / len(references)
+    if references and "layout_boxes" in capabilities:
+        result["layout.mean_bounding_box_iou"] = sum(
+            _iou(references[left].bounding_box, predictions[right].bounding_box)
             for left, right, _ in matches
-        }
-        for left, right, _ in matches:
-            reference = references[left]
-            prediction = predictions[right]
-            if reference.parent_id is None and reference.hierarchy_level is None:
-                continue
-            predicted_level = _optional_int(prediction.metadata.get("hierarchy_level"))
-            parent_correct = (
-                reference.parent_id is None
-                or reference_to_prediction.get(reference.parent_id)
-                == prediction.parent_id
-            )
-            level_correct = (
-                reference.hierarchy_level is None
-                or reference.hierarchy_level == predicted_level
-            )
-            hierarchy.append(float(parent_correct and level_correct))
-        if hierarchy:
-            result["layout.hierarchy_accuracy"] = float(np.mean(hierarchy))
-    if matches and "layout_boxes" in capabilities:
-        boxes = [
-            score
-            for left, right, score in matches
             if references[left].bounding_box and predictions[right].bounding_box
-        ]
-        if boxes:
-            result["layout.mean_bounding_box_iou"] = float(np.mean(boxes))
+        ) / len(references)
     return result
+
+
+def _hierarchy_preservation(references, predictions, matches):
+    by_reference = {left: right for left, right, _ in matches}
+    eligible = [
+        i for i, e in enumerate(references) if e.parent_annotated or e.level_annotated
+    ]
+    id_mapping = {
+        references[left].element_id: predictions[right].element_id
+        for left, right, _ in matches
+    }
+    correct = 0
+    for index in eligible:
+        if index not in by_reference:
+            continue
+        expected, observed = references[index], predictions[by_reference[index]]
+        parent_correct = not expected.parent_annotated or (
+            observed.parent_id is None
+            and observed.metadata.get("parent_annotated") is True
+            if expected.parent_id is None
+            else observed.metadata.get("parent_annotated") is True
+            and expected.parent_id in id_mapping
+            and id_mapping[expected.parent_id] is not None
+            and id_mapping[expected.parent_id] == observed.parent_id
+        )
+        level_correct = (
+            not expected.level_annotated
+            or expected.hierarchy_level == observed.metadata.get("hierarchy_level")
+        )
+        correct += bool(parent_correct and level_correct)
+    return correct / len(eligible) if eligible else None
 
 
 def _score_structured_kind(
@@ -691,10 +974,8 @@ def _score_structured_kind(
     annotation_key = "tables" if target is SegmentKind.TABLE else "formulas"
     # This function is reached only when the explicit capability is present.
     # Keep a count row even for a verified negative stored in a reference file so
-    # false positives contribute to pooled detection metrics.
+    # verified negatives participate in document-macro detection.
     result.counts[annotation_key] = (0, len(predictions), len(references))
-    if not references and not predictions:
-        return
     matches = _match_elements(
         references,
         predictions,
@@ -706,7 +987,7 @@ def _score_structured_kind(
         len(predictions) - len(matches),
         len(references) - len(matches),
     )
-    precision, recall, f1 = precision_recall_f1(*result.counts[annotation_key])
+    precision, recall, f1 = _detection_scores(*result.counts[annotation_key])
     result.metrics.update(
         {
             f"{annotation_key}.detection_precision": precision,
@@ -720,7 +1001,11 @@ def _score_structured_kind(
             prediction = (
                 predictions[by_reference[index]] if index in by_reference else None
             )
-            content = _content_scores(item.text, prediction.text if prediction else "")
+            content = (
+                _content_scores(_table_text(item), _table_text(prediction))
+                if prediction is not None
+                else (0.0, 0.0, 0.0)
+            )
             result.table_content_scores.append(content)
             result.table_pairs.append((item.html or "", _table_html(prediction)))
         for name, index in (
@@ -741,108 +1026,141 @@ def _score_structured_kind(
             )
 
 
-def _aggregate_group(records: Sequence[DocumentEvaluation]) -> dict[str, float]:
-    names = sorted(set().union(*(record.metrics for record in records)))
-    values = {
-        name: float(
-            np.mean(
-                [record.metrics[name] for record in records if name in record.metrics]
-            )
-        )
-        for name in names
-    }
-    for category in ("layout", "tables", "formulas"):
-        counts = [
-            record.counts[category] for record in records if category in record.counts
+def _aggregate_group(records):
+    names = sorted({name for record in records for name in record.metrics})
+    result = {}
+    for name in names:
+        values = [
+            record.metrics[name]
+            for record in records
+            if record.metrics.get(name) is not None
         ]
-        if not counts:
-            continue
-        tp, fp, fn = (sum(value[index] for value in counts) for index in range(3))
-        if tp + fp + fn == 0:
-            continue
-        precision, recall, f1 = precision_recall_f1(tp, fp, fn)
-        values[
-            f"{category}.detection_precision"
-            if category != "layout"
-            else "layout.element_precision"
-        ] = precision
-        values[
-            f"{category}.detection_recall"
-            if category != "layout"
-            else "layout.element_recall"
-        ] = recall
-        values[
-            f"{category}.detection_f1" if category != "layout" else "layout.element_f1"
-        ] = f1
-    table_scores = [score for record in records for score in record.table_scores]
-    if table_scores:
-        for name, index in (
-            ("tables.content_precision", 0),
-            ("tables.content_recall", 1),
-            ("tables.content_f1", 2),
-            ("tables.teds", 3),
-            ("tables.teds_s", 4),
-        ):
-            values[name] = float(np.mean([value[index] for value in table_scores]))
-    formula_scores = [score for record in records for score in record.formula_scores]
-    if formula_scores:
-        values["formulas.recognition_similarity"] = float(np.mean(formula_scores))
-        values["formulas.exact_match"] = float(
-            np.mean([value == 1.0 for value in formula_scores])
-        )
-    return values
+        result[name] = float(np.mean(values)) if values else None
+    return result
 
 
-def _match_elements(
-    references,
-    predictions,
-    *,
-    visual: bool,
-    use_boxes: bool | None = None,
-    threshold: float,
-):
+def _match_elements(references, predictions, *, visual, use_boxes=None, threshold):
     if not references or not predictions:
         return []
-    scores = np.zeros((len(references), len(predictions)), dtype=np.float64)
+    from scipy.optimize import linear_sum_assignment
+
+    scores = np.full(
+        (len(references) + len(predictions), len(references) + len(predictions)), 0.0
+    )
+    admissible = np.zeros((len(references), len(predictions)), dtype=bool)
     for left, reference in enumerate(references):
         for right, prediction in enumerate(predictions):
             if visual and reference.page_number != prediction.page_number:
                 continue
-            if visual and use_boxes is not False and reference.bounding_box:
-                scores[left, right] = (
+            if visual and use_boxes is not False and reference.bounding_box is not None:
+                score = (
                     _iou(reference.bounding_box, prediction.bounding_box)
-                    if prediction.bounding_box
+                    if _valid_box(prediction.bounding_box)
                     else 0.0
                 )
             else:
-                scores[left, right] = _content_f1(reference.text, prediction.text)
-    try:
-        from scipy.optimize import linear_sum_assignment
-    except ModuleNotFoundError as exc:
-        raise RuntimeError(
-            "scipy is required for one-to-one document-element matching"
-        ) from exc
+                expected, observed = (
+                    _element_tokens(reference),
+                    _element_tokens(prediction),
+                )
+                if expected and observed:
+                    overlap = sum((Counter(expected) & Counter(observed)).values())
+                    score = precision_recall_f1(
+                        overlap, len(observed) - overlap, len(expected) - overlap
+                    )[2]
+                else:
+                    expected_id = _element_identity(reference)
+                    observed_id = _element_identity(prediction)
+                    score = float(bool(expected_id) and expected_id == observed_id)
+            if score > 0 and score >= threshold:
+                scores[left, right] = score
+                admissible[left, right] = True
     rows, columns = linear_sum_assignment(-scores)
     return [
         (int(left), int(right), float(scores[left, right]))
-        for left, right in zip(rows, columns)
-        if scores[left, right] >= threshold
+        for left, right in zip(rows, columns, strict=True)
+        if left < len(references)
+        and right < len(predictions)
+        and admissible[left, right]
     ]
 
 
-def _reading_order(matches, references, predictions) -> float | None:
-    if len(matches) < 2:
-        return None
-    ordered = sorted(matches, key=lambda value: references[value[0]].order)
-    correct = 0
-    total = 0
-    for left in range(len(ordered)):
-        for right in range(left + 1, len(ordered)):
-            total += 1
-            correct += (predictions[ordered[left][1]].order or 0) < (
-                predictions[ordered[right][1]].order or 0
-            )
-    return correct / total
+def _element_tokens(element):
+    text = getattr(element, "text", "")
+    if element.kind is SegmentKind.TABLE:
+        text = _table_text(element)
+    if element.kind is SegmentKind.FORMULA:
+        text = (
+            getattr(element, "latex", None)
+            or getattr(element, "structured_content", {}).get("latex")
+            or text
+        )
+    if element.kind in {SegmentKind.CODE, SegmentKind.FORMULA}:
+        import re
+
+        return re.findall(r"\w+|[^\w\s]", _canonical(text))
+    return normalized_tokens(text)
+
+
+def _table_text(element):
+    """Cell contents, never HTML tags or Markdown separators, are lexical units."""
+    structured = getattr(element, "structured_content", {})
+    cells = structured.get("cells")
+    if isinstance(cells, (list, tuple)):
+        return " ".join(str(cell["text"]) for cell in cells)
+    html = getattr(element, "html", None) or structured.get("html")
+    if html:
+        from .adapters import _parse_table_html
+
+        return " ".join(str(cell["text"]) for cell in _parse_table_html(html)[1])
+    return element.text
+
+
+def _element_identity(element):
+    structured = getattr(element, "structured_content", {})
+    identity = getattr(element, "identity", None) or structured.get("identity")
+    if identity:
+        return ("identity", identity)
+    html = getattr(element, "html", None) or structured.get("html")
+    if element.kind is SegmentKind.TABLE and html:
+        from .adapters import _parse_table_html
+
+        rows, cells = _parse_table_html(html)
+        if cells:
+            return ("table", stable_hash({"rows": rows, "cells": cells}))
+    return None
+
+
+def _valid_box(box):
+    return (
+        box is not None
+        and len(box) == 4
+        and all(np.isfinite(x) and 0 <= x <= 1 for x in box)
+        and box[0] < box[2]
+        and box[1] < box[3]
+    )
+
+
+def _reading_order(matches, references, predictions):
+    observed_ids = {right: ("reference", left) for left, right, _ in matches}
+    expected = [
+        ("reference", index)
+        for index in sorted(range(len(references)), key=lambda i: references[i].order)
+    ]
+    observed = [
+        observed_ids.get(index, ("extra", index))
+        for index in sorted(
+            range(len(predictions)),
+            key=lambda i: (
+                predictions[i].order if predictions[i].order is not None else i
+            ),
+        )
+    ]
+    return (
+        levenshtein(expected, observed) / max(len(expected), len(observed))
+        if expected or observed
+        else 0.0
+    )
 
 
 def _document_groups(item: Mapping[str, object]) -> tuple[str, ...]:
@@ -861,19 +1179,6 @@ def _grouped_name(name: str, prefix: str) -> str:
     return f"{category}.{prefix}{metric}"
 
 
-def _contributes(record: DocumentEvaluation, name: str) -> bool:
-    if name in record.metrics:
-        return True
-    for prefix, category in (
-        ("layout.element_", "layout"),
-        ("tables.detection_", "tables"),
-        ("formulas.detection_", "formulas"),
-    ):
-        if name.startswith(prefix):
-            return category in record.counts
-    return False
-
-
 def _content_f1(reference: str, prediction: str) -> float:
     return _content_scores(_canonical(reference), _canonical(prediction))[2]
 
@@ -882,7 +1187,7 @@ def _content_scores(reference: str, prediction: str) -> tuple[float, float, floa
     left = Counter(normalized_tokens(reference))
     right = Counter(normalized_tokens(prediction))
     overlap = sum((left & right).values())
-    return precision_recall_f1(
+    return _detection_scores(
         overlap,
         sum(right.values()) - overlap,
         sum(left.values()) - overlap,
@@ -892,7 +1197,7 @@ def _content_scores(reference: str, prediction: str) -> tuple[float, float, floa
 def _duplicate_content_rate(reference: str, prediction: str) -> float | None:
     predicted = normalized_tokens(prediction)
     if not predicted:
-        return None
+        return 0.0
     predicted_counts = Counter(predicted)
     extra = predicted_counts - Counter(normalized_tokens(reference))
     repeated = sum(
@@ -902,19 +1207,28 @@ def _duplicate_content_rate(reference: str, prediction: str) -> float | None:
 
 
 def _document_fingerprint(document: ExtractedDocument) -> str:
+    identifiers = {
+        segment.element_id: str(index)
+        for index, segment in enumerate(document.segments)
+        if segment.element_id is not None
+    }
     return stable_hash(
         {
-            "text": document.text,
+            "text": _canonical(document.text),
             "segments": [
                 {
                     "text": segment.text,
-                    "id": segment.element_id,
-                    "parent": segment.parent_id,
+                    "id": identifiers.get(segment.element_id),
+                    "parent": identifiers.get(segment.parent_id, "unresolved-parent")
+                    if segment.parent_id is not None
+                    else None,
                     "order": segment.order,
                     "page": segment.page_number,
                     "box": segment.bounding_box,
                     "kind": segment.kind.value,
                     "structured": segment.structured_content,
+                    "hierarchy_level": segment.metadata.get("hierarchy_level"),
+                    "parent_annotated": segment.metadata.get("parent_annotated", False),
                 }
                 for segment in document.segments
             ],
@@ -961,13 +1275,19 @@ def _box(value: object) -> tuple[float, float, float, float] | None:
     ):
         return None
     result = tuple(float(item) for item in value)
-    if not all(0.0 <= item <= 1.0 for item in result):
+    if not _valid_box(result):
         raise ValueError("Reference boxes must use normalized coordinates")
     return result  # type: ignore[return-value]
 
 
 def _optional_int(value: object) -> int | None:
-    return None if value in (None, "") else int(value)
+    if value in (None, ""):
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError(
+            "Reference integer annotations must not be fractional or boolean"
+        )
+    return int(value)
 
 
 def _optional_string(value: object) -> str | None:
@@ -1007,20 +1327,20 @@ def _validate_capability_list(value: object, sample_id: object) -> None:
 
 def _infer_capabilities(payload, text, pages, elements) -> frozenset[str]:
     capabilities: set[str] = set()
-    if text.strip():
+    if "text" in payload or "reference" in payload:
         capabilities.add("text")
     if pages:
         capabilities.add("pages")
     if elements:
         capabilities.add("element_types")
-    if len(elements) >= 2:
+    if elements and all(
+        "order" in value
+        for value in payload.get("elements", payload.get("reference_elements", []))
+    ):
         capabilities.add("reading_order")
     if any(element.bounding_box is not None for element in elements):
         capabilities.add("layout_boxes")
-    if any(
-        element.parent_id is not None or element.hierarchy_level is not None
-        for element in elements
-    ):
+    if any(element.parent_annotated or element.level_annotated for element in elements):
         capabilities.add("hierarchy")
     if (
         any(element.kind is SegmentKind.TABLE for element in elements)
@@ -1040,3 +1360,7 @@ def _presence(
 ) -> bool | None:
     value = payload.get(key, item.get(key))
     return value if isinstance(value, bool) else None
+
+
+def _detection_scores(tp, fp, fn):
+    return (1.0, 1.0, 1.0) if tp + fp + fn == 0 else precision_recall_f1(tp, fp, fn)

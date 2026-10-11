@@ -45,6 +45,8 @@ class DocumentProtocol:
     evaluator_timeout_seconds: int
     maximum_architecture_finalists: int
     backend_devices: Mapping[str, tuple[str, ...]]
+    minimum_ci_sources: int | None
+    minimum_latency_ci_sources: int | None
 
     def profile(self, name: str):
         return self.meta.profile(name)
@@ -250,7 +252,17 @@ def protocol_from_mapping(
         split: _counts(datasets[split], f"datasets.{split}")
         for split in ("development", "validation", "locked")
     }
-    statistics = strict_object(root["statistics"], "statistics", {"confidence_level"})
+    statistics = strict_object(
+        root["statistics"],
+        "statistics",
+        {"confidence_level", "minimum_ci_sources", "minimum_latency_ci_sources"},
+    )
+    support = {
+        name: integer(statistics[name], f"statistics.{name}", minimum=2)
+        if statistics[name] is not None
+        else None
+        for name in ("minimum_ci_sources", "minimum_latency_ci_sources")
+    }
     confidence = number(
         statistics["confidence_level"],
         "statistics.confidence_level",
@@ -313,6 +325,8 @@ def protocol_from_mapping(
         timeout,
         maximum_finalists,
         devices,
+        support["minimum_ci_sources"],
+        support["minimum_latency_ci_sources"],
     )
 
 

@@ -1,5 +1,5 @@
 {
-  "checksum": "0671e081c9f2b9f908385624a9d5fe695e3e81c84cfd24b961e16c6c8b93a3da",
+  "checksum": "eb720b2f281fc1573843bca8d2b0d4f59ba15fd359202699f4f654e797e9b812",
   "license": "CC0-1.0",
   "name": "edumind-smoke-extraction",
   "preprocessing_version": "extraction-fixtures-v1",
@@ -249,6 +249,7 @@
       "kind": "video",
       "reference": "The slide defines a binary search tree.",
       "reference_transcript": "The slide defines a binary search tree.",
+      "reference_segments": [{"text": "The slide defines a binary search tree.", "start": 0.0, "end": 2.645}],
       "reference_visual_text": [
         "The slide defines a binary search tree."
       ],
@@ -257,7 +258,8 @@
         {
           "end": 2.645,
           "start": 0.0,
-          "text": "The slide defines a binary search tree."
+          "text": "The slide defines a binary search tree.",
+          "id": "video-01-visible-1"
         }
       ]
     },
@@ -268,6 +270,7 @@
       "kind": "video",
       "reference": "The lecturer balances the chemical equation.",
       "reference_transcript": "The lecturer balances the chemical equation.",
+      "reference_segments": [{"text": "The lecturer balances the chemical equation.", "start": 0.0, "end": 2.855}],
       "reference_visual_text": [
         "The lecturer balances the chemical equation."
       ],
@@ -276,7 +279,8 @@
         {
           "end": 2.855,
           "start": 0.0,
-          "text": "The lecturer balances the chemical equation."
+          "text": "The lecturer balances the chemical equation.",
+          "id": "video-02-visible-1"
         }
       ]
     }

@@ -13,9 +13,9 @@ On this page:
 With the image parser and ASR fixed, which keyframe policy recovers useful
 on-screen text at useful times without unnecessary processing and duplicate output?
 
-**Implementation status:** the revised metrics, grouped run structure, and
-execution flow below are approved documentation. Runner and protocol alignment
-remain pending; documentation does not enable the target interface by itself.
+The runner implements the metric contract, grouped run structure, and execution
+flow below. Reviewed authoritative datasets and data-derived protocol selections
+remain separate prerequisites.
 
 ## Candidates
 
@@ -65,8 +65,9 @@ annotation seeds and must be reviewed against the video.
 Use the [data-validation workflow](../../data-validation.md) during preparation.
 Automatic validated-input verification checks the matching report before each
 invocation. Both finish before candidate loading, monitoring, or timing.
-These interfaces remain pending implementation. Frozen-artifact identity checks
-are separate runtime integrity gates.
+Run `python -m experiments.benchmarks.validate video --profile <profile>` after
+preparing the inputs. Frozen-artifact identity checks are separate runtime
+integrity gates.
 
 ## Execution
 
@@ -89,16 +90,19 @@ decode audio once
 → deterministic windows ≤30 seconds, with 2-second overlap
 → selected ASR once per required window
 → shift window-local timestamps to the video timeline
-→ stitch overlapping text once
+→ stitch the normalized suffix/prefix overlap once, retaining native timestamps
+→ order retained timestamp units chronologically (stable window order on ties)
 → retain transcript completion status and every window outcome
 ```
 
 The checksummed `FrozenASRArtifact` records the producing run ID, selected-model
 decision fingerprint, model-lock identity, manifest and composed protocol
-checksums, FFmpeg version/commands, per-video transcripts/segments, window outcomes,
+checksums, executing/scoring code and software-lock hashes, installed runtime
+versions, FFmpeg version/commands, per-video transcripts/segments, window outcomes,
 latencies, edit counts, and resource observations. Artifact reuse requires
 matching identities and exact sample membership. Any changed composed protocol
-requires regeneration; do not reinterpret old artifacts under new definitions.
+requires regeneration. Changed executing code or dependencies also require a
+new artifact; do not reinterpret old artifacts under new definitions.
 
 A failed required window makes that video's complete transcript unavailable.
 Keep partial output and failure evidence without scoring it as a complete video.

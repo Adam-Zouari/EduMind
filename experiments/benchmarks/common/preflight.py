@@ -99,6 +99,7 @@ def current_qualification_fingerprint(
             "Qualification input envelope is missing: " + ", ".join(missing)
         )
     hardware = dict(hardware_summary())
+    execution = {**execution, "vram_measurement": "assigned-device-total-nvml-v1"}
     locks = {
         str(path.relative_to(PROJECT_ROOT)): sha256_file(path)
         for path in (
@@ -311,9 +312,7 @@ def run_preflight(
         if decision_provenance
         else ""
     )
-    with tracking.run(
-        f"{benchmark}-preflight-{time.strftime('%Y%m%d-%H%M%S')}"
-    ) as parent_id:
+    with tracking.run("preflight") as parent_id:
         tracking.parameters(
             {
                 "qualification_fingerprint": fingerprint,
@@ -341,6 +340,10 @@ def run_preflight(
             tracking.artifact(resolved_path)
         for name, path in (decision_files or {}).items():
             tracking.artifact(path, f"engineer-decisions/{name}")
+        if context.get("data_validation_report"):
+            tracking.artifact(
+                Path(str(context["data_validation_report"])), "inputs/data-validation"
+            )
         for candidate in candidates:
             with tracking.run(candidate, nested=True):
                 tracking.parameters(
@@ -489,10 +492,11 @@ def _probe_candidate(candidate: str, probe) -> dict[str, object]:
             "outcome": "vram_limit_exceeded",
             "peak_vram_mb": exc.peak_vram_mb,
             "vram_limit_mb": exc.limit_mb,
-            "resource_samples": list(exc.samples),
+            "resource_samples": list(exc.resource_samples),
         }
     except WorkerMeasurementError as exc:
         return {
+            **exc.resource_evidence,
             "candidate": candidate,
             "status": "blocked",
             "reason_code": "measurement_unavailable",
@@ -504,6 +508,7 @@ def _probe_candidate(candidate: str, probe) -> dict[str, object]:
         lowered = message.casefold()
         oom = "out of memory" in lowered or "cuda oom" in lowered
         return {
+            **getattr(exc, "resource_evidence", {}),
             "candidate": candidate,
             "status": "excluded" if oom else "blocked",
             "reason_code": "gpu_oom" if oom else "execution_error",
@@ -518,9 +523,12 @@ def _probe_candidate(candidate: str, probe) -> dict[str, object]:
     )
     if placement_status == "offload_detected":
         status, reason = "excluded", "offload_detected"
-    elif placement_status in {"placement_unverifiable", "wrong_device"}:
+    elif placement_status != "qualified":
         status, reason = "blocked", placement_status
-    elif evidence.get("vram_measurement_method") in {None, "unavailable"}:
+    elif evidence.get("vram_measurement_method") not in {
+        "nvml-device-total",
+        "not-applicable",
+    }:
         status, reason = "blocked", "measurement_unavailable"
     else:
         status, reason = "qualified", "qualified"

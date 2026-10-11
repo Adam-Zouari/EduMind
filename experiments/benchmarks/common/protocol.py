@@ -199,9 +199,7 @@ def execution_profile(value: object, label: str) -> ExecutionProfile:
     return profile
 
 
-def preflight_settings(
-    value: object, label: str = "preflight"
-) -> PreflightSettings:
+def preflight_settings(value: object, label: str = "preflight") -> PreflightSettings:
     payload = strict_object(
         value,
         label,
@@ -216,9 +214,7 @@ def preflight_settings(
     )
     settings = PreflightSettings(
         warmups=integer(payload["warmups"], f"{label}.warmups", minimum=0),
-        repetitions=integer(
-            payload["repetitions"], f"{label}.repetitions", minimum=1
-        ),
+        repetitions=integer(payload["repetitions"], f"{label}.repetitions", minimum=1),
         bootstrap_resamples=integer(
             payload["bootstrap_resamples"],
             f"{label}.bootstrap_resamples",

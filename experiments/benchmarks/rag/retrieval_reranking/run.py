@@ -431,11 +431,7 @@ def _run_evaluation(
         resource_monitor_options=lambda candidate: {
             "require_vram": device == "cuda"
             and parse_candidate(candidate).model_backed,
-            "report_zero_vram": device == "cpu"
-            or not parse_candidate(candidate).model_backed,
-            "zero_vram_measurement_method": (
-                "cpu-zero" if device == "cpu" else "not-applicable-zero"
-            ),
+            "device": device if parse_candidate(candidate).model_backed else "cpu",
         },
         monitor_temporary_disk=False,
         run_name_prefix=(
