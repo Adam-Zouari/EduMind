@@ -128,6 +128,15 @@ interval. Each split must contain at least ten answerable questions with
 verified evidence for each of `table`, `formula`, and `mixed` before it can be
 combined with QASPER.
 
+Chunking–embedding executes only answerable questions with reviewed gold
+evidence. Unanswerable questions retained in the shared manifests are for later
+generation/Final-RAG evaluation, not retrieval or latency requests in this
+phase. All pairs keep the same searchable document corpus, including distractors.
+The [chunking–embedding input contract](data-validation.md#chunking-and-embedding-inputs)
+separates preparation/reference checks from runtime checks on generated chunks,
+vectors, rankings, and native-model input lengths; its standalone validator and
+report-reuse interface remain planned.
+
 For generation, required gold claims are atomic, non-duplicate facts needed for
 a complete answer. They are not an exhaustive list of every permissible correct
 fact. Preserve frozen authoritative verification material and its checksum with

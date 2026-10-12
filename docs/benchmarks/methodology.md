@@ -202,6 +202,14 @@ uses zero. Vector-server startup, index readiness, and warm query measurement
 follow the [Vector Database methodology](vectordb/methodology.md), not the model
 constructor lifecycle.
 
+Chunking–embedding first measures one complete corpus build after model/tokenizer
+loading, because the searchable matrix is needed before a representative query
+can run. First-use work during that build remains in its build-time measurement.
+It then runs the one query warmup and measures queries on the fixed corpus;
+query repetitions never rebuild the matrix. Offline scoring and bootstrap work
+begin after the candidate resource window ends. See the
+[suite lifecycle](rag/chunking_embedding/methodology.md#per-candidate-execution).
+
 `gpu_oom` and `offload_detected` are definitive hardware exclusions;
 `vram_limit_exceeded` additionally applies only to benchmark families with an
 explicit protocol cap, not extraction. Missing measurement, unverifiable placement, and infrastructure or

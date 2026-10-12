@@ -228,7 +228,7 @@ declared shared holdout policy.
 | Document | Claimed reference capabilities, physical page inventory, element order/identity, boxes/types/hierarchy, explicit table/formula positives and negatives, and scorer-compatible reference representations. |
 | ASR | Canonical audio decoding, positive duration within 30 seconds with the frozen manifest tolerance, speech/control labels, transcripts, required timed segments, condition coverage, and separate reliability-control splits. |
 | Video | Positive duration, explicit spoken/visible annotations including reviewed negatives, nonempty timed visual lines with stable occurrence IDs and valid intervals, genuine reappearances, claimed spoken timings, reviewed nonspeech units, source grouping, and development/stress coverage. Frozen-ASR artifacts have separate manifest/protocol/sample-membership integrity gates before visual execution. |
-| Chunking and embedding | Canonical source text, exact evidence intervals, unique evidence IDs, answerability, evidence types, and source-group isolation. Generated chunks and native-model input lengths are checked during candidate execution. |
+| Chunking and embedding | Nonempty required corpus and answerable-query allocation, canonical source text, exact evidence intervals, unique evidence IDs, explicit answerability, evidence types, and source-group isolation. Generated chunks, vectors, rankings, and native-model input lengths remain runtime integrity checks. |
 | Retrieval and reranking | The same reviewed RAG inputs and selected upstream data identities. Runtime pool collection, chunk-content, and dense/BM25 index checksums remain artifact-integrity gates, not data annotations. |
 | Generation | Required facts, accepted answers, supplied evidence for answerable questions, unanswerable labels, and frozen context provenance. Judge calibration/readiness and predicted-output validation are separate gates. |
 | Final RAG | Its untouched held-out inputs, frozen composition's input requirements, and source isolation from component selection/confirmation. Automatic checks cannot prove that a reviewer has never examined a holdout. |
@@ -315,6 +315,38 @@ composed protocol identities, exact video membership, and recorded per-video/
 window statuses. Failed windows cannot masquerade as complete video transcripts;
 missing records are an integrity/completeness problem. These gates finish before
 visual candidate monitoring and do not become visual latency or quality metrics.
+
+### Chunking and embedding inputs
+
+The standalone validator/report-verification interface is planned for this
+suite. Its input contract requires a nonempty canonical corpus and at least
+one answerable question, plus the frozen per-split source and evidence-type
+allocation. Validate document/query IDs, checksums, source grouping, and split
+isolation before any candidate loads.
+
+Every answerable question has reviewed, uniquely identified gold evidence units
+with nonempty half-open intervals inside the referenced canonical text. A unit's
+intervals resolve to the same document and its evidence type is `text`, `table`,
+or `formula`. The question's slice agrees with its units: `mixed` requires at
+least two types, not merely two units or distant intervals.
+Review that units are atomic enough to fit a valid chunk; automatic interval
+checks do not establish annotation truth. Missing required evidence is invalid
+data, not a retrieval score or candidate failure.
+
+Unanswerable questions may remain in a shared manifest for generation, but are
+not executed, timed, or scored by chunking–embedding. Do not remove their source
+documents from the common corpus or require unanswerable queries to test this
+phase. Validated-input verification checks the actual invocation's full frozen
+input identity, including any overrides, before timing or resource monitoring.
+
+Candidate outputs do not exist during preparation. Their chunk IDs/text/offsets,
+native token lengths for every inference input (including semantic-boundary
+sentences and prefixes/special tokens), vector shape/dtype,
+finite values and nonzero vector norms, and unique in-index ranked IDs/scores
+are validated at runtime. These checks do not require another data-validation
+report for each model and never silently truncate or repair generated input. Scorer finite/range
+checks are evaluation integrity safeguards, not additional data annotations or
+normal metric edge cases.
 
 ## Data validity and metric applicability
 

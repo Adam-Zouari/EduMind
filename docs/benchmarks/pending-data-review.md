@@ -118,6 +118,13 @@ the authoritative dataset manifests and methodology, then remove the item.
 - Inspect the pinned QASPER splits and verify that the prepared 100/40/40 paper
   allocation preserves source-paper isolation and useful answerable/unanswerable
   coverage.
+- Freeze answerable-query and independent-document counts for chunking–embedding
+  overall and per evidence slice. Unanswerable coverage belongs to generation;
+  those shared-manifest queries are not retrieval/timing requests in this phase.
+  Review atomic units and token/source spans so complete-unit coverage and token
+  overlap describe the intended evidence without candidate-specific repairs.
+  Freeze quality/slice and p50/p95 CI support requirements before held-out runs;
+  insufficient support retains defined point estimates with null bounds/reasons.
 - Build and review the structured supplement independently for development,
   validation, and locked test. Confirm at least ten answerable questions with
   verified evidence for each of `table`, `formula`, and `mixed` in every split.
@@ -141,6 +148,10 @@ the authoritative dataset manifests and methodology, then remove the item.
   metric contract and versioned protocol before validation or locked execution.
   Do not mix normalization methods within a comparison or tune the choice on
   held-out results.
+- Retain uncapped alpha-nDCG ratios and greedy-baseline-exceeded flags during
+  that review, including single-unit questions. Inspect degenerate quality and
+  latency bootstrap results: retain supported calculated equal bounds with a
+  degeneracy flag rather than treating them as certainty on future papers.
 - Defer semantic-judge model selection until representative development data has
   been collected and reviewed. Compare a small, cost-aware shortlist against the
   same human-labeled calibration set; neither a model's price nor its general

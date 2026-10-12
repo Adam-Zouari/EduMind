@@ -39,10 +39,12 @@ The shared rules on this page apply alongside each benchmark's specific contract
 - Empty denominators use the explicit behavior stated in each benchmark's metric contract; they never produce
   fabricated zero-quality observations.
 - A valid empty comparison can have the contract's best or worst numeric value.
-  A failed request is not an observed empty output. Extraction quality uses
-  the designated first measured attempt; failure makes applicable output-dependent
-  quality unavailable, never a fabricated zero or best/worst score. Later success
-  cannot replace that output. Failure/repeatability metrics and genuinely completed
+  A failed request is not an observed empty output. Extraction and
+  chunking–embedding quality use the designated first measured attempt; failure
+  makes applicable output-dependent quality unavailable, never a fabricated zero
+  or best/worst score. Later success
+  cannot replace that output, and a later failure does not erase valid
+  first-attempt quality. Failure/repeatability metrics and genuinely completed
   measurements retain their own definitions. `null` is a storage value:
   retain `inapplicable`, `unavailable`, or `incomplete` status and its reason.
   Exclude an undefined value only from that metric's numeric calculation, never

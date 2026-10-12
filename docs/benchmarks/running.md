@@ -16,10 +16,12 @@ running.
 The separate Generation and Vector Database locked stages and the locked-only
 Final RAG workflow below define the approved target interface. Runner alignment
 for those stages, the revised generation scoring/timing rules and full-development
-workload, frozen vector-index finalist selection, linear evidence-count nDCG, and shared answerable-question
-eligibility for alpha-nDCG remains pending. Documentation changes alone do not
-implement these contracts or enable the new commands. The current retrieval
-scorer still uses binary nDCG gains and narrower alpha-nDCG eligibility.
+workload, and frozen vector-index finalist selection remains pending.
+Chunking–embedding's linear evidence-count nDCG, single-unit alpha-nDCG,
+first-ranking/failure rules, successful-latency handling, one-warmup settings,
+and resource-scope reporting also require implementation alignment. Its current
+scorer still uses binary gains and narrower alpha-nDCG eligibility. Documentation
+changes alone do not implement these contracts or enable new commands.
 Document, ASR, and Video implement their revised metric, failure, repeatability,
 resource, and display-name contracts. Their standalone data validators and
 automatic sealed-report verification are available. Video uses grouped parents
@@ -127,8 +129,9 @@ Use `--manifest PATH` only to run an alternate reviewed manifest.
 
 A **component decision file** is an engineer-reviewed transition between stages.
 It names exact candidates with complete, run-level-valid evidence selected from
-a completed upstream parent. Sample-attempt failures remain visible in that
-evidence rather than being confused with an incomplete candidate run:
+a completed upstream parent. Sample-attempt failures remain visible; their
+effect on candidate validity follows the suite's failure contract. A recorded
+failed attempt is distinct from missing scheduled records:
 
 ```json
 {
@@ -416,6 +419,46 @@ Development runs qualified members of the full matrix. Create
 `chunking-embedding-validation.json` after development and
 `chunking-embedding-locked.json` with exactly one pair after validation. The
 locked result is reporting-only.
+
+### Reading the chunking–embedding results
+
+The following is the approved contract; the implementation gaps above must be
+resolved before current outputs are treated as authoritative under it.
+
+- Prepare/review canonical sources and evidence separately. The standalone RAG
+  validator/report-reuse commands remain planned. Once implemented, each profile
+  verifies its matching successful report before candidate loading or measurement.
+- Execute only answerable questions. Keep the same searchable corpus for all
+  pairs; shared-manifest unanswerable queries are not embedded, timed, or scored.
+- Build the corpus once after loading, including semantic boundary work and
+  matrix validation in Corpus-Build Time. Run one query warmup after the matrix
+  exists, then one measured request per query in smoke or three in authoritative
+  profiles with the same seed/settings.
+- Score only the first measured ranking at both `@3` and `@5`; retain top-20
+  artifacts. First-request failure leaves unavailable quality even after later
+  success. Later failure does not erase valid first-ranking quality.
+- Construct p50/p95 from each query's median successful measured latency,
+  excluding failed elapsed times. Preserve all outcomes and failed elapsed times
+  in `timings.parquet`. A query with no completed measured request has null
+  latency, not zero.
+- Read linear evidence-count nDCG with Recall and token Precision. Zero complete
+  evidence in the candidate corpus gives nDCG/alpha-nDCG zero. Invalid empty
+  rankings give unavailable quality. Alpha-nDCG includes single-unit questions
+  and retains raw greedy-baseline exceedances as artifact diagnostics.
+- Partial quality estimates stay labelled in artifacts and do not enter normal
+  quality scalars, successful leaderboards, or paired selection comparisons.
+  Inspect planned/scored/failed/unavailable support, not just surviving scores.
+- A failed child can retain completed build measurements and observed resource
+  peaks. `measurement.resource_scope=partial` labels interrupted windows on the
+  existing child; missing CUDA telemetry is unavailable and CPU VRAM inapplicable.
+  An unfinished matrix has no final matrix-byte value or partial-bytes metric.
+- Bootstrap whole source documents offline 10,000 times with seed 42, retaining
+  dependent queries/attempts. Insufficient support gives null CI bounds with a
+  reason; sufficiently supported degenerate bounds are retained and flagged.
+
+See [metric definitions](rag/chunking_embedding/metrics.md) and the
+[artifact/MLflow contract](rag/chunking_embedding/methodology.md#mlflow-result-structure)
+for status, measurement-boundary, and advancement rules.
 
 ## 8. Retrieval–reranking
 

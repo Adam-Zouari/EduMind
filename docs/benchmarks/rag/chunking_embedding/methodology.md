@@ -9,6 +9,7 @@ On this page:
 - [Data](#data)
 - [Common input and output rules](#common-input-and-output-rules)
 - [Per-candidate execution](#per-candidate-execution)
+- [Result completeness and advancement](#result-completeness-and-advancement)
 - [Development, validation, and locked test](#development-validation-and-locked-test)
 - [Metrics and why they are used](#metrics-and-why-they-are-used)
 - [MLflow result structure](#mlflow-result-structure)
@@ -32,11 +33,11 @@ Each pair produces:
 - evidence matches and per-question quality values; and
 - timing, resource, warning, and validity records.
 
-Quality is evaluated on answerable questions with verified evidence. The
-answerability label remains in the manifest for downstream generation and final
-RAG evaluation, but this phase does not ask a dense retriever to abstain. An
-unanswerable question has no gold evidence and therefore cannot receive a
-fabricated retrieval-quality score.
+Only answerable questions with verified evidence are executed. Unanswerable
+questions can remain in a shared manifest for generation and Final RAG, but are
+filtered out before query embedding, timing, and scoring in this phase. Their
+documents remain in the frozen searchable corpus; excluding a query does not
+remove corpus distractors or alter another question's available evidence.
 
 One answerable question is one scoring sample. Because questions from the same
 paper are related, the source document—not the individual question—is the
@@ -91,11 +92,17 @@ Each question stores answerability, accepted answers, evidence type, and exact
 half-open evidence offsets. The structured supplement contains table, formula,
 and mixed-evidence questions because QASPER is primarily text.
 
-The [shared data-validation workflow](../../data-validation.md) checks canonical
-text, evidence intervals/IDs, answerability, evidence types, and split isolation
-before candidates run. Its standalone/report-reuse interface is planned. Native
-model length checks on generated chunks remain runtime checks: valid source data
-does not guarantee that every candidate's generated inputs fit its tokenizer.
+The [shared data-validation workflow](../../data-validation.md#chunking-and-embedding-inputs)
+checks the nonempty required corpus, answerable-question allocation, canonical
+text, evidence intervals/IDs, answerability, evidence types, and split isolation.
+Full validation runs separately during preparation; each profile then verifies
+that its actual inputs still match the successful report before candidate
+loading or measurement. Invalid references produce a preparation error report,
+not benchmark observations. This suite's standalone/report-reuse interface is
+planned, not implemented by these documentation changes.
+
+Generated chunks and native model lengths remain runtime checks: valid source
+data cannot guarantee every candidate's boundaries, vectors, or inference inputs.
 
 ## Common input and output rules
 
@@ -104,12 +111,18 @@ evidence annotations. Candidate-specific text repair, query rewriting, reranking
 and approximate vector search are not allowed in this phase.
 
 Each answerable question contains one or more independently useful **gold
-evidence units**. A unit has a stable ID, one mutually exclusive evidence type,
-and one or more exact half-open source intervals. Units must be atomic enough to
-fit inside a valid candidate chunk. A table unit includes any row/column headers
-needed to interpret its selected cells, and a formula unit includes the complete
-expression. Evidence that genuinely requires different modalities or separated
-support is represented by multiple units and the question is labelled `mixed`.
+evidence units**. A unit has a stable ID, one evidence type (`text`, `table`, or
+`formula`), and one or more exact half-open source intervals in the same canonical document.
+Units must be atomic enough to fit inside a valid candidate chunk. A table unit
+includes any row/column headers needed to interpret its selected cells, and a
+formula unit includes the complete expression. Evidence that genuinely requires
+different types or separated support is represented by multiple units. A question
+is labelled `mixed` only when its units require at least two evidence types; two separate text units
+still belong to the `text` slice.
+
+Atomic annotation does not guarantee that every strategy preserves every unit:
+a candidate boundary can still split it. Such fragmentation is a quality
+outcome, not a reason to repair the reference or resize chunks for that pair.
 
 For the rank-aware and unit-recall metrics, chunk `j` covers evidence unit `i`
 only when that single chunk contains every required source interval for the
@@ -127,11 +140,19 @@ The fixed tokenizer is a protocol control, not another benchmark candidate. A
 future multilingual protocol may evaluate tokenizer sensitivity separately
 before freezing a replacement.
 
+Token relevance uses positive source-span overlap with verified evidence. Count
+each returned token occurrence once even if several evidence intervals overlap
+it; occurrences repeated through different chunks count again. Prefixes and
+special inference tokens are excluded from source-content scoring. Unlike unit
+coverage, token relevance does not require recovering the entire evidence unit.
+
 Every declared pair is checked against the embedding model's native input
 contract, including query/document prefixes and required special tokens.
 Preflight records native-token counts on reviewed development/stress inputs;
-each evaluation also validates all chunks and answerable queries in its own
-manifest. Validation and locked content are never inspected by preflight.
+each evaluation also validates all inference inputs for its own manifest,
+including semantic-boundary sentence inputs, generated chunks, warmup inputs,
+and answerable queries. Validation and locked content are never inspected by
+preflight.
 Execution never silently truncates, changes a strategy's size, or splits chunks
 again for one model. An oversized input is reported as `input_length_exceeded`:
 a preflight input-contract failure blocks development until resolved, while an
@@ -149,41 +170,99 @@ at or below 3,584 MiB under the shared whole-device contract.
 The same settings apply to every pair; a candidate cannot receive a smaller
 batch or a different precision to avoid an out-of-memory result.
 
-An eligible pair performs:
+After input verification, an eligible pair performs:
 
 ```text
-split documents into chunks with exact source offsets
+start resource monitoring and load the pinned embedding model/tokenizer
+-> start the corpus-build timer
+-> split documents into chunks with exact source offsets
+   (validate semantic-boundary inputs before their embedding calls)
 -> validate every chunk with the candidate model tokenizer
 -> embed every valid chunk
--> embed each answerable question
--> rank with exact NumPy cosine search and deterministic tie-breaking
--> retain the top 20 as the auditable retrieval artifact
--> score the first three and first five against verified evidence units and source spans
+-> assemble/validate the complete matrix/metadata and synchronize; stop the build timer
+-> run one complete representative query warmup, outside query timing/quality
+-> execute the measured answerable queries with the corpus fixed
+-> retain the designated first ranking and every attempt's status/timing
+-> stop resource monitoring after measured execution ends
+-> score the first ranking at @3/@5; aggregate and bootstrap offline
 ```
 
 Exact NumPy search removes vector-database approximation from this experiment.
 For semantic chunking, the tested embedding also creates the boundaries; that
 result intentionally represents the complete semantic-chunker/embedding pair.
-The search scores the complete candidate corpus, retains the top 20 only for
-near-miss diagnosis, and scores both `@3` and `@5`. These cutoffs match the two
+The search scores the complete candidate corpus and must return
+`min(20, chunk_count)` unique chunk IDs with finite scores. It retains those
+ordered results for near-miss diagnosis and scores both `@3` and `@5` from the
+same first ranking. A valid corpus shorter than a cutoff uses all available
+chunks without inventing entries or changing the cutoff. These cutoffs match the two
 downstream Final-RAG context counts; this phase adds no token budget or context
 curve.
 
-Corpus-build timing starts after model and tokenizer loading and includes
-chunking, document embedding, and searchable-matrix/metadata assembly. Query
-latency includes query tokenization, query embedding, exact cosine scoring, and
-deterministic top-20 selection. Each query's median measured repetition is its
-warm-latency observation. Model downloads, data downloads, and environment setup
-are excluded.
+Corpus build happens once after model/tokenizer loading and includes chunking,
+semantic boundary embedding where applicable, document embedding, first-use
+work during that build, and matrix/metadata assembly. Its measured cost is not
+hidden inside query warmup. The complete matrix is needed before the one query
+warmup can exercise exact search.
+
+Smoke measures one request per answerable query; development, validation, and
+locked measure three with the same seed/settings. Each request validates native
+input length and its output. Query timing covers tokenization and native-length
+validation, query embedding, exact cosine scoring, deterministic top-20
+selection, output validation, and device synchronization. Use each query's median successful measured latency
+for p50/p95, retaining failed elapsed times separately. Downloading, full data
+validation and validated-input verification, model loading, corpus build,
+warmup, and offline scoring are outside warm-query timing. RAM/VRAM monitoring
+includes loading, build, warmup, and measured requests, but excludes offline
+scoring and bootstrap work.
+
+Quality uses only attempt 1. A failed first request leaves unavailable quality
+even when later requests succeed; a later failed request does not erase valid
+first-ranking quality. Keep one outcome per scheduled attempt, including an
+explicit unexecuted status when execution stops. Missing records are incomplete,
+not presumed request failures. Repetitions supply timing and the frozen ranking-
+consistency checks, not additional quality observations.
 
 A successful child must account for every expected document and answerable
-query, produce the expected number and dimension of finite nonzero vectors, use
-zero truncated inputs, and reproduce the same ordered top-five IDs for repeated
-identical queries. An evaluation-time input-limit violation, crash, OOM, or
+query and attempt, produce nonempty source-consistent chunks and the expected
+number, dimension, and stored dtype of finite nonzero vectors, use zero truncated
+inputs, and reproduce the same ordered top-five IDs for repeated identical
+queries. Empty/short rankings outside the expected corpus size, duplicate or
+out-of-index IDs, invalid offsets, and token-free chunks fail output integrity.
+Distinct chunk IDs may legitimately contain identical text. A substantive
+out-of-range or non-finite reported score fails scoring integrity; alpha-nDCG's
+uncapped diagnostic ratio is not a reported bounded score.
+An evaluation-time input-limit violation, crash, OOM, or
 malformed output retains its validation report and makes the child failed and
 comparison incomplete. Definitive hardware exclusions recorded by preflight
 are different: those candidates never enter the development comparison, and
 their reasons remain in its qualification provenance.
+
+## Result completeness and advancement
+
+Each answerable question retains its first-ranking metric values, status/reason,
+and planned evidence support even after failure. Quality averages defined
+question scores within each source document and then macro-averages documents.
+Keep scheduled, eligible, scored, failed, and unavailable counts per metric/slice;
+successful-latency counts are separate because a later request may succeed when
+first-ranking quality is unavailable.
+
+An optional evidence slice with no eligible questions is inapplicable. A slice
+with eligible questions but no usable scores is unavailable. Missing scheduled
+outcomes or required records make execution incomplete. None is imputed as zero.
+
+Partial quality aggregates remain labelled diagnostics in artifacts, not normal
+`quality.*` aggregates, complete-result leaderboard entries, or paired selection
+comparisons. For example, `0.90` on 8/10 queries cannot establish superiority
+over `0.85` on 10/10. Advancement requires complete required quality observations
+and successful run-level validity, not merely a high surviving-output average.
+The engineer still chooses among valid complete alternatives; no weighted score
+or automatic quality winner is introduced.
+
+A completed corpus build and valid resource observations survive later request
+failures. Conversely, incomplete matrix preparation has no final matrix-byte or
+completed-build-time value. Retain known progress and elapsed-to-failure evidence
+without adding a partial-matrix-bytes metric. Recorded attempts, partial outputs,
+and scope labels do not turn an invalid child into a successful comparison.
 
 ## Development, validation, and locked test
 
@@ -195,16 +274,16 @@ declared chunking and embedding paths on tiny committed fixtures
 development:
 8 chunkers × 6 embeddings = 48 declared pairs
 -> qualify all 48 using reviewed development/stress inputs
--> evaluate exactly the qualified subset on 100 papers
+-> evaluate exactly the qualified subset on 100 QASPER papers plus the structured supplement
 -> retain all hardware exclusions in qualification provenance
 -> engineer selects up to three complete finalist pairs
 
 validation:
-selected finalists on 40 unseen papers
+selected finalists on 40 unseen QASPER papers plus their structured supplement
 -> engineer records exactly one selected chunker/embedding pair
 
 locked test:
-the selected pair runs in its own component benchmark on 40 locked papers
+the selected pair on 40 locked QASPER papers plus their structured supplement
 -> reporting only, with no further component tuning
 ```
 
@@ -232,7 +311,8 @@ separately measures distinct coverage.
 Alpha-nDCG is diagnostic with fixed `alpha=0.5`. Its denominator uses a
 deterministic greedy approximation over the same complete corpus, choosing the
 unused chunk with the greatest remaining alpha gain at each rank and resolving
-ties by frozen corpus order. Scores are capped at one. It describes novelty,
+ties by frozen corpus order. Scores are capped at one; per-question artifacts
+retain a raw ratio above one and its greedy-baseline-exceeded flag. It describes novelty,
 not a relevance failure or demonstrated harm from repeated evidence. The
 [data-review checklist](../../pending-data-review.md) tracks whether exact
 normalization is practical; any change is frozen before held-out evaluation.
@@ -246,9 +326,11 @@ definitions, examples, directions, and confidence-interval rules are in
 
 The four retrieval metric families are reported overall and for mutually
 exclusive `text`, `table`, `formula`, and `mixed` slices. A mixed question
-requires at least two evidence types. Each slice reports its contributing
-question and document counts, shared by all four metrics. Unanswerable questions
-remain a workload count and do not enter retrieval-quality aggregates.
+requires at least two evidence types. Each slice reports reference-eligible
+question and document counts shared by all four metrics, plus metric-specific
+contributing and unavailable support. Unanswerable questions
+remain a workload count and do not enter inference, timing, or retrieval-quality
+aggregates.
 
 ## MLflow result structure
 
@@ -328,27 +410,49 @@ Primary, diagnostic, operational, and descriptor labels are documentation
 roles; they are not repeated as MLflow prefixes. The prefixes above describe
 metric families and evidence slices. Eligible uncertainty bounds use the shared
 `.ci_lower` and `.ci_upper` suffixes.
-Validity counters such as expected/processed documents and queries, truncated
-inputs, failed cases, nonfinite/zero-norm vectors, dimension mismatches, and
-determinism mismatches are logged under `validity.*`. Retrieval-eligible question
-and document counts are shared by all four quality metrics and logged per
-evidence scope. The final decision is also stored as a
+Validity counters such as expected/processed documents and queries, scheduled,
+successful, failed, and unexecuted attempts, truncated inputs, nonfinite/zero-norm
+vectors, dimension mismatches, and determinism mismatches are logged under
+`validity.*`. All four quality metrics share reference eligibility; log eligible,
+scored, failed, and unavailable question/document support per metric and evidence
+scope. Independent contributing counts use the shared `.sample_count` convention.
+The final decision is also stored as a
 `benchmark.valid` tag and a `validation.status` tag whose value is `passed` or
 `failed`. MLflow scalar values do not replace the
 detailed `validation_report.json` artifact. Stored dtype is a parameter in the
 resolved embedding contract rather than a numeric metric.
 
-Each successful child stores:
+Nulls and their statuses/reasons remain in artifacts; MLflow scalar keys are
+absent. Partial quality estimates are artifact diagnostics, not normal quality
+scalars. A failed child can retain complete first-ranking quality aggregates,
+genuinely completed operational values, and observed resource peaks. Later
+failure does not erase those observations or make the child eligible for
+selection. Its MLflow status is `FAILED`, with
+`benchmark.valid=false` and `validation.status=failed`. Set
+`measurement.resource_scope=partial` for an interrupted execution window
+(`complete` for a completed window) and record the monitoring boundaries and
+per-measurement availability in `candidate.json` and `resources.parquet`.
+
+For example, observed RAM of 2,800 MiB and device VRAM of 2,900 MiB remain under
+`operational.peak_process_tree_ram_mb` and `operational.peak_vram_mb` on a failed
+child with partial scope. They are not evidence that the remaining workload
+would fit. Missing measurements stay unavailable; CPU VRAM stays inapplicable.
+Failed/incomplete children are omitted from the successful leaderboard and
+paired selection comparisons, not removed from the parent plan or summary.
+
+Each successful child stores the artifacts below. Failed children retain the
+same available records, including explicit null/status rows for planned queries
+and unexecuted attempts; a missing output is not a successful empty artifact.
 
 | Artifact | Contents and purpose |
 |---|---|
 | `chunk_manifest.parquet` | One row per chunk with source document, exact offsets, strategy metadata, and token counts. |
-| `query_metrics.parquet` | One row per answerable question with all four retrieval-quality families at @3/@5 and its evidence slice. |
-| `retrievals.parquet` | Ordered top-20 chunk IDs and scores for near-miss diagnosis; the first three and first five are scored. |
+| `query_metrics.parquet` | One row per planned answerable question with first-ranking @3/@5 values, null statuses/reasons when unavailable, evidence slice, and support. Raw alpha-nDCG ratios/flags preserve greedy-baseline exceedances. |
+| `retrievals.parquet` | Ordered up-to-20 chunk IDs and scores for near-miss diagnosis; the first three and first five are scored. |
 | `evidence_matches.parquet` | Trace from each question and evidence unit to the chunks that recovered it. |
-| `timings.parquet` | One row per query and measured repetition with warm latency and success state. |
-| `resources.parquet` | Timestamped process-tree RAM and raw assigned-device VRAM samples, with measurement identity. |
-| `candidate.json` | Resolved contracts, status, fingerprint, aggregates, confidence intervals, operational values, and artifact references. |
+| `timings.parquet` | One row per query and scheduled measured attempt with outcome, actual elapsed time when executed, and errors, plus the separate corpus-build outcome/duration and elapsed-to-failure evidence. Only successful query elapsed times enter warm-latency percentiles. |
+| `resources.parquet` | Timestamped process-tree RAM and raw assigned-device VRAM samples, with method, availability, and complete/partial window scope. |
+| `candidate.json` | Resolved contracts, run and metric statuses, fingerprint, complete or labelled partial aggregates, support, CI draw counts/degeneracy flags, operational values and measurement scope, and artifact references. |
 | `validation_report.json` | Input-length and validity checks, counts, limits, checksums, and any errors. |
 
 Raw documents, model weights, and a full embedding matrix are not duplicated
