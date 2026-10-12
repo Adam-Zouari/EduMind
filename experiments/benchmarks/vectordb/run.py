@@ -279,6 +279,9 @@ def main() -> int:
             "operational.persistent_storage_bytes": "min",
         },
         primary_metric="ann_recall_at_10",
+        run_name_prefix="smoke-cpu"
+        if arguments.profile == "smoke"
+        else arguments.profile,
         revisions=revisions,
         decision_files={
             name: path

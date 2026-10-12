@@ -62,7 +62,9 @@ class DockerMonitor:
     def __exit__(self, *_) -> None:
         self.stop_event.set()
         if self.thread:
-            self.thread.join(timeout=max(1.0, self.interval_seconds * 4))
+            # Each Docker request is already bounded by stats_timeout_seconds.
+            # Finish the sampler before the final sample and metric snapshot.
+            self.thread.join()
         if self.monitor_memory:
             self._sample()
 

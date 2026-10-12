@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -12,6 +11,7 @@ from .base import Config, Hit, InvalidIndexState, Record, ensure_dimension
 class Chroma:
     def __init__(self, config: Config) -> None:
         import chromadb
+        import httpx
         from chromadb.config import Settings
 
         self.config = config
@@ -20,17 +20,18 @@ class Chroma:
             port=8001,
             settings=Settings(
                 anonymized_telemetry=False,
-                chroma_logservice_request_timeout_seconds=math.ceil(
-                    self.config.request_timeout_seconds
-                ),
-                chroma_sysdb_request_timeout_seconds=math.ceil(
-                    self.config.request_timeout_seconds
-                ),
-                chroma_query_request_timeout_seconds=math.ceil(
-                    self.config.request_timeout_seconds
-                ),
+                chroma_http_max_connections=self.config.connection_pool_limit,
+                chroma_http_max_keepalive_connections=self.config.connection_pool_limit,
             ),
         )
+        # Pinned Chroma 1.5.9 ignores server timeout settings in its HTTP
+        # client and does not close its HTTP sessions when Client.close() stops it.
+        self._http = (
+            self.client._server._session,
+            self.client._admin_client._server._session,
+        )
+        for session in self._http:
+            session.timeout = httpx.Timeout(self.config.request_timeout_seconds)
         self.collection: Any | None = None
 
     def health(self) -> bool:
@@ -50,7 +51,7 @@ class Chroma:
             ) from exc
         self.collection = self.client.create_collection(
             self.config.collection,
-            metadata={"hnsw:space": "cosine"},
+            embedding_function=None,
             configuration={
                 "hnsw": {
                     "space": "cosine",
@@ -68,7 +69,7 @@ class Chroma:
             rows = records[start : start + self.config.upsert_batch_size]
             self._collection().upsert(
                 ids=[row.identifier for row in rows],
-                embeddings=[list(row.vector) for row in rows],
+                embeddings=[list(map(float, row.vector)) for row in rows],
                 documents=[row.text for row in rows],
                 metadatas=[dict(row.metadata) for row in rows],
             )
@@ -83,7 +84,7 @@ class Chroma:
             else {"$and": clauses}
         )
         result = self._collection().query(
-            query_embeddings=[list(vector)],
+            query_embeddings=[list(map(float, vector))],
             n_results=limit,
             where=where,
             include=["metadatas", "distances"],
@@ -135,9 +136,11 @@ class Chroma:
         return {"type": "hnsw", "configuration": dict(hnsw)}
 
     def close(self) -> None:
-        closer = getattr(self.client, "close", None)
-        if callable(closer):
-            closer()
+        try:
+            self.client.close()
+        finally:
+            for session in self._http:
+                session.close()
 
     def _collection(self):
         if self.collection is None:

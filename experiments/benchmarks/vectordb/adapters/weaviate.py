@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from .base import Config, Hit, Record, ensure_dimension
+from .base import Config, Hit, InvalidIndexState, Record, ensure_dimension
 
 
 class Weaviate:
@@ -63,12 +63,11 @@ class Weaviate:
                 Property(name="embedding_fingerprint", data_type=DataType.TEXT),
             ],
             vector_config=Configure.Vectors.self_provided(
-                distance_metric=VectorDistances.COSINE,
                 vector_index_config=Configure.VectorIndex.hnsw(
+                    distance_metric=VectorDistances.COSINE,
                     ef_construction=self.config.ef_construction,
                     max_connections=self.config.m,
-                    dynamic_ef_min=self.config.ef_search,
-                    dynamic_ef_max=self.config.ef_search,
+                    ef=self.config.ef_search,
                 ),
             ),
         )
@@ -132,10 +131,26 @@ class Weaviate:
 
     def index_info(self) -> Mapping[str, object]:
         config = self._collection().config.get()
-        value = str(config.vector_index_config)
-        if "hnsw" not in value.casefold():
-            raise RuntimeError("Weaviate did not report HNSW")
-        return {"type": "hnsw", "configuration": value}
+        if not config.vector_config or set(config.vector_config) != {"default"}:
+            raise InvalidIndexState("Weaviate did not report the default vector index")
+        index = config.vector_config["default"].vector_index_config
+        if index.vector_index_type() != "hnsw" or index.skip:
+            raise InvalidIndexState("Weaviate did not report an enabled HNSW index")
+        actual = {
+            "space": index.distance_metric.value,
+            "max_neighbors": index.max_connections,
+            "ef_construction": index.ef_construction,
+            "ef_search": index.ef,
+        }
+        expected = {
+            "space": "cosine",
+            "max_neighbors": self.config.m,
+            "ef_construction": self.config.ef_construction,
+            "ef_search": self.config.ef_search,
+        }
+        if actual != expected:
+            raise InvalidIndexState(f"Weaviate HNSW configuration mismatch: {actual}")
+        return {"type": "hnsw", "configuration": actual}
 
     def close(self) -> None:
         self.client.close()

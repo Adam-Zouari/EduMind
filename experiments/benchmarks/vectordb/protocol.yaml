@@ -1,5 +1,5 @@
 schema_version: 1
-protocol_version: vector-database-v2
+protocol_version: vector-database-v3
 seed: 42
 
 workloads:
@@ -52,7 +52,7 @@ conformance:
 adapters:
   upsert_batch_sizes: {chroma: 2000, qdrant: 2000, weaviate: 200, pgvector: 2000}
   index_verification_limit: 10
-  qdrant_full_scan_threshold: 0
+  qdrant_full_scan_threshold: 10
   qdrant_indexing_threshold: 1
   request_timeout_seconds: 120
   connection_pool_limit: 64

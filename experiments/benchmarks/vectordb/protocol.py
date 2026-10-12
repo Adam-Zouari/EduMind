@@ -310,7 +310,7 @@ def load_protocol(path: Path = DEFAULT_PROTOCOL_PATH) -> VectorDatabaseProtocol:
     full_scan_threshold = integer(
         adapters["qdrant_full_scan_threshold"],
         "adapters.qdrant_full_scan_threshold",
-        minimum=0,
+        minimum=10,
     )
     indexing_threshold = integer(
         adapters["qdrant_indexing_threshold"],

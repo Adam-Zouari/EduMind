@@ -134,11 +134,20 @@ class Qdrant:
 
     def index_info(self) -> Mapping[str, object]:
         deadline = time.monotonic() + self.config.index_readiness_timeout_seconds
+        resumed = False
         while True:
             info = self.client.get_collection(self.config.collection)
             status = str(info.status).casefold()
             points = int(info.points_count or 0)
             indexed = int(info.indexed_vectors_count or 0)
+            if "grey" in status and not resumed:
+                # Restart can pause pending optimizations. Resume without
+                # changing settings, then retain the normal readiness gate.
+                self.client.update_collection(
+                    self.config.collection,
+                    optimizers_config=self.models.OptimizersConfigDiff(),
+                )
+                resumed = True
             if "green" in status and (not points or indexed >= points):
                 return {
                     "type": "hnsw",

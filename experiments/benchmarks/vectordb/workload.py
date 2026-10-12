@@ -102,6 +102,8 @@ def exact_ids(
     *,
     candidate_indices: np.ndarray | None = None,
 ) -> list[str]:
+    if limit <= 0:
+        return []
     indices = (
         candidate_indices
         if candidate_indices is not None
@@ -122,8 +124,9 @@ def exact_ids(
         return []
     scores = corpus.vectors[indices] @ query
     count = min(limit, len(indices))
-    local = np.argpartition(-scores, count - 1)[:count]
-    local = local[np.lexsort((indices[local], -scores[local]))]
+    boundary = np.partition(scores, len(scores) - count)[len(scores) - count]
+    local = np.flatnonzero(scores >= boundary)
+    local = local[np.lexsort((indices[local], -scores[local]))][:count]
     order = indices[local]
     return [str(value) for value in order]
 

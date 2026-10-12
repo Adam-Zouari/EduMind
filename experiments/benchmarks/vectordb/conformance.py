@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import time
 from collections.abc import Mapping
+from contextlib import ExitStack
 from pathlib import Path
 
 import numpy as np
@@ -27,79 +28,87 @@ def check(
         seed=protocol.conformance["seed"],
         settings=protocol.synthetic,
     )
-    adapter = create(name, config)
-    adapter.reset()
-    adapter.upsert(records(corpus))
-    _finish_index(adapter)
-    flags = {
-        "health_correctness": float(adapter.health()),
-        "cosine_correctness": float(
-            adapter.search(corpus.vectors[0], 1)[0].identifier == "0"
-        ),
-        "compound_filter_correctness": _compound(
-            adapter,
-            corpus.vectors[0],
-            limit=protocol.conformance["search_limit"],
-            filter_names=protocol.conformance["compound_filters"],
-        ),
-        "empty_filter_correctness": float(
-            not adapter.search(
+    with ExitStack() as resources:
+        adapter = create(name, config)
+        resources.callback(adapter.close)
+        adapter.reset()
+        adapter.upsert(records(corpus))
+        _finish_index(adapter)
+        flags = {
+            "health_correctness": float(adapter.health()),
+            "cosine_correctness": float(
+                adapter.search(corpus.vectors[0], 1)[0].identifier == "0"
+            ),
+            "compound_filter_correctness": _compound(
+                adapter,
                 corpus.vectors[0],
-                protocol.conformance["search_limit"],
-                {str(protocol.conformance["empty_filter"]): "missing"},
-            )
-        ),
-        "ann_index_verified": float(bool(adapter.index_info())),
-        "dimension_rejection_correctness": _dimension_rejection(adapter, config),
-    }
-    original_count = adapter.count()
-    adapter.upsert([Record("0", corpus.vectors[1], "replacement", corpus.metadata[0])])
-    flags["duplicate_id_correctness"] = float(adapter.count() == original_count)
-    deleted = adapter.delete_document("doc-0")
-    adapter.upsert(
-        [
-            Record(
-                "replacement-0",
-                corpus.vectors[0],
-                "replacement",
-                {**corpus.metadata[0], "source_id": "doc-0"},
-            )
-        ]
-    )
-    replacement_hits = adapter.search(
-        corpus.vectors[0],
-        protocol.conformance["search_limit"],
-        {"source_id": "doc-0"},
-    )
-    flags["replacement_correctness"] = float(
-        deleted == protocol.synthetic.records_per_document
-        and [hit.identifier for hit in replacement_hits] == ["replacement-0"]
-    )
-    adapter.delete(["replacement-0"])
-    flags["deletion_correctness"] = float(
-        not adapter.search(
+                limit=protocol.conformance["search_limit"],
+                filter_names=protocol.conformance["compound_filters"],
+            ),
+            "empty_filter_correctness": float(
+                not adapter.search(
+                    corpus.vectors[0],
+                    protocol.conformance["search_limit"],
+                    {str(protocol.conformance["empty_filter"]): "missing"},
+                )
+            ),
+            "ann_index_verified": float(bool(adapter.index_info())),
+            "dimension_rejection_correctness": _dimension_rejection(adapter, config),
+        }
+        original_count = adapter.count()
+        adapter.upsert(
+            [Record("0", corpus.vectors[1], "replacement", corpus.metadata[0])]
+        )
+        flags["duplicate_id_correctness"] = float(adapter.count() == original_count)
+        deleted = adapter.delete_document("doc-0")
+        adapter.upsert(
+            [
+                Record(
+                    "replacement-0",
+                    corpus.vectors[0],
+                    "replacement",
+                    {**corpus.metadata[0], "source_id": "doc-0"},
+                )
+            ]
+        )
+        replacement_hits = adapter.search(
             corpus.vectors[0],
             protocol.conformance["search_limit"],
             {"source_id": "doc-0"},
         )
-    )
-    persisted_count = adapter.count()
-    adapter.close()
-    restarted_at = time.perf_counter()
-    _restart(name, compose, timeout_seconds=protocol.docker_restart_timeout_seconds)
-    adapter = _wait_for_adapter(
-        name,
-        config,
-        timeout_seconds=protocol.index_readiness_timeout_seconds,
-        poll_seconds=protocol.index_readiness_poll_seconds,
-    )
-    flags["restart_readiness_seconds"] = time.perf_counter() - restarted_at
-    flags["restart_persistence_correctness"] = float(adapter.count() == persisted_count)
-    flags["ann_index_verified_after_restart"] = float(bool(adapter.index_info()))
-    cold_query_started = time.perf_counter()
-    adapter.search(corpus.vectors[0], protocol.conformance["search_limit"])
-    flags["process_cold_query_seconds"] = time.perf_counter() - cold_query_started
-    return adapter, flags
+        flags["replacement_correctness"] = float(
+            deleted == protocol.synthetic.records_per_document
+            and [hit.identifier for hit in replacement_hits] == ["replacement-0"]
+        )
+        adapter.delete(["replacement-0"])
+        flags["deletion_correctness"] = float(
+            not adapter.search(
+                corpus.vectors[0],
+                protocol.conformance["search_limit"],
+                {"source_id": "doc-0"},
+            )
+        )
+        persisted_count = adapter.count()
+        resources.close()
+        restarted_at = time.perf_counter()
+        _restart(name, compose, timeout_seconds=protocol.docker_restart_timeout_seconds)
+        adapter = _wait_for_adapter(
+            name,
+            config,
+            timeout_seconds=protocol.index_readiness_timeout_seconds,
+            poll_seconds=protocol.index_readiness_poll_seconds,
+        )
+        resources.callback(adapter.close)
+        flags["restart_readiness_seconds"] = time.perf_counter() - restarted_at
+        flags["restart_persistence_correctness"] = float(
+            adapter.count() == persisted_count
+        )
+        flags["ann_index_verified_after_restart"] = float(bool(adapter.index_info()))
+        cold_query_started = time.perf_counter()
+        adapter.search(corpus.vectors[0], protocol.conformance["search_limit"])
+        flags["process_cold_query_seconds"] = time.perf_counter() - cold_query_started
+        resources.pop_all()  # The caller owns the successfully checked adapter.
+        return adapter, flags
 
 
 def _compound(
