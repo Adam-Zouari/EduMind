@@ -11,6 +11,7 @@ from importlib.metadata import version
 from typing import Any
 from unittest.mock import patch
 
+from edumind.common.artifacts import stable_hash
 from edumind.extraction.contracts import (
     ExtractedDocument,
     ExtractionRequest,
@@ -127,7 +128,9 @@ class ExperimentalDocumentExtractor:
             artifacts_path=model_path.parent,
             accelerator_options=AcceleratorOptions(device=request.profile.device),
         )
-        key = request.profile.fingerprint
+        key = stable_hash(
+            {"profile": request.profile.fingerprint, "options": request.options}
+        )
         if key not in self._runtimes:
             self._runtimes[key] = DocumentConverter(
                 format_options={
@@ -187,7 +190,9 @@ class ExperimentalDocumentExtractor:
         # A GPU build can default to gpu:0 even when the worker hides CUDA.
         # Set the framework device before PaddleX creates/restores device guards.
         paddle.set_device("gpu:0" if request.profile.device == "cuda" else "cpu")
-        key = request.profile.fingerprint
+        key = stable_hash(
+            {"profile": request.profile.fingerprint, "options": request.options}
+        )
         if key not in self._runtimes:
             capability_check = nullcontext()
             if request.profile.device == "cpu":

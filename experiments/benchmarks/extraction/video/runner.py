@@ -22,7 +22,7 @@ from experiments.benchmarks.common.contracts import (
     SampleResult,
 )
 from experiments.benchmarks.common.data_validation import (
-    manifest_path as _default_manifest,
+    manifest_path as default_manifest_path,
 )
 from experiments.benchmarks.common.datasets import load_manifest
 from experiments.benchmarks.common.decisions import load_engineer_decision
@@ -161,7 +161,9 @@ def main():
             arguments.shortlist = arguments.shortlist or default_decision_path(
                 "video", profile
             )
-    manifest_path = (arguments.manifest or _manifest(profile)).resolve()
+    manifest_path = (
+        arguments.manifest or default_manifest_path("video", profile)
+    ).resolve()
     validation_path, _ = verified_inputs(manifest_path, profile, protocol)
     manifest = load_manifest(manifest_path)
     items = [
@@ -201,7 +203,9 @@ def main():
     qualification = qualification_path = None
     if profile != "smoke":
         development_path = (
-            manifest_path if profile == "development" else _manifest("development")
+            manifest_path
+            if profile == "development"
+            else default_manifest_path("video", "development")
         )
         verified_inputs(development_path, "development", protocol)
         development = load_manifest(development_path)
@@ -714,7 +718,3 @@ def _selected_image(arguments, protocol: DocumentProtocol):
     )
     parse_document_profile(decision.selected_candidates[0])
     return decision.selected_candidates[0], arguments.document_selection
-
-
-def _manifest(profile):
-    return _default_manifest("video", profile)

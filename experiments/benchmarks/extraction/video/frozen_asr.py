@@ -38,7 +38,9 @@ def execution_identity():
             for name in ("metrics.py", "process.py", "resources.py", "protocol.py")
         ),
         PROJECT_ROOT / "src/edumind/common/artifacts.py",
+        PROJECT_ROOT / "src/edumind/common/gpu.py",
         PROJECT_ROOT / "src/edumind/common/model_placement.py",
+        PROJECT_ROOT / "src/edumind/extraction/extractors/audio.py",
         *sorted((PROJECT_ROOT / "requirements").glob("*.lock")),
     ]
     return {

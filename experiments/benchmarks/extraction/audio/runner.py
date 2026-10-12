@@ -20,6 +20,9 @@ from experiments.benchmarks.common.contracts import (
     CandidateExecutionError,
     SampleResult,
 )
+from experiments.benchmarks.common.data_validation import (
+    manifest_path as default_manifest_path,
+)
 from experiments.benchmarks.common.datasets import (
     load_manifest,
     require_manifest_split,
@@ -48,6 +51,9 @@ from experiments.benchmarks.extraction.audio.validation import (
     canonicalize,
     verified_inputs,
 )
+from experiments.benchmarks.extraction.audio.validation import (
+    reliability_manifest as default_reliability_manifest,
+)
 from experiments.benchmarks.extraction.media import (
     ffmpeg_version,
 )
@@ -63,7 +69,7 @@ PROFILE_STAGE = {
 }
 
 
-def main(directory: Path) -> int:
+def main() -> int:
     parser = argparse.ArgumentParser(description="Benchmark English audio extraction")
     parser.add_argument(
         "--profile",
@@ -178,8 +184,10 @@ def run(
         raise ValueError(
             f"Authoritative ASR profile requires device {execution.device}"
         )
-    speech_path = (manifest_path or _speech_manifest(profile)).resolve()
-    controls_path = (reliability_path or _reliability_manifest(profile)).resolve()
+    speech_path = (manifest_path or default_manifest_path("audio", profile)).resolve()
+    controls_path = (
+        reliability_path or default_reliability_manifest(profile)
+    ).resolve()
     data_report_path, _ = verified_inputs(
         speech_path, profile, protocol, controls_path=controls_path
     )
@@ -209,7 +217,7 @@ def run(
         qualification_manifest = (
             speech_manifest
             if profile == "development"
-            else load_manifest(_speech_manifest("development"))
+            else load_manifest(default_manifest_path("audio", "development"))
         )
         qualification_speech = [
             item
@@ -430,7 +438,9 @@ def run_preflight_profile(
     if device != "cuda":
         raise ValueError("ASR preflight requires CUDA")
     protocol = load_protocol(protocol_path)
-    speech_path = (manifest_path or _speech_manifest("development")).resolve()
+    speech_path = (
+        manifest_path or default_manifest_path("audio", "development")
+    ).resolve()
     data_report_path, _ = verified_inputs(speech_path, "development", protocol)
     speech_manifest = load_manifest(speech_path)
     require_manifest_split(speech_manifest, "development", "development")
@@ -580,22 +590,3 @@ def _qualification_identity(protocol: AudioProtocol, model_lock, manifest, stres
             "tested_duration_seconds": float(stress["duration_seconds"]),
         },
     )
-
-
-def _speech_manifest(profile: str) -> Path:
-    name = {
-        "smoke": "smoke.json",
-        "development": "audio-development.json",
-        "validation": "audio-validation.json",
-        "locked": "audio-locked-test.json",
-    }[profile]
-    return PROJECT_ROOT / "data/benchmarks/extraction" / name
-
-
-def _reliability_manifest(profile: str) -> Path:
-    name = (
-        "audio-reliability-smoke.json"
-        if profile == "smoke"
-        else "audio-reliability.json"
-    )
-    return PROJECT_ROOT / "data/benchmarks/extraction" / name

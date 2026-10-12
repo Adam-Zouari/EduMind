@@ -290,6 +290,26 @@ def test_frozen_asr_artifact_is_reused_only_for_matching_protocol(tmp_path) -> N
         )
 
 
+@pytest.mark.parametrize(
+    "relative_path",
+    ["src/edumind/extraction/extractors/audio.py", "src/edumind/common/gpu.py"],
+)
+def test_frozen_asr_identity_tracks_shared_runtime_changes(monkeypatch, relative_path):
+    from experiments.benchmarks.extraction.video import frozen_asr
+
+    before = frozen_asr.execution_identity()
+    assert relative_path in before["implementation_and_locks"]
+    checksum = frozen_asr.sha256_file
+    monkeypatch.setattr(
+        frozen_asr,
+        "sha256_file",
+        lambda path: (
+            "changed" if Path(path) == ROOT / relative_path else checksum(path)
+        ),
+    )
+    assert frozen_asr.execution_identity() != before
+
+
 def test_video_profiles_validate_candidate_sources() -> None:
     smoke = SimpleNamespace(profile="smoke", phase="all", shortlist=None)
     candidates, decisions = _candidates(smoke, VIDEO_PROTOCOL)
@@ -439,7 +459,7 @@ def test_mocked_visual_phase_runs_through_artifact_writer(
                 "p95_warm_visual_latency_seconds": 0.1,
                 "cold_visual_pipeline_load_seconds": 0.1,
                 "peak_visual_process_tree_ram_mb": 1.0,
-                "peak_visual_vram_mb": 0.0,
+                "peak_visual_vram_mb": None,
                 "mean_selected_frames_per_video": 1.0,
             },
             "metrics": {
@@ -490,6 +510,7 @@ def test_mocked_visual_phase_runs_through_artifact_writer(
     assert len(result.candidates) == 2
     assert result.candidates[0].parameters["run_type"] == "preparation"
     assert "word_error_rate" not in result.candidates[1].metrics
+    assert result.candidates[1].operational["peak_visual_vram_mb"] is None
     assert (result.artifact_directory / "summary.json").is_file()
     assert (result.artifact_directory / "document_protocol.json").is_file()
 

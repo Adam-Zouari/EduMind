@@ -130,16 +130,9 @@ class DocumentEvaluation:
     groups: tuple[str, ...]
     metrics: dict[str, float | None] = field(default_factory=dict)
     statuses: dict[str, dict[str, str | None]] = field(default_factory=dict)
-    sample_id: str = ""
     source_group_id: str = ""
-    counts: dict[str, tuple[int, int, int]] = field(default_factory=dict)
-    table_content_scores: list[tuple[float, float, float]] = field(default_factory=list)
     table_pairs: list[tuple[str, str]] = field(default_factory=list)
-    table_scores: list[tuple[float, float, float, float, float]] = field(
-        default_factory=list
-    )
     formula_pairs: list[tuple[str, str]] = field(default_factory=list)
-    formula_scores: list[float] = field(default_factory=list)
 
 
 def load_reference(item: Mapping[str, object]) -> ReferenceDocument:
@@ -401,29 +394,20 @@ def apply_official_metrics(
         table_count = len(record.table_pairs)
         if table_count:
             official = table_results[table_offset : table_offset + table_count]
-            record.table_scores = [
-                (*content, teds, teds_s)
-                for content, (teds, teds_s) in zip(
-                    record.table_content_scores, official, strict=True
-                )
-            ]
-            record.metrics["tables.teds"] = float(
-                np.mean([value[3] for value in record.table_scores])
-            )
-            record.metrics["tables.teds_s"] = float(
-                np.mean([value[4] for value in record.table_scores])
-            )
+            teds, teds_s = zip(*official, strict=True)
+            record.metrics["tables.teds"] = float(np.mean(teds))
+            record.metrics["tables.teds_s"] = float(np.mean(teds_s))
             table_offset += table_count
         formula_count = len(record.formula_pairs)
         if formula_count:
-            record.formula_scores = formula_results[
+            formula_scores = formula_results[
                 formula_offset : formula_offset + formula_count
             ]
             record.metrics["formulas.recognition_similarity"] = float(
-                np.mean(record.formula_scores)
+                np.mean(formula_scores)
             )
             record.metrics["formulas.exact_match"] = float(
-                np.mean([value == 1.0 for value in record.formula_scores])
+                np.mean([value == 1.0 for value in formula_scores])
             )
             formula_offset += formula_count
         for name, value in record.metrics.items():
@@ -444,7 +428,6 @@ def score_document(
     reference = reference or load_reference(item)
     result = DocumentEvaluation(
         _document_groups(item),
-        sample_id=str(item["id"]),
         source_group_id=source_id(item),
     )
     predicted = tuple(document.segments) if document is not None else ()
@@ -496,11 +479,6 @@ def score_document(
                 visual=str(item["kind"]) in VISUAL_KINDS,
                 use_boxes="layout_boxes" in reference.capabilities,
                 threshold=element_matching_threshold,
-            )
-            result.counts["layout"] = (
-                len(matches),
-                len(layout_predictions) - len(matches),
-                len(layout_references) - len(matches),
             )
             result.metrics.update(
                 _layout_metrics(
@@ -793,7 +771,7 @@ def _reference_from_mapping(payload: Mapping[str, object]) -> ReferenceDocument:
         frozenset(str(value) for value in raw_capabilities)
         if isinstance(raw_capabilities, Sequence)
         and not isinstance(raw_capabilities, (str, bytes))
-        else _infer_capabilities(payload, text, pages, elements)
+        else _infer_capabilities(payload, pages, elements)
     )
     return ReferenceDocument(text, pages, tuple(elements), capabilities)
 
@@ -972,22 +950,17 @@ def _score_structured_kind(
     )
     predictions = tuple(segment for segment in predicted if segment.kind is target)
     annotation_key = "tables" if target is SegmentKind.TABLE else "formulas"
-    # This function is reached only when the explicit capability is present.
-    # Keep a count row even for a verified negative stored in a reference file so
-    # verified negatives participate in document-macro detection.
-    result.counts[annotation_key] = (0, len(predictions), len(references))
     matches = _match_elements(
         references,
         predictions,
         visual=source_kind in VISUAL_KINDS,
         threshold=matching_threshold,
     )
-    result.counts[annotation_key] = (
+    precision, recall, f1 = _detection_scores(
         len(matches),
         len(predictions) - len(matches),
         len(references) - len(matches),
     )
-    precision, recall, f1 = _detection_scores(*result.counts[annotation_key])
     result.metrics.update(
         {
             f"{annotation_key}.detection_precision": precision,
@@ -997,6 +970,7 @@ def _score_structured_kind(
     )
     by_reference = {left: right for left, right, _ in matches}
     if target is SegmentKind.TABLE and references:
+        content_scores = []
         for index, item in enumerate(references):
             prediction = (
                 predictions[by_reference[index]] if index in by_reference else None
@@ -1006,7 +980,7 @@ def _score_structured_kind(
                 if prediction is not None
                 else (0.0, 0.0, 0.0)
             )
-            result.table_content_scores.append(content)
+            content_scores.append(content)
             result.table_pairs.append((item.html or "", _table_html(prediction)))
         for name, index in (
             ("tables.content_precision", 0),
@@ -1014,7 +988,7 @@ def _score_structured_kind(
             ("tables.content_f1", 2),
         ):
             result.metrics[name] = float(
-                np.mean([value[index] for value in result.table_content_scores])
+                np.mean([value[index] for value in content_scores])
             )
     if target is SegmentKind.FORMULA and references:
         for index, item in enumerate(references):
@@ -1325,7 +1299,7 @@ def _validate_capability_list(value: object, sample_id: object) -> None:
         )
 
 
-def _infer_capabilities(payload, text, pages, elements) -> frozenset[str]:
+def _infer_capabilities(payload, pages, elements) -> frozenset[str]:
     capabilities: set[str] = set()
     if "text" in payload or "reference" in payload:
         capabilities.add("text")

@@ -316,6 +316,16 @@ def string(value: object, label: str) -> str:
     return value.strip()
 
 
+def unique_strings(value: object, label: str) -> tuple[str, ...]:
+    values = tuple(
+        string(item, f"{label}[{index}]")
+        for index, item in enumerate(sequence(value, label))
+    )
+    if not values or len(values) != len(set(values)):
+        raise ValueError(f"{label} must contain unique values")
+    return values
+
+
 def choice(value: object, label: str, choices: set[str]) -> str:
     result = string(value, label)
     if result not in choices:

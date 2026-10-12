@@ -21,6 +21,7 @@ from experiments.benchmarks.common.protocol import (
     sequence,
     strict_object,
     string,
+    unique_strings,
 )
 
 DEFAULT_PROTOCOL_PATH = Path(__file__).with_name("protocol.yaml")
@@ -34,7 +35,6 @@ _BACKEND_BY_ALIAS = {
 
 @dataclass(frozen=True)
 class AudioCandidate:
-    alias: str
     model_id: str
     backend: str
 
@@ -159,7 +159,7 @@ def protocol_from_mapping(
         for alias, value in raw_decoding.items()
     }
     candidates = {
-        alias: AudioCandidate(alias, str(value["model_id"]), _BACKEND_BY_ALIAS[alias])
+        alias: AudioCandidate(str(value["model_id"]), _BACKEND_BY_ALIAS[alias])
         for alias, value in decoding.items()
     }
     alignment = strict_object(root["alignment"], "alignment", {"content_f1_threshold"})
@@ -190,13 +190,15 @@ def protocol_from_mapping(
         for name, value in counts.items()
     }
     conditions = frozenset(
-        _strings(
+        unique_strings(
             datasets["required_speech_conditions"],
             "datasets.required_speech_conditions",
         )
     )
     exclusive_groups = tuple(
-        frozenset(_strings(group, f"datasets.exclusive_condition_groups[{index}]"))
+        frozenset(
+            unique_strings(group, f"datasets.exclusive_condition_groups[{index}]")
+        )
         for index, group in enumerate(
             sequence(
                 datasets["exclusive_condition_groups"],
@@ -211,10 +213,12 @@ def protocol_from_mapping(
             "Exclusive ASR condition groups must be non-empty subsets of required conditions"
         )
     reliability = frozenset(
-        _strings(datasets["reliability_categories"], "datasets.reliability_categories")
+        unique_strings(
+            datasets["reliability_categories"], "datasets.reliability_categories"
+        )
     )
     smoke_reliability = frozenset(
-        _strings(
+        unique_strings(
             datasets["smoke_reliability_categories"],
             "datasets.smoke_reliability_categories",
         )
@@ -346,13 +350,3 @@ def _decoder(alias: str, backend: str, value: object) -> dict[str, object]:
         else:
             string(row[name], f"decoding.{alias}.{name}")
     return row
-
-
-def _strings(value: object, label: str) -> tuple[str, ...]:
-    values = tuple(
-        string(item, f"{label}[{index}]")
-        for index, item in enumerate(sequence(value, label))
-    )
-    if not values or len(values) != len(set(values)):
-        raise ValueError(f"{label} must contain unique values")
-    return values

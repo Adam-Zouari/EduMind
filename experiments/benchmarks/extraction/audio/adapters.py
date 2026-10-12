@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import gc
 from collections.abc import Mapping
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
+from edumind.common.gpu import release_runtime_memory
 from edumind.extraction.errors import MissingDependencyError
 from edumind.extraction.extractors.audio import load_whisper_runtime, transcribe_whisper
 from experiments.benchmarks.common.provenance import package_versions
@@ -60,8 +60,9 @@ def build_runtime(
     entry = model_lock.get(profile.model)
     if not entry:
         raise RuntimeError(f"The model lock has no entry for {profile.model}")
-    model_path = Path(str(entry.get("model_path", "")))
-    if not model_path.is_dir():
+    raw_path = entry.get("model_path")
+    model_path = Path(str(raw_path)) if raw_path else None
+    if model_path is None or not model_path.is_dir():
         raise FileNotFoundError(f"Pinned ASR snapshot is missing: {model_path}")
     runtime_type = {
         "transformers": WhisperRuntime,
@@ -96,7 +97,7 @@ class BaseRuntime:
 
     def close(self) -> None:
         self._runtime = None
-        _release_memory()
+        release_runtime_memory()
 
     def placement_models(self) -> tuple[object, ...]:
         if self._runtime is None:
@@ -343,17 +344,6 @@ def _nemo_segment(item: Mapping[str, object]) -> dict[str, object]:
         "start": float(item.get("start", -1)),
         "end": float(item.get("end", -1)),
     }
-
-
-def _release_memory() -> None:
-    gc.collect()
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    except ModuleNotFoundError:
-        pass
 
 
 def _assert_device(runtime: object, expected: str) -> None:

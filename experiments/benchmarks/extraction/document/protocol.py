@@ -21,7 +21,7 @@ from experiments.benchmarks.common.protocol import (
     preflight_settings,
     sequence,
     strict_object,
-    string,
+    unique_strings,
 )
 from experiments.benchmarks.extraction.document.profiles import DOCUMENT_LOCK_CANDIDATES
 
@@ -161,15 +161,19 @@ def protocol_from_mapping(
             "smoke_configuration",
         },
     )
-    ocr_engines = _strings(factors["ocr_engines"], "candidate_factors.ocr_engines")
+    ocr_engines = unique_strings(
+        factors["ocr_engines"], "candidate_factors.ocr_engines"
+    )
     if set(ocr_engines) != {"rapidocr", "tesseract", "easyocr"}:
         raise ValueError(
             "Document protocol must declare the three reviewed OCR engines"
         )
-    ocr_modes = _strings(factors["ocr_modes"], "candidate_factors.ocr_modes")
+    ocr_modes = unique_strings(factors["ocr_modes"], "candidate_factors.ocr_modes")
     if set(ocr_modes) != {"pdf_aware_layout_regions", "full_page"}:
         raise ValueError("Document protocol must declare both reviewed OCR modes")
-    table_modes = _strings(factors["table_modes"], "candidate_factors.table_modes")
+    table_modes = unique_strings(
+        factors["table_modes"], "candidate_factors.table_modes"
+    )
     if set(table_modes) != {"fast", "accurate"}:
         raise ValueError("Document protocol must declare both TableFormer modes")
     formulas = tuple(
@@ -336,16 +340,6 @@ def protocol_from_worker(value: object) -> DocumentProtocol:
     protocol = protocol_from_mapping(root)
     protocol.meta.validate_worker_payload(payload)
     return protocol
-
-
-def _strings(value: object, label: str) -> tuple[str, ...]:
-    values = tuple(
-        string(item, f"{label}[{index}]")
-        for index, item in enumerate(sequence(value, label))
-    )
-    if not values or len(values) != len(set(values)):
-        raise ValueError(f"{label} must contain unique values")
-    return values
 
 
 def _counts(value: object, label: str) -> dict[str, int]:

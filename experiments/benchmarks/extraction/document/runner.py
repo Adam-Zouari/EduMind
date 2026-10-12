@@ -85,7 +85,6 @@ def evaluate_candidate(
                 if latency is not None and pages
                 else None,
                 "successful_pages": (pages or 0) * len(successful),
-                "attempt_seconds": sum(float(row["latency_seconds"]) for row in rows),
                 "groups": evaluation.groups,
             }
         )

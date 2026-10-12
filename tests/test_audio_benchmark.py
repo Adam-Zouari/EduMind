@@ -244,7 +244,9 @@ def test_asr_normalization_is_minimal_and_unicode_aware() -> None:
     assert normalize_transcript("42") == "42"
 
 
-def test_whisper_preserves_untimed_text_and_benchmark_records_it(tmp_path) -> None:
+def test_whisper_preserves_untimed_text_and_benchmark_records_it(
+    tmp_path, monkeypatch
+) -> None:
     calls = []
 
     def fake_runtime(source: str, **options):
@@ -259,7 +261,10 @@ def test_whisper_preserves_untimed_text_and_benchmark_records_it(tmp_path) -> No
         }
 
     extractor = WhisperExtractor("revision")
-    extractor._runtime = fake_runtime
+    monkeypatch.setattr(
+        "edumind.extraction.extractors.audio.load_whisper_runtime",
+        lambda *_args: (fake_runtime, "float32"),
+    )
     request = ExtractionRequest(
         Path("audio.wav"),
         "checksum",
@@ -934,3 +939,64 @@ def test_cpu_vram_is_inapplicable_not_a_fabricated_zero():
         monitor.sample_now()
     assert monitor.metrics()["peak_vram_mb"] is None
     assert monitor.vram_measurement_method == "not-applicable"
+
+
+def test_long_reference_timeline_does_not_hit_python_recursion_limit():
+    from experiments.benchmarks.extraction.audio.evaluate import _ordered_span_matches
+
+    matches = _ordered_span_matches(
+        [{"text": "alpha"}] * 1100, [{"text": "alpha"}], threshold=0.5
+    )
+    assert len(matches) == 1
+    assert matches[0][1:] == (0, 0, 1.0)
+
+
+def test_timestamp_dynamic_program_matches_exhaustive_small_rankings():
+    from collections import Counter
+    from itertools import pairwise, product
+    from random import Random
+
+    from experiments.benchmarks.extraction.audio.evaluate import _ordered_span_matches
+
+    rng = Random(42)
+    for _ in range(30):
+        reference = [{"text": rng.choice(("a", "b", "a b"))} for _ in range(3)]
+        predicted = [{"text": rng.choice(("a", "b"))} for _ in range(4)]
+        choices = []
+        for index, item in enumerate(reference):
+            expected = Counter(item["text"].split())
+            spans = [()]
+            for start in range(len(predicted)):
+                for end in range(start, len(predicted)):
+                    observed = Counter(
+                        word
+                        for segment in predicted[start : end + 1]
+                        for word in segment["text"].split()
+                    )
+                    f1 = (
+                        2
+                        * sum((expected & observed).values())
+                        / (sum(expected.values()) + sum(observed.values()))
+                    )
+                    if f1 >= 0.5:
+                        spans.append(((index, start, end, f1),))
+            choices.append(spans)
+
+        def objective(matches):
+            return (
+                round(sum(match[3] for match in matches), 12),
+                len(matches),
+                tuple((-match[1], -match[2]) for match in matches),
+            )
+
+        possibilities = (
+            tuple(match for selection in combination for match in selection)
+            for combination in product(*choices)
+        )
+        legal = (
+            matches
+            for matches in possibilities
+            if all(left[2] < right[1] for left, right in pairwise(matches))
+        )
+        actual = _ordered_span_matches(reference, predicted, threshold=0.5)
+        assert objective(actual) == max(objective(matches) for matches in legal)

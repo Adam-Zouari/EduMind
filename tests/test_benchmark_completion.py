@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -505,6 +506,10 @@ def test_protocol_identity_and_resolved_settings_are_recorded_for_parent_and_chi
                 self.active.pop()
 
         def parameters(self, values) -> None:
+            for run, previous in self.parameter_calls:
+                if run == self.active[-1]:
+                    for key in previous.keys() & values.keys():
+                        assert str(previous[key]) == str(values[key]), key
             self.parameter_calls.append((self.active[-1], dict(values)))
 
         def metrics(self, values) -> None:
@@ -525,7 +530,7 @@ def test_protocol_identity_and_resolved_settings_are_recorded_for_parent_and_chi
     decision = tmp_path / "decision.json"
     decision.write_text("{}", encoding="utf-8")
     result = run_benchmark(
-        _plan("candidate"),
+        replace(_plan("candidate"), settings={"device": "cpu", "dtype": "float32"}),
         lambda _candidate: (
             [SampleResult("sample", {"quality": 1.0}, 0.01)],
             {"p95_latency_seconds": 0.01},

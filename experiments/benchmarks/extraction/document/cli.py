@@ -18,7 +18,7 @@ from experiments.benchmarks.extraction.document.protocol import (
 )
 
 
-def main(directory: Path) -> int:
+def main() -> int:
     argument_parser = parser(
         "Benchmark document extraction",
         shortlist=False,
@@ -57,11 +57,10 @@ def main(directory: Path) -> int:
         ),
     )
     arguments = argument_parser.parse_args()
-    return _document_main(arguments, directory)
+    return _document_main(arguments)
 
 
-def _document_main(arguments, directory: Path) -> int:
-    del directory
+def _document_main(arguments) -> int:
     protocol = load_protocol(arguments.protocol)
     if arguments.profile == "preflight":
         ignored = []
@@ -179,7 +178,7 @@ def _document_main(arguments, directory: Path) -> int:
 
 
 def _document_candidates(source: str, arguments, protocol):
-    comparison = getattr(arguments, "comparison", "configuration")
+    comparison = arguments.comparison
     if comparison == "configuration":
         if source == "pdf":
             return protocol.configuration_candidates(arguments.profile), {}

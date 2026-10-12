@@ -525,15 +525,7 @@ def _run_candidate(
                 {
                     "candidate": candidate,
                     "profile": plan.profile,
-                    **(
-                        {
-                            "execution_settings": json.dumps(
-                                plan.settings, sort_keys=True
-                            )
-                        }
-                        if plan.settings
-                        else {}
-                    ),
+                    **execution_parameters,
                     **{
                         f"protocol.{name}.version": protocol.version
                         for name, protocol in protocols.items()

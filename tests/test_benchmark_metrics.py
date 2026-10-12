@@ -16,6 +16,7 @@ from edumind.extraction import (
     SourceKind,
 )
 from edumind.extraction.structured import build_structured_document
+from experiments.benchmarks.common.data_validation import manifest_path
 from experiments.benchmarks.common.metrics import (
     average_precision_at_k,
     balanced_accuracy,
@@ -41,9 +42,6 @@ from experiments.benchmarks.common.metrics import (
 )
 from experiments.benchmarks.extraction.document import cli as document_cli
 from experiments.benchmarks.extraction.document.adapters import _paddle_blocks
-from experiments.benchmarks.extraction.document.benchmark import (
-    _manifest as document_manifest,
-)
 from experiments.benchmarks.extraction.document.cli import (
     _document_candidates,
     _validate_document_arguments,
@@ -741,7 +739,7 @@ def test_document_runner_preserves_first_attempt_quality(
 
 
 def test_document_configuration_matrix_has_no_duplicate_image_modes() -> None:
-    arguments = SimpleNamespace(profile="development")
+    arguments = SimpleNamespace(profile="development", comparison="configuration")
     protocol = default_document_protocol()
     pdf, _ = _document_candidates("pdf", arguments, protocol)
     image, _ = _document_candidates("image", arguments, protocol)
@@ -829,7 +827,7 @@ def test_document_locked_uses_exactly_one_validation_winner(monkeypatch) -> None
             {"expected_profile": "validation", "exact": 1},
         )
     ]
-    assert document_manifest("locked").name == "document-locked-test.json"
+    assert manifest_path("document", "locked").name == "document-locked-test.json"
 
     with pytest.raises(ValueError, match="complete PDF, image, and DOCX"):
         _validate_document_arguments(arguments, ("pdf",))

@@ -16,8 +16,11 @@ from edumind.extraction import (
     SegmentKind,
     SourceKind,
 )
+from experiments.benchmarks.common.protocol import unique_strings
 from experiments.benchmarks.extraction.document.metrics import (
+    DocumentEvaluation,
     aggregate_evaluations,
+    apply_official_metrics,
     score_document,
     validate_reference,
 )
@@ -25,6 +28,59 @@ from experiments.benchmarks.extraction.document.protocol import load_protocol
 from experiments.benchmarks.extraction.scoring import attempt_rates, bootstrap_sources
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize("values", [[], "a", None, [""], [1], ["a", " a "]])
+def test_shared_protocol_strings_reject_empty_invalid_and_duplicate_values(values):
+    with pytest.raises(ValueError):
+        unique_strings(values, "values")
+
+
+def test_shared_protocol_strings_preserve_order_and_trim_values():
+    assert unique_strings([" a ", "b"], "values") == ("a", "b")
+
+
+def test_official_scores_keep_document_boundaries_and_content_scores(monkeypatch):
+    from experiments.benchmarks.extraction.document import metrics
+
+    records = [
+        DocumentEvaluation(("pdf",)),
+        DocumentEvaluation(
+            ("pdf",),
+            metrics={"tables.content_f1": 0.5},
+            table_pairs=[("one", "one"), ("two", "two")],
+            formula_pairs=[("x", "x")],
+        ),
+        DocumentEvaluation(
+            ("pdf",),
+            table_pairs=[("three", "three")],
+            formula_pairs=[("y", "y"), ("z", "z")],
+        ),
+    ]
+    monkeypatch.setattr(
+        metrics,
+        "score_official_metrics",
+        lambda *_args, **_kwargs: ([(0.2, 0.4), (0.6, 0.8), (1, 1)], [0.5, 0, 1]),
+    )
+    apply_official_metrics(records, timeout_seconds=1)
+    assert records[0].metrics == {}
+    assert records[1].metrics == pytest.approx(
+        {
+            "tables.content_f1": 0.5,
+            "tables.teds": 0.4,
+            "tables.teds_s": 0.6,
+            "formulas.recognition_similarity": 0.5,
+            "formulas.exact_match": 0,
+        }
+    )
+    assert records[2].metrics == pytest.approx(
+        {
+            "tables.teds": 1,
+            "tables.teds_s": 1,
+            "formulas.recognition_similarity": 0.5,
+            "formulas.exact_match": 0.5,
+        }
+    )
 
 
 @pytest.mark.parametrize(
@@ -305,6 +361,51 @@ def test_nested_paddle_cpu_weights_are_not_mistaken_for_verified_cuda():
     assert report["observed_devices"] == ["cpu"]
 
 
+def test_empty_device_map_is_not_model_placement_evidence():
+    from edumind.common.model_placement import inspect_model_placement
+
+    report = inspect_model_placement(SimpleNamespace(hf_device_map={}))
+    assert report["status"] == "placement_unverifiable"
+    assert not report["verified"]
+
+
+def test_content_cache_reuses_extraction_with_current_source_identity(tmp_path):
+    from edumind.extraction import ExtractionRequest
+    from edumind.extraction.cache import ExtractionCache
+
+    original, renamed = tmp_path / "original.png", tmp_path / "renamed.png"
+    original.write_bytes(b"same source content")
+    renamed.write_bytes(original.read_bytes())
+    prediction = document("content")
+    request = ExtractionRequest.from_path(
+        original, profile=prediction.profile, source_kind=SourceKind.IMAGE
+    )
+    cache = ExtractionCache(tmp_path / "cache")
+    cache.put(request, prediction)
+    current = replace(request, source_path=renamed)
+    assert cache.key(current) == cache.key(request)
+    loaded = cache.get(current)
+    assert loaded.cache_hit
+    assert loaded.source_name == renamed.name
+    assert loaded.source_path == str(renamed)
+    assert loaded.text == "content"
+    assert cache.key(replace(request, source_kind=SourceKind.PDF)) != cache.key(request)
+    assert cache.key(replace(request, mime_type="image/png")) != cache.key(request)
+
+
+@pytest.mark.parametrize("payload", ["[]", "null", '{"schema": 1, "document": []}'])
+def test_corrupt_cache_shape_is_a_cache_miss(tmp_path, payload):
+    from edumind.extraction import ExtractionRequest
+    from edumind.extraction.cache import ExtractionCache
+
+    cache = ExtractionCache(tmp_path)
+    request = ExtractionRequest(
+        tmp_path / "image", "fixture", profile=document().profile
+    )
+    (tmp_path / f"{cache.key(request)}.json").write_text(payload, encoding="utf-8")
+    assert cache.get(request) is None
+
+
 @pytest.mark.parametrize("accessor", ["buffers", "named_modules", "get_providers"])
 def test_partial_placement_inspection_cannot_qualify_a_model(accessor):
     from edumind.common.model_placement import inspect_model_placement
@@ -534,10 +635,13 @@ def test_missing_predicted_parent_ids_cannot_verify_hierarchy():
     assert result.metrics["layout.hierarchy_preservation_rate"] == 0
 
 
-@pytest.mark.parametrize("suite", ["document", "audio", "video"])
+@pytest.mark.parametrize(
+    "suite,latency_support",
+    [("document", None), ("audio", None), ("video", None), ("video", 2)],
+)
 @pytest.mark.parametrize("failed_attempt", [1, 3])
 def test_workers_preserve_designated_quality_and_all_measured_attempts(
-    suite, failed_attempt, monkeypatch
+    suite, latency_support, failed_attempt, monkeypatch
 ):
     import importlib
     import time
@@ -553,8 +657,11 @@ def test_workers_preserve_designated_quality_and_all_measured_attempts(
     )
     settings = deepcopy(protocol_module.load_protocol().meta.resolved)
     settings["profiles"]["smoke"]["repetitions"] = 3
+    if suite == "video":
+        settings["statistics"]["minimum_latency_ci_sources"] = latency_support
     protocol = protocol_module.protocol_from_mapping(settings)
     events = []
+    bootstrap_minima = []
 
     class Runtime:
         requests = 0
@@ -632,6 +739,13 @@ def test_workers_preserve_designated_quality_and_all_measured_attempts(
             )
 
             doc = doc_protocol()
+            original_bootstrap = worker.bootstrap_sources
+
+            def recorded_bootstrap(*args, **kwargs):
+                bootstrap_minima.append(kwargs["minimum_sources"])
+                return original_bootstrap(*args, **kwargs)
+
+            monkeypatch.setattr(worker, "bootstrap_sources", recorded_bootstrap)
             monkeypatch.setattr(
                 worker,
                 "load_frozen_asr_artifact",
@@ -661,6 +775,10 @@ def test_workers_preserve_designated_quality_and_all_measured_attempts(
                 frozen_asr_checksum="checksum",
             )
     result = worker.execute(payload)
+    if suite == "video":
+        assert bootstrap_minima == (
+            [None] if latency_support is None else [None, latency_support]
+        )
     attempts = result["attempts"] if suite == "document" else result["timings"]
     assert len(attempts) == 3
     assert [row["success"] for row in attempts] == [

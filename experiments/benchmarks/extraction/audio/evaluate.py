@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from functools import cache
 
 import numpy as np
 from jiwer import process_characters, process_words
@@ -532,40 +531,47 @@ def _ordered_span_matches(reference_segments, predicted_segments, *, threshold: 
 
     if not reference_segments or not predicted_segments:
         return ()
-    eligible: dict[int, list[tuple[int, int, float]]] = {}
-    for reference_index, reference in enumerate(reference_segments):
-        expected = normalize_transcript(str(reference["text"])).split()
-        spans: list[tuple[int, int, float]] = []
-        for start in range(len(predicted_segments)):
+    predicted = [
+        normalize_transcript(str(segment["text"])).split()
+        for segment in predicted_segments
+    ]
+    following = [(0.0, 0, ())] * (len(predicted) + 1)
+    # Bottom-up DP avoids a recursion limit on long video transcripts. Each
+    # eligible span is considered once, rather than once per preceding unit.
+    for reference_index in range(len(reference_segments) - 1, -1, -1):
+        expected = normalize_transcript(
+            str(reference_segments[reference_index]["text"])
+        ).split()
+        current = list(following)
+        for start in range(len(predicted) - 1, -1, -1):
+            best = following[start]  # Omit this reference segment.
+            if _better_span_solution(current[start + 1], best):
+                best = current[start + 1]  # Skip this predicted unit.
             observed: list[str] = []
-            for end in range(start, len(predicted_segments)):
-                observed.extend(
-                    normalize_transcript(str(predicted_segments[end]["text"])).split()
-                )
+            for end in range(start, len(predicted)):
+                observed.extend(predicted[end])
+                # Even perfect overlap cannot rescue a span this much longer
+                # than the reference; extending it only lowers this upper bound.
+                if (
+                    observed
+                    and threshold > 0
+                    and 2 * len(expected) / (len(expected) + len(observed)) < threshold
+                ):
+                    break
                 similarity = _token_content_f1(expected, observed)
-                if similarity >= threshold:
-                    spans.append((start, end, similarity))
-        eligible[reference_index] = spans
-
-    @cache
-    def solve(reference_index: int, minimum_prediction: int):
-        if reference_index >= len(reference_segments):
-            return (0.0, 0, ())
-        best = solve(reference_index + 1, minimum_prediction)
-        for start, end, similarity in eligible[reference_index]:
-            if start < minimum_prediction:
-                continue
-            remaining = solve(reference_index + 1, end + 1)
-            candidate = (
-                similarity + remaining[0],
-                1 + remaining[1],
-                ((reference_index, start, end, similarity), *remaining[2]),
-            )
-            if _better_span_solution(candidate, best):
-                best = candidate
-        return best
-
-    return solve(0, 0)[2]
+                if similarity < threshold:
+                    continue
+                remaining = following[end + 1]
+                candidate = (
+                    similarity + remaining[0],
+                    1 + remaining[1],
+                    ((reference_index, start, end, similarity), *remaining[2]),
+                )
+                if _better_span_solution(candidate, best):
+                    best = candidate
+            current[start] = best
+        following = current
+    return following[0][2]
 
 
 def _better_span_solution(candidate, incumbent) -> bool:

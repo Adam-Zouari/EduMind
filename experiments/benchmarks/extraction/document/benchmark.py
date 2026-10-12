@@ -8,6 +8,9 @@ from pathlib import Path
 
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.contracts import BenchmarkPlan, BenchmarkResult
+from experiments.benchmarks.common.data_validation import (
+    manifest_path as default_manifest_path,
+)
 from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
 from experiments.benchmarks.common.preflight import (
     current_qualification_fingerprint,
@@ -22,7 +25,7 @@ from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.extraction.document import runner
 from experiments.benchmarks.extraction.document.metrics import (
     METRIC_DIRECTIONS,
-    load_reference_data,
+    load_reference,
     validate_official_evaluators,
 )
 from experiments.benchmarks.extraction.document.official_metrics import (
@@ -56,10 +59,9 @@ def run(
 ) -> BenchmarkResult:
     protocol = load_protocol(protocol_path)
     execution = protocol.profile(profile)
-    data_report_path, data_report = verified_inputs(
-        manifest_path or _manifest(profile), profile, protocol
-    )
-    manifest = load_manifest(manifest_path or _manifest(profile))
+    path = (manifest_path or default_manifest_path("document", profile)).resolve()
+    data_report_path, data_report = verified_inputs(path, profile, protocol)
+    manifest = load_manifest(path)
     require_manifest_split(
         manifest,
         profile,
@@ -79,12 +81,7 @@ def run(
             f"Document {profile} requires at least {minimum} frozen samples; "
             f"manifest contains {len(selected)}"
         )
-    loaded_references = {
-        str(item["id"]): load_reference_data(item) for item in selected
-    }
-    references = {
-        sample_id: reference for sample_id, (_, reference) in loaded_references.items()
-    }
+    references = {str(item["id"]): load_reference(item) for item in selected}
     uses_official_evaluators = validate_official_evaluators(
         tuple(references.values()), timeout_seconds=protocol.evaluator_timeout_seconds
     )
@@ -124,12 +121,16 @@ def run(
     qualification = None
     if profile != "smoke":
         if profile != "development":
-            verified_inputs(_manifest("development"), "development", protocol)
+            verified_inputs(
+                default_manifest_path("document", "development"),
+                "development",
+                protocol,
+            )
         qualification_lock = _model_lock(declared)
         qualification_manifest = (
             manifest
             if profile == "development"
-            else load_manifest(_manifest("development"))
+            else load_manifest(default_manifest_path("document", "development"))
         )
         qualification_stress = _stress_documents(qualification_manifest)
         fingerprint, _ = _qualification_identity(
@@ -220,7 +221,7 @@ def run(
         },
         decision_files=decision_files,
         input_artifacts={
-            "manifest": (manifest_path or _manifest(profile)).resolve(),
+            "manifest": path,
             "data_validation": data_report_path,
             **(
                 {"preflight_report": qualification_path}
@@ -249,7 +250,7 @@ def run_preflight_profile(
     protocol_path: Path = DEFAULT_PROTOCOL_PATH,
 ):
     protocol = load_protocol(protocol_path)
-    path = (manifest_path or _manifest("development")).resolve()
+    path = (manifest_path or default_manifest_path("document", "development")).resolve()
     manifest = load_manifest(path)
     data_report_path, _ = verified_inputs(path, "development", protocol)
     require_manifest_split(manifest, "development", "development")
@@ -397,10 +398,3 @@ def _model_lock(candidates: tuple[str, ...]) -> dict[str, dict[str, object]]:
         PROJECT_ROOT / "data/benchmarks/models/selected.json",
         candidates=required,
     )
-
-
-def _manifest(profile: str) -> Path:
-    if profile == "smoke":
-        return PROJECT_ROOT / "data/benchmarks/extraction/smoke.json"
-    split = "locked-test" if profile == "locked" else profile
-    return PROJECT_ROOT / f"data/benchmarks/extraction/document-{split}.json"

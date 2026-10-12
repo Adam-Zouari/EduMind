@@ -261,8 +261,6 @@ def _preflight(
         runtime.close()
     resources = monitor.metrics()
     placement = after if after["status"] != "qualified" else before
-    if before["status"] == "qualified" and after["status"] == "qualified":
-        placement = after
     return {
         "placement": placement,
         "placement_before": before,
