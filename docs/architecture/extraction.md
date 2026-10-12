@@ -32,8 +32,10 @@ than the text view.
 
 `ExtractionRequest` freezes source identity and options. `ExtractionProfile`
 freezes every behavior-changing choice: engine revision, device, OCR/table/formula
-settings, routing, preprocessing, and normalization. The profile fingerprint and
-source checksum form the cache identity.
+settings, routing, preprocessing, and normalization. The cache identity includes
+the profile fingerprint, resolved request options, source checksum, source kind,
+and MIME type. Renaming identical input reuses the extraction while returning
+the current source name and path.
 
 Production may request an optional cleanup profile. Extraction benchmarks request
 `normalization=none`, preserve candidate output, and use only the fixed prose

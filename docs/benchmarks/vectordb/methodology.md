@@ -56,6 +56,11 @@ Unsupported settings are recorded rather than silently replaced.
 Every supported configuration remains visible in MLflow; the runner does not
 automatically choose the database winner.
 
+The protocol uses Qdrant's minimum supported full-scan threshold, 10 KiB; the
+pinned server rejects zero. Index readiness is verified before measurement.
+Small filtered candidate sets may still use the server's exact-search path;
+their measured recall and latency describe that server behavior.
+
 A validation finalist is a server together with its exact development-tested
 index settings. Validation rebuilds those indexes on the validation corpus and
 compares only the recorded finalists without changing their settings or

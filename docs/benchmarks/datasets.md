@@ -15,8 +15,9 @@ licenses, references, and source-family-isolated splits.
 
 After preparation, follow the [shared data-validation guide](data-validation.md)
 for per-profile checks, cross-split isolation, generated reports, and their
-verification before runs. Its standalone commands/report reuse are planned;
-current runners retain inline checks until that interface is implemented.
+verification before runs. Document, ASR, and video implement these standalone
+commands and report verification; other suites retain inline checks pending
+their migration.
 Dataset annotation rules live here; prediction scoring lives in each metric
 reference, not in the validator.
 

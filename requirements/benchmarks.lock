@@ -36,5 +36,5 @@ psycopg==3.3.4
 psycopg-binary==3.3.4
 psycopg-pool==3.3.1
 
-# Only the small metric/dataset checks use pytest.
+# Unit and regression tests.
 pytest==9.1.1

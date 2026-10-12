@@ -49,6 +49,9 @@ application processes, external GPU applications, or Windows driver paging.
 Run one application process on this laptop and keep unrelated GPU workloads
 closed. Provisionally configured CPU execution and explicit request profiles
 remain unchanged; benchmark runners do not promote application models/devices.
+Resolved application video defaults and request-level overrides are included in
+the extraction cache identity, so changing a frame-selection setting cannot
+reuse results produced under the previous policy.
 
 ## Readiness
 

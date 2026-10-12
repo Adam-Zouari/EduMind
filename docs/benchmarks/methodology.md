@@ -63,8 +63,9 @@ inputs; a development report does not certify a different validation dataset.
 Those checks are outside model loading, warmup, measured latency, and candidate
 resource monitoring. Valid inputs do not make every metric applicable to every
 row; task eligibility and prediction failures follow the metric contracts.
-The standalone validator/report-reuse interface is approved but still requires
-implementation; existing inline runner checks remain in place meanwhile.
+Document, ASR, and video implement standalone validation and report verification.
+The remaining suites retain inline checks until their validator/report-reuse
+interface is implemented.
 The benchmark `validation` profile means evaluating finalists on unseen data,
 not either of these data checks.
 
