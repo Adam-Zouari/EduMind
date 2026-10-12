@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import gc
 import re
 import threading
 import time
@@ -10,6 +9,8 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from edumind.common.gpu import release_runtime_memory
 
 from .contracts import GenerationProfile
 from .errors import GenerationError, ModelLoadError
@@ -221,7 +222,7 @@ class HuggingFaceGenerator:
         if not path.is_dir():
             raise ModelLoadError(
                 f"Pinned model is missing at {path}; run `python "
-                "experiments/benchmarks/prepare.py app-models` or `all-models`."
+                "-m experiments.benchmarks.prepare app-models` or `all-models`."
             )
         started = time.perf_counter()
         try:
@@ -254,11 +255,8 @@ class HuggingFaceGenerator:
         self._model = None
         self._tokenizer = None
         self._processor = None
-        torch = self._torch
         self._torch = None
-        gc.collect()
-        if torch is not None and torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        release_runtime_memory()
 
     def runtime_memory(self) -> dict[str, float]:
         if self._torch is None or not self.profile.device.startswith("cuda"):

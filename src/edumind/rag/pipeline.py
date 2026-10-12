@@ -143,7 +143,9 @@ class RAGPipeline:
     ) -> list[RetrievalHit]:
         if not query_text.strip():
             raise ValueError("Query must not be empty")
-        limit = top_k or self.top_k
+        limit = self.top_k if top_k is None else top_k
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("top_k must be a positive integer")
         query_vector = self.embedder.embed_query(query_text)
         candidates = self.vector_store.query_dense(
             query_vector.tolist(),
@@ -169,6 +171,7 @@ class RAGPipeline:
             if available <= 0:
                 break
             tokens = candidate.token_count or self.tokenizer.count(candidate.document)
+            candidate = replace(candidate, token_count=tokens)
             if tokens > available:
                 truncated = self.tokenizer.truncate(candidate.document, available)
                 if not truncated.strip():

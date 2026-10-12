@@ -30,7 +30,7 @@ def inspect_model_placement(
     for model in _walk_runtime_objects(models):
         inspected_objects += 1
         device_map = getattr(model, "hf_device_map", None)
-        if isinstance(device_map, Mapping):
+        if isinstance(device_map, Mapping) and device_map:
             normalized = {str(key): str(value) for key, value in device_map.items()}
             device_maps.append(normalized)
             devices.update(_device_type(value) for value in normalized.values())

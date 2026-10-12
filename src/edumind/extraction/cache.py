@@ -24,6 +24,10 @@ class ExtractionCache:
             {
                 "schema": CACHE_SCHEMA,
                 "source_checksum": request.checksum,
+                "source_kind": request.source_kind.value
+                if request.source_kind
+                else None,
+                "mime_type": request.mime_type,
                 "profile": request.profile.fingerprint,
                 "options": request.options,
             }
@@ -35,12 +39,21 @@ class ExtractionCache:
             return None
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-            if payload.get("schema") != CACHE_SCHEMA:
+            if (
+                not isinstance(payload, dict)
+                or payload.get("schema") != CACHE_SCHEMA
+                or not isinstance(payload.get("document"), dict)
+            ):
                 return None
             document = ExtractedDocument.from_dict(payload["document"])
-        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        except (OSError, ValueError, KeyError, TypeError):
             return None
-        return replace(document, cache_hit=True)
+        return replace(
+            document,
+            source_name=request.source_path.name,
+            source_path=str(request.source_path),
+            cache_hit=True,
+        )
 
     def put(self, request: ExtractionRequest, document: ExtractedDocument) -> Path:
         path = self.directory / f"{self.key(request)}.json"

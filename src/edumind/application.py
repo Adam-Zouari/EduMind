@@ -120,7 +120,7 @@ class EduMindPipeline:
         self,
         query: str,
         *,
-        top_k: int = 5,
+        top_k: int | None = None,
         generate_answer: bool = True,
         filters: Mapping[str, object] | None = None,
         progress: ProgressCallback | None = None,

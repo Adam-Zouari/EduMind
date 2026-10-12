@@ -215,12 +215,24 @@ class ExtractionPipeline:
     def _prepare_profile(
         self, profile: ExtractionProfile
     ) -> tuple[ExtractionProfile, dict[str, object]]:
+        if profile.engine.startswith("video-"):
+            video = self.settings.extraction.video
+            profile = replace(
+                profile,
+                options={
+                    "keyframe_strategy": video.keyframe_strategy,
+                    "fixed_interval_seconds": video.fixed_interval_seconds,
+                    "scene_threshold": video.scene_threshold,
+                    "maximum_hybrid_gap_seconds": video.maximum_hybrid_gap_seconds,
+                    **profile.options,
+                },
+            )
         lock_path = self.settings.models.lock_path
         if not lock_path.is_file():
             if profile.engine_revision == "from-lock":
                 raise RuntimeError(
                     f"Missing extraction model lock {lock_path}; run `python "
-                    "experiments/benchmarks/prepare.py app-models`"
+                    "-m experiments.benchmarks.prepare app-models`"
                 )
             return profile, {}
         models = load_model_lock(lock_path)
@@ -251,10 +263,7 @@ class ExtractionPipeline:
         snapshot = require_model(models, candidate)
         if profile.engine_revision == "from-lock":
             profile = replace(profile, engine_revision=snapshot.revision)
-        if (
-            not profile.engine.startswith("video-")
-            and snapshot.revision != profile.engine_revision
-        ):
+        if snapshot.revision != profile.engine_revision:
             raise RuntimeError(
                 f"Extraction profile revision mismatch for {candidate}: profile has "
                 f"{profile.engine_revision}, model lock has {snapshot.revision}. Rebuild the "
@@ -264,16 +273,8 @@ class ExtractionPipeline:
 
 
 def _lock_options(entry: Mapping[str, object]) -> dict[str, object]:
-    options = {
+    return {
         str(key): value
         for key, value in entry.items()
         if str(key).endswith("_path") or str(key).endswith("_dir")
     }
-    submodels = entry.get("submodels", [])
-    if isinstance(submodels, list):
-        for submodel in submodels:
-            if not isinstance(submodel, Mapping):
-                continue
-            if submodel.get("role") == "forced-aligner":
-                options["aligner_model_path"] = str(submodel.get("model_path", ""))
-    return options

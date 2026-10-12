@@ -63,4 +63,6 @@ class TiktokenOffsetTokenizer:
         if maximum_tokens <= 0:
             return ""
         ids = self.encoding.encode(text, disallowed_special=())
-        return self.encoding.decode(ids[:maximum_tokens])
+        # A token boundary may split a UTF-8 character. Drop that incomplete
+        # character instead of inventing a replacement character in the context.
+        return self.encoding.decode(ids[:maximum_tokens], errors="ignore")

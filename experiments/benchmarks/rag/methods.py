@@ -166,9 +166,7 @@ class Reranker:
                 "expected_device": self.device,
                 "observed_devices": [],
             }
-        return inspect_model_placement(
-            self.model, expected_device=self.device
-        )
+        return inspect_model_placement(self.model, expected_device=self.device)
 
     def input_token_counts(self, query: str, documents: Sequence[str]) -> list[int]:
         self.prepare()

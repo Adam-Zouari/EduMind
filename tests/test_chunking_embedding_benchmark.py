@@ -879,6 +879,15 @@ def test_cl100k_boundaries_send_canonical_text_not_token_ids_to_embedder(
     assert all(chunk.tokens <= 5 for chunk in index.chunks)
 
 
+@pytest.mark.parametrize("text", ["A🙂B", "漢字", "école", "مرحبا"])
+def test_token_truncation_preserves_unicode_source_prefix(text):
+    tokenizer = TiktokenOffsetTokenizer()
+    for maximum in range(tokenizer.count(text) + 1):
+        truncated = tokenizer.truncate(text, maximum)
+        assert text.startswith(truncated)
+        assert tokenizer.count(truncated) <= maximum
+
+
 def test_worker_marks_oversized_input_as_failed_with_reason_code(monkeypatch) -> None:
     embedding_name = "Alibaba-NLP/gte-modernbert-base"
     candidate = f"fixture|{embedding_name}"

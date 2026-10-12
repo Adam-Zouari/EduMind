@@ -84,7 +84,7 @@ class AppController:
         records[checksum] = record.to_dict()
         return record, True
 
-    def query(self, text: str, *, top_k: int = 5) -> PipelineQueryResult:
+    def query(self, text: str, *, top_k: int | None = None) -> PipelineQueryResult:
         return self.pipeline.query(text, top_k=top_k, generate_answer=True)
 
     def reset(self, records: MutableMapping[str, dict[str, object]]) -> None:
@@ -113,7 +113,7 @@ class AppController:
 
 def safe_error(exc: Exception) -> str:
     if isinstance(exc, ExtractionError):
-        if exc.detail and "prepare.py app-models" in exc.detail:
+        if exc.detail and "experiments.benchmarks.prepare" in exc.detail:
             return exc.detail
         return exc.public_message
     if isinstance(
@@ -126,6 +126,8 @@ def safe_error(exc: Exception) -> str:
         ),
     ):
         return str(exc)
-    if isinstance(exc, FileNotFoundError) and "prepare.py app-models" in str(exc):
+    if isinstance(exc, FileNotFoundError) and "experiments.benchmarks.prepare" in str(
+        exc
+    ):
         return str(exc)
     return "Processing failed. Check the local application logs for details."

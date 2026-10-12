@@ -91,7 +91,12 @@ def _render_query(controller: AppController) -> None:
     question = st.text_area(
         "Question", placeholder="Ask a question grounded in your documents"
     )
-    top_k = st.select_slider("Maximum evidence blocks", options=[1, 3, 5, 10], value=5)
+    default_top_k = controller.pipeline.rag.top_k
+    top_k = st.select_slider(
+        "Maximum evidence blocks",
+        options=sorted({1, 3, 5, 10, default_top_k}),
+        value=default_top_k,
+    )
     if st.button("Answer", disabled=not question.strip()):
         try:
             with st.spinner("Retrieving evidence and generating a cited answer..."):

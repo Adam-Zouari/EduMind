@@ -10,8 +10,8 @@ from edumind.application import EduMindPipeline
 from edumind.common.gpu import exclusive_model_workload
 from edumind.extraction import ExtractionProfile, ExtractionRequest, SourceKind
 from edumind.extraction.errors import ExtractionBackendError
-from edumind.extraction.extractors.audio import WhisperExtractor
-from edumind.extraction.extractors.document import _require_cuda_ocr
+from edumind.extraction.extractors.audio import WhisperExtractor, WhisperTranscript
+from edumind.extraction.extractors.document import DoclingExtractor, _require_cuda_ocr
 from edumind.extraction.extractors.video import VideoExtractor
 
 
@@ -127,7 +127,105 @@ def test_audio_unload_releases_its_runtime(monkeypatch):
     extractor._runtime = object()
     extractor.unload()
     assert extractor._runtime is None
+    assert extractor._runtime_key is None
     assert released == [True]
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_preparation_command_is_visible_in_application_errors(wrapped):
+    from edumind.ui.controller import safe_error
+
+    command = "Run python -m experiments.benchmarks.prepare app-models"
+    error = (
+        ExtractionBackendError("Extraction failed", detail=command)
+        if wrapped
+        else FileNotFoundError(command)
+    )
+    assert safe_error(error) == command
+
+
+@pytest.mark.parametrize("changed", ["device", "model_path"])
+def test_whisper_reloads_changed_runtime_inputs(tmp_path, monkeypatch, changed):
+    from dataclasses import replace
+
+    from edumind.extraction.extractors import audio
+
+    loaded, released = [], []
+
+    def load(path, device):
+        loaded.append((path.resolve(), device))
+        return object(), "float32"
+
+    monkeypatch.setattr(audio, "load_whisper_runtime", load)
+    monkeypatch.setattr(
+        audio, "transcribe_whisper", lambda *_: WhisperTranscript("", ())
+    )
+    monkeypatch.setattr(audio, "release_runtime_memory", lambda: released.append(True))
+    request = ExtractionRequest(
+        tmp_path / "audio.wav",
+        "fixture",
+        profile=ExtractionProfile("audio", "whisper-small-en-control", "pinned"),
+        options={"model_path": str(tmp_path)},
+    )
+    extractor = WhisperExtractor("pinned")
+    extractor._transcribe(request)
+    extractor._transcribe(request)
+    if changed == "device":
+        request = replace(request, profile=replace(request.profile, device="cuda"))
+    else:
+        other = tmp_path / "other"
+        other.mkdir()
+        request = replace(request, options={"model_path": str(other)})
+    extractor._transcribe(request)
+    assert len(loaded) == 2
+    assert loaded[-1] == (
+        audio.model_directory(request).resolve(),
+        request.profile.device,
+    )
+    assert released == [True]
+    assert extractor.revision == "pinned"
+
+
+@pytest.mark.parametrize("engine", ["docling-standard", "docling-vlm-granite-258m"])
+def test_document_runtime_cache_includes_request_overrides(
+    tmp_path, monkeypatch, engine
+):
+    from dataclasses import replace
+
+    converter = pytest.importorskip("docling.document_converter")
+    from experiments.benchmarks.extraction.document.adapters import (
+        ExperimentalDocumentExtractor,
+    )
+
+    monkeypatch.setattr(
+        converter,
+        "DocumentConverter",
+        lambda **options: SimpleNamespace(**options),
+    )
+    request = ExtractionRequest(
+        tmp_path / "image.png",
+        "fixture",
+        profile=ExtractionProfile("image", engine, "pinned"),
+        options={
+            "model_path": str(tmp_path),
+            "image_scale": 3.0,
+            "load_in_8bit": False,
+        },
+    )
+    if engine == "docling-standard":
+        extractor = DoclingExtractor("pinned")
+        runtime = lambda r: extractor._converter(r, SourceKind.IMAGE)[0]
+    else:
+        extractor = ExperimentalDocumentExtractor(engine, "pinned")
+        runtime = extractor._docling_converter
+    original = runtime(request)
+    assert runtime(request) is original
+    changed = runtime(replace(request, options={**request.options, "image_scale": 4.0}))
+    assert changed is not original
+    assert all(
+        option.pipeline_options.images_scale == 4.0
+        for option in changed.format_options.values()
+    )
 
 
 def test_rapidocr_cuda_session_is_verified_and_cached(monkeypatch):

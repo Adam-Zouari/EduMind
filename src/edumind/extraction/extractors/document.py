@@ -7,6 +7,7 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
+from edumind.common.artifacts import stable_hash
 from edumind.common.onnx_placement import cuda_shape_session, verified_cuda_graph
 
 from ..contracts import ExtractedDocument, ExtractionRequest, SourceKind
@@ -136,7 +137,7 @@ class DoclingExtractor:
         pipeline.table_structure_options.do_cell_matching = bool(
             options.get("do_cell_matching", True)
         )
-        key = request.profile.fingerprint
+        key = stable_hash({"profile": request.profile.fingerprint, "options": options})
         if key not in self._runtimes:
             formats: dict[Any, Any] = {
                 InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline),
@@ -186,10 +187,11 @@ def _require_cuda_ocr(converter, input_format) -> None:
 
 
 def required_directory(request: ExtractionRequest, key: str, label: str) -> Path:
-    path = Path(str(request.options.get(key, ""))).expanduser()
-    if not path.is_dir():
+    raw_path = request.options.get(key)
+    path = Path(str(raw_path)).expanduser() if raw_path else None
+    if path is None or not path.is_dir():
         raise FileNotFoundError(
             f"{label} is not prepared locally; run `python "
-            "experiments/benchmarks/prepare.py app-models`."
+            "-m experiments.benchmarks.prepare app-models`."
         )
     return path

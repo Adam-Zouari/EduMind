@@ -61,10 +61,7 @@ class VectorStore:
                 port=endpoint.port,
                 ssl=endpoint.scheme == "https",
             )
-            self.collection = self.client.get_or_create_collection(
-                name=self.collection_name,
-                metadata={"hnsw:space": self.distance_metric},
-            )
+            self.collection = self._get_or_create_collection()
         except Exception as exc:
             raise RAGConfigurationError(
                 f"Cannot connect to Chroma at {self.endpoint}. Start it with "
@@ -80,9 +77,21 @@ class VectorStore:
                 "The Chroma collection uses incompatible embedding or chunking settings. "
                 "Reset the collection before using the new configuration."
             )
+        space = "ip" if self.distance_metric == "dot" else self.distance_metric
+        hnsw = self.collection.configuration.get("hnsw") or {}
+        if hnsw.get("space") != space:
+            raise IndexCompatibilityError(
+                "The Chroma collection uses an incompatible distance metric. "
+                "Reset the collection before using the new configuration."
+            )
         if existing is None:
+            if self.collection.count():
+                raise IndexCompatibilityError(
+                    "The Chroma collection contains data without an index manifest. "
+                    "Reset and reindex before using the new configuration."
+                )
+            metadata.pop("hnsw:space", None)
             metadata[COMPATIBILITY] = expected.compatibility_key
-            metadata.setdefault("hnsw:space", self.distance_metric)
             self.collection.modify(metadata=metadata)
         self._manifest = expected
         return expected
@@ -108,7 +117,7 @@ class VectorStore:
                     ids=previous_ids,
                     documents=previous.get("documents") or [],
                     metadatas=previous.get("metadatas") or [],
-                    embeddings=previous.get("embeddings") or [],
+                    embeddings=previous.get("embeddings"),
                 )
             raise
         return len(previous_ids)
@@ -135,7 +144,7 @@ class VectorStore:
         for index, doc_id in enumerate(ids):
             metadata = self._deserialize(metadatas[index])
             distance = float(distances[index])
-            score = 1.0 - distance if self.distance_metric == "cosine" else -distance
+            score = 1.0 - distance
             hits.append(
                 RetrievalHit(
                     str(doc_id),
@@ -169,15 +178,25 @@ class VectorStore:
                 f"Could not reset Chroma collection {self.collection_name!r}"
             ) from exc
         try:
-            self.collection = self.client.get_or_create_collection(
-                name=self.collection_name,
-                metadata={"hnsw:space": self.distance_metric},
-            )
+            self.collection = self._get_or_create_collection()
         except Exception as exc:
             raise RAGConfigurationError(
                 f"Could not recreate Chroma collection {self.collection_name!r}"
             ) from exc
         self._manifest = None
+
+    def _get_or_create_collection(self):
+        return self.client.get_or_create_collection(
+            name=self.collection_name,
+            configuration={
+                "hnsw": {
+                    "space": "ip"
+                    if self.distance_metric == "dot"
+                    else self.distance_metric
+                }
+            },
+            embedding_function=None,
+        )
 
     def _upsert(self, chunks: Sequence[ChunkRecord]) -> None:
         for offset in range(0, len(chunks), 5000):

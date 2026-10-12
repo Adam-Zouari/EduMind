@@ -32,8 +32,10 @@ class WhisperExtractor:
     name = engine
     model = "openai/whisper-small.en"
 
-    def __init__(self, _revision: str) -> None:
+    def __init__(self, revision: str) -> None:
+        self.revision = revision
         self._runtime: Any | None = None
+        self._runtime_key: tuple[Path, str] | None = None
 
     def extract(
         self, request: ExtractionRequest, kind: SourceKind
@@ -82,8 +84,12 @@ class WhisperExtractor:
         profile = request.profile
         assert profile is not None
         model_path = model_directory(request)
-        if self._runtime is None:
+        key = (model_path.resolve(), profile.device)
+        if self._runtime_key != key or self._runtime is None:
+            if self._runtime is not None:
+                self.unload()
             self._runtime, _ = load_whisper_runtime(model_path, profile.device)
+            self._runtime_key = key
         transcript = transcribe_whisper(self._runtime, request.source_path)
         if transcript.segments:
             return (
@@ -98,15 +104,17 @@ class WhisperExtractor:
     def unload(self) -> None:
         """Release ASR before the independent video visual stage begins."""
         self._runtime = None
+        self._runtime_key = None
         release_runtime_memory()
 
 
 def model_directory(request: ExtractionRequest) -> Path:
-    path = Path(str(request.options.get("model_path", ""))).expanduser()
-    if not path.is_dir():
+    raw_path = request.options.get("model_path")
+    path = Path(str(raw_path)).expanduser() if raw_path else None
+    if path is None or not path.is_dir():
         raise FileNotFoundError(
             "Pinned ASR weights are missing; run `python "
-            "experiments/benchmarks/prepare.py app-models`."
+            "-m experiments.benchmarks.prepare app-models`."
         )
     return path
 
