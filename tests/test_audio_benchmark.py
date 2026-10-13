@@ -287,7 +287,11 @@ def test_whisper_preserves_untimed_text_and_benchmark_records_it(
     transcript = runtime.transcribe(Path("audio.wav"))
 
     assert transcript.text == "hello world unfinished"
-    assert [segment["text"] for segment in transcript.segments] == ["hello", "world"]
+    assert [segment["text"] for segment in transcript.segments] == [
+        "hello",
+        "world",
+        "unfinished",
+    ]
     assert transcript.warnings == (
         "1 Whisper chunk(s) lacked complete timestamp boundaries",
     )
@@ -303,7 +307,8 @@ def test_whisper_preserves_untimed_text_and_benchmark_records_it(
             "audio.wav",
             {
                 "return_timestamps": "word",
-                "generate_kwargs": {"do_sample": False},
+                "batch_size": 1,
+                "generate_kwargs": {"do_sample": False, "num_beams": 1},
             },
         ),
     ]
@@ -583,7 +588,7 @@ def test_audio_registry_and_duration_limit_are_frozen() -> None:
             "nonspeech_kind": "background_noise",
         },
     ]
-    with pytest.raises(ValueError, match="between 0 and 30"):
+    with pytest.raises(ValueError, match="duration exceeds its valid range"):
         _validate_manifest_rows(speech, controls, "smoke", AUDIO_PROTOCOL)
 
     cpu_environment = worker_environment("cpu")

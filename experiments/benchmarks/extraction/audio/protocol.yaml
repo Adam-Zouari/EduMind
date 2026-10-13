@@ -1,5 +1,5 @@
 schema_version: 1
-protocol_version: audio-asr-v6
+protocol_version: audio-asr-v7
 seed: 42
 
 audio:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -16,6 +15,7 @@ from experiments.benchmarks.common.data_validation import (
     write_report,
 )
 from experiments.benchmarks.common.datasets import load_manifest
+from experiments.benchmarks.common.protocol import number
 from experiments.benchmarks.extraction.audio.evaluate import normalize_transcript
 from experiments.benchmarks.extraction.audio.protocol import AudioProtocol
 from experiments.benchmarks.extraction.media import (
@@ -150,9 +150,10 @@ def canonicalize(
         )
         maximum_duration = float(protocol.audio["maximum_duration_seconds"])
         tolerance = float(protocol.audio["manifest_duration_tolerance_seconds"])
-        if duration > maximum_duration + 1e-6:
+        if duration <= 0 or duration > maximum_duration + 1e-6:
             raise ValueError(
-                f"Audio sample {item['id']} exceeds the {maximum_duration:g}-second limit"
+                f"Audio sample {item['id']} must decode to positive duration "
+                f"within the {maximum_duration:g}-second limit"
             )
         if abs(duration - float(item["duration_seconds"])) > tolerance:
             raise ValueError(
@@ -169,6 +170,21 @@ def canonicalize(
         )
         result.append(item)
     return result
+
+
+def verify_canonical_inputs(samples, metadata):
+    """Verify execution preprocessing against the already sealed data results."""
+    verified = metadata["samples"]
+    for item in samples:
+        expected = verified.get(str(item["id"]), {})
+        if (
+            expected.get("canonical_sha256") != item["canonical_sha256"]
+            or expected.get("actual_duration_seconds") != item["duration_seconds"]
+        ):
+            raise ValueError(
+                f"ASR canonical input {item['id']} differs from its sealed validation "
+                "report; rerun data validation before execution"
+            )
 
 
 def validate_manifest_rows(
@@ -234,6 +250,8 @@ def validate_manifest_rows(
                     f"ASR speech sample {item['id']} conditions must be a non-empty string list"
                 )
             conditions = set(raw_conditions)
+            if len(conditions) != len(raw_conditions):
+                raise ValueError("ASR condition labels must not repeat")
             unknown = conditions - protocol.required_conditions
             if unknown:
                 raise ValueError(
@@ -248,13 +266,13 @@ def validate_manifest_rows(
                         + ", ".join(sorted(group))
                     )
             observed_conditions.update(conditions)
-        duration = float(item["duration_seconds"])
-        maximum_duration = float(protocol.audio["maximum_duration_seconds"])
-        if not math.isfinite(duration) or duration <= 0 or duration > maximum_duration:
-            raise ValueError(
-                f"ASR speech sample {item['id']} must be between 0 and "
-                f"{maximum_duration:g} seconds"
-            )
+        duration = number(
+            item["duration_seconds"],
+            f"ASR speech sample {item['id']} duration",
+            minimum=0,
+            minimum_exclusive=True,
+            maximum=float(protocol.audio["maximum_duration_seconds"]),
+        )
         validate_reference_segments(item, duration)
     if authoritative and not any(
         normalize_transcript(str(item["reference"])) for item in speech
@@ -316,13 +334,13 @@ def validate_manifest_rows(
             raise ValueError(
                 f"Nonspeech control {item.get('id')} must have an empty reference"
             )
-        duration = float(item.get("duration_seconds", 0))
-        if (
-            not math.isfinite(duration)
-            or duration <= 0
-            or duration > float(protocol.audio["maximum_duration_seconds"])
-        ):
-            raise ValueError(f"Nonspeech control {item.get('id')} has invalid duration")
+        number(
+            item.get("duration_seconds"),
+            f"Nonspeech control {item.get('id')} duration",
+            minimum=0,
+            minimum_exclusive=True,
+            maximum=float(protocol.audio["maximum_duration_seconds"]),
+        )
     from experiments.benchmarks.extraction.scoring import source_id
 
     ids = [str(item["id"]) for item in (*speech, *controls)]
@@ -349,6 +367,8 @@ def validate_reliability_split_isolation(
             raise ValueError(
                 f"Nonspeech control {item.get('id')} lacks ID, split, or asset checksum"
             )
+        if split not in {"smoke", "development", "validation", "locked-test"}:
+            raise ValueError(f"Unknown ASR reliability split {split!r}")
         if sample_id in seen_ids:
             raise ValueError(
                 f"Duplicate ASR reliability sample ID {sample_id!r} occurs in "
@@ -379,22 +399,30 @@ def validate_reference_segments(item: Mapping[str, object], duration: float) -> 
     previous_end = 0.0
     segment_texts: list[str] = []
     for segment in segments:
-        if not isinstance(segment, Mapping) or not str(segment.get("text", "")).strip():
+        if (
+            not isinstance(segment, Mapping)
+            or not isinstance(segment.get("text"), str)
+            or not segment["text"].strip()
+        ):
             raise ValueError(
                 f"ASR speech sample {item['id']} has a malformed reference segment"
             )
-        segment_texts.append(str(segment["text"]))
-        start, end = float(segment.get("start", -1)), float(segment.get("end", -1))
-        if (
-            not math.isfinite(start)
-            or not math.isfinite(end)
-            or start < previous_end
-            or end <= start
-            or end > duration + 1e-6
-        ):
+        segment_texts.append(segment["text"])
+        try:
+            start = number(
+                segment.get("start"), "Reference segment start", minimum=previous_end
+            )
+            end = number(
+                segment.get("end"),
+                "Reference segment end",
+                minimum=start,
+                minimum_exclusive=True,
+                maximum=duration + 1e-6,
+            )
+        except ValueError as exc:
             raise ValueError(
                 f"ASR speech sample {item['id']} has invalid segment boundaries"
-            )
+            ) from exc
         previous_end = end
     if normalize_transcript(" ".join(segment_texts)) != normalize_transcript(
         str(item.get("reference", ""))

@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import math
+import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
 from edumind.common.gpu import release_runtime_memory
+from edumind.common.model_placement import inspect_model_placement
 from edumind.extraction.errors import MissingDependencyError
-from edumind.extraction.extractors.audio import load_whisper_runtime, transcribe_whisper
+from edumind.extraction.extractors.audio import load_whisper_runtime
 from experiments.benchmarks.common.provenance import package_versions
 from experiments.benchmarks.extraction.audio.protocol import AudioProtocol
 
@@ -30,6 +33,21 @@ class Transcript:
     text: str
     segments: tuple[Mapping[str, object], ...]
     warnings: tuple[str, ...] = ()
+
+
+class ASRPlacementError(RuntimeError):
+    """A rejected placement whose evidence must survive model cleanup."""
+
+    def __init__(self, message, model, expected, locations):
+        super().__init__(message)
+        self.placement_report = inspect_model_placement(model, expected_device=expected)
+        self.placement_report["observed_device_locations"] = sorted(locations)
+        if self.placement_report["status"] == "qualified":
+            self.placement_report["status"] = (
+                "device_splitting_detected"
+                if len(locations) > 1
+                else "placement_unverifiable"
+            )
 
 
 def profiles(protocol: AudioProtocol) -> dict[str, ASRProfile]:
@@ -58,8 +76,16 @@ def build_runtime(
     except KeyError as exc:
         raise ValueError(f"Unknown ASR candidate: {candidate}") from exc
     entry = model_lock.get(profile.model)
-    if not entry:
+    if not isinstance(entry, Mapping) or not entry:
         raise RuntimeError(f"The model lock has no entry for {profile.model}")
+    if not isinstance(entry.get("revision"), str) or not entry["revision"].strip():
+        raise RuntimeError(
+            f"The model lock lacks a pinned revision for {profile.model}"
+        )
+    if entry.get("model", profile.model) != profile.model:
+        raise RuntimeError(
+            f"The model lock identifies a different model than {profile.model}"
+        )
     raw_path = entry.get("model_path")
     model_path = Path(str(raw_path)) if raw_path else None
     if model_path is None or not model_path.is_dir():
@@ -69,7 +95,9 @@ def build_runtime(
         "nemo": NemoRuntime,
         "moss": MossRuntime,
     }[profile.backend]
-    return runtime_type(profile, model_path, device, protocol)
+    runtime = runtime_type(profile, model_path.resolve(), device, protocol)
+    runtime.model_lock_entry = dict(entry)
+    return runtime
 
 
 class BaseRuntime:
@@ -87,6 +115,7 @@ class BaseRuntime:
         self.device = device
         self.protocol = protocol
         self._runtime: Any | None = None
+        self.model_lock_entry: Mapping[str, object] = {}
         self.dtype = protocol.dtype(profile.candidate, device)
 
     def load(self) -> None:
@@ -102,12 +131,18 @@ class BaseRuntime:
     def placement_models(self) -> tuple[object, ...]:
         if self._runtime is None:
             return ()
-        return (getattr(self._runtime, "model", self._runtime),)
+        return (self._runtime,)
 
     def parameters(self) -> dict[str, object]:
         return {
             "candidate": self.profile.candidate,
             "model": self.profile.model,
+            "model_path": str(self.model_path),
+            "model_revision": self.model_lock_entry.get("revision", ""),
+            "selection_revision": self.model_lock_entry.get("selection_revision", ""),
+            "model_cache_manifest_sha256": self.model_lock_entry.get(
+                "model_cache_manifest_sha256", ""
+            ),
             "backend": self.profile.backend,
             "runtime_version": _runtime_version(self.profile.backend),
             "device": self.device,
@@ -133,11 +168,15 @@ class BaseRuntime:
 
 
 class WhisperRuntime(BaseRuntime):
+    def placement_models(self) -> tuple[object, ...]:
+        return (self._runtime.model,) if self._runtime is not None else ()
+
     def parameters(self) -> dict[str, object]:
         return {
             **super().parameters(),
             "return_timestamps": self.profile.decoding["return_timestamps"],
             "do_sample": self.profile.decoding["do_sample"],
+            "num_beams": 1,
         }
 
     def load(self) -> None:
@@ -151,26 +190,44 @@ class WhisperRuntime(BaseRuntime):
             raise RuntimeError(
                 f"Whisper loaded {self.dtype} instead of protocol dtype {expected_dtype}"
             )
+        _assert_device(self._runtime.model, self.device, dtype=expected_dtype)
 
     def transcribe(self, source: Path) -> Transcript:
-        result = transcribe_whisper(
-            self._runtime,
-            source,
+        result = self._runtime(
+            str(source),
+            batch_size=self.protocol.batch_size,
             return_timestamps=str(self.profile.decoding["return_timestamps"]),
-            do_sample=bool(self.profile.decoding["do_sample"]),
+            generate_kwargs={
+                "do_sample": self.profile.decoding["do_sample"],
+                "num_beams": 1,
+            },
         )
-        complete = tuple(
-            segment
-            for segment in result.segments
-            if segment.get("start") is not None and segment.get("end") is not None
-        )
-        missing = len(result.segments) - len(complete)
+        if not isinstance(result, Mapping):
+            raise ValueError("Whisper output must be an object")
+        text = _text(result.get("text"))
+        segments = []
+        for chunk in _sequence(result.get("chunks", []), "Whisper chunks"):
+            if not isinstance(chunk, Mapping):
+                raise ValueError("Whisper chunks must contain objects")
+            stamp = _sequence(chunk.get("timestamp"), "Whisper timestamp")
+            if len(stamp) != 2:
+                raise ValueError("Whisper timestamp must contain two boundaries")
+            # Retain incomplete lexical chunks: validation must fail the attempt,
+            # not score only the successfully timestamped portion of its text.
+            segments.append(
+                {
+                    "text": _text(chunk.get("text")),
+                    "start": None if stamp[0] is None else _boundary(stamp[0]),
+                    "end": None if stamp[1] is None else _boundary(stamp[1]),
+                }
+            )
+        missing = sum(item["start"] is None or item["end"] is None for item in segments)
         warnings = (
             (f"{missing} Whisper chunk(s) lacked complete timestamp boundaries",)
             if missing
             else ()
         )
-        return Transcript(result.text, complete, warnings)
+        return Transcript(text, tuple(segments), warnings)
 
 
 class NemoRuntime(BaseRuntime):
@@ -182,6 +239,7 @@ class NemoRuntime(BaseRuntime):
         if self.profile.candidate == "canary-180m":
             values.update(
                 {
+                    "decoding_strategy": "beam",
                     "beam_size": self.profile.decoding["beam_size"],
                     "punctuation_and_capitalization": self.profile.decoding[
                         "punctuation_and_capitalization"
@@ -204,49 +262,94 @@ class NemoRuntime(BaseRuntime):
         except ModuleNotFoundError as exc:
             raise MissingDependencyError("NVIDIA NeMo ASR is required") from exc
         checkpoints = sorted(self.model_path.glob("*.nemo"))
-        if not checkpoints:
+        if len(checkpoints) != 1:
             raise FileNotFoundError(
-                f"No pinned .nemo checkpoint exists under {self.model_path}"
+                f"Expected exactly one pinned .nemo checkpoint under {self.model_path}, "
+                f"found {len(checkpoints)}"
             )
         self._runtime = nemo_asr.models.ASRModel.restore_from(
             restore_path=str(checkpoints[0]), map_location=self.device
         )
-        expected_dtype = self.protocol.dtype(self.profile.candidate, self.device)
+        if getattr(self._runtime, "timestamps_asr_model", None) is not None:
+            raise RuntimeError(
+                "The native-timestamp ASR profile cannot use an external aligner"
+            )
+        expected_dtype = self.dtype
         self._runtime = self._runtime.to(
             device=self.device,
             dtype=getattr(torch, expected_dtype),
         ).eval()
-        _assert_device(self._runtime, self.device)
+        from omegaconf import open_dict
+
         decoding = self._runtime.cfg.decoding
-        if self.profile.candidate == "canary-180m":
-            decoding.beam.beam_size = int(self.profile.decoding["beam_size"])
-        else:
-            decoding.strategy = str(self.profile.decoding["decoding_strategy"])
+        with open_dict(decoding):
+            if self.profile.candidate == "canary-180m":
+                decoding.strategy = "beam"
+                decoding.beam.beam_size = int(self.profile.decoding["beam_size"])
+                decoding.beam.return_best_hypothesis = True
+            else:
+                decoding.strategy = str(self.profile.decoding["decoding_strategy"])
+                decoding.compute_timestamps = self.profile.decoding["timestamps"]
+                # NeMo's "all" computes segment and word timestamps before first use.
+                decoding.rnnt_timestamp_type = {"segment_then_word": "all"}[
+                    str(self.profile.decoding["timestamp_level"])
+                ]
         self._runtime.change_decoding_strategy(decoding)
-        self.dtype = str(next(self._runtime.parameters()).dtype).removeprefix("torch.")
-        if self.dtype != expected_dtype:
-            raise RuntimeError(
-                f"NeMo loaded {self.dtype} instead of protocol dtype {expected_dtype}"
-            )
+        _assert_device(self._runtime, self.device, dtype=expected_dtype)
 
     def transcribe(self, source: Path) -> Transcript:
         arguments: dict[str, object] = {
             "batch_size": self.protocol.batch_size,
             "timestamps": self.profile.decoding["timestamps"],
+            "return_hypotheses": True,
         }
         if self.profile.candidate == "canary-180m":
+            language = {"English": "en"}[str(self.profile.decoding["language"])]
+            arguments.update(source_lang=language, target_lang=language)
             arguments["pnc"] = (
                 "True"
                 if self.profile.decoding["punctuation_and_capitalization"]
                 else "False"
             )
-        output = self._runtime.transcribe([str(source)], **arguments)[0]
-        timestamp_payload = getattr(output, "timestamp", {}) or {}
-        segments = timestamp_payload.get("segment", [])
+        outputs = _sequence(
+            self._runtime.transcribe([str(source)], **arguments), "NeMo outputs"
+        )
+        if len(outputs) != 1:
+            raise ValueError(
+                "NeMo must return exactly one hypothesis for batch size one"
+            )
+        output = outputs[0]
+        text = _text(
+            output if isinstance(output, str) else getattr(output, "text", None)
+        )
+        if self.profile.candidate == "canary-180m" and hasattr(output, "y_sequence"):
+            token_ids = output.y_sequence
+            if not isinstance(token_ids, list):
+                token_ids = token_ids.tolist()
+            raw_text = _text(self._runtime.decoding.decode_ids_to_str(token_ids))
+            # NeMo leaves a lone timestamp token in hyp.text when silence produces
+            # no complete timestamp pair. It is metadata, not lexical speech.
+            text = re.sub(r"<\|[0-9]+\|>", " ", text).strip()
+            # NeMo's AED timestamp postprocessor retains only paired timestamp
+            # spans and can discard lexical prefixes/tails. Audit the original
+            # decoded hypothesis as well, without repairing its transcription.
+            if re.sub(r"<\|[0-9]+\|>", " ", raw_text).split() != text.split():
+                raise ValueError("Canary timestamp processing discarded lexical text")
+        timestamp_payload = getattr(output, "timestamp", {})
+        # NeMo's empty Hypothesis defaults its timestamp field to an empty list.
+        if isinstance(timestamp_payload, list) and not timestamp_payload:
+            timestamp_payload = {}
+        if not isinstance(timestamp_payload, Mapping):
+            raise ValueError("NeMo timestamps must be an object")
+        segments = _sequence(
+            timestamp_payload.get("segment", []), "NeMo segment timestamps"
+        )
         if not segments:
-            segments = timestamp_payload.get("word", [])
+            segments = _sequence(
+                timestamp_payload.get("word", []), "NeMo word timestamps"
+            )
         return Transcript(
-            str(getattr(output, "text", output)).strip(),
+            text,
             tuple(_nemo_segment(item) for item in segments),
         )
 
@@ -258,10 +361,11 @@ class MossRuntime(BaseRuntime):
     def load(self) -> None:
         try:
             import torch
-            from moss_transcribe_diarize.attention import (
-                load_model_with_attention_fallback,
+            from moss_transcribe_diarize.inference_utils import (
+                build_transcription_messages,
+                generate_transcription,
             )
-            from transformers import AutoProcessor
+            from transformers import AutoModelForCausalLM, AutoProcessor
         except ModuleNotFoundError as exc:
             raise MissingDependencyError(
                 "The pinned MOSS-Transcribe-Diarize runtime is required"
@@ -274,9 +378,35 @@ class MossRuntime(BaseRuntime):
             fix_mistral_regex=True,
         )
         device = torch.device(self.device)
-        model, attention_report = load_model_with_attention_fallback(
-            str(self.model_path), device=device, dtype=dtype
+        # One explicit backend and one load: no retries, auto dtype, or remote fetch.
+        model = AutoModelForCausalLM.from_pretrained(
+            str(self.model_path),
+            trust_remote_code=True,
+            local_files_only=True,
+            dtype=dtype,
+            attn_implementation="sdpa",
         )
+        config = model.config
+        attention = {
+            name: getattr(item, "_attn_implementation", None)
+            for name, item in (
+                ("model", config),
+                ("text", getattr(config, "text_config", None)),
+                ("audio", getattr(config, "audio_config", None)),
+            )
+        }
+        if "sdpa" not in attention.values() or any(
+            value not in (None, "sdpa") for value in attention.values()
+        ):
+            raise RuntimeError(
+                f"MOSS changed the requested SDPA attention backend: {attention}"
+            )
+        attention_report = {
+            "requested": "sdpa",
+            "selected": "sdpa",
+            "config": attention,
+        }
+        model.generation_config.num_beams = 1
         self._runtime = (
             model.to(device=device, dtype=dtype).eval(),
             processor,
@@ -284,86 +414,152 @@ class MossRuntime(BaseRuntime):
             device,
             dtype,
         )
-        _assert_device(self._runtime[0], self.device)
+        _assert_device(self._runtime[0], self.device, dtype=self.dtype)
         self.dtype = str(dtype).removeprefix("torch.")
         self.attention_report = attention_report
+        self._build_messages = build_transcription_messages
+        self._generate = generate_transcription
 
     def parameters(self) -> dict[str, object]:
         return {
             **super().parameters(),
-            "attention": str(self.attention_report),
+            "attention": str(getattr(self, "attention_report", {})),
             "max_new_tokens": self.profile.decoding["max_new_tokens"],
             "do_sample": self.profile.decoding["do_sample"],
+            "num_beams": 1,
         }
 
     def transcribe(self, source: Path) -> Transcript:
-        try:
-            from moss_transcribe_diarize import parse_transcript
-            from moss_transcribe_diarize.inference_utils import (
-                build_transcription_messages,
-                generate_transcription,
-            )
-        except ModuleNotFoundError as exc:
-            raise MissingDependencyError(
-                "The pinned MOSS-Transcribe-Diarize runtime is required"
-            ) from exc
         model, processor, attention_report, device, dtype = self._runtime
-        result = generate_transcription(
+        result = self._generate(
             model,
             processor,
-            build_transcription_messages(str(source)),
+            self._build_messages(str(source)),
             max_new_tokens=int(self.profile.decoding["max_new_tokens"]),
             do_sample=bool(self.profile.decoding["do_sample"]),
             device=device,
             dtype=dtype,
             attention_report=attention_report,
         )
-        raw = (
-            str(result.get("text", "")) if isinstance(result, Mapping) else str(result)
-        )
-        parsed = parse_transcript(raw)
-        segments = tuple(
-            {
-                "text": str(getattr(segment, "text", "")).strip(),
-                "start": float(getattr(segment, "start", -1)),
-                "end": float(getattr(segment, "end", -1)),
-            }
-            for segment in parsed
-            if str(getattr(segment, "text", "")).strip()
-        )
-        return Transcript(
-            " ".join(str(item["text"]) for item in segments) or raw.strip(), segments
-        )
+        if not isinstance(result, Mapping):
+            raise ValueError("MOSS generation output must be an object")
+        return _moss_transcript(_text(result.get("text")))
 
 
 def _nemo_segment(item: Mapping[str, object]) -> dict[str, object]:
+    if not isinstance(item, Mapping):
+        raise ValueError("NeMo timestamp units must be objects")
     return {
-        "text": str(
-            item.get("segment", item.get("word", item.get("text", "")))
-        ).strip(),
-        "start": float(item.get("start", -1)),
-        "end": float(item.get("end", -1)),
+        "text": _text(item.get("segment", item.get("word", item.get("text")))),
+        # Native transcribe() already converts frame offsets to seconds.
+        "start": _boundary(item.get("start")),
+        "end": _boundary(item.get("end")),
     }
 
 
-def _assert_device(runtime: object, expected: str) -> None:
-    model = getattr(runtime, "model", runtime)
+def _text(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("ASR lexical text must be a string")
+    return value.strip()
+
+
+def _sequence(value: object, label: str) -> Sequence:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError(f"{label} must be a sequence")
+    return value
+
+
+def _boundary(value: object) -> float:
+    if isinstance(value, (bool, str, bytes)) or value is None:
+        raise ValueError("ASR timestamp boundaries must be finite numbers")
+    result = float(value)
+    if not math.isfinite(result):
+        raise ValueError("ASR timestamp boundaries must be finite numbers")
+    return result
+
+
+_MOSS_SEGMENT = re.compile(
+    r"\[([0-9.]{1,32})\]\s*\[S[0-9]{1,15}\](.*?)\[([0-9.]{1,32})\](?=\s*(?:\[|$))",
+    re.DOTALL,
+)
+
+
+def _moss_transcript(raw: str) -> Transcript:
+    # The producer's streaming parser intentionally ignores malformed prefixes
+    # and unfinished tails. Benchmark conversion must consume the entire output.
+    segments = []
+    position = 0
+    while position < len(raw):
+        match = _MOSS_SEGMENT.match(raw, position)
+        if match is None:
+            raise ValueError("MOSS returned malformed or incomplete timestamp output")
+        start, text, end = match.groups()
+        segment = {
+            "text": text.strip(),
+            "start": _boundary(float(start)),
+            "end": _boundary(float(end)),
+        }
+        if segment["start"] < 0 or segment["end"] <= segment["start"]:
+            raise ValueError("MOSS returned invalid timestamp boundaries")
+        if segment["text"]:
+            segments.append(segment)
+        position = match.end()
+        while position < len(raw) and raw[position].isspace():
+            position += 1
+    return Transcript(" ".join(item["text"] for item in segments), tuple(segments))
+
+
+def _assert_device(runtime: object, expected: str, *, dtype: str | None = None) -> None:
+    model = runtime
+    if any(
+        getattr(model, name, False)
+        for name in ("is_quantized", "is_loaded_in_4bit", "is_loaded_in_8bit")
+    ):
+        raise RuntimeError("ASR quantization is forbidden")
     device_map = getattr(model, "hf_device_map", None)
-    if isinstance(device_map, Mapping):
-        observed = {str(value).split(":", 1)[0] for value in device_map.values()}
-        if observed != {expected}:
-            raise RuntimeError(
-                f"ASR model used {sorted(observed)} instead of the requested {expected} device"
-            )
-        return
     try:
-        observed = str(next(model.parameters()).device).split(":", 1)[0]
+        parameters = list(model.parameters())
+        tensors = [*parameters, *getattr(model, "buffers", lambda: ())()]
+        observed = {_device_name(item.device) for item in tensors}
+        if isinstance(device_map, Mapping):
+            observed.update(_device_name(value) for value in device_map.values())
+        for _name, module in getattr(model, "named_modules", lambda: ())():
+            hook = getattr(module, "_hf_hook", None)
+            if hook is not None and (
+                getattr(hook, "offload", False)
+                or getattr(hook, "weights_map", None) is not None
+            ):
+                raise ASRPlacementError(
+                    "ASR model offload hooks are forbidden", model, expected, observed
+                )
     except (AttributeError, StopIteration, TypeError) as exc:
         raise RuntimeError("ASR runtime does not expose its model device") from exc
-    if observed != expected:
-        raise RuntimeError(
-            f"ASR model used {observed} instead of the requested {expected} device"
+    if (
+        not observed
+        or len(observed) != 1
+        or {value.split(":", 1)[0] for value in observed} != {expected}
+    ):
+        raise ASRPlacementError(
+            f"ASR model used {sorted(observed)} instead of one requested {expected} device",
+            model,
+            expected,
+            observed,
         )
+    if dtype is not None and any(
+        str(item.dtype).removeprefix("torch.") != dtype for item in parameters
+    ):
+        raise RuntimeError(f"ASR model weights do not all use protocol dtype {dtype}")
+
+
+def _device_name(value: object) -> str:
+    name = str(value)
+    if name.isdigit():
+        return f"cuda:{name}"
+    if name == "cuda":
+        return "cuda:0"
+    if name.startswith("cpu:"):
+        return "cpu"
+    return name
 
 
 def _runtime_version(backend: str) -> str:

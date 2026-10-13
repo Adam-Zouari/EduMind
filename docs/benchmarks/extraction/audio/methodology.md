@@ -346,13 +346,24 @@ cannot finish:
 |---|---|
 | `samples.parquet` | One row per speech/control sample with source/group IDs, labels, duration, designated-first-attempt status, known reference lengths, raw word/character edit counts when available, timestamp denominators/matches/errors, event eligibility/flags, repeatability score, and warnings. Unavailable predicted edit counts remain null. |
 | `timings.parquet` | One row per scheduled speech/control measured attempt: index, success/failure/not-executed status, error, elapsed time, duration, valid completed latency where available, and device. Canonical transcript hashes allow pairwise agreement audit without uploading raw predictions. |
-| `candidate.json` | Resolved runtime parameters, execution status, fingerprint, all metric fields with value/status/reason/support counts, intervals, operational values, and artifact references. |
+| `candidate.json` | Resolved runtime parameters, execution status, fingerprint, all metric values, intervals, operational values, and artifact references. |
+| `metric_statuses.json` | Every aggregate metric's value, scored/inapplicable/unavailable/incomplete status, reason, and support counts. Separates availability of a recorded estimate from completeness of the comparison. |
+| `placement.json` | CUDA model-placement checks before and after inference; CPU checks are inapplicable and retained as null. |
+| `execution_error.json` | When a lifecycle or measurement failure prevents completion, records its phase and error without discarding completed sample or timing rows. Remaining scheduled attempts are explicitly not executed. |
 
 The fixed artifact schema uses null plus status/reason for inapplicable or
 unavailable values, not omitted required fields or fabricated zeros.
 Raw audio and candidate predictions are not uploaded to MLflow. The frozen
 speech manifest is uploaded and contains the verified reference transcripts,
 source identifiers, and checksums needed to reproduce scoring.
+
+Startup compares each newly decoded canonical WAV's checksum and duration with
+the sealed data-validation report. Preflight identity also includes the tested
+canonical input and FFmpeg version. Validation and locked decisions must reference
+the current audio protocol and matching hardware qualification.
+The reviewed development stress clip must cover the decoded durations of both
+speech and controls in subsequent profiles. Longer inputs require a covering
+reviewed stress clip and a new validation/preflight identity before execution.
 
 Every completed development, validation, or locked child retains all 17 aggregate
 metric fields in JSON, even when a conditional value is null. Required artifact

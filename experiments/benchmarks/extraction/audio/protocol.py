@@ -158,6 +158,8 @@ def protocol_from_mapping(
         alias: _decoder(alias, _BACKEND_BY_ALIAS[alias], value)
         for alias, value in raw_decoding.items()
     }
+    if len({value["model_id"] for value in decoding.values()}) != len(decoding):
+        raise ValueError("ASR candidates must identify distinct models")
     candidates = {
         alias: AudioCandidate(str(value["model_id"]), _BACKEND_BY_ALIAS[alias])
         for alias, value in decoding.items()
@@ -250,6 +252,8 @@ def protocol_from_mapping(
     maximum_finalists = integer(
         selection["maximum_finalists"], "selection.maximum_finalists", minimum=1
     )
+    if maximum_finalists > len(candidates):
+        raise ValueError("ASR finalist limit exceeds the declared roster")
     resources = strict_object(
         root["resources"],
         "resources",
@@ -319,7 +323,8 @@ def _decoder(alias: str, backend: str, value: object) -> dict[str, object]:
         "moss": {"max_new_tokens", "do_sample"},
     }[backend]
     row = strict_object(value, f"decoding.{alias}", common | extras)
-    string(row["model_id"], f"decoding.{alias}.model_id")
+    if string(row["model_id"], f"decoding.{alias}.model_id") != row["model_id"]:
+        raise ValueError("ASR model IDs must not contain surrounding whitespace")
     choice(row["language"], f"decoding.{alias}.language", {"English"})
     expected_descriptors = {
         "whisper-small-en-control": ("greedy", "native-word"),
@@ -349,4 +354,12 @@ def _decoder(alias: str, backend: str, value: object) -> dict[str, object]:
             choice(row[name], f"decoding.{alias}.{name}", {"segment_then_word"})
         else:
             string(row[name], f"decoding.{alias}.{name}")
+    if row.get("do_sample", False):
+        raise ValueError("Deterministic ASR decoding requires do_sample=False")
+    if "timestamps" in row and not row["timestamps"]:
+        raise ValueError("ASR timestamp profiles require timestamps=True")
+    if alias == "canary-180m" and (
+        row["beam_size"] != 1 or not row["punctuation_and_capitalization"]
+    ):
+        raise ValueError("Canary beam-1-pnc requires beam_size=1 and punctuation=True")
     return row
