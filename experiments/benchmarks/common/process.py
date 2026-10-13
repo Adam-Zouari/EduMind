@@ -219,9 +219,17 @@ def run_json_worker(
             try:
                 resource_metrics = monitor.metrics()
             except RuntimeError as exc:
-                raise WorkerMeasurementError(
-                    str(exc), getattr(exc, "resource_evidence", {})
-                ) from exc
+                evidence = dict(getattr(exc, "resource_evidence", {}))
+                if output_path.is_file():
+                    try:
+                        completed_output = json.loads(
+                            output_path.read_text(encoding="utf-8")
+                        )
+                    except (ValueError, OSError):
+                        completed_output = None
+                    if isinstance(completed_output, dict):
+                        evidence["worker_result"] = completed_output
+                raise WorkerMeasurementError(str(exc), evidence) from exc
             else:
                 supervision = {
                     **resource_metrics,
@@ -239,13 +247,46 @@ def run_json_worker(
                 ) from exc
         if returncode or not isinstance(result, dict):
             detail = (stderr or stdout or "no worker output").strip()
+            error_type = WorkerExecutionError
+            worker_resources = {}
+            worker_failures = {}
             if isinstance(result, dict) and result.get("worker_error"):
                 detail = str(result["worker_error"])
-                evidence.update(payload_mapping(result.get("resource_evidence")))
-                evidence.update(payload_mapping(result.get("failure_evidence")))
-            raise WorkerExecutionError(
-                f"{error_label} failed: {detail[-4000:]}", evidence
-            )
+                worker_resources = payload_mapping(result.get("resource_evidence"))
+                worker_failures = payload_mapping(result.get("failure_evidence"))
+                evidence.update(worker_resources)
+                evidence.update(worker_failures)
+                if result.get("worker_error_type") == "WorkerMeasurementError":
+                    error_type = WorkerMeasurementError
+            # Preserve both scopes; child nulls/empty samples cannot erase the
+            # supervisor's observations. Placement/input-validation
+            # fields above remain directly accessible to preflight consumers.
+            evidence["worker_result"] = result
+            evidence["supervisor_resource_evidence"] = dict(supervision or {})
+            if supervision is not None:
+                evidence["resource_samples"] = supervision["resource_samples"]
+            sources = [supervision or {}]
+            for source in (payload_mapping(result), worker_resources, worker_failures):
+                sources.append(source)
+                sources.append(payload_mapping(source.get("operational")))
+                sources.append(payload_mapping(source.get("resource_evidence")))
+            for name in (
+                "peak_process_tree_ram_mb",
+                "peak_vram_mb",
+                "peak_temporary_disk_mb",
+            ):
+                observed = []
+                for source in sources:
+                    value = source.get(name)
+                    if not isinstance(value, (int, float)) or isinstance(value, bool):
+                        continue
+                    try:
+                        if math.isfinite(value) and value >= 0:
+                            observed.append(float(value))
+                    except OverflowError:
+                        pass
+                evidence[name] = max(observed) if observed else None
+            raise error_type(f"{error_label} failed: {detail[-4000:]}", evidence)
         reported_peak = _reported_peak_vram_mb(result)
         if reported_peak is not None and supervision is not None:
             supervision["worker_reported_peak_vram_mb"] = reported_peak
@@ -343,6 +384,9 @@ def json_worker_main(
             Path(sys.argv[2]),
             {
                 "worker_error": f"{type(exc).__name__}: {exc}",
+                "worker_error_type": "WorkerMeasurementError"
+                if isinstance(exc, WorkerMeasurementError)
+                else "WorkerExecutionError",
                 "resource_evidence": getattr(exc, "resource_evidence", {}),
                 "failure_evidence": {"input_validation": exc.report}
                 if hasattr(exc, "report")

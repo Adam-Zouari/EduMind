@@ -16,7 +16,7 @@ from .metrics import load_reference_data, validate_reference
 def requirements(protocol, profile):
     return {
         "normalization": "NFC-prose-v1",
-        "reference_schema": "document-v2",
+        "reference_schema": "document-v3",
         "counts": dict(protocol.sample_counts.get(profile, {})),
     }
 
@@ -87,6 +87,13 @@ def validate(path, profile, protocol):
         ):
             raise ValueError(
                 "Reference must identify every physical page, including blanks"
+            )
+        if pages is not None and any(
+            element.page_number is not None and not 1 <= element.page_number <= pages
+            for element in reference.elements
+        ):
+            raise ValueError(
+                "Reference element page exceeds the physical page inventory"
             )
         if item["kind"] == "docx" and "layout_boxes" in reference.capabilities:
             raise ValueError("Native DOCX cannot claim invented page geometry")

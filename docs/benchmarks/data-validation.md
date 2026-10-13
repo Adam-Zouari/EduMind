@@ -192,6 +192,11 @@ source/group counts, and the exact input fingerprints. Its identity covers:
   normalization versions; and
 - validator implementation/version and cross-split inventory identity.
 
+Document reports also bind the pinned table/formula evaluator source and image
+lock used to certify reference renderability. Changing that evaluator identity
+requires a new matching report, rather than treating an earlier self-check as
+evidence for a different scorer.
+
 A changed reference, asset, split, validation rule, or applicable requirement
 requires full validation again and a new matching report. An unchanged dataset
 does not need full revalidation merely because another benchmark invocation is
@@ -240,7 +245,7 @@ Authoritative references declare `reference_capabilities`. Validate only claimed
 annotations; smoke may infer eligibility from explicitly supplied fixture fields.
 Missing fields must not become verified empty values through defaults.
 
-- `text` with an explicit reviewed `reference_text: ""` is valid. A missing text
+- `text` with an explicit reviewed `text: ""` is valid. A missing text
   annotation is invalid when text is claimed. Documents need no global positive
   prose-word quota: blank or structure-only sources are legitimate.
 - Explicit complete empty element sequences are valid for negative detection or

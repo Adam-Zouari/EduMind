@@ -31,9 +31,15 @@ def build_docling_document(
     """Convert a native DoclingDocument without inferring structure from Markdown."""
 
     elements: list[dict[str, object]] = []
-    for order, (item, level) in enumerate(
+    native_items = list(
         document.iterate_items(with_groups=False, traverse_pictures=True)
-    ):
+    )
+    included_ids = {
+        str(getattr(item, "self_ref", f"element-{order}"))
+        for order, (item, _) in enumerate(native_items)
+    }
+    levels: dict[str, int] = {}
+    for order, (item, level) in enumerate(native_items):
         label = _enum_value(getattr(item, "label", None)) or _enum_value(
             getattr(item, "name", None)
         )
@@ -41,12 +47,28 @@ def build_docling_document(
         page_number, bounding_box, provenance = _docling_provenance(item, document)
         parent = getattr(item, "parent", None)
         parent_id = str(getattr(parent, "cref", "")) or None
-        if parent_id in {"#/body", "#/furniture"}:
-            parent_id = None
+        native_parent_id = parent_id
+        visited: set[str] = set()
+        # Groups carry no additional content. Keep only the closest emitted
+        # ancestor, preserving nested authored relationships without double counts.
+        while parent_id is not None and parent_id not in included_ids:
+            if parent_id in {"#/body", "#/furniture"} or parent_id in visited:
+                parent_id = None
+                break
+            visited.add(parent_id)
+            resolve = getattr(parent, "resolve", None)
+            if not callable(resolve):
+                parent_id = None
+                break
+            ancestor = resolve(doc=document)
+            parent = getattr(ancestor, "parent", None)
+            parent_id = str(getattr(parent, "cref", "")) or None
+        element_id = str(getattr(item, "self_ref", f"element-{order}"))
+        levels[element_id] = levels.get(parent_id, 0) + 1
         elements.append(
             {
                 "text": text,
-                "element_id": str(getattr(item, "self_ref", f"element-{order}")),
+                "element_id": element_id,
                 "parent_id": parent_id,
                 "order": order,
                 "page_number": page_number,
@@ -55,7 +77,9 @@ def build_docling_document(
                 "structured_content": structured,
                 "metadata": {
                     "label": label or "group",
-                    "hierarchy_level": int(level),
+                    "hierarchy_level": levels[element_id],
+                    "native_hierarchy_level": int(level),
+                    "native_parent_id": native_parent_id,
                     "provenance": provenance,
                 },
             }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import time
 from collections.abc import Mapping
@@ -94,6 +95,10 @@ class ExperimentalDocumentExtractor:
         self._paddle_runtime(request)
 
     def _docling_converter(self, request: ExtractionRequest):
+        if request.options["load_in_8bit"]:
+            raise ValueError(
+                "Pinned Docling Granite does not support load_in_8bit=True"
+            )
         try:
             from docling.datamodel import vlm_model_specs
             from docling.datamodel.accelerator_options import AcceleratorOptions
@@ -155,7 +160,12 @@ class ExperimentalDocumentExtractor:
             page_count += 1
             payload = getattr(result, "json", None)
             payload = payload() if callable(payload) else payload or {}
-            blocks = _paddle_blocks(payload, warnings=warnings)
+            blocks = _paddle_blocks(
+                payload,
+                warnings=warnings,
+                fallback_page_number=page_count,
+                segment_offset=len(elements),
+            )
             elements.extend(blocks)
         if not page_count:
             raise RuntimeError("PaddleOCR-VL-1.6 produced no pages")
@@ -218,6 +228,8 @@ def _paddle_blocks(
     value: object,
     *,
     warnings: list[ExtractionWarning] | None = None,
+    fallback_page_number: int = 1,
+    segment_offset: int = 0,
 ) -> list[dict[str, object]]:
     """Read native Paddle blocks; do not infer structure from rendered Markdown."""
 
@@ -226,7 +238,11 @@ def _paddle_blocks(
     if isinstance(value.get("res"), Mapping):
         value = value["res"]
     raw_page_index = value.get("page_index")
-    page_number = 1 if raw_page_index is None else int(raw_page_index) + 1
+    if raw_page_index is not None and (
+        type(raw_page_index) is not int or raw_page_index < 0
+    ):
+        raise ValueError("Paddle page index must be a nonnegative integer")
+    page_number = fallback_page_number if raw_page_index is None else raw_page_index + 1
     raw_blocks = value.get("parsing_res_list")
     if not isinstance(raw_blocks, list):
         raise ValueError("Paddle page result must contain a native parsing block list")
@@ -239,25 +255,39 @@ def _paddle_blocks(
                     ExtractionWarning(
                         "paddle_block_conversion_failed",
                         f"Skipped Paddle block {index}: block is not an object",
-                        segment_index=len(result),
+                        segment_index=segment_offset + len(result),
                     )
                 )
             continue
         try:
-            label = str(raw.get("block_label", "text")).casefold()
-            native_content = str(raw.get("block_content", ""))
+            label = raw.get("block_label", "text")
+            native_content = raw.get("block_content", "")
+            if not isinstance(label, str) or not isinstance(native_content, str):
+                raise ValueError("Paddle block label/content must be strings")
+            label = label.casefold()
             text = native_content
             kind = {
                 "title": "title",
+                "doc_title": "title",
                 "heading": "heading",
+                "paragraph_title": "heading",
                 "section_header": "heading",
                 "table": "table",
                 "formula": "formula",
                 "equation": "formula",
+                "display_formula": "formula",
+                "inline_formula": "formula",
                 "figure": "figure",
                 "image": "figure",
+                "chart": "figure",
                 "caption": "caption",
+                "figure_title": "caption",
+                "header": "page_header",
+                "footer": "page_footer",
+                "header_image": "figure",
+                "footer_image": "figure",
                 "code": "code",
+                "algorithm": "code",
                 "list_item": "list_item",
             }.get(label, "text")
             structured: dict[str, object] = {}
@@ -285,7 +315,7 @@ def _paddle_blocks(
                             ExtractionWarning(
                                 "paddle_table_html_malformed",
                                 f"Paddle table block {index} had no parseable cells",
-                                segment_index=len(result),
+                                segment_index=segment_offset + len(result),
                             )
                         )
                 text = "\n".join("\t".join(cell for cell in row) for row in rows)
@@ -295,14 +325,24 @@ def _paddle_blocks(
             elif kind == "formula":
                 # Formula text is an exact LaTeX payload, not prose.
                 structured["latex"] = native_content
+            try:
+                box = _paddle_box(raw.get("block_bbox"), page_size)
+            except (TypeError, ValueError) as exc:
+                box = None
+                if warnings is not None:
+                    warnings.append(
+                        ExtractionWarning(
+                            "paddle_bbox_malformed",
+                            f"Paddle block {index}: {exc}",
+                            segment_index=segment_offset + len(result),
+                        )
+                    )
             result.append(
                 {
                     "text": text,
-                    "element_id": str(
-                        raw.get("block_id", f"page-{page_number}-{index}")
-                    ),
+                    "element_id": f"page-{page_number}-block-{raw.get('block_id', index)}",
                     "page_number": page_number,
-                    "bounding_box": _paddle_box(raw.get("block_bbox"), page_size),
+                    "bounding_box": box,
                     "kind": kind,
                     "structured_content": structured,
                     "metadata": {
@@ -318,10 +358,14 @@ def _paddle_blocks(
                     ExtractionWarning(
                         "paddle_block_conversion_failed",
                         f"Skipped Paddle block {index}: {exc}",
-                        segment_index=len(result),
+                        segment_index=segment_offset + len(result),
                     )
                 )
     return result
+
+
+# A parser-output allocation guard, not a limit on model/device memory.
+_MAX_TABLE_GRID_SLOTS = 100_000
 
 
 class _TableHTMLParser(HTMLParser):
@@ -334,6 +378,7 @@ class _TableHTMLParser(HTMLParser):
         self._cell_attrs: dict[str, str] = {}
         self._occupied: set[tuple[int, int]] = set()
         self._column = 0
+        self._cell_header = False
 
     def handle_starttag(self, tag: str, attrs) -> None:
         if tag.casefold() == "tr":
@@ -349,7 +394,10 @@ class _TableHTMLParser(HTMLParser):
             if self._row is None:
                 self._row = []
             self._cell_parts = []
+            self._cell_header = tag.casefold() == "th"
             self._cell_attrs = {str(key).casefold(): str(value) for key, value in attrs}
+        elif tag.casefold() in {"br", "p", "div"} and self._cell_parts is not None:
+            self._cell_parts.append(" ")
 
     def handle_data(self, data: str) -> None:
         if self._cell_parts is not None:
@@ -359,13 +407,18 @@ class _TableHTMLParser(HTMLParser):
         lowered = tag.casefold()
         if lowered in {"td", "th"} and self._cell_parts is not None:
             value = " ".join("".join(self._cell_parts).split())
-            assert self._row is not None
+            if self._row is None:
+                raise ValueError("Table cell has no row")
             row = len(self.rows)
             while (row, self._column) in self._occupied:
                 self._column += 1
             column = self._column
             row_span = _positive_span(self._cell_attrs.get("rowspan"))
             column_span = _positive_span(self._cell_attrs.get("colspan"))
+            if len(self._occupied) + row_span * column_span > _MAX_TABLE_GRID_SLOTS:
+                raise ValueError(
+                    "Table span expansion exceeds the parser-output budget"
+                )
             self._occupied.update(
                 (r, c)
                 for r in range(row, row + row_span)
@@ -380,14 +433,20 @@ class _TableHTMLParser(HTMLParser):
                     "column": column,
                     "row_span": row_span,
                     "column_span": column_span,
-                    "header": lowered == "th",
+                    "header": self._cell_header,
                 }
             )
             self._cell_parts = None
             self._cell_attrs = {}
         elif lowered == "tr" and self._row is not None:
+            if self._cell_parts is not None:
+                self.handle_endtag("td")
             self.rows.append(self._row)
             self._row = None
+        elif lowered == "table":
+            self.handle_endtag("tr")
+        elif lowered in {"p", "div"} and self._cell_parts is not None:
+            self._cell_parts.append(" ")
 
     def close(self) -> None:
         super().close()
@@ -422,33 +481,47 @@ def _plain_html_text(value: str) -> str:
 
 def _positive_span(value: str | None) -> int:
     try:
-        return max(1, int(value or 1))
+        span = int(value or 1)
     except ValueError:
-        return 1
+        raise ValueError("Table span must be a positive integer") from None
+    if not 1 <= span <= _MAX_TABLE_GRID_SLOTS:
+        raise ValueError("Table span exceeds the parser-output budget")
+    return span
 
 
 def _paddle_box(
     value: object, page_size: tuple[float, float] | None
 ) -> list[float] | None:
-    if not isinstance(value, (list, tuple)) or len(value) != 4:
+    if value is None:
         return None
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        raise ValueError("Paddle bounding box must contain four pixel coordinates")
+    if any(isinstance(item, bool) for item in value):
+        raise ValueError("Paddle bounding box coordinates must be numbers")
     values = [float(item) for item in value]
-    if all(0.0 <= item <= 1.0 for item in values):
-        return values
-    if page_size and page_size[0] > 0 and page_size[1] > 0:
-        width, height = page_size
-        normalized = [
-            values[0] / width,
-            values[1] / height,
-            values[2] / width,
-            values[3] / height,
-        ]
-        if all(0.0 <= item <= 1.0 for item in normalized):
-            return normalized
-    return None
+    if not all(math.isfinite(item) for item in values) or not (
+        values[0] < values[2] and values[1] < values[3]
+    ):
+        raise ValueError("Paddle bounding box is non-finite or reversed/empty")
+    if page_size is None:
+        raise ValueError("Pixel bounding boxes require a valid page size")
+    width, height = page_size
+    normalized = [
+        values[0] / width,
+        values[1] / height,
+        values[2] / width,
+        values[3] / height,
+    ]
+    if not all(0.0 <= item <= 1.0 for item in normalized):
+        raise ValueError("Paddle bounding box lies outside its page")
+    return normalized
 
 
 def _page_size(value: Mapping[str, object]) -> tuple[float, float] | None:
-    if value.get("width") and value.get("height"):
-        return float(value["width"]), float(value["height"])
+    try:
+        width, height = float(value["width"]), float(value["height"])
+        if all(math.isfinite(item) and item > 0 for item in (width, height)):
+            return width, height
+    except (KeyError, TypeError, ValueError):
+        pass
     return None

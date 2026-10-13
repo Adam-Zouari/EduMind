@@ -40,14 +40,13 @@ from experiments.benchmarks.common.metrics import (
     token_f1,
     word_error_rate,
 )
-from experiments.benchmarks.extraction.document import cli as document_cli
+from experiments.benchmarks.extraction.document import benchmark as document_benchmark
 from experiments.benchmarks.extraction.document.adapters import _paddle_blocks
-from experiments.benchmarks.extraction.document.cli import (
-    _document_candidates,
-    _validate_document_arguments,
-)
+from experiments.benchmarks.extraction.document.benchmark import comparison_candidates
+from experiments.benchmarks.extraction.document.cli import _validate_document_arguments
 from experiments.benchmarks.extraction.document.metrics import (
     METRIC_DIRECTIONS,
+    _document_fingerprint,
     aggregate_evaluations,
     load_reference,
     validate_reference,
@@ -674,10 +673,12 @@ def test_document_runner_preserves_first_attempt_quality(
         {
             "sample_id": "sample",
             "repetition": index,
+            "executed": True,
             "latency_seconds": 0.1,
             "success": success,
             "error": None if success else "injected failure",
             "document": document.to_dict() if success else None,
+            "output_fingerprint": _document_fingerprint(document) if success else None,
         }
         for index, success in enumerate(outcomes, 1)
     ]
@@ -739,11 +740,10 @@ def test_document_runner_preserves_first_attempt_quality(
 
 
 def test_document_configuration_matrix_has_no_duplicate_image_modes() -> None:
-    arguments = SimpleNamespace(profile="development", comparison="configuration")
     protocol = default_document_protocol()
-    pdf, _ = _document_candidates("pdf", arguments, protocol)
-    image, _ = _document_candidates("image", arguments, protocol)
-    docx, _ = _document_candidates("docx", arguments, protocol)
+    pdf, _ = comparison_candidates("pdf", "development", "configuration", protocol)
+    image, _ = comparison_candidates("image", "development", "configuration", protocol)
+    docx, _ = comparison_candidates("docx", "development", "configuration", protocol)
     assert len(pdf) == 24
     assert len(image) == len(set(image)) == 12
     assert all("mode=full_page" in candidate for candidate in image)
@@ -756,23 +756,23 @@ def test_document_architecture_uses_development_before_validation(monkeypatch) -
     )
     calls = []
 
-    def selected(_path, expected_stage, **_limits):
+    def selected(_path, *, expected_source, **_limits):
+        expected_stage = expected_source[1]
         calls.append(expected_stage)
         if expected_stage == "document-configuration-pdf":
-            return (configuration,)
-        return (configuration, "docling-vlm-granite-258m")
+            return SimpleNamespace(selected_candidates=(configuration,))
+        return SimpleNamespace(
+            selected_candidates=(configuration, "docling-vlm-granite-258m")
+        )
 
-    monkeypatch.setattr(document_cli, "_document_selection", selected)
-    development_arguments = SimpleNamespace(
-        profile="development",
-        comparison="architecture",
-        pdf_selection=Path("configuration-decision.json"),
-        image_selection=None,
-    )
-    development, _ = _document_candidates(
+    monkeypatch.setattr(document_benchmark, "load_engineer_decision", selected)
+    development, _ = comparison_candidates(
         "pdf",
-        development_arguments,
+        "development",
+        "architecture-development",
         default_document_protocol(),
+        selection_path=Path("configuration-decision.json"),
+        qualification_fingerprint="current",
     )
     assert development == (
         configuration,
@@ -780,16 +780,13 @@ def test_document_architecture_uses_development_before_validation(monkeypatch) -
         "paddleocr-vl-1.6",
     )
 
-    validation_arguments = SimpleNamespace(
-        profile="validation",
-        comparison="architecture",
-        pdf_selection=Path("architecture-decision.json"),
-        image_selection=None,
-    )
-    validation, _ = _document_candidates(
+    validation, _ = comparison_candidates(
         "pdf",
-        validation_arguments,
+        "validation",
+        "architecture-validation",
         default_document_protocol(),
+        selection_path=Path("architecture-decision.json"),
+        qualification_fingerprint="current",
     )
     assert validation == (configuration, "docling-vlm-granite-258m")
     assert calls == [
@@ -802,11 +799,11 @@ def test_document_locked_uses_exactly_one_validation_winner(monkeypatch) -> None
     winner = "docling-vlm-granite-258m"
     calls = []
 
-    def selected(path, expected_stage, **limits):
-        calls.append((path, expected_stage, limits))
-        return (winner,)
+    def selected(path, **limits):
+        calls.append((path, limits))
+        return SimpleNamespace(selected_candidates=(winner,))
 
-    monkeypatch.setattr(document_cli, "_document_selection", selected)
+    monkeypatch.setattr(document_benchmark, "load_engineer_decision", selected)
     arguments = SimpleNamespace(
         profile="locked",
         comparison="architecture",
@@ -814,8 +811,14 @@ def test_document_locked_uses_exactly_one_validation_winner(monkeypatch) -> None
         image_selection=None,
     )
 
-    candidates, decisions = _document_candidates(
-        "pdf", arguments, default_document_protocol()
+    protocol = default_document_protocol()
+    candidates, decisions = comparison_candidates(
+        "pdf",
+        "locked",
+        "architecture-locked",
+        protocol,
+        selection_path=arguments.pdf_selection,
+        qualification_fingerprint="current",
     )
 
     assert candidates == (winner,)
@@ -823,8 +826,17 @@ def test_document_locked_uses_exactly_one_validation_winner(monkeypatch) -> None
     assert calls == [
         (
             Path("validation-winner.json"),
-            "document-architecture-validation-pdf",
-            {"expected_profile": "validation", "exact": 1},
+            {
+                "expected_source": (
+                    "extraction",
+                    "document-architecture-validation-pdf",
+                    "validation",
+                ),
+                "expected_protocols": {"document": protocol.meta.checksum},
+                "expected_qualification": "current",
+                "exact": 1,
+                "maximum": None,
+            },
         )
     ]
     assert manifest_path("document", "locked").name == "document-locked-test.json"

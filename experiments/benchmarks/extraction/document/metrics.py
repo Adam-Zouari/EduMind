@@ -115,6 +115,7 @@ class ReferenceElement:
     identity: str | None = None
     html: str | None = None
     latex: str | None = None
+    type_annotated: bool = True
 
 
 @dataclass(frozen=True)
@@ -133,6 +134,7 @@ class DocumentEvaluation:
     source_group_id: str = ""
     table_pairs: list[tuple[str, str]] = field(default_factory=list)
     formula_pairs: list[tuple[str, str]] = field(default_factory=list)
+    reference_counts: dict[str, int] = field(default_factory=dict)
 
 
 def load_reference(item: Mapping[str, object]) -> ReferenceDocument:
@@ -203,11 +205,11 @@ def validate_reference(
         "hierarchy",
     }
     raw_elements = payload.get("elements", payload.get("reference_elements"))
-    if reference.capabilities & layout_capabilities and not isinstance(
-        raw_elements, (list, tuple)
-    ):
+    if reference.capabilities & (
+        layout_capabilities | {"tables", "formulas"}
+    ) and not isinstance(raw_elements, (list, tuple)):
         raise ValueError(
-            f"Document sample {item.get('id')} claims layout capabilities without an element annotation list"
+            f"Document sample {item.get('id')} claims element-based capabilities without an element annotation list"
         )
     identifiers = [element.element_id for element in reference.elements]
     if len(identifiers) != len(set(identifiers)):
@@ -337,7 +339,10 @@ def validate_reference(
                 f"Visual sample {item.get('id')} has elements without normalized boxes: "
                 + ", ".join(missing_boxes[:10])
             )
-    page_matched_kinds = set(LAYOUT_KINDS)
+    layout_matching = bool(reference.capabilities & layout_capabilities)
+    page_matched_kinds = set(LAYOUT_KINDS) if layout_matching else set()
+    if reference.capabilities & {"reading_order", "hierarchy"}:
+        page_matched_kinds.update(element.kind for element in reference.elements)
     if "tables" in reference.capabilities:
         page_matched_kinds.add(SegmentKind.TABLE)
     if "formulas" in reference.capabilities:
@@ -350,6 +355,29 @@ def validate_reference(
         raise ValueError(
             f"Visual sample {item.get('id')} has matched elements without page numbers"
         )
+    for element in reference.elements:
+        matching_required = (
+            element.kind in page_matched_kinds
+            or "pages" in reference.capabilities
+            and element.page_number is not None
+            and element.kind
+            in {SegmentKind.FIGURE, SegmentKind.TABLE, SegmentKind.FORMULA}
+        )
+        box_matching = (
+            kind in VISUAL_KINDS
+            and "layout_boxes" in reference.capabilities
+            and element.bounding_box is not None
+        )
+        if (
+            matching_required
+            and not box_matching
+            and not _element_tokens(element)
+            and not _element_identity(element)
+        ):
+            raise ValueError(
+                f"Reference element {element.element_id} requires comparison text "
+                "or a frozen non-text identity for its claimed matching task"
+            )
 
 
 def validate_official_evaluators(
@@ -429,6 +457,7 @@ def score_document(
     result = DocumentEvaluation(
         _document_groups(item),
         source_group_id=source_id(item),
+        reference_counts=_reference_counts(reference),
     )
     predicted = tuple(document.segments) if document is not None else ()
     applicable = _eligible_metrics(reference)
@@ -600,7 +629,7 @@ def _eligible_metrics(reference: ReferenceDocument) -> set[str]:
         result.update(
             {"layout.element_precision", "layout.element_recall", "layout.element_f1"}
         )
-    if layout and "element_types" in capabilities:
+    if any(e.type_annotated for e in layout) and "element_types" in capabilities:
         result.add("layout.element_type_recall")
     if layout and "layout_boxes" in capabilities:
         result.add("layout.mean_bounding_box_iou")
@@ -636,6 +665,45 @@ def _usable_element(element) -> bool:
     )
 
 
+def _reference_counts(reference: ReferenceDocument) -> dict[str, int]:
+    capabilities = reference.capabilities
+    elements = reference.elements
+    layout = [element for element in elements if element.kind in LAYOUT_KINDS]
+    return {
+        "elements": len(elements),
+        "layout_elements": len(layout)
+        if capabilities
+        & {"reading_order", "layout_boxes", "element_types", "hierarchy"}
+        else 0,
+        "tables": sum(e.kind is SegmentKind.TABLE for e in elements)
+        if "tables" in capabilities
+        else 0,
+        "formulas": sum(e.kind is SegmentKind.FORMULA for e in elements)
+        if "formulas" in capabilities
+        else 0,
+        "pages": len(reference.pages) if "pages" in capabilities else 0,
+        "reading_order_elements": len(elements)
+        if "reading_order" in capabilities
+        else 0,
+        "typed_layout_elements": sum(e.type_annotated for e in layout)
+        if "element_types" in capabilities
+        else 0,
+        "hierarchy_elements": sum(
+            e.parent_annotated or e.level_annotated for e in elements
+        )
+        if "hierarchy" in capabilities
+        else 0,
+        "boxed_layout_elements": sum(_valid_box(e.bounding_box) for e in layout)
+        if "layout_boxes" in capabilities
+        else 0,
+        "page_attribution_elements": sum(
+            e.page_number is not None and bool(_element_tokens(e)) for e in elements
+        )
+        if "pages" in capabilities
+        else 0,
+    }
+
+
 def aggregate_evaluations(
     records, *, resamples, seed, confidence, minimum_sources=None
 ):
@@ -649,6 +717,7 @@ def aggregate_evaluations(
             continue
         prefix = "" if group is None else f"{group}."
         estimates = _aggregate_group(selected)
+        cohorts = {}
         for name, value in estimates.items():
             qualified = _grouped_name(name, prefix)
             metrics[qualified] = value
@@ -680,21 +749,59 @@ def aggregate_evaluations(
                     ),
                 }
             )
-        rows = [
-            {"source_group_id": record.source_group_id or str(index), "record": record}
-            for index, record in enumerate(selected)
-        ]
-        bounds = bootstrap_sources(
-            rows,
-            lambda values: _aggregate_group([row["record"] for row in values]),
-            resamples=resamples,
-            seed=seed,
-            confidence=confidence,
-            minimum_sources=minimum_sources,
-        )
-        intervals.update(
-            {_grouped_name(name, prefix): value for name, value in bounds.items()}
-        )
+            count_key = (
+                "layout_elements"
+                if name
+                in {
+                    "layout.element_precision",
+                    "layout.element_recall",
+                    "layout.element_f1",
+                }
+                else "tables"
+                if name.startswith("tables.detection_")
+                else "formulas"
+                if name.startswith("formulas.detection_")
+                else None
+            )
+            if count_key is not None:
+                counts = [
+                    record.reference_counts[count_key]
+                    for record in eligible
+                    if count_key in record.reference_counts
+                ]
+                metrics[f"{qualified}.reference_positive_count"] = float(
+                    sum(count > 0 for count in counts)
+                )
+                metrics[f"{qualified}.verified_negative_count"] = float(
+                    sum(count == 0 for count in counts)
+                )
+            indices = tuple(
+                index
+                for index, record in enumerate(selected)
+                if record.statuses.get(name, {}).get("status") != "inapplicable"
+            )
+            cohorts.setdefault(indices, []).append(name)
+        for indices, names in cohorts.items():
+            rows = [
+                {
+                    "source_group_id": selected[index].source_group_id or str(index),
+                    "record": selected[index],
+                }
+                for index in indices
+            ]
+            bounds = bootstrap_sources(
+                rows,
+                lambda values, names=tuple(names): _aggregate_group(
+                    [row["record"] for row in values], names=names
+                ),
+                resamples=resamples,
+                seed=seed,
+                confidence=confidence,
+                minimum_sources=minimum_sources,
+            )
+            intervals.update(
+                {_grouped_name(name, prefix): value for name, value in bounds.items()}
+            )
     return metrics, intervals
 
 
@@ -763,9 +870,15 @@ def _reference_from_mapping(payload: Mapping[str, object]) -> ReferenceDocument:
                     identity=_optional_string(value.get("identity")),
                     html=_optional_string(value.get("html")),
                     latex=_optional_string(value.get("latex")),
+                    type_annotated="kind" in value,
                 )
             )
-    if not pages and payload.get("kind") == "image":
+    if (
+        not pages
+        and raw_capabilities is None
+        and payload.get("kind") == "image"
+        and isinstance(payload.get("text", payload.get("reference")), str)
+    ):
         pages[1] = text
     capabilities = (
         frozenset(str(value) for value in raw_capabilities)
@@ -829,6 +942,18 @@ def _page_metrics(
                 )
             ]
         observed = [e for e in predicted if e.page_number == page]
+        if expected and not any(
+            e.page_number == page and _usable_element(e) for e in reference.elements
+        ):
+            # A page-text-only reference has no element segmentation to match.
+            observed = [
+                ReferenceElement(
+                    str(page),
+                    SegmentKind.TEXT,
+                    text=predicted_pages.get(page, ""),
+                    page_number=page,
+                )
+            ]
         if _match_elements(
             expected,
             observed,
@@ -897,11 +1022,15 @@ def _layout_metrics(references, predictions, matches, *, capabilities):
             strict=True,
         )
     )
-    if references and "element_types" in capabilities:
+    typed = {
+        index for index, element in enumerate(references) if element.type_annotated
+    }
+    if typed and "element_types" in capabilities:
         result["layout.element_type_recall"] = sum(
             references[left].kind is predictions[right].kind
             for left, right, _ in matches
-        ) / len(references)
+            if left in typed
+        ) / len(typed)
     if references and "layout_boxes" in capabilities:
         result["layout.mean_bounding_box_iou"] = sum(
             _iou(references[left].bounding_box, predictions[right].bounding_box)
@@ -1000,8 +1129,9 @@ def _score_structured_kind(
             )
 
 
-def _aggregate_group(records):
-    names = sorted({name for record in records for name in record.metrics})
+def _aggregate_group(records, *, names=None):
+    if names is None:
+        names = sorted({name for record in records for name in record.metrics})
     result = {}
     for name in names:
         values = [
@@ -1035,17 +1165,19 @@ def _match_elements(references, predictions, *, visual, use_boxes=None, threshol
             else:
                 expected, observed = (
                     _element_tokens(reference),
-                    _element_tokens(prediction),
+                    _element_tokens(prediction, kind=reference.kind),
                 )
                 if expected and observed:
                     overlap = sum((Counter(expected) & Counter(observed)).values())
                     score = precision_recall_f1(
                         overlap, len(observed) - overlap, len(expected) - overlap
                     )[2]
-                else:
+                elif not expected:
                     expected_id = _element_identity(reference)
                     observed_id = _element_identity(prediction)
                     score = float(bool(expected_id) and expected_id == observed_id)
+                else:
+                    score = 0.0
             if score > 0 and score >= threshold:
                 scores[left, right] = score
                 admissible[left, right] = True
@@ -1059,17 +1191,18 @@ def _match_elements(references, predictions, *, visual, use_boxes=None, threshol
     ]
 
 
-def _element_tokens(element):
+def _element_tokens(element, *, kind=None):
+    kind = element.kind if kind is None else kind
     text = getattr(element, "text", "")
-    if element.kind is SegmentKind.TABLE:
+    if kind is SegmentKind.TABLE:
         text = _table_text(element)
-    if element.kind is SegmentKind.FORMULA:
+    if kind is SegmentKind.FORMULA:
         text = (
             getattr(element, "latex", None)
             or getattr(element, "structured_content", {}).get("latex")
             or text
         )
-    if element.kind in {SegmentKind.CODE, SegmentKind.FORMULA}:
+    if kind in {SegmentKind.CODE, SegmentKind.FORMULA}:
         import re
 
         return re.findall(r"\w+|[^\w\s]", _canonical(text))
@@ -1086,23 +1219,84 @@ def _table_text(element):
     if html:
         from .adapters import _parse_table_html
 
-        return " ".join(str(cell["text"]) for cell in _parse_table_html(html)[1])
+        try:
+            cells = _parse_table_html(html)[1]
+        except ValueError:
+            # Claimed references are validated separately. Malformed predicted
+            # spans must not abort scoring or establish a structural identity.
+            return element.text
+        return " ".join(str(cell["text"]) for cell in cells)
     return element.text
 
 
 def _element_identity(element):
     structured = getattr(element, "structured_content", {})
-    identity = getattr(element, "identity", None) or structured.get("identity")
-    if identity:
-        return ("identity", identity)
     html = getattr(element, "html", None) or structured.get("html")
-    if element.kind is SegmentKind.TABLE and html:
-        from .adapters import _parse_table_html
+    if element.kind is SegmentKind.TABLE:
+        structure = _table_structure(html) if html else None
+        return ("table", stable_hash(structure)) if structure is not None else None
+    identity = getattr(element, "identity", None) or structured.get("identity")
+    return ("identity", identity) if identity else None
 
-        rows, cells = _parse_table_html(html)
-        if cells:
-            return ("table", stable_hash({"rows": rows, "cells": cells}))
-    return None
+
+def _table_structure(value: str):
+    """Canonical section/row/cell tags and spans, never cell text or styling."""
+    from html.parser import HTMLParser
+
+    class StructureParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.stack = []
+            self.events = []
+            self.valid = True
+            self.cells = 0
+            self.tables = 0
+
+        def handle_starttag(self, tag, attrs):
+            if tag not in {"table", "thead", "tbody", "tfoot", "tr", "td", "th"}:
+                return
+            parent = self.stack[-1] if self.stack else None
+            allowed = {
+                "table": {None},
+                "thead": {"table"},
+                "tbody": {"table"},
+                "tfoot": {"table"},
+                "tr": {"table", "thead", "tbody", "tfoot"},
+                "td": {"tr"},
+                "th": {"tr"},
+            }
+            self.valid &= parent in allowed[tag]
+            spans = []
+            if tag in {"td", "th"}:
+                self.cells += 1
+                attrs = dict(attrs)
+                for name in ("rowspan", "colspan"):
+                    try:
+                        span = int(attrs.get(name, "1"))
+                    except (ValueError, TypeError):
+                        self.valid = False
+                        span = 0
+                    self.valid &= span > 0
+                    spans.append(span)
+            self.tables += tag == "table"
+            self.stack.append(tag)
+            self.events.append((tag, *spans))
+
+        def handle_endtag(self, tag):
+            if tag not in {"table", "thead", "tbody", "tfoot", "tr", "td", "th"}:
+                return
+            if not self.stack or self.stack.pop() != tag:
+                self.valid = False
+            self.events.append(("/" + tag,))
+
+    parser = StructureParser()
+    parser.feed(value)
+    parser.close()
+    return (
+        parser.events
+        if parser.valid and not parser.stack and parser.cells and parser.tables == 1
+        else None
+    )
 
 
 def _valid_box(box):

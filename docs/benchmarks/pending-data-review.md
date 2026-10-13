@@ -22,6 +22,10 @@ the authoritative dataset manifests and methodology, then remove the item.
 
 ## Document extraction
 
+- Review whether the largest-file-per-format preflight inputs exercise demanding
+  page counts, rendered resolutions, and content density. File bytes alone do
+  not establish an upper workload boundary; freeze any revised stress-selection
+  or supported-envelope contract from development data before qualification.
 - Verify that every reference-eligible metric has enough independent sources: pages with
   page references, layouts with element boxes/types/hierarchy, tables with cell
   structure, and formulas with detection and transcription references.

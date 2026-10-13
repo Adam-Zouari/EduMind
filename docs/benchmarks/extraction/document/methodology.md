@@ -425,6 +425,12 @@ not a candidate-dependent subset. Smoke uses one measured attempt per fixture
 and does not estimate repeatability. Preflight uses no warmup and terminates its
 worker; it does not warm a later comparison.
 
+Document preflight currently selects the largest source file in each supported
+format from the reviewed development manifest. File size is a deterministic
+stress-selection proxy, not a proven page-count or image-resolution boundary.
+Review its coverage against the supported workloads before authoritative use;
+normal runtime OOM, placement, and telemetry gates still apply to every profile.
+
 | Measured attempt | Evidence retained |
 |---|---|
 | 1 | The sole quality output, timing, validity/failure state, and canonical output for repeatability. |
@@ -544,11 +550,17 @@ The parent run stores:
   succeeded or failed; and
 - paired comparisons derived from aligned per-sample results in `summary.json`.
 
+Configuration, finalist, and winner decisions must reference evidence produced
+under the current document protocol and matching hardware qualification.
+Changing either requires fresh matching evidence before advancing candidates;
+the runner does not reuse a stale decision merely because its candidate names
+still exist.
+
 Paired comparisons use aligned document-level scalar results, including layout,
 table, and formula detection precision/recall/F1 under document-macro aggregation.
 Reference eligibility stays fixed, but failed first outputs can make the actual
-scored cohorts differ. Quality and successful-completion latency comparisons use
-aligned samples defined for both candidates and identify that common cohort,
+scored cohorts differ. Paired quality comparisons use aligned first-attempt scores
+defined for both candidates and identify that common cohort,
 its independent-source count, and all exclusions. Failure/repeatability evidence
 retains scheduled outcomes. A conditional comparison is not a claim about the
 entire planned workload; missing required evaluations cannot be silently dropped.
@@ -585,6 +597,13 @@ The child run stores:
 - retained outputs for every executed attempt. Official quality evaluation uses
   only the first measured output; later outputs are validated and fingerprinted,
   not rescored. Warmup and loading records are separate from measured attempts.
+
+Loading, warmup, telemetry, or placement failures retain their lifecycle phase,
+elapsed-to-failure, available outputs, and partial resource observations.
+Scheduled but unexecuted attempts remain explicit null observations, not
+fabricated extraction failures. Missing measured attempts make the invocation
+incomplete; they do not yield a complete Attempt Failure Rate or repeatability
+score.
 
 The MLflow comparison page is used for compact aggregates. The Parquet artifact
 is the detailed evidence: it supports document-group breakdowns, diagnostic
@@ -733,7 +752,5 @@ parent and child runs, the engineer records finalists or a final extraction
 policy in a separate decision file. The benchmark never modifies production
 configuration automatically.
 
-The approved document-parser profile is frozen before video and
-downstream extraction are evaluated. The revised first-attempt failure and
-display-name contract is approved documentation; align executable runners before
-claiming compliance under this version.
+The approved document-parser profile is frozen before video and downstream
+extraction are evaluated.

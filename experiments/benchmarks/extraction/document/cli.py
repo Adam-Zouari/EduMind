@@ -5,9 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.arguments import execution_devices, parser
-from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.extraction.document.benchmark import (
     run,
     run_preflight_profile,
@@ -139,18 +137,22 @@ def _document_main(arguments) -> int:
                         "Native DOCX has no parser comparison; reuse development-docx configuration evidence"
                     )
                 continue
-            candidates, decisions = _document_candidates(source, arguments, protocol)
             results.append(
                 (
                     device,
                     source,
                     run(
                         arguments.profile,
-                        candidates,
                         manifest_path=arguments.manifest,
                         no_mlflow=arguments.no_mlflow,
                         component_options={"device": device},
-                        decision_files=decisions,
+                        selection_path=(
+                            arguments.pdf_selection
+                            if source == "pdf"
+                            else arguments.image_selection
+                            if source == "image"
+                            else None
+                        ),
                         document_kind=source,
                         document_comparison=comparison,
                         preflight_report=arguments.preflight_report,
@@ -177,56 +179,6 @@ def _document_main(arguments) -> int:
     return 0 if all(result.complete for _, _, result in results) else 2
 
 
-def _document_candidates(source: str, arguments, protocol):
-    comparison = arguments.comparison
-    if comparison == "configuration":
-        if source == "pdf":
-            return protocol.configuration_candidates(arguments.profile), {}
-        if source == "image":
-            return protocol.configuration_candidates(arguments.profile, image=True), {}
-        return ("docling-standard-native",), {}
-
-    if source == "docx":
-        return ("docling-standard-native",), {}
-    decision_path = (
-        arguments.pdf_selection if source == "pdf" else arguments.image_selection
-    )
-    if decision_path is None:
-        suffix = {
-            "development": "configuration",
-            "validation": "validation",
-            "locked": "locked",
-        }[arguments.profile]
-        decision_path = (
-            PROJECT_ROOT
-            / "data/benchmarks/decisions"
-            / f"document-{source}-{suffix}.json"
-        )
-    if arguments.profile == "development":
-        selected = _document_selection(
-            decision_path, f"document-configuration-{source}", exact=1
-        )
-        return (
-            selected[0],
-            "docling-vlm-granite-258m",
-            "paddleocr-vl-1.6",
-        ), {source: decision_path}
-    if arguments.profile == "validation":
-        selected = _document_selection(
-            decision_path,
-            f"document-architecture-development-{source}",
-            maximum=protocol.maximum_architecture_finalists,
-        )
-    else:
-        selected = _document_selection(
-            decision_path,
-            f"document-architecture-validation-{source}",
-            expected_profile="validation",
-            exact=1,
-        )
-    return selected, {source: decision_path}
-
-
 def _validate_document_arguments(arguments, sources: tuple[str, ...]) -> None:
     if arguments.profile == "locked" and sources != ("pdf", "image", "docx"):
         raise ValueError(
@@ -248,27 +200,3 @@ def _validate_document_arguments(arguments, sources: tuple[str, ...]) -> None:
             "Document architecture comparison requires development, validation, "
             "or locked-test data"
         )
-    for source in sources:
-        if source not in {"pdf", "image", "docx"}:
-            raise ValueError(f"Unsupported document source: {source}")
-
-
-def _document_selection(
-    path: Path | None,
-    expected_stage: str,
-    *,
-    expected_profile: str = "development",
-    exact: int | None = None,
-    maximum: int | None = None,
-) -> tuple[str, ...]:
-    if path is None:
-        raise ValueError(
-            f"Document comparison requires a decision for {expected_stage}"
-        )
-    decision = load_engineer_decision(
-        path,
-        exact=exact,
-        maximum=maximum,
-        expected_source=("extraction", expected_stage, expected_profile),
-    )
-    return decision.selected_candidates

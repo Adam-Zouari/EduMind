@@ -12,6 +12,7 @@ from experiments.benchmarks.common.data_validation import (
     manifest_path as default_manifest_path,
 )
 from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
+from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.preflight import (
     current_qualification_fingerprint,
     eligible_candidates,
@@ -45,13 +46,12 @@ from experiments.benchmarks.preparation.models import load_selected_model_lock
 
 def run(
     profile: str,
-    candidates: tuple[str, ...],
     *,
     manifest_path: Path | None = None,
     no_mlflow: bool = False,
     component_options: Mapping[str, object] | None = None,
-    decision_files: Mapping[str, Path] | None = None,
-    document_kind: str | None = None,
+    selection_path: Path | None = None,
+    document_kind: str,
     document_comparison: str | None = None,
     preflight_report: Path | None = None,
     preflight_run_id: str | None = None,
@@ -59,9 +59,11 @@ def run(
 ) -> BenchmarkResult:
     protocol = load_protocol(protocol_path)
     execution = protocol.profile(profile)
+    if document_kind not in {"pdf", "image", "docx"}:
+        raise ValueError(f"Unsupported document source: {document_kind}")
     path = (manifest_path or default_manifest_path("document", profile)).resolve()
     data_report_path, data_report = verified_inputs(path, profile, protocol)
-    manifest = load_manifest(path)
+    manifest = load_manifest(path, validate_annotations=False)
     require_manifest_split(
         manifest,
         profile,
@@ -71,7 +73,7 @@ def run(
         {**item, **data_report["metadata"]["samples"][str(item["id"])]}
         for item in manifest.samples
         if item.get("kind") in {"image", "pdf", "docx"}
-        and (document_kind is None or item.get("kind") == document_kind)
+        and item.get("kind") == document_kind
     ]
     if not selected:
         raise ValueError(f"Manifest {manifest.name} has no document samples")
@@ -104,24 +106,14 @@ def run(
         if profile in {"validation", "locked"}
         else "configuration"
     )
-    plan = BenchmarkPlan(
-        "extraction",
-        f"document-{comparison}-{document_kind or 'all'}",
-        profile,
-        manifest.name,
-        candidates,
-        seed=protocol.meta.seed,
-        repetitions=execution.repetitions,
-        bootstrap_resamples=execution.bootstrap_resamples,
-        warmups=execution.warmups,
-        settings=component_options,
-    )
     declared = declared_document_candidates(protocol)
     qualification_path = None
     qualification = None
+    fingerprint = None
     if profile != "smoke":
+        qualification_data_report = data_report
         if profile != "development":
-            verified_inputs(
+            _, qualification_data_report = verified_inputs(
                 default_manifest_path("document", "development"),
                 "development",
                 protocol,
@@ -130,9 +122,14 @@ def run(
         qualification_manifest = (
             manifest
             if profile == "development"
-            else load_manifest(default_manifest_path("document", "development"))
+            else load_manifest(
+                default_manifest_path("document", "development"),
+                validate_annotations=False,
+            )
         )
-        qualification_stress = _stress_documents(qualification_manifest)
+        qualification_stress = _stress_documents(
+            qualification_manifest, qualification_data_report["metadata"]["samples"]
+        )
         fingerprint, _ = _qualification_identity(
             protocol,
             qualification_lock,
@@ -147,23 +144,35 @@ def run(
             explicit=preflight_report,
             run_id=preflight_run_id,
         )
+        component_options.update(
+            preflight_run_id=qualification.get("mlflow_run_id"),
+            preflight_fingerprint=fingerprint,
+            hardware_exclusions=qualification.get("excluded_candidates", []),
+        )
+    candidates, decision_files = comparison_candidates(
+        document_kind,
+        profile,
+        comparison,
+        protocol,
+        selection_path=selection_path,
+        qualification_fingerprint=fingerprint,
+    )
+    if qualification is not None:
         candidates = eligible_candidates(
             candidates, qualification, profile=profile, label="Document"
         )
-        plan = BenchmarkPlan(
-            **{
-                **vars(plan),
-                "candidates": candidates,
-                "settings": {
-                    **plan.settings,
-                    "preflight_run_id": qualification.get("mlflow_run_id"),
-                    "preflight_fingerprint": qualification.get(
-                        "qualification_fingerprint"
-                    ),
-                    "hardware_exclusions": qualification.get("excluded_candidates", []),
-                },
-            }
-        )
+    plan = BenchmarkPlan(
+        "extraction",
+        f"document-{comparison}-{document_kind}",
+        profile,
+        manifest.name,
+        candidates,
+        seed=protocol.meta.seed,
+        repetitions=execution.repetitions,
+        bootstrap_resamples=execution.bootstrap_resamples,
+        warmups=execution.warmups,
+        settings=component_options,
+    )
     model_lock = _model_lock(candidates)
     requested_device = str(component_options.get("device", execution.device))
     for candidate in candidates:
@@ -193,16 +202,18 @@ def run(
         )
 
     directions = runner.directions_for(tuple(references.values()), METRIC_DIRECTIONS)
+    required = tuple(directions)
     return run_benchmark(
         plan,
         evaluate,
         dataset_checksum=manifest.fingerprint,
         directions=directions,
         primary_metric=runner.primary_metrics(directions),
-        required_metrics=runner.required_metrics(directions),
-        nullable_metrics=runner.required_metrics(directions),
+        required_metrics=required,
+        nullable_metrics=required,
         paired_metrics=runner.paired_metrics(directions),
         paired_group_key="source_group_id",
+        paired_minimum_ci_units=protocol.minimum_ci_sources,
         monitor_resources=False,
         candidate_artifact_name="candidate.json",
         revisions={
@@ -232,12 +243,12 @@ def run(
         protocols={"document": protocol.meta},
         no_mlflow=no_mlflow,
         run_name_prefix=(
-            f"smoke-{requested_device}-{document_kind or 'all'}"
+            f"smoke-{requested_device}-{document_kind}"
             if profile == "smoke"
             else (
-                f"development-{'config' if comparison == 'configuration' else 'parsers'}-{document_kind or 'all'}"
+                f"development-{'config' if comparison == 'configuration' else 'parsers'}-{document_kind}"
                 if profile == "development" and document_kind != "docx"
-                else f"{profile}-{document_kind or 'all'}"
+                else f"{profile}-{document_kind}"
             )
         ),
     )
@@ -251,10 +262,10 @@ def run_preflight_profile(
 ):
     protocol = load_protocol(protocol_path)
     path = (manifest_path or default_manifest_path("document", "development")).resolve()
-    manifest = load_manifest(path)
-    data_report_path, _ = verified_inputs(path, "development", protocol)
+    data_report_path, data_report = verified_inputs(path, "development", protocol)
+    manifest = load_manifest(path, validate_annotations=False)
     require_manifest_split(manifest, "development", "development")
-    stress = _stress_documents(manifest)
+    stress = _stress_documents(manifest, data_report["metadata"]["samples"])
     candidates = declared_document_candidates(protocol)
     model_lock = _model_lock(candidates)
     for candidate in candidates:
@@ -346,6 +357,85 @@ def declared_document_candidates(protocol):
     )
 
 
+def comparison_candidates(
+    source,
+    profile,
+    comparison,
+    protocol,
+    *,
+    selection_path=None,
+    qualification_fingerprint=None,
+):
+    """Resolve the roster once, after current qualification is known."""
+    if source not in {"pdf", "image", "docx"}:
+        raise ValueError(f"Unsupported document source: {source}")
+    if comparison == "configuration":
+        if profile not in {"smoke", "development"} or selection_path is not None:
+            raise ValueError(
+                "Configuration screening uses smoke/development without a decision"
+            )
+        return (
+            ("docling-standard-native",)
+            if source == "docx"
+            else protocol.configuration_candidates(profile, image=source == "image")
+        ), {}
+    if comparison != f"architecture-{profile}" or profile == "smoke":
+        raise ValueError(
+            "Document parser comparison requires development, validation, or locked"
+        )
+    if source == "docx":
+        if profile == "development":
+            raise ValueError(
+                "Reuse native DOCX configuration evidence; no parser comparison"
+            )
+        return ("docling-standard-native",), {}
+    if not qualification_fingerprint:
+        raise ValueError(
+            "Document decisions require the current qualification fingerprint"
+        )
+    suffix = "configuration" if profile == "development" else profile
+    path = selection_path or (
+        PROJECT_ROOT / "data/benchmarks/decisions" / f"document-{source}-{suffix}.json"
+    )
+    source_stage = (
+        "configuration"
+        if profile == "development"
+        else "architecture-development"
+        if profile == "validation"
+        else "architecture-validation"
+    )
+    decision = load_engineer_decision(
+        path,
+        exact=1 if profile != "validation" else None,
+        maximum=protocol.maximum_architecture_finalists
+        if profile == "validation"
+        else None,
+        expected_source=(
+            "extraction",
+            f"document-{source_stage}-{source}",
+            "validation" if profile == "locked" else "development",
+        ),
+        expected_protocols={"document": protocol.meta.checksum},
+        expected_qualification=qualification_fingerprint,
+    )
+    selected = decision.selected_candidates
+    allowed = (
+        set(protocol.configuration_candidates("development", image=source == "image"))
+        if profile == "development"
+        else set(declared_document_candidates(protocol)) - {"docling-standard-native"}
+    )
+    if not set(selected) <= allowed or (
+        source == "image"
+        and any("mode=pdf_aware_layout_regions" in candidate for candidate in selected)
+    ):
+        raise ValueError(
+            "Document decision selects a candidate outside this source's declared roster"
+        )
+    if profile == "development":
+        selected = (*selected, "docling-vlm-granite-258m", "paddleocr-vl-1.6")
+    return selected, {source: path}
+
+
 def _qualification_identity(protocol, model_lock, candidates, manifest, stress):
     execution = protocol.profile("development")
     return current_qualification_fingerprint(
@@ -373,9 +463,9 @@ def _qualification_identity(protocol, model_lock, candidates, manifest, stress):
     )
 
 
-def _stress_documents(manifest):
+def _stress_documents(manifest, metadata):
     items = [
-        item
+        {**item, **metadata[str(item["id"])]}
         for item in manifest.samples
         if item.get("kind") in {"image", "pdf", "docx"}
     ]

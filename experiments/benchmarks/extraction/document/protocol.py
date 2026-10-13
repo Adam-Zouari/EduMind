@@ -224,7 +224,8 @@ def protocol_from_mapping(
     ):
         boolean(parser[name], f"parser.{name}")
     granite = strict_object(parser["granite"], "parser.granite", {"load_in_8bit"})
-    boolean(granite["load_in_8bit"], "parser.granite.load_in_8bit")
+    if boolean(granite["load_in_8bit"], "parser.granite.load_in_8bit"):
+        raise ValueError("Pinned Docling Granite does not support load_in_8bit=True")
     paddle = strict_object(
         parser["paddle"], "parser.paddle", {"pipeline_version", "recognition_backend"}
     )

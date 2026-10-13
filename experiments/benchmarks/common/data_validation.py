@@ -70,6 +70,13 @@ def input_identity(
                     asset = (PROJECT_ROOT / str(item[field])).resolve()
                     files[str(asset)] = sha256_file(asset)
     extraction = PROJECT_ROOT / "experiments/benchmarks/extraction"
+    if benchmark == "document":
+        # Reference renderability was certified under this evaluator identity.
+        evaluator = PROJECT_ROOT / "data/benchmarks/evaluators/OmniDocBench"
+        for name in (".edumind-revision", ".edumind-image.json"):
+            source = evaluator / name
+            if source.is_file():
+                files[str(source)] = sha256_file(source)
     dependencies = [
         Path(__file__).with_name("datasets.py"),
     ]
@@ -99,6 +106,10 @@ def input_identity(
                 )
             )
         )
+        if benchmark == "document":
+            dependencies.append(
+                PROJECT_ROOT / "experiments/benchmarks/preparation/evaluators.py"
+            )
     implementation = {
         str(source): sha256_file(source)
         for source in (Path(__file__), Path(validator_path), *dependencies)
