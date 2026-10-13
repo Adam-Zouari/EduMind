@@ -791,3 +791,30 @@ def test_real_native_docling_hierarchy_maps_ancestors_without_synthetic_groups()
     assert [s.metadata["hierarchy_level"] for s in document.segments] == [1, 2, 3]
     assert len(document.segments) == 3
     worker.validate_document_payload(document.to_dict())
+
+
+def test_pipeline_parameters_preserve_concrete_ocr_and_table_options():
+    options_module = pytest.importorskip("docling.datamodel.pipeline_options")
+    options = options_module.PdfPipelineOptions(
+        ocr_options=options_module.EasyOcrOptions(
+            lang=["en"], use_gpu=True, download_enabled=False
+        )
+    )
+    options.table_structure_options.mode = options_module.TableFormerMode.ACCURATE
+    options.table_structure_options.do_cell_matching = False
+    extractor = SimpleNamespace(
+        _runtimes={
+            "runtime": SimpleNamespace(
+                initialized_pipelines={
+                    (object, "hash"): SimpleNamespace(pipeline_options=options)
+                }
+            )
+        }
+    )
+    logged = next(iter(worker.pipeline_parameters(extractor).values()))
+    assert logged["ocr_options"]["use_gpu"] is True
+    assert logged["ocr_options"]["download_enabled"] is False
+    assert logged["table_structure_options"] == {
+        "mode": "accurate",
+        "do_cell_matching": False,
+    }

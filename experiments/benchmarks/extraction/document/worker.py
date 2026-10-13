@@ -285,7 +285,7 @@ def pipeline_parameters(extractor):
             options = getattr(pipeline, "pipeline_options", None)
             if options is not None:
                 result[f"{runtime_index}:{type(pipeline).__name__}:{key[1]}"] = (
-                    options.model_dump(mode="json")
+                    options.model_dump(mode="json", serialize_as_any=True)
                 )
         config = getattr(runtime, "_merged_paddlex_config", None)
         if isinstance(config, Mapping):
