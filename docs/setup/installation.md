@@ -324,9 +324,9 @@ running the existing smoke benchmarks does not require `flite`.
 
 Prepared assets still need reference and split review before benchmark execution.
 The [shared data-validation guide](../benchmarks/data-validation.md) defines the
-standalone checks and sealed-report verification. Document, ASR, and Video
-implement this interface: validate the prepared inputs before starting any
-extraction profile. The remaining suites retain their current input checks
+standalone checks and sealed-report verification. Document, ASR, Video, and
+Chunking–Embedding implement this interface: validate prepared inputs before
+starting their profiles. The remaining suites retain their current input checks
 until their planned validators are implemented.
 
 ## 5. Vector databases

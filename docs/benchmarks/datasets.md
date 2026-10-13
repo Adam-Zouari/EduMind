@@ -15,7 +15,7 @@ licenses, references, and source-family-isolated splits.
 
 After preparation, follow the [shared data-validation guide](data-validation.md)
 for per-profile checks, cross-split isolation, generated reports, and their
-verification before runs. Document, ASR, and video implement these standalone
+verification before runs. Document, ASR, video, and chunking–embedding implement these standalone
 commands and report verification; other suites retain inline checks pending
 their migration.
 Dataset annotation rules live here; prediction scoring lives in each metric
@@ -134,8 +134,8 @@ generation/Final-RAG evaluation, not retrieval or latency requests in this
 phase. All pairs keep the same searchable document corpus, including distractors.
 The [chunking–embedding input contract](data-validation.md#chunking-and-embedding-inputs)
 separates preparation/reference checks from runtime checks on generated chunks,
-vectors, rankings, and native-model input lengths; its standalone validator and
-report-reuse interface remain planned.
+vectors, rankings, and native-model input lengths. Its standalone validator and
+sealed-report reuse are implemented; runtime checks remain candidate-specific.
 
 For generation, required gold claims are atomic, non-duplicate facts needed for
 a complete answer. They are not an exhaustive list of every permissible correct

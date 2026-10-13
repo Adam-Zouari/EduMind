@@ -36,13 +36,8 @@ class SentenceChunkingStrategy:
     def split(self, text: str) -> list[tuple[int, int, int]]:
         if not text.strip():
             return []
-        sentence_spans = [
-            (match.start(), match.end())
-            for match in re.finditer(r"[^.!?\n]+(?:[.!?]+|\n|$)", text)
-        ]
-        if not sentence_spans:
-            return []
-        step = max(1, self.sentences - self.overlap)
+        sentence_spans = _sentence_spans(text)
+        step = self.sentences - self.overlap
         chunks = []
         for index in range(0, len(sentence_spans), step):
             selected = sentence_spans[index : index + self.sentences]
@@ -136,9 +131,7 @@ class SemanticChunkingStrategy:
 
         if not text.strip():
             return []
-        spans = [
-            (m.start(), m.end()) for m in re.finditer(r"[^.!?\n]+(?:[.!?]+|\n|$)", text)
-        ]
+        spans = _sentence_spans(text)
         if len(spans) < 2:
             return self._bounded(text, 0, len(text))
         sentences = [text[start:end] for start, end in spans]
@@ -170,17 +163,7 @@ class SemanticChunkingStrategy:
         return chunks
 
     def _bounded(self, text: str, start: int, end: int) -> list[tuple[int, int, int]]:
-        local = self.tokenizer.spans(text[start:end])
-        if not local:
-            return []
-        return [
-            (
-                start + local[index][0],
-                start + local[min(index + self.maximum_tokens, len(local)) - 1][1],
-                min(self.maximum_tokens, len(local) - index),
-            )
-            for index in range(0, len(local), self.maximum_tokens)
-        ]
+        return _token_spans(text, start, end, self.tokenizer, self.maximum_tokens, 0)
 
 
 @dataclass(frozen=True)
@@ -212,10 +195,6 @@ class SectionAwareChunkingStrategy:
             match.start() for match in re.finditer(r"(?m)^#{1,6}[ \t]+\S", text)
         ]
         boundaries = sorted({0, *headings, len(text)})
-        if len(boundaries) == 2:
-            return _token_spans(
-                text, 0, len(text), self.tokenizer, self.size, self.overlap
-            )
         chunks: list[tuple[int, int, int]] = []
         for start, end in pairwise(boundaries):
             if text[start:end].strip():
@@ -254,7 +233,9 @@ class StructureAwareChunkingStrategy:
             return []
         protected = _structured_spans(text)
         headings = [
-            match.start() for match in re.finditer(r"(?m)^#{1,6}[ \t]+\S", text)
+            match.start()
+            for match in re.finditer(r"(?m)^#{1,6}[ \t]+\S", text)
+            if not any(start < match.start() < end for start, end in protected)
         ]
         boundaries = sorted(
             {
@@ -324,23 +305,20 @@ def _token_spans(
     size: int,
     overlap: int,
 ) -> list[tuple[int, int, int]]:
-    local = tokenizer.spans(text[start:end])
-    if not local:
-        return []
-    step = size - overlap
-    result: list[tuple[int, int, int]] = []
-    for token_start in range(0, len(local), step):
-        token_end = min(token_start + size, len(local))
-        result.append(
-            (
-                start + local[token_start][0],
-                start + local[token_end - 1][1],
-                token_end - token_start,
-            )
+    return [
+        (start + left, start + right, count)
+        for left, right, count in TokenChunkingStrategy(tokenizer, size, overlap).split(
+            text[start:end]
         )
-        if token_end == len(local):
-            break
-    return result
+    ]
+
+
+def _sentence_spans(text):
+    ends = [match.end() for match in re.finditer(r"[^.!?\n]+(?:[.!?]+|\n|$)", text)]
+    if not ends:
+        return [(0, len(text))] if text.strip() else []
+    ends[-1] = len(text)
+    return list(pairwise([0, *ends]))
 
 
 def _structured_spans(text: str) -> list[tuple[int, int]]:
@@ -456,7 +434,7 @@ def build_chunking_strategy(
     if kind == "semantic":
         if embed_sentences is None:
             raise ValueError(
-                "Semantic chunking requires the production sentence embedding function"
+                "Semantic chunking requires the candidate sentence embedding function"
             )
         if not semantic_embedding_fingerprint:
             raise ValueError(

@@ -78,6 +78,7 @@ def build_index(
     dtype: str,
     chunking_protocol: ChunkingEmbeddingProtocol | None = None,
     retrieval_protocol: RetrievalProtocol | None = None,
+    progress: dict[str, object] | None = None,
 ) -> ExactIndex:
     if chunking_protocol is None:
         raise ValueError("build_index requires explicit chunking/embedding settings")
@@ -92,6 +93,7 @@ def build_index(
         local_path=local_path,
         document_device=device,
         query_device=device,
+        config_options=chunking_protocol.model_config_options(embedding_name),
     )
     embedder = (
         Embedder(
@@ -108,26 +110,20 @@ def build_index(
     )
     if embedder is not None:
         embedder.prepare()
-    build_started = time.perf_counter()
-    input_preflight_seconds = 0.0
+    synchronize(device)
+    progress = progress if progress is not None else {}
+    progress["build_started"] = build_started = time.perf_counter()
     semantic_sentence_counts: list[int] = []
 
     def input_counts(texts: Sequence[str], *, role: str) -> list[int]:
-        nonlocal input_preflight_seconds
-        started = time.perf_counter()
-        try:
-            if embedder is None:
-                raise RuntimeError(
-                    "Model-input validation requires an embedding runtime"
-                )
-            return _model_input_counts(
-                embedder,
-                texts,
-                role=role,
-                batch_size=chunking_protocol.embedding_batch_size,
-            )
-        finally:
-            input_preflight_seconds += time.perf_counter() - started
+        if embedder is None:
+            raise RuntimeError("Model-input validation requires an embedding runtime")
+        return _model_input_counts(
+            embedder,
+            texts,
+            role=role,
+            batch_size=chunking_protocol.embedding_batch_size,
+        )
 
     def embed_sentences(sentences: Sequence[str]):
         if embedder is None:
@@ -146,10 +142,7 @@ def build_index(
                 ),
                 "offending_semantic_sentence_count": len(offending),
                 "truncated_inputs": 0,
-                "input_preflight_seconds_excluded_from_corpus_build": (
-                    input_preflight_seconds
-                ),
-                "chunking_contract": _chunking_contract(chunker),
+                "chunking_contract": progress["chunking_contract"],
                 "resolved_document_input": embedder.input_configuration("document"),
                 "resolved_query_input": embedder.input_configuration("query"),
             }
@@ -179,16 +172,22 @@ def build_index(
         ),
     )
     chunks: list[Chunk] = []
+    progress["chunks"] = chunks
+    progress["chunking_contract"] = _chunking_contract(chunker)
     documents = [row for row in manifest.samples if row.get("kind") == "document"]
+    empty_documents = []
     for document in documents:
         text = str(document["text"])
-        for start, end, tokens in chunker.split(text):
+        document_chunks = chunker.split(text)
+        if not document_chunks:
+            empty_documents.append(str(document["id"]))
+        for start, end, tokens in document_chunks:
             if not (0 <= start < end <= len(text)):
                 raise RuntimeError(
                     f"Chunker {chunker_name} returned invalid offsets for {document['id']}"
                 )
             actual_tokens = tokenizer.count(text[start:end])
-            if tokens != actual_tokens:
+            if tokens <= 0 or tokens != actual_tokens:
                 raise RuntimeError(
                     f"Chunker {chunker_name} token-count mismatch for {document['id']}: "
                     f"reported {tokens}, counted {actual_tokens}"
@@ -203,8 +202,14 @@ def build_index(
                     tokens,
                 )
             )
+        progress["processed_documents"] = progress.get("processed_documents", 0) + 1
+    progress["generation_complete"] = True
     if not chunks:
         raise RuntimeError("Chunking produced an empty corpus")
+    if empty_documents:
+        raise RuntimeError(
+            f"Chunker {chunker_name} omitted documents: {empty_documents}"
+        )
     chunk_ids = [chunk.identifier for chunk in chunks]
     if len(chunk_ids) != len(set(chunk_ids)):
         raise RuntimeError(f"Chunker {chunker_name} produced duplicate stable IDs")
@@ -218,7 +223,7 @@ def build_index(
         "document_inputs": len(chunks),
         "query_inputs": len(questions),
         "truncated_inputs": 0,
-        "chunking_contract": _chunking_contract(chunker),
+        "chunking_contract": progress["chunking_contract"],
         "semantic_sentence_input_count": len(semantic_sentence_counts),
         "maximum_semantic_sentence_tokens": max(semantic_sentence_counts, default=0),
     }
@@ -226,30 +231,20 @@ def build_index(
         document_counts = input_counts(
             [chunk.text for chunk in chunks], role="document"
         )
-        query_counts = input_counts(
-            [str(question["question"]) for question in questions], role="query"
-        )
         chunks = [
             replace(chunk, model_tokens=count)
             for chunk, count in zip(chunks, document_counts, strict=True)
         ]
+        progress["chunks"] = chunks
         preflight.update(
             {
                 "maximum_document_tokens": max(document_counts, default=0),
-                "maximum_query_tokens": max(query_counts, default=0),
                 "document_token_counts": {
                     chunk.identifier: count
                     for chunk, count in zip(chunks, document_counts, strict=True)
                 },
-                "query_token_counts": {
-                    str(question["id"]): count
-                    for question, count in zip(questions, query_counts, strict=True)
-                },
                 "resolved_query_input": embedder.input_configuration("query"),
                 "resolved_document_input": embedder.input_configuration("document"),
-                "input_preflight_seconds_excluded_from_corpus_build": (
-                    input_preflight_seconds
-                ),
             }
         )
         offending_documents = [
@@ -261,23 +256,13 @@ def build_index(
             if chunk.model_tokens is not None
             and chunk.model_tokens > spec.maximum_length
         ]
-        offending_queries = [
-            {
-                "question_id": str(question["id"]),
-                "model_tokens": count,
-            }
-            for question, count in zip(questions, query_counts, strict=True)
-            if count > spec.maximum_length
-        ]
-        if offending_documents or offending_queries:
+        if offending_documents:
             preflight.update(
                 {
                     "status": "failed",
                     "reason_code": "input_length_exceeded",
                     "offending_document_inputs": offending_documents,
-                    "offending_query_inputs": offending_queries,
                     "offending_document_count": len(offending_documents),
-                    "offending_query_count": len(offending_queries),
                 }
             )
             raise InputCompatibilityError(
@@ -292,9 +277,13 @@ def build_index(
         else None
     )
     if vectors is not None:
-        _validate_vectors(vectors, len(chunks), spec.dimension, "document")
         vectors = vectors.astype(np.float32, copy=False)
-        vectors = vectors / np.linalg.norm(vectors, axis=1, keepdims=True)
+        norms = _validate_vectors(vectors, len(chunks), spec.dimension, "document")
+        vectors = vectors / norms[:, None]
+        vectors = np.ascontiguousarray(
+            vectors, dtype=np.dtype(chunking_protocol.stored_vector_dtype)
+        )
+        _validate_vectors(vectors, len(chunks), spec.dimension, "stored document")
     if embedder is not None:
         placement_report = getattr(embedder, "placement_report", None)
         if callable(placement_report):
@@ -309,9 +298,9 @@ def build_index(
         if with_bm25
         else None
     )
-    corpus_build_seconds = max(
-        0.0, time.perf_counter() - build_started - input_preflight_seconds
-    )
+    synchronize(device)
+    corpus_build_seconds = time.perf_counter() - build_started
+    progress["build_complete"] = True
     return ExactIndex(
         chunks,
         vectors,
@@ -320,7 +309,7 @@ def build_index(
         bm25,
         spec,
         chunker.fingerprint,
-        _chunking_contract(chunker),
+        progress["chunking_contract"],
         corpus_build_seconds,
         preflight,
     )
@@ -394,17 +383,57 @@ def dense_rank_with_scores(
         raise RuntimeError("This index was built without dense vectors")
     if limit is None:
         raise ValueError("Exact dense ranking requires an explicit result limit")
+    if limit <= 0:
+        raise ValueError("Exact dense ranking requires a positive result limit")
+    counts = _model_input_counts(index.embedder, [query], role="query", batch_size=1)
+    if counts[0] > index.embedding_spec.maximum_length:
+        raise InputCompatibilityError(
+            "Query exceeds the native input limit",
+            {
+                "reason_code": "input_length_exceeded",
+                "query_tokens": counts[0],
+                "maximum_length": index.embedding_spec.maximum_length,
+                "truncated_inputs": 0,
+            },
+        )
+    index.preflight.setdefault("query_token_counts", {})[query] = counts[0]
+    index.preflight["maximum_query_tokens"] = max(
+        counts[0], index.preflight.get("maximum_query_tokens", 0)
+    )
     query_vector = np.asarray(index.embedder.embed_query(query), dtype=np.float32)
     if query_vector.ndim != 1:
         raise RuntimeError("Query embedding must be one-dimensional")
-    _validate_vectors(
+    norms = _validate_vectors(
         query_vector.reshape(1, -1), 1, index.embedding_spec.dimension, "query"
     )
-    query_norm = float(np.linalg.norm(query_vector))
-    scores = index.vectors @ (query_vector / query_norm)
+    scores = index.vectors @ (query_vector / norms[0])
+    if not np.isfinite(scores).all():
+        raise RuntimeError("Exact cosine scores contain non-finite values")
     positions = np.arange(len(scores))
     order = np.lexsort((positions, -scores))[:limit]
-    return [(int(position), float(scores[position])) for position in order]
+    result = [(int(position), float(scores[position])) for position in order]
+    synchronize(index.embedding_spec.query_device)
+    return result
+
+
+def validate_ranking(index, ranking, limit):
+    if len(ranking) != min(limit, len(index.chunks)):
+        raise RuntimeError("Retrieval returned an incomplete ranking")
+    positions = [position for position, _ in ranking]
+    if len(set(positions)) != len(positions) or any(
+        not isinstance(i, int) or isinstance(i, bool) or not 0 <= i < len(index.chunks)
+        for i in positions
+    ):
+        raise RuntimeError("Retrieval contains duplicate or out-of-index IDs")
+    if any(not np.isfinite(score) or abs(score) > 1 + 1e-5 for _, score in ranking):
+        raise RuntimeError("Retrieval contains invalid cosine scores")
+
+
+def synchronize(device):
+    if device == "cuda":
+        import torch
+
+        torch.cuda.synchronize()
 
 
 def _model_input_counts(
@@ -419,12 +448,19 @@ def _model_input_counts(
         counts.extend(
             embedder.input_token_counts(texts[start : start + batch_size], role=role)
         )
+    if len(counts) != len(texts) or any(
+        not isinstance(count, int) or isinstance(count, bool) or count <= 0
+        for count in counts
+    ):
+        raise RuntimeError(
+            "Native-token counts must match every nonempty inference input"
+        )
     return counts
 
 
 def _validate_vectors(
     vectors: np.ndarray, expected_rows: int, expected_dimension: int, label: str
-) -> None:
+) -> np.ndarray:
     if vectors.shape != (expected_rows, expected_dimension):
         raise RuntimeError(
             f"{label.title()} embedding shape mismatch: expected "
@@ -432,8 +468,13 @@ def _validate_vectors(
         )
     if not np.isfinite(vectors).all():
         raise RuntimeError(f"{label.title()} embeddings contain non-finite values")
-    if np.any(np.linalg.norm(vectors, axis=1) == 0):
+    with np.errstate(over="ignore", invalid="ignore"):
+        norms = np.linalg.norm(vectors, axis=1)
+    if not np.isfinite(norms).all():
+        raise RuntimeError(f"{label.title()} embeddings contain non-finite norms")
+    if np.any(norms == 0):
         raise RuntimeError(f"{label.title()} embeddings contain zero-norm vectors")
+    return norms
 
 
 def _chunking_contract(chunker) -> dict[str, object]:
@@ -447,6 +488,7 @@ def _chunking_contract(chunker) -> dict[str, object]:
         "boundary_embedding_fingerprint",
         "separators",
         "minimum_boundary_ratio",
+        "parser_identity",
     )
     return {
         **{

@@ -149,11 +149,11 @@ class Embedder:
             encoder(list(texts), **options),
             dtype=np.float32,
         )
-        if vectors.ndim != 2 or vectors.shape[1] != self.spec.dimension:
-            actual = vectors.shape[1] if vectors.ndim == 2 else "invalid"
+        expected = (len(texts), self.spec.dimension)
+        if vectors.shape != expected:
             raise RAGConfigurationError(
-                f"Embedding contract dimension mismatch for {self.spec.model_name}: expected "
-                f"{self.spec.dimension}, received {actual}"
+                f"Embedding contract shape mismatch for {self.spec.model_name}: expected "
+                f"{expected}, received {vectors.shape}"
             )
         return vectors
 
@@ -170,6 +170,8 @@ class Embedder:
                 "device": device,
                 "local_files_only": True,
             }
+            if self.spec.config_options:
+                kwargs["config_kwargs"] = dict(self.spec.config_options)
             if self.dtype is not None:
                 try:
                     import torch
@@ -190,6 +192,8 @@ class Embedder:
             if self.spec.trust_remote_code:
                 kwargs["trust_remote_code"] = True
             model = SentenceTransformer(source, **kwargs)
+            if self.spec.buffer_initialization is not None:
+                self._initialize_buffers(model)
             native_maximum = getattr(model, "max_seq_length", None)
             if (
                 isinstance(native_maximum, int)
@@ -213,6 +217,33 @@ class Embedder:
                 )
             self._models[device] = model
         return self._models[device]
+
+    def _initialize_buffers(self, model) -> None:
+        """Rebuild the pinned GTE code's nonpersistent buffers after meta loading."""
+        import torch
+
+        if self.spec.buffer_initialization != "gte-position-rope-v1":
+            raise RAGConfigurationError("Unsupported embedding buffer initialization")
+        backbone = model[0].model
+        config = backbone.config
+        if config.model_type != "gte" or config.rope_scaling is not None:
+            raise RAGConfigurationError(
+                "Prepared model violates the GTE buffer contract"
+            )
+        embeddings = backbone.embeddings
+        device = embeddings.word_embeddings.weight.device
+        embeddings.register_buffer(
+            "position_ids",
+            torch.arange(config.max_position_embeddings, device=device),
+            persistent=False,
+        )
+        rotary = embeddings.rotary_emb
+        embeddings.rotary_emb = type(rotary)(
+            dim=rotary.dim,
+            max_position_embeddings=rotary.max_position_embeddings,
+            base=rotary.base,
+            device=device,
+        ).to(dtype=embeddings.word_embeddings.weight.dtype)
 
     def _prepared_texts(self, texts: Sequence[str], role: str) -> list[str]:
         if self.spec.interface == "query-document":

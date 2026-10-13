@@ -12,7 +12,9 @@ from experiments.benchmarks.common.data_validation import PROFILES, manifest_pat
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("benchmark", choices=("document", "audio", "video", "all"))
+    parser.add_argument(
+        "benchmark", choices=("document", "audio", "video", "chunking-embedding", "all")
+    )
     parser.add_argument("--profile", choices=(*PROFILES, "all"), default="all")
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--protocol", type=Path)
@@ -20,7 +22,9 @@ def main():
     parser.add_argument("--reliability-manifest", type=Path)
     args = parser.parse_args()
     benchmarks = (
-        ("document", "audio", "video") if args.benchmark == "all" else (args.benchmark,)
+        ("document", "audio", "video", "chunking-embedding")
+        if args.benchmark == "all"
+        else (args.benchmark,)
     )
     profiles = PROFILES if args.profile == "all" else (args.profile,)
     if (
@@ -31,7 +35,11 @@ def main():
         parser.error("--reliability-manifest applies only to ASR data validation")
     reports = []
     for benchmark in benchmarks:
-        package = f"experiments.benchmarks.extraction.{benchmark}"
+        package = (
+            "experiments.benchmarks.rag.chunking_embedding"
+            if benchmark == "chunking-embedding"
+            else f"experiments.benchmarks.extraction.{benchmark}"
+        )
         protocol_module = importlib.import_module(package + ".protocol")
         validator = importlib.import_module(package + ".validation")
         protocol = protocol_module.load_protocol(

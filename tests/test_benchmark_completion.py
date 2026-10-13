@@ -58,6 +58,62 @@ def test_worker_launcher_uses_repository_module(
     assert options["cwd"] == ROOT
 
 
+@pytest.mark.parametrize("output", ["{", "[]", "null"])
+def test_worker_launcher_classifies_unusable_output_as_missing_results(
+    tmp_path, monkeypatch, output
+):
+    def launch(command, **options):
+        Path(command[-1]).write_text(output, encoding="utf-8")
+        return SimpleNamespace(returncode=0, communicate=lambda **kwargs: ("", ""))
+
+    monkeypatch.setattr(benchmark_process.subprocess, "Popen", launch)
+    with pytest.raises(benchmark_process.WorkerExecutionError):
+        benchmark_process.run_json_worker(
+            ROOT / "experiments/benchmarks/rag/chunking_embedding/worker.py",
+            {},
+            device="cpu",
+            prefix="bad-worker-output-",
+            error_label="test",
+            temporary_root=tmp_path,
+        )
+
+
+def test_worker_setup_failure_preserves_input_contract_report(tmp_path, monkeypatch):
+    from experiments.benchmarks.common.preflight import _probe_candidate
+    from experiments.benchmarks.rag.evaluation import InputCompatibilityError
+
+    source = tmp_path / "input.json"
+    destination = tmp_path / "output.json"
+    source.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["worker", str(source), str(destination)])
+    report = {"reason_code": "input_length_exceeded", "maximum_length": 8192}
+
+    def fail(_payload):
+        raise InputCompatibilityError("oversized input", report)
+
+    assert benchmark_process.json_worker_main(fail) == 1
+    output = destination.read_text(encoding="utf-8")
+
+    def launch(command, **options):
+        Path(command[-1]).write_text(output, encoding="utf-8")
+        return SimpleNamespace(returncode=1, communicate=lambda **kwargs: ("", ""))
+
+    monkeypatch.setattr(benchmark_process.subprocess, "Popen", launch)
+    result = _probe_candidate(
+        "candidate",
+        lambda _: benchmark_process.run_json_worker(
+            ROOT / "experiments/benchmarks/rag/chunking_embedding/worker.py",
+            {},
+            device="cpu",
+            prefix="input-failure-",
+            error_label="test",
+            temporary_root=tmp_path,
+        ),
+    )
+    assert result["status"] == "blocked"
+    assert result["input_validation"] == report
+
+
 @pytest.mark.parametrize(
     "module",
     (
@@ -311,6 +367,43 @@ def test_failed_candidate_preserves_empty_audit_table(tmp_path: Path) -> None:
     assert result.candidates[0].status == "failed"
     assert (
         result.artifact_directory / "candidates" / "failed" / "query_metrics.parquet"
+    ).is_file()
+
+
+def test_runner_rejection_updates_validation_report_and_preserves_evidence(tmp_path):
+    result = run_benchmark(
+        _plan("candidate"),
+        lambda _: (
+            [SampleResult("q", {"quality": 1.0}, 0.01)],
+            {"peak_vram_mb": 4000},
+            {"quality": 1.0},
+            {},
+            {},
+            {
+                "validation_report": {"status": "passed", "errors": []},
+                "timings": [{"latency_ms": 10}],
+            },
+        ),
+        dataset_checksum="fixed",
+        directions={"quality": "max"},
+        primary_metric="quality",
+        no_mlflow=True,
+        artifact_root=tmp_path,
+        monitor_resources=False,
+        operational_maximums={"peak_vram_mb": 3584},
+    )
+    candidate = result.candidates[0]
+    report = json.loads(
+        (
+            result.artifact_directory / "candidates/candidate/validation_report.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert candidate.status == "failed"
+    assert candidate.operational["peak_vram_mb"] == 4000
+    assert report["status"] == "failed"
+    assert "3584" in report["errors"][0]
+    assert (
+        result.artifact_directory / "candidates/candidate/timings.parquet"
     ).is_file()
 
 

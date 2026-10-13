@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -27,6 +28,8 @@ def load_engineer_decision(
     maximum: int | None = None,
     exact: int | None = None,
     expected_source: tuple[str, str, str] | None = None,
+    expected_protocols: Mapping[str, str] | None = None,
+    expected_qualification: str | None = None,
 ) -> EngineerDecision:
     """Load a decision and prove that it references complete comparable evidence."""
 
@@ -49,8 +52,18 @@ def load_engineer_decision(
             f"{source_summary} is incomplete; an engineer may select only from a complete run"
         )
     plan = summary.get("plan")
+    for name, checksum in (expected_protocols or {}).items():
+        recorded = summary.get("protocols", {}).get(name, {})
+        if not isinstance(recorded, Mapping) or recorded.get("checksum") != checksum:
+            raise ValueError(
+                f"{source_summary} was produced under a different {name} protocol"
+            )
     if not isinstance(plan, dict):
         raise ValueError(f"{source_summary} has no valid benchmark plan")
+    if expected_qualification is not None and (
+        plan.get("settings", {}).get("preflight_fingerprint") != expected_qualification
+    ):
+        raise ValueError(f"{source_summary} used a different hardware qualification")
     suite = str(plan.get("suite", ""))
     stage = str(plan.get("stage", ""))
     profile = str(plan.get("profile", ""))

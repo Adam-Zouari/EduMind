@@ -232,6 +232,10 @@ def _qasper_samples(papers: Sequence[Mapping[str, Any]]) -> list[dict[str, objec
                 "kind": "document",
                 "text": text,
                 "representation": "markdown-sections",
+                "source_dataset": QASPER_DATASET,
+                "source_license": "CC-BY-4.0",
+                "source_revision": QASPER_REVISION,
+                "independent_source_id": paper_id,
             }
         )
         for qa in _records(paper.get("qas", [])):

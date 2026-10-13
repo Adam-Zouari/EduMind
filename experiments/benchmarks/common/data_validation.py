@@ -14,6 +14,14 @@ PROFILES = ("smoke", "development", "validation", "locked")
 
 
 def manifest_path(benchmark, profile):
+    if benchmark == "chunking-embedding":
+        name = {
+            "smoke": "smoke",
+            "development": "rag-selection-dev",
+            "validation": "rag-selection-validation",
+            "locked": "rag-selection-locked-test",
+        }[profile]
+        return PROJECT_ROOT / f"data/benchmarks/rag/{name}.json"
     if profile == "smoke":
         return PROJECT_ROOT / "data/benchmarks/extraction/smoke.json"
     split = "locked-test" if profile == "locked" else profile
@@ -44,7 +52,7 @@ def input_identity(
     files = {}
     splits = {}
     for source in inventory:
-        manifest = load_manifest(source)
+        manifest = load_manifest(source, validate_annotations=False)
         files[str(source)] = sha256_file(source)
         splits[str(source)] = manifest.split
         for item in manifest.samples:
@@ -64,37 +72,40 @@ def input_identity(
     extraction = PROJECT_ROOT / "experiments/benchmarks/extraction"
     dependencies = [
         Path(__file__).with_name("datasets.py"),
-        Path(__file__).with_name("metrics.py"),
     ]
-    dependencies.append(PROJECT_ROOT / "src/edumind/extraction/contracts.py")
-    dependencies.extend(
-        extraction / name
-        for name in (
-            (
-                "document/metrics.py",
-                "document/adapters.py",
-                "document/official_metrics.py",
-                "document/omnidocbench_worker.py",
-            )
-            if benchmark == "document"
-            else ("audio/evaluate.py", "media.py")
-            if benchmark == "audio"
-            else (
-                "video/metrics.py",
-                "video/frozen_asr_worker.py",
-                "audio/evaluate.py",
-                "audio/validation.py",
-                "media.py",
+    if benchmark == "chunking-embedding":
+        dependencies.append(PROJECT_ROOT / "src/edumind/rag/tokenizers.py")
+    else:
+        dependencies.append(Path(__file__).with_name("metrics.py"))
+        dependencies.append(PROJECT_ROOT / "src/edumind/extraction/contracts.py")
+        dependencies.extend(
+            extraction / name
+            for name in (
+                (
+                    "document/metrics.py",
+                    "document/adapters.py",
+                    "document/official_metrics.py",
+                    "document/omnidocbench_worker.py",
+                )
+                if benchmark == "document"
+                else ("audio/evaluate.py", "media.py")
+                if benchmark == "audio"
+                else (
+                    "video/metrics.py",
+                    "video/frozen_asr_worker.py",
+                    "audio/evaluate.py",
+                    "audio/validation.py",
+                    "media.py",
+                )
             )
         )
-    )
     implementation = {
         str(source): sha256_file(source)
         for source in (Path(__file__), Path(validator_path), *dependencies)
     }
     resolved = {
         "schema_version": 1,
-        "validator_version": "extraction-data-v1",
+        "validator_version": "benchmark-data-v2",
         "benchmark": benchmark,
         "profile": profile,
         "manifest_path": str(path),
@@ -109,7 +120,13 @@ def input_identity(
 def validate_inventory(benchmark, profile, path, inventory):
     manifest = load_manifest(path)
     require_manifest_split(
-        manifest, profile, "locked-test" if profile == "locked" else profile
+        manifest,
+        profile,
+        "locked-test"
+        if profile == "locked"
+        else ("development", "dev")
+        if profile == "development"
+        else profile,
     )
     if profile == "smoke":
         return
@@ -117,6 +134,35 @@ def validate_inventory(benchmark, profile, path, inventory):
     splits = set()
     for source in inventory:
         frozen = load_manifest(source)
+        if benchmark == "chunking-embedding":
+            split = "development" if frozen.split == "dev" else frozen.split
+            if split not in {"development", "validation", "locked-test"}:
+                raise ValueError("Authoritative RAG inventory has an invalid split")
+            splits.add(split)
+            for item in frozen.samples:
+                if item.get("kind") != "document":
+                    continue
+                if item.get("split", frozen.split) != frozen.split:
+                    raise ValueError(
+                        "Inventory sample split contradicts its manifest split"
+                    )
+                group = item.get("independent_source_id") or item.get("source_group_id")
+                if not isinstance(group, str) or not group:
+                    raise ValueError(
+                        "Authoritative documents require reviewed independent source/group IDs"
+                    )
+                keys = [
+                    "source:" + group,
+                    "id:" + str(item["id"]),
+                    "text:" + stable_hash(item["text"]),
+                ]
+                if item.get("duplicate_group_id"):
+                    keys.append("duplicate:" + str(item["duplicate_group_id"]))
+                for key in keys:
+                    if key in observed and observed[key] != split:
+                        raise ValueError(f"Cross-split source leakage: {key}")
+                    observed[key] = split
+            continue
         if frozen.split in {"development", "validation", "locked-test"}:
             splits.add(frozen.split)
         for item in frozen.samples:

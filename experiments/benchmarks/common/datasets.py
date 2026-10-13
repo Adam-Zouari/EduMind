@@ -42,9 +42,16 @@ def answerable_questions(
     ]
 
 
-def load_manifest(path: str | Path, *, verify_checksum: bool = True) -> DatasetManifest:
+def load_manifest(
+    path: str | Path,
+    *,
+    verify_checksum: bool = True,
+    validate_annotations: bool = True,
+) -> DatasetManifest:
     manifest_path = Path(path)
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping):
+        raise DatasetValidationError("Manifest must be a JSON object")
     required = {
         "name",
         "version",
@@ -66,9 +73,9 @@ def load_manifest(path: str | Path, *, verify_checksum: bool = True) -> DatasetM
     samples = payload["samples"]
     if not isinstance(samples, list) or not samples:
         raise DatasetValidationError("Manifest must contain at least one sample")
-    ids = [
-        str(sample.get("id", "")) for sample in samples if isinstance(sample, Mapping)
-    ]
+    if any(not isinstance(sample, Mapping) for sample in samples):
+        raise DatasetValidationError("Every manifest sample must be a JSON object")
+    ids = [str(sample.get("id", "")) for sample in samples]
     if not all(ids) or len(ids) != len(set(ids)):
         raise DatasetValidationError("Sample IDs must be present and unique")
     manifest = DatasetManifest(
@@ -90,7 +97,8 @@ def load_manifest(path: str | Path, *, verify_checksum: bool = True) -> DatasetM
             raise DatasetValidationError(
                 f"Manifest checksum mismatch: expected {manifest.checksum}, computed {actual}"
             )
-    validate_evidence(manifest)
+    if validate_annotations:
+        validate_evidence(manifest)
     return manifest
 
 
@@ -235,10 +243,14 @@ def evidence_units(question: Mapping[str, object]) -> tuple[EvidenceUnit, ...]:
             raise DatasetValidationError(
                 f"Evidence must be an object in question {question.get('id', '')}"
             )
-        identifier = str(raw_unit.get("id", "")).strip()
-        if not identifier:
+        identifier = raw_unit.get("id")
+        if (
+            not isinstance(identifier, str)
+            or not identifier
+            or identifier != identifier.strip()
+        ):
             raise DatasetValidationError(
-                f"Every evidence unit requires a stable ID in question {question.get('id', '')}"
+                f"Every evidence unit requires an unpadded stable ID in question {question.get('id', '')}"
             )
         evidence_type = str(raw_unit.get("evidence_type", question_type))
         if evidence_type not in EVIDENCE_TYPES:

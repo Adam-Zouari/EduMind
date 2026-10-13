@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from dataclasses import dataclass
 
 from edumind.common.artifacts import stable_hash
@@ -37,15 +38,30 @@ class TokenChunkingStrategy:
         tokens = self.tokenizer.spans(text)
         if not tokens:
             return []
-        step = self.size - self.overlap
+        ends = [end for _, end in tokens]
         chunks: list[tuple[int, int, int]] = []
-        for token_start in range(0, len(tokens), step):
-            token_end = min(token_start + self.size, len(tokens))
-            start = tokens[token_start][0]
-            end = tokens[token_end - 1][1]
-            chunks.append((start, end, token_end - token_start))
-            if token_end == len(tokens):
+        start = 0
+        while start < len(text):
+            token_start = bisect_right(ends, start)
+            if token_start == len(tokens):
                 break
+            end = ends[min(token_start + self.size, len(tokens)) - 1]
+            # A UTF-8 character can span multiple IDs. Retokenize the intact
+            # source string instead of misreporting an ID slice as its length.
+            while end > start and self.tokenizer.count(text[start:end]) > self.size:
+                end -= 1
+            if end == start:
+                raise ValueError("Token ceiling cannot contain one source character")
+            local = self.tokenizer.spans(text[start:end])
+            chunks.append((start, end, len(local)))
+            if end == len(text):
+                break
+            next_start = (
+                end
+                if not self.overlap
+                else start + local[max(0, len(local) - self.overlap)][0]
+            )
+            start = max(start + 1, next_start)
         return chunks
 
 

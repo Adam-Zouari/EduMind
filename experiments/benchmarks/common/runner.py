@@ -84,6 +84,7 @@ def run_benchmark(
     resource_monitor_options: ResourceMonitorOptions | None = None,
     monitor_temporary_disk: bool = True,
     paired_group_key: str | None = None,
+    paired_minimum_ci_units: int | None = 2,
     run_name_prefix: str | None = None,
     shuffle_candidates: bool = True,
     evaluator_receives_context: bool = False,
@@ -317,6 +318,7 @@ def run_benchmark(
                 seed=plan.seed,
                 group_key=paired_group_key,
                 confidence=confidence_level,
+                minimum_ci_units=paired_minimum_ci_units,
             )
         )
         custom_parent_artifacts: list[Path] = []
@@ -483,6 +485,7 @@ def _run_candidate(
     sample_artifact_path: Path | None = None
     temporary_directory: Path | None = None
     resource_rows: list[dict[str, object]] = []
+    artifact_tables: dict[str, object] = {}
     fingerprint = stable_hash({"run": run_fingerprint, "candidate": candidate})
     protocol_parameters = (
         {
@@ -612,6 +615,14 @@ def _run_candidate(
             tracking.parameters(candidate_parameters)
             if candidate_parameters.get("run_type"):
                 tracking.tags({"run_type": str(candidate_parameters["run_type"])})
+            if candidate_parameters.get("measurement.resource_scope"):
+                tracking.tags(
+                    {
+                        "measurement.resource_scope": str(
+                            candidate_parameters["measurement.resource_scope"]
+                        )
+                    }
+                )
             candidate_intervals = dict(evaluated[4]) if len(evaluated) >= 5 else {}
             artifact_tables = dict(evaluated[5]) if len(evaluated) >= 6 else {}
             if resource_artifact_name and resource_rows:
@@ -619,19 +630,6 @@ def _run_candidate(
             if not samples:
                 raise RuntimeError("Candidate produced no samples")
             _validate_sample_ids(samples)
-            if artifact_tables:
-                if sample_artifact_name not in artifact_tables:
-                    artifact_tables[sample_artifact_name] = _sample_rows(samples)
-                written = _persist_candidate_artifacts(
-                    directory, candidate, artifact_tables, tracking
-                )
-                artifact_names.extend(path.name for path in written.values())
-                sample_artifact_path = written.get(sample_artifact_name)
-            else:
-                sample_path = _write_samples(directory, candidate, samples)
-                tracking.artifact(sample_path)
-                artifact_names.append(sample_path.name)
-                sample_artifact_path = sample_path
             shutil.rmtree(temporary_directory, ignore_errors=True)
             # Evaluators with grouped/pooled statistics return their own aggregates and CIs.
             if len(evaluated) >= 5:
@@ -654,6 +652,18 @@ def _run_candidate(
                 nullable_metrics,
             )
             _validate_operational_maximums(operational, operational_maximums or {})
+            if artifact_tables:
+                artifact_tables.setdefault(sample_artifact_name, _sample_rows(samples))
+                written = _persist_candidate_artifacts(
+                    directory, candidate, artifact_tables, tracking
+                )
+                artifact_names.extend(path.name for path in written.values())
+                sample_artifact_path = written.get(sample_artifact_name)
+            else:
+                sample_path = _write_samples(directory, candidate, samples)
+                tracking.artifact(sample_path)
+                artifact_names.append(sample_path.name)
+                sample_artifact_path = sample_path
             result = CandidateResult(
                 candidate,
                 "success",
@@ -693,17 +703,31 @@ def _run_candidate(
             artifact_payloads = dict(exc.artifacts)
             if resource_artifact_name and resource_rows:
                 artifact_payloads.setdefault(resource_artifact_name, resource_rows)
-            if samples and sample_artifact_name not in artifact_payloads:
-                artifact_payloads[sample_artifact_name] = _sample_rows(samples)
             error = str(exc)
             structured_failure = True
         except Exception as exc:  # noqa: BLE001 - retain arbitrary candidate failures
             error = f"{type(exc).__name__}: {exc}"
-            structured_failure = False
+            artifact_payloads = dict(artifact_tables)
+            structured_failure = bool(artifact_payloads)
 
         if temporary_directory is not None:
             shutil.rmtree(temporary_directory, ignore_errors=True)
         if structured_failure:
+            if samples:
+                artifact_payloads.setdefault(
+                    sample_artifact_name, _sample_rows(samples)
+                )
+            if (
+                "validation_report" in artifact_payloads
+                and artifact_payloads["validation_report"].get("status") != "failed"
+            ):
+                report = dict(artifact_payloads["validation_report"])
+                report.update(
+                    status="failed",
+                    reason_code="runner_validation_failed",
+                    errors=[*report.get("errors", []), error],
+                )
+                artifact_payloads["validation_report"] = report
             written = _persist_candidate_artifacts(
                 directory, candidate, artifact_payloads, tracking
             )
@@ -738,6 +762,14 @@ def _run_candidate(
         )
         tracking.metrics(_reported_metrics(metrics, operational, operational_prefix))
         tracking.tags({"benchmark.valid": "false", "validation.status": "failed"})
+        if candidate_parameters.get("measurement.resource_scope"):
+            tracking.tags(
+                {
+                    "measurement.resource_scope": str(
+                        candidate_parameters["measurement.resource_scope"]
+                    )
+                }
+            )
         candidate_path = _write_candidate_result(
             directory, candidate, candidate_artifact_name, result, artifact_names
         )
@@ -1076,6 +1108,7 @@ def _paired_comparisons(
     seed: int,
     group_key: str | None = None,
     confidence: float,
+    minimum_ci_units: int | None = 2,
 ):
     comparisons = []
     quality_metrics = [
@@ -1138,18 +1171,40 @@ def _paired_comparisons(
                         for group in groups
                     ]
                     paired_units = len(groups)
-                interval = paired_bootstrap_interval(
-                    left_values,
-                    right_values,
-                    resamples=resamples,
-                    seed=seed,
-                    confidence=confidence,
+                reason = (
+                    "ci_support_not_frozen"
+                    if minimum_ci_units is None
+                    else "insufficient_independent_units"
+                    if paired_units < max(2, minimum_ci_units)
+                    else "no_bootstrap_resampling"
+                    if not resamples
+                    else None
+                )
+                interval = (
+                    paired_bootstrap_interval(
+                        left_values,
+                        right_values,
+                        resamples=resamples,
+                        seed=seed,
+                        confidence=confidence,
+                    )
+                    if reason is None
+                    else None
                 )
                 metrics[metric] = {
-                    "left_minus_right": interval.estimate,
-                    "lower": interval.lower,
-                    "upper": interval.upper,
-                    "confidence": interval.confidence,
+                    "left_minus_right": sum(
+                        left - right
+                        for left, right in zip(left_values, right_values, strict=True)
+                    )
+                    / len(left_values),
+                    "lower": interval.lower if interval else None,
+                    "upper": interval.upper if interval else None,
+                    "confidence": confidence,
+                    "reason": reason,
+                    "degenerate": bool(interval and interval.lower == interval.upper),
+                    "requested_resamples": resamples,
+                    "defined_resamples": resamples if interval else 0,
+                    "undefined_resamples": 0,
                     "direction": directions[metric],
                     "paired_samples": len(paired_ids),
                     "paired_resampling_units": paired_units,

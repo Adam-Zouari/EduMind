@@ -29,10 +29,17 @@ class EmbeddingSpec:
     document_prompt_name: str | None = None
     trust_remote_code: bool = False
     encode_options: tuple[tuple[str, float], ...] = ()
+    config_options: tuple[tuple[str, bool], ...] = ()
+    buffer_initialization: str | None = None
 
     @property
     def fingerprint(self) -> str:
-        return stable_hash(asdict(self))
+        contract = asdict(self)
+        # Empty new loader options do not invalidate unchanged production indexes.
+        for name in ("config_options", "buffer_initialization"):
+            if not contract[name]:
+                del contract[name]
+        return stable_hash(contract)
 
 
 PRODUCTION_EMBEDDING_MODEL = "Alibaba-NLP/gte-modernbert-base"

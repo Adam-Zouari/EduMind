@@ -54,10 +54,13 @@ class ChunkingEmbeddingProtocol:
     similarity: str
     stored_vector_dtype: str
     reject_truncation: bool
+    model_config: Mapping[str, Mapping[str, bool]]
     quality_cutoffs: tuple[int, ...]
     audit_depth: int
     alpha_ndcg_alpha: float
     minimum_latency_ci_documents: int
+    minimum_quality_ci_documents: int | None
+    data_requirements: Mapping[str, object]
     confidence_level: float
     maximum_finalists: int
     authoritative_peak_vram_mb: float
@@ -86,6 +89,9 @@ class ChunkingEmbeddingProtocol:
             return self.strategies[alias]
         except KeyError as exc:
             raise ValueError(f"Unknown chunking strategy: {alias}") from exc
+
+    def model_config_options(self, name: str) -> tuple[tuple[str, bool], ...]:
+        return tuple(sorted(self.model_config.get(name, {}).items()))
 
     @property
     def development_candidates(self) -> tuple[str, ...]:
@@ -118,6 +124,7 @@ def protocol_from_mapping(
             "index",
             "quality",
             "statistics",
+            "data",
             "selection",
             "resources",
             "preflight",
@@ -129,6 +136,8 @@ def protocol_from_mapping(
         alias: _strategy(alias, value)
         for alias, value in mapping(root["strategies"], "strategies").items()
     }
+    if set(strategies) != set(_STRATEGY_KINDS):
+        raise ValueError("strategies must declare all eight supported chunkers")
     models = tuple(
         string(item, "embedding_models item")
         for item in sequence(root["embedding_models"], "embedding_models")
@@ -154,6 +163,7 @@ def protocol_from_mapping(
             "normalize_vectors",
             "stored_vector_dtype",
             "reject_truncation",
+            "model_config",
         },
     )
     batch_size = integer(
@@ -165,6 +175,28 @@ def protocol_from_mapping(
         index["stored_vector_dtype"], "index.stored_vector_dtype", {"float32"}
     )
     reject_truncation = boolean(index["reject_truncation"], "index.reject_truncation")
+    model_config = {}
+    for name, configuration in mapping(
+        index["model_config"], "index.model_config"
+    ).items():
+        if name != "Snowflake/snowflake-arctic-embed-m-v2.0":
+            raise ValueError(f"No audited configuration overrides for {name}")
+        options = strict_object(
+            configuration,
+            f"index.model_config.{name}",
+            {"use_memory_efficient_attention", "unpad_inputs"},
+        )
+        model_config[name] = {
+            key: boolean(value, f"index.model_config.{name}.{key}")
+            for key, value in options.items()
+        }
+        if (
+            model_config[name]["unpad_inputs"]
+            and not model_config[name]["use_memory_efficient_attention"]
+        ):
+            raise ValueError("Snowflake unpadding requires memory-efficient attention")
+    if not model_config:
+        raise ValueError("Snowflake attention and padding settings must be explicit")
     if not normalized or not reject_truncation:
         raise ValueError(
             "Chunking/embedding requires normalized vectors and truncation rejection"
@@ -186,13 +218,45 @@ def protocol_from_mapping(
     statistics = strict_object(
         root["statistics"],
         "statistics",
-        {"minimum_latency_ci_documents", "confidence_level"},
+        {
+            "minimum_latency_ci_documents",
+            "minimum_quality_ci_documents",
+            "confidence_level",
+        },
     )
     minimum_documents = integer(
         statistics["minimum_latency_ci_documents"],
         "statistics.minimum_latency_ci_documents",
-        minimum=1,
+        minimum=2,
     )
+    quality_support = statistics["minimum_quality_ci_documents"]
+    if quality_support is not None:
+        quality_support = integer(
+            quality_support, "statistics.minimum_quality_ci_documents", minimum=2
+        )
+    data = strict_object(
+        root["data"], "data", {"qasper_papers", "minimum_structured_questions"}
+    )
+    counts = strict_object(
+        data["qasper_papers"],
+        "data.qasper_papers",
+        {"development", "validation", "locked"},
+    )
+    slices = strict_object(
+        data["minimum_structured_questions"],
+        "data.minimum_structured_questions",
+        {"table", "formula", "mixed"},
+    )
+    data = {
+        "qasper_papers": {
+            name: integer(count, f"data.qasper_papers.{name}", minimum=1)
+            for name, count in counts.items()
+        },
+        "minimum_structured_questions": {
+            name: integer(count, f"data.minimum_structured_questions.{name}", minimum=1)
+            for name, count in slices.items()
+        },
+    }
     confidence = number(
         statistics["confidence_level"],
         "statistics.confidence_level",
@@ -233,10 +297,13 @@ def protocol_from_mapping(
         similarity,
         vector_dtype,
         reject_truncation,
+        model_config,
         cutoffs,
         audit_depth,
         alpha,
         minimum_documents,
+        quality_support,
+        data,
         confidence,
         maximum_finalists,
         peak,

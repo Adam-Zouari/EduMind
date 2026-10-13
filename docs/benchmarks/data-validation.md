@@ -9,7 +9,7 @@ Automatic checks establish consistency, not annotation truth: a reviewer must
 still check transcripts, blank sources, evidence, and labels against the assets.
 
 **Implementation status:** standalone validation and sealed report verification
-are implemented for Document, ASR (`audio`), and Video. Their runners require a
+are implemented for Document, ASR (`audio`), Video, and Chunking–Embedding. Their runners require a
 matching successful report before execution. The remaining benchmark validators
 below define planned interfaces; they are not yet executable.
 
@@ -131,7 +131,7 @@ experiments/benchmarks/
 │   ├── audio/validation.py
 │   └── video/validation.py
 ├── rag/
-│   ├── chunking_embedding/validation.py  # planned
+│   ├── chunking_embedding/validation.py
 │   ├── retrieval_reranking/validation.py # planned
 │   ├── generation/validation.py          # planned
 │   └── final/validation.py               # planned
@@ -145,18 +145,19 @@ The existing generic manifest-validation helpers feed this coordinator rather
 than becoming a second full validator. Sealing a manifest checksum is not proof
 that its references, corpus coverage, or split isolation passed validation.
 
-Available extraction commands, from the repository root:
+Available commands, from the repository root:
 
 ```powershell
 python -m experiments.benchmarks.validate audio --profile development
 python -m experiments.benchmarks.validate audio --profile all
 python -m experiments.benchmarks.validate document --profile all
 python -m experiments.benchmarks.validate video --profile all
+python -m experiments.benchmarks.validate chunking-embedding --profile all
 python -m experiments.benchmarks.validate all --profile smoke
 python -m experiments.benchmarks.validate all --profile all
 ```
 
-`all` currently coordinates the three extraction validators. It reports missing
+`all` currently coordinates extraction and chunking–embedding validators. It reports missing
 authoritative inputs as failures, while `--profile smoke` checks their fixtures.
 Use `--manifest` and `--protocol` for a single benchmark/profile override;
 `--inventory` supplies the frozen cross-split manifests, and ASR also accepts
@@ -166,7 +167,6 @@ report's content seal; it neither repairs inputs nor creates a passed report.
 Planned commands for the remaining benchmarks:
 
 ```powershell
-python -m experiments.benchmarks.validate chunking-embedding --profile all
 python -m experiments.benchmarks.validate retrieval-reranking --profile all
 python -m experiments.benchmarks.validate generation --profile all
 python -m experiments.benchmarks.validate final-rag --profile locked
@@ -318,11 +318,20 @@ visual candidate monitoring and do not become visual latency or quality metrics.
 
 ### Chunking and embedding inputs
 
-The standalone validator/report-verification interface is planned for this
+The standalone validator/report-verification interface is implemented for this
 suite. Its input contract requires a nonempty canonical corpus and at least
 one answerable question, plus the frozen per-split source and evidence-type
 allocation. Validate document/query IDs, checksums, source grouping, and split
 isolation before any candidate loads.
+
+Authoritative document records identify `source_dataset`, `source_license`,
+`source_revision`, and an independently reviewed `independent_source_id` or
+`source_group_id`. QASPER records use `source_dataset="allenai/qasper"`; counts
+must match `data.qasper_papers` in the protocol. Required table/formula/mixed
+question counts come from `data.minimum_structured_questions`. Cross-split
+validation checks source groups, document IDs, canonical text hashes, and any
+reviewed duplicate groups. These checks do not certify the truth or atomicity of
+human evidence annotations.
 
 Every answerable question has reviewed, uniquely identified gold evidence units
 with nonempty half-open intervals inside the referenced canonical text. A unit's

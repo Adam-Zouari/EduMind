@@ -98,8 +98,10 @@ text, evidence intervals/IDs, answerability, evidence types, and split isolation
 Full validation runs separately during preparation; each profile then verifies
 that its actual inputs still match the successful report before candidate
 loading or measurement. Invalid references produce a preparation error report,
-not benchmark observations. This suite's standalone/report-reuse interface is
-planned, not implemented by these documentation changes.
+not benchmark observations. This suite's standalone validator produces a sealed
+report; every profile verifies it before loading candidates. Canonical inputs
+and the protocol's data requirements determine report reuse, not the model or
+execution device.
 
 Generated chunks and native model lengths remain runtime checks: valid source
 data cannot guarantee every candidate's boundaries, vectors, or inference inputs.
@@ -164,6 +166,12 @@ One child run executes one planned pair in a fresh operating-system process.
 The requested device, dtype, model and tokenizer revisions, query/document
 prefixes, pooling, normalization, seed, warmups, and repetitions are fixed and
 recorded. Silent device fallback or unrecorded truncation invalidates the child.
+Snowflake uses the protocol's padded native-attention path
+(`use_memory_efficient_attention=false`, `unpad_inputs=false`). Its pinned custom
+loader rebuilds nonpersistent position/rotary buffers after loading; this
+architecture initialization is recorded in the embedding contract and does not
+change checkpoint weights. Model configuration overrides are included in both
+the protocol checksum and embedding fingerprint.
 Authoritative development, validation, and locked comparisons use the target RTX 3050 through
 CUDA with `float16` and embedding batch size `1`. Peak Device VRAM must remain
 at or below 3,584 MiB under the shared whole-device contract.
@@ -292,6 +300,11 @@ validation checks the finalists on unseen papers. A failed pair makes its parent
 comparison incomplete. The component locked report evaluates the selected pair
 in isolation and is not another chunking/embedding selection round.
 
+Validation and locked decisions must reference complete source comparisons
+with the same protocol checksum and current qualification fingerprint. Changed
+model snapshots, execution settings, software, or hardware require fresh
+qualification and selection evidence rather than reuse of an older decision.
+
 ## Metrics and why they are used
 
 | Category | Metrics | Why they are needed |
@@ -411,9 +424,10 @@ roles; they are not repeated as MLflow prefixes. The prefixes above describe
 metric families and evidence slices. Eligible uncertainty bounds use the shared
 `.ci_lower` and `.ci_upper` suffixes.
 Validity counters such as expected/processed documents and queries, scheduled,
-successful, failed, and unexecuted attempts, truncated inputs, nonfinite/zero-norm
-vectors, dimension mismatches, and determinism mismatches are logged under
-`validity.*`. All four quality metrics share reference eligibility; log eligible,
+successful, failed, and unexecuted attempts, truncated inputs, and ranking-
+consistency mismatches are logged under `validity.*`. Vector shape, finiteness,
+and norm checks retain any failure reason in `validation_report.json`.
+All four quality metrics share reference eligibility; log eligible,
 scored, failed, and unavailable question/document support per metric and evidence
 scope. Independent contributing counts use the shared `.sample_count` convention.
 The final decision is also stored as a

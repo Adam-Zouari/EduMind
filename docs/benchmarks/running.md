@@ -17,11 +17,11 @@ The separate Generation and Vector Database locked stages and the locked-only
 Final RAG workflow below define the approved target interface. Runner alignment
 for those stages, the revised generation scoring/timing rules and full-development
 workload, and frozen vector-index finalist selection remains pending.
-Chunking–embedding's linear evidence-count nDCG, single-unit alpha-nDCG,
-first-ranking/failure rules, successful-latency handling, one-warmup settings,
-and resource-scope reporting also require implementation alignment. Its current
-scorer still uses binary gains and narrower alpha-nDCG eligibility. Documentation
-changes alone do not implement these contracts or enable new commands.
+Chunking–embedding implements linear evidence-count nDCG, single-unit alpha-nDCG,
+first-ranking/failure rules, successful-attempt latency, one query warmup, and
+execution-only resource monitoring. Its standalone validator and sealed-report
+verification are available. Quality-CI support remains unset until data review;
+such results retain descriptive scores and null confidence bounds.
 Document, ASR, and Video implement their revised metric, failure, repeatability,
 resource, and display-name contracts. Their standalone data validators and
 automatic sealed-report verification are available. Video uses grouped parents
@@ -407,13 +407,21 @@ p95 support retains a descriptive value with null bounds/reason. See
 
 ## 7. Chunking–embedding
 
+Validate the inputs once before running either smoke device. Authoritative
+reports require all three reviewed split manifests in the frozen inventory.
+
 ```powershell
+python -m experiments.benchmarks.validate chunking-embedding --profile smoke
 python -m experiments.benchmarks.rag.chunking_embedding.run --profile smoke
 python -m experiments.benchmarks.rag.chunking_embedding.run --profile preflight
 python -m experiments.benchmarks.rag.chunking_embedding.run --profile development
 python -m experiments.benchmarks.rag.chunking_embedding.run --profile validation
 python -m experiments.benchmarks.rag.chunking_embedding.run --profile locked
 ```
+
+Use `python -m experiments.benchmarks.validate chunking-embedding --profile all`
+after preparing the authoritative inputs. Every run verifies the matching report
+before loading candidates; it does not repeat full annotation validation.
 
 Development runs qualified members of the full matrix. Create
 `chunking-embedding-validation.json` after development and

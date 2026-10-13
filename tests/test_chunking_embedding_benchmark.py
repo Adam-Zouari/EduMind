@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import ClassVar
 
@@ -27,7 +27,6 @@ from experiments.benchmarks.preparation.datasets import _answers_and_evidence
 from experiments.benchmarks.rag.chunking_embedding import benchmark
 from experiments.benchmarks.rag.chunking_embedding.metrics import (
     aggregate_quality,
-    alpha_ndcg_at_k,
     latency_intervals,
     score_question,
 )
@@ -45,6 +44,7 @@ from experiments.benchmarks.rag.chunking_embedding.strategies import (
     build_chunking_strategy,
 )
 from experiments.benchmarks.rag.evaluation import (
+    Chunk,
     ExactIndex,
     InputCompatibilityError,
     _chunking_contract,
@@ -53,6 +53,10 @@ from experiments.benchmarks.rag.evaluation import (
 )
 
 CHUNKING_PROTOCOL = default_chunking_protocol()
+FIXTURE_EMBEDDING = replace(
+    embedding_spec("Alibaba-NLP/gte-modernbert-base", revision="r", local_path="p"),
+    dimension=2,
+)
 
 
 def _protocol_settings(*, warmups=1, repetitions=1, bootstrap_resamples=0):
@@ -66,17 +70,6 @@ def _protocol_settings(*, warmups=1, repetitions=1, bootstrap_resamples=0):
     )
     protocol = chunking_protocol_from_mapping(payload)
     return {"chunking_embedding_protocol": protocol.meta.worker_payload()}
-
-
-@dataclass(frozen=True)
-class Chunk:
-    identifier: str
-    document_id: str
-    text: str
-    start: int
-    end: int
-    tokens: int = 0
-    model_tokens: int | None = None
 
 
 class WordTokenizer:
@@ -148,15 +141,36 @@ def test_qasper_preparation_emits_typed_units_and_rejects_ambiguous_offsets() ->
 
 
 def test_alpha_ndcg_penalizes_duplicate_evidence_before_novel_evidence() -> None:
-    corpus = [{"a"}, {"a"}, {"b"}]
-    duplicate_first = alpha_ndcg_at_k(corpus, corpus, 3, alpha=0.5)
-    novel_first = alpha_ndcg_at_k([{"a"}, {"b"}, {"a"}], corpus, 3, alpha=0.5)
+    question = {
+        **_manifest().samples[-1],
+        "evidence": [
+            {
+                "id": name,
+                "evidence_type": "text",
+                "document_id": "doc",
+                "start": start,
+                "end": end,
+            }
+            for name, start, end in (("a", 0, 5), ("b", 6, 10))
+        ],
+    }
+    corpus = [
+        Chunk("a", "doc", "alpha", 0, 5, 1),
+        Chunk("repeat-a", "doc", "alpha ", 0, 6, 1),
+        Chunk("b", "doc", "beta", 6, 10, 1),
+    ]
+
+    def score(ranking):
+        return score_question(
+            question, ranking, corpus, WordTokenizer(), cutoffs=(3,), alpha=0.5
+        ).metrics["alpha_ndcg_at_3"]
+
+    duplicate_first = score(corpus)
+    novel_first = score([corpus[0], corpus[2], corpus[1]])
     assert 0.0 <= duplicate_first < novel_first <= 1.0
 
 
-def test_quality_uses_three_and_five_cutoffs_and_alpha_requires_multiple_units() -> (
-    None
-):
+def test_quality_uses_three_and_five_cutoffs() -> None:
     question = {
         "id": "q1",
         "document_id": "doc",
@@ -179,11 +193,11 @@ def test_quality_uses_three_and_five_cutoffs_and_alpha_requires_multiple_units()
         ],
     }
     ranking = [
-        Chunk("a", "doc", "alpha", 0, 5),
-        Chunk("d1", "other", "x", 0, 1),
-        Chunk("d2", "other", "y", 1, 2),
-        Chunk("b", "doc", "beta", 6, 10),
-        Chunk("d3", "other", "z", 2, 3),
+        Chunk("a", "doc", "alpha", 0, 5, 1),
+        Chunk("d1", "other", "x", 0, 1, 1),
+        Chunk("d2", "other", "y", 1, 2, 1),
+        Chunk("b", "doc", "beta", 6, 10, 1),
+        Chunk("d3", "other", "z", 2, 3, 1),
     ]
 
     score = score_question(
@@ -209,18 +223,18 @@ def test_quality_uses_three_and_five_cutoffs_and_alpha_requires_multiple_units()
     assert score.matches[1]["recovered_at_5"] is True
 
 
-def test_single_unit_questions_omit_alpha_ndcg_and_its_metric_contract() -> None:
+def test_single_unit_questions_receive_alpha_ndcg_and_its_metric_contract() -> None:
     manifest = _manifest()
     question = next(row for row in manifest.samples if row.get("kind") == "question")
-    chunk = Chunk("a", "doc", "alpha", 0, 5)
+    chunk = Chunk("a", "doc", "alpha", 0, 5, 1)
 
     score = score_question(
         question, [chunk], [chunk], WordTokenizer(), cutoffs=(3, 5), alpha=0.5
     )
     directions, _ = benchmark.directions_for(manifest, CHUNKING_PROTOCOL)
 
-    assert not any(name.startswith("alpha_ndcg") for name in score.metrics)
-    assert not any("alpha_ndcg" in name for name in directions)
+    assert score.metrics["alpha_ndcg_at_3"] == 1.0
+    assert "quality.overall.alpha_ndcg_at_3" in directions
 
     rows = list(manifest.samples)
     rows[-1] = {
@@ -259,9 +273,9 @@ def test_retrieval_metrics_use_complete_units_and_evaluation_tokens() -> None:
             }
         ],
     }
-    partial = Chunk("partial", "doc", "alpha", 0, 5)
-    complete = Chunk("complete", "doc", "alpha beta gamma", 0, len(text))
-    distractor = Chunk("other", "other", "alpha beta", 0, 10)
+    partial = Chunk("partial", "doc", "alpha", 0, 5, 1)
+    complete = Chunk("complete", "doc", "alpha beta gamma", 0, len(text), 3)
+    distractor = Chunk("other", "other", "alpha beta", 0, 10, 2)
 
     partial_score = score_question(
         question,
@@ -335,16 +349,36 @@ def test_downstream_citation_support_accepts_multi_interval_evidence_units() -> 
     assert _supported_contexts(question, [hit]) == {1}
 
 
-def test_exact_cosine_ranking_uses_stable_corpus_order_for_ties() -> None:
+@pytest.mark.parametrize(
+    ("counts", "vector", "error"),
+    [
+        ([1], [2.0, 0.0], None),
+        ([True], None, "Native-token counts"),
+        ([1.5], None, "Native-token counts"),
+        ([float("nan")], None, "Native-token counts"),
+        ([], None, "Native-token counts"),
+        ([0], None, "Native-token counts"),
+        ([1, 2], None, "Native-token counts"),
+        ([1], [0.0, 0.0], "zero-norm"),
+        ([1], [1e30, 1e30], "non-finite norms"),
+        ([1], [float("nan"), 0.0], "non-finite values"),
+    ],
+)
+def test_exact_cosine_ranking_validates_inputs_and_breaks_ties(counts, vector, error):
     class QueryEmbedder:
         @staticmethod
+        def input_token_counts(texts, *, role):
+            return counts
+
+        @staticmethod
         def embed_query(_query):
-            return np.asarray([2.0, 0.0])
+            assert vector is not None, "invalid counts must fail before embedding"
+            return np.asarray(vector)
 
     chunks = [
-        Chunk("first", "doc", "a", 0, 1),
-        Chunk("second", "doc", "b", 1, 2),
-        Chunk("third", "doc", "c", 2, 3),
+        Chunk("first", "doc", "a", 0, 1, 1),
+        Chunk("second", "doc", "b", 1, 2, 1),
+        Chunk("third", "doc", "c", 2, 3, 1),
     ]
     index = ExactIndex(
         chunks,
@@ -352,15 +386,31 @@ def test_exact_cosine_ranking_uses_stable_corpus_order_for_ties() -> None:
         QueryEmbedder(),
         WordTokenizer(),
         None,
-        SimpleNamespace(dimension=2),
+        SimpleNamespace(dimension=2, maximum_length=8192, query_device="cpu"),
         "chunker",
         {},
         1.0,
         {},
     )
+    if error:
+        with pytest.raises(RuntimeError, match=error):
+            dense_rank_with_scores(index, "query", 3)
+        return
     ranking = dense_rank_with_scores(index, "query", 3)
     assert [position for position, _ in ranking] == [0, 1, 2]
     assert ranking[0][1] == ranking[1][1] == 1.0
+
+
+@pytest.mark.parametrize("shape", [(0, 768), (2, 768), (1, 2), (768,)])
+def test_embedding_runtime_rejects_wrong_output_cardinality_and_dimensions(shape):
+    runtime = Embedder(
+        embedding_spec("Alibaba-NLP/gte-modernbert-base", revision="r", local_path="p")
+    )
+    runtime._models["cpu"] = SimpleNamespace(
+        encode=lambda *args, **kwargs: np.ones(shape, dtype=np.float32)
+    )
+    with pytest.raises(RAGConfigurationError, match="shape mismatch"):
+        runtime.embed_query("question")
 
 
 def test_quality_aggregation_uses_documents_as_statistical_units() -> None:
@@ -915,7 +965,7 @@ def test_worker_marks_oversized_input_as_failed_with_reason_code(monkeypatch) ->
             },
         )
 
-    monkeypatch.setattr(benchmark, "evaluate_candidate", reject)
+    monkeypatch.setattr(benchmark, "build_index", reject)
     result = benchmark.execute_payload(
         {
             "candidate": candidate,
@@ -945,7 +995,7 @@ def test_candidate_emits_new_metrics_and_auditable_top_twenty(monkeypatch) -> No
         object(),
         WordTokenizer(),
         None,
-        SimpleNamespace(dimension=2),
+        FIXTURE_EMBEDDING,
         "chunker-fingerprint",
         {"name": "fixture", "fingerprint": "chunker-fingerprint"},
         2.0,
@@ -983,10 +1033,8 @@ def test_candidate_emits_new_metrics_and_auditable_top_twenty(monkeypatch) -> No
     assert len(samples) == 1
     assert aggregate["quality.overall.ndcg_at_3"] == 1.0
     assert aggregate["quality.overall.evidence_unit_recall_at_5"] == 1.0
-    assert "quality.overall.alpha_ndcg_at_3" not in aggregate
-    assert (
-        aggregate["validity.quality.overall.alpha_ndcg_eligible_question_count"] == 0.0
-    )
+    assert aggregate["quality.overall.alpha_ndcg_at_3"] == 1.0
+    assert aggregate["validity.quality.overall.eligible_question_count"] == 1.0
     assert aggregate["workload.embedding_matrix_bytes"] == 25 * 2 * 4
     assert operational["corpus_build_source_tokens_per_second"] == 1.0
     assert _parameters["manifest_checksum"] == "checksum"
@@ -1002,7 +1050,7 @@ def test_candidate_emits_new_metrics_and_auditable_top_twenty(monkeypatch) -> No
     }
     assert intervals == {}
     assert len(artifacts["retrievals"]) == 20
-    assert len(artifacts["timings"]) == 2
+    assert len(artifacts["timings"]) == 3  # build plus measured queries
     assert set(artifacts) == {
         "chunk_manifest",
         "query_metrics",
@@ -1010,6 +1058,7 @@ def test_candidate_emits_new_metrics_and_auditable_top_twenty(monkeypatch) -> No
         "evidence_matches",
         "timings",
         "validation_report",
+        "resources",
     }
 
 
@@ -1020,7 +1069,7 @@ def test_measured_query_failure_runs_every_repetition(monkeypatch) -> None:
         object(),
         WordTokenizer(),
         None,
-        SimpleNamespace(dimension=2),
+        FIXTURE_EMBEDDING,
         "chunker-fingerprint",
         {"name": "fixture", "fingerprint": "chunker-fingerprint"},
         1.0,
@@ -1059,7 +1108,13 @@ def test_measured_query_failure_runs_every_repetition(monkeypatch) -> None:
             dtype="float32",
         )
     assert calls == 3
-    assert len(caught.value.artifacts["timings"]) == 3
+    assert len(caught.value.artifacts["timings"]) == 4
+    assert caught.value.samples[0].latency_seconds is not None
+    assert caught.value.samples[0].metrics["quality.overall.ndcg_at_3"] is None
+    assert caught.value.metrics["quality.overall.ndcg_at_3"] is None
+    assert (
+        caught.value.artifacts["query_metrics"][0]["first_attempt_status"] == "failed"
+    )
 
 
 def test_worker_serializes_unexpected_python_failures_with_validation_report(
@@ -1082,7 +1137,7 @@ def test_worker_serializes_unexpected_python_failures_with_validation_report(
     def fail(*_args, **_kwargs):
         raise RuntimeError("injected")
 
-    monkeypatch.setattr(benchmark, "evaluate_candidate", fail)
+    monkeypatch.setattr(benchmark, "build_index", fail)
     result = benchmark.execute_payload(
         {
             "candidate": candidate,
@@ -1142,3 +1197,783 @@ def _manifest() -> DatasetManifest:
             },
         ),
     )
+
+
+def test_linear_ndcg_credits_multiple_units_without_exponential_gain():
+    question = _manifest().samples[-1]
+    question = {
+        **question,
+        "evidence": [
+            *question["evidence"],
+            {
+                "id": "e2",
+                "evidence_type": "text",
+                "document_id": "doc",
+                "start": 6,
+                "end": 10,
+            },
+        ],
+    }
+    one = Chunk("one", "doc", "alpha", 0, 5, 1)
+    two = Chunk("two", "doc", "alpha beta", 0, 10, 2)
+    score = score_question(
+        question, [one, two], [one, two], WordTokenizer(), cutoffs=(3,), alpha=0.5
+    )
+    discount = 1 / np.log2(3)
+    assert score.metrics["ndcg_at_3"] == pytest.approx(
+        (1 + 2 * discount) / (2 + discount)
+    )
+
+
+@pytest.mark.parametrize("ranking", [[], [Chunk("empty", "doc", "", 0, 0, 0)]])
+def test_token_free_retrieval_is_not_a_zero_quality_observation(ranking):
+    with pytest.raises(ValueError, match="tokens|token-free"):
+        score_question(
+            _manifest().samples[-1],
+            ranking,
+            ranking,
+            WordTokenizer(),
+            cutoffs=(3,),
+            alpha=0.5,
+        )
+
+
+def test_partial_quality_stays_diagnostic_and_failed_documents_enter_draws():
+    name = "quality.overall.ndcg_at_3"
+    samples = [
+        SampleResult(
+            "a", {name: 1.0}, 0.1, {"document_id": "a", "evidence_type": "text"}
+        ),
+        SampleResult(
+            "b", {name: 0.0}, 0.2, {"document_id": "b", "evidence_type": "text"}
+        ),
+        SampleResult(
+            "c",
+            {name: None},
+            None,
+            {
+                "document_id": "c",
+                "evidence_type": "text",
+                "first_attempt_status": "failed",
+            },
+        ),
+    ]
+    diagnostics = {}
+    aggregate, intervals = aggregate_quality(
+        samples, resamples=100, seed=42, confidence=0.95, diagnostics=diagnostics
+    )
+    assert aggregate[name] is None
+    assert name not in intervals
+    assert diagnostics[name]["estimate"] == 0.5
+    assert diagnostics[name]["interval"]["independent_document_count"] == 3
+    assert diagnostics[name]["interval"]["undefined_resamples"] > 0
+    assert diagnostics[name]["failed_question_count"] == 1
+
+
+def test_supported_degenerate_ci_is_retained_and_one_document_has_no_bounds():
+    name = "quality.overall.ndcg_at_3"
+    samples = [
+        SampleResult(
+            str(i), {name: 0.0}, 0.1, {"document_id": str(i), "evidence_type": "text"}
+        )
+        for i in range(2)
+    ]
+    _, intervals = aggregate_quality(samples, resamples=100, seed=42, confidence=0.95)
+    assert intervals[name]["lower"] == intervals[name]["upper"] == 0.0
+    assert intervals[name]["degenerate"] is True
+    _, intervals = aggregate_quality(
+        samples[:1], resamples=100, seed=42, confidence=0.95
+    )
+    assert intervals[name]["lower"] is None
+    assert intervals[name]["reason"] == "insufficient_independent_documents"
+
+
+@pytest.mark.parametrize("failed_attempt", [1, 2, 3])
+def test_first_quality_and_successful_latency_have_separate_support(
+    monkeypatch, failed_attempt
+):
+    chunks = [Chunk("a", "doc", "alpha", 0, 5, 1, 3)]
+    index = ExactIndex(
+        chunks,
+        np.asarray([[1.0, 0.0]], dtype=np.float32),
+        object(),
+        WordTokenizer(),
+        None,
+        FIXTURE_EMBEDDING,
+        "fixture",
+        {},
+        1.0,
+        {},
+    )
+    monkeypatch.setattr(benchmark, "build_index", lambda *args, **kwargs: index)
+    calls = 0
+
+    def rank(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == failed_attempt:
+            raise RuntimeError("injected")
+        return [(0, 1.0)]
+
+    monkeypatch.setattr(benchmark, "dense_rank_with_scores", rank)
+    plan = BenchmarkPlan(
+        "rag",
+        "chunking-embedding",
+        "smoke",
+        "fixture",
+        ("fixture|embedding",),
+        42,
+        3,
+        0,
+        0,
+        _protocol_settings(warmups=0, repetitions=3),
+    )
+    with pytest.raises(benchmark.CandidateExecutionError) as caught:
+        benchmark.evaluate_candidate(
+            "fixture|embedding",
+            _manifest(),
+            {"embedding": {"revision": "r", "model_path": "p"}},
+            plan,
+            device="cpu",
+            dtype="float32",
+        )
+    result = caught.value
+    assert calls == 3
+    assert result.metrics["quality.overall.ndcg_at_3"] == (
+        None if failed_attempt == 1 else 1.0
+    )
+    assert result.samples[0].latency_seconds is not None
+    assert result.operational["peak_vram_mb"] is None
+    assert result.parameters["measurement.resource_scope"] == "complete"
+
+
+@pytest.mark.parametrize("text", ["A🙂B漢字é", "...!!!", "\n\nFirst.\nSecond?!"])
+def test_all_strategies_preserve_source_characters_and_actual_token_counts(text):
+    tokenizer = TiktokenOffsetTokenizer()
+    for name in CHUNKING_PROTOCOL.strategies:
+        strategy = build_chunking_strategy(
+            name,
+            protocol=CHUNKING_PROTOCOL,
+            tokenizer=tokenizer,
+            embed_sentences=lambda rows: np.ones((len(rows), 2)),
+            semantic_embedding_fingerprint="fixture",
+        )
+        spans = strategy.split(text)
+        assert spans
+        assert all(
+            count == tokenizer.count(text[start:end]) and count > 0
+            for start, end, count in spans
+        )
+        assert all(
+            any(start <= i < end for start, end, _ in spans)
+            for i, char in enumerate(text)
+            if not char.isspace()
+        )
+
+
+def test_protocol_rejects_missing_chunker_and_single_document_ci_support():
+    payload = deepcopy(CHUNKING_PROTOCOL.meta.resolved)
+    del payload["strategies"]["semantic"]
+    with pytest.raises(ValueError, match="all eight"):
+        chunking_protocol_from_mapping(payload)
+    payload = deepcopy(CHUNKING_PROTOCOL.meta.resolved)
+    payload["statistics"]["minimum_latency_ci_documents"] = 1
+    with pytest.raises(ValueError):
+        chunking_protocol_from_mapping(payload)
+
+
+def test_sealed_data_report_is_reused_then_rejects_changed_input(tmp_path, monkeypatch):
+    from edumind.common.artifacts import atomic_write_json
+    from edumind.common.paths import PROJECT_ROOT
+    from experiments.benchmarks.common.datasets import load_manifest
+    from experiments.benchmarks.rag.chunking_embedding.validation import (
+        prepare_report,
+        verify_inputs,
+    )
+
+    source = PROJECT_ROOT / "data/benchmarks/rag/smoke.json"
+    manifest = load_manifest(source)
+    path = tmp_path / "smoke.json"
+    atomic_write_json(path, manifest.__dict__)
+    root = tmp_path / "reports"
+    _, report = prepare_report(path, "smoke", CHUNKING_PROTOCOL, report_root=root)
+    assert report["status"] == "passed"
+    from experiments.benchmarks.common import datasets
+
+    monkeypatch.setattr(
+        datasets,
+        "validate_evidence",
+        lambda *_: pytest.fail("sealed verification must not reevaluate annotations"),
+    )
+    assert (
+        verify_inputs(path, "smoke", CHUNKING_PROTOCOL, report_root=root)[1] == report
+    )
+    payload = {**manifest.__dict__, "revision": "changed"}
+    atomic_write_json(path, payload)
+    with pytest.raises(ValueError, match="Missing or stale"):
+        verify_inputs(path, "smoke", CHUNKING_PROTOCOL, report_root=root)
+
+
+@pytest.mark.parametrize("identifier", [" unit ", 1, None])
+def test_invalid_evidence_ids_produce_a_failed_data_report(tmp_path, identifier):
+    from edumind.common.artifacts import atomic_write_json
+    from experiments.benchmarks.common.datasets import manifest_content_checksum
+    from experiments.benchmarks.rag.chunking_embedding.validation import prepare_report
+
+    manifest = deepcopy(_manifest().__dict__)
+    manifest["samples"][-1]["evidence"][0]["id"] = identifier
+    manifest["checksum"] = manifest_content_checksum(manifest["samples"])
+    path = tmp_path / "smoke.json"
+    atomic_write_json(path, manifest)
+    destination, report = prepare_report(
+        path, "smoke", CHUNKING_PROTOCOL, report_root=tmp_path / "reports"
+    )
+    assert destination.is_file()
+    assert report["status"] == "failed"
+    assert "stable ID" in report["errors"][0]
+
+
+@pytest.mark.parametrize("payload", [[], None, {"samples": [None]}])
+def test_malformed_manifest_structure_produces_a_failed_data_report(tmp_path, payload):
+    from edumind.common.artifacts import atomic_write_json
+    from experiments.benchmarks.rag.chunking_embedding.validation import prepare_report
+
+    if isinstance(payload, dict):
+        payload = {**_manifest().__dict__, **payload}
+    path = tmp_path / "smoke.json"
+    atomic_write_json(path, payload)
+    destination, report = prepare_report(
+        path, "smoke", CHUNKING_PROTOCOL, report_root=tmp_path / "reports"
+    )
+    assert destination.is_file()
+    assert report["status"] == "failed"
+    assert "JSON object" in report["errors"][0]
+
+
+def test_alpha_greedy_exceedance_keeps_raw_ratio_and_caps_question_score():
+    text = "abcdefghijklmnopqrstuvwxyz1234"
+    evidence = [
+        (7, 16),
+        (14, 25),
+        (13, 15),
+        (6, 17),
+        (9, 20),
+        (3, 7),
+        (22, 24),
+        (20, 29),
+    ]
+    spans = [(10, 23), (11, 25), (13, 15), (13, 19), (10, 19), (14, 29), (5, 19)]
+    chunks = [
+        Chunk(str(i), "doc", text[start:end], start, end, 1)
+        for i, (start, end) in enumerate(spans)
+    ]
+    score = score_question(
+        {
+            **_manifest().samples[-1],
+            "evidence": [
+                {
+                    "id": str(i),
+                    "evidence_type": "text",
+                    "document_id": "doc",
+                    "start": start,
+                    "end": end,
+                }
+                for i, (start, end) in enumerate(evidence)
+            ],
+        },
+        [chunks[5], chunks[6], chunks[1]],
+        chunks,
+        WordTokenizer(),
+        cutoffs=(3,),
+        alpha=0.5,
+    )
+    assert score.metrics["alpha_ndcg_at_3"] == 1
+    assert score.diagnostics["alpha_ndcg_at_3.raw_ratio"] > 1
+    assert score.diagnostics["alpha_ndcg_at_3.greedy_baseline_exceeded"] is True
+
+
+@pytest.mark.parametrize(
+    "ranking", [[], [(0, 1.0), (0, 0.9)], [(2, 1.0)], [(0, float("nan"))]]
+)
+def test_invalid_rankings_are_integrity_errors(ranking):
+    from experiments.benchmarks.rag.evaluation import validate_ranking
+
+    with pytest.raises(RuntimeError):
+        validate_ranking(SimpleNamespace(chunks=[object()]), ranking, 20)
+
+
+def test_partial_build_preserves_inventory_but_no_final_bytes_or_duration(monkeypatch):
+    model = "Alibaba-NLP/gte-modernbert-base"
+
+    def build(*args, progress, **kwargs):
+        progress.update(
+            chunks=[Chunk("a", "doc", "alpha", 0, 5, 1)],
+            generation_complete=True,
+            build_started=0.0,
+            chunking_contract={"fingerprint": "actual-chunker", "size": 256},
+        )
+        raise RuntimeError("embedding failed")
+
+    monkeypatch.setattr(benchmark, "build_index", build)
+    plan = BenchmarkPlan(
+        "rag",
+        "chunking-embedding",
+        "smoke",
+        "fixture",
+        (f"token-256-32|{model}",),
+        42,
+        1,
+        0,
+        0,
+        _protocol_settings(warmups=0),
+    )
+    with pytest.raises(benchmark.CandidateExecutionError) as caught:
+        benchmark.evaluate_candidate(
+            plan.candidates[0],
+            _manifest(),
+            {model: {"revision": "r", "model_path": "p"}},
+            plan,
+            device="cpu",
+            dtype="float32",
+        )
+    result = caught.value
+    assert result.metrics["workload.chunk_count"] == 1.0
+    assert result.metrics["workload.embedding_matrix_bytes"] is None
+    assert result.operational["corpus_build_seconds"] is None
+    assert result.artifacts["timings"][1]["status"] == "unexecuted"
+    assert result.parameters["measurement.resource_scope"] == "partial"
+    assert result.operational["peak_process_tree_ram_mb"] > 0
+    assert result.parameters["chunking_fingerprint"] == "actual-chunker"
+    assert (
+        result.artifacts["chunk_manifest"][0]["chunking_fingerprint"]
+        == "actual-chunker"
+    )
+
+
+def test_paired_ci_does_not_invent_support_before_data_review():
+    from experiments.benchmarks.common.contracts import CandidateResult
+    from experiments.benchmarks.common.runner import _paired_comparisons
+
+    name = "quality.overall.ndcg_at_3"
+    samples = tuple(
+        SampleResult(str(i), {name: 0.5}, 0.1, {"document_id": str(i)})
+        for i in range(3)
+    )
+    results = [
+        CandidateResult(candidate, "success", "hash", {}, {}, samples, {})
+        for candidate in ("a", "b")
+    ]
+    metric = _paired_comparisons(
+        results,
+        {name: "max"},
+        resamples=100,
+        seed=42,
+        group_key="document_id",
+        confidence=0.95,
+        minimum_ci_units=None,
+    )[0]["metrics"][name]
+    assert metric["left_minus_right"] == 0
+    assert metric["lower"] is None
+    assert metric["reason"] == "ci_support_not_frozen"
+
+
+def test_snowflake_protocol_config_is_executed_and_fingerprinted(monkeypatch):
+    import sentence_transformers
+    import torch
+
+    calls = []
+
+    class Rotary(torch.nn.Module):
+        def __init__(self, dim=2, max_position_embeddings=8, base=10000, device=None):
+            super().__init__()
+            self.dim = dim
+            self.max_position_embeddings = max_position_embeddings
+            self.base = base
+            self.register_buffer("inv_freq", torch.ones(dim, device=device))
+
+    embeddings = torch.nn.Module()
+    embeddings.word_embeddings = torch.nn.Embedding(3, 2)
+    embeddings.register_buffer("position_ids", torch.full((8,), -1))
+    embeddings.rotary_emb = Rotary()
+    embeddings.rotary_emb.inv_freq.fill_(float("nan"))
+    original_weights = embeddings.word_embeddings.weight.detach().clone()
+
+    class Model:
+        device = "cpu"
+        max_seq_length = 8192
+
+        def __getitem__(self, index):
+            assert index == 0
+            return SimpleNamespace(
+                model=SimpleNamespace(
+                    config=SimpleNamespace(
+                        model_type="gte", rope_scaling=None, max_position_embeddings=8
+                    ),
+                    embeddings=embeddings,
+                )
+            )
+
+    def load(_source, **kwargs):
+        calls.append(kwargs)
+        return Model()
+
+    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", load)
+    name = "Snowflake/snowflake-arctic-embed-m-v2.0"
+    spec = embedding_spec(
+        name,
+        revision="rev",
+        local_path="path",
+        config_options=CHUNKING_PROTOCOL.model_config_options(name),
+    )
+    Embedder(spec, dtype="float32").prepare()
+    assert calls[0]["config_kwargs"] == {
+        "unpad_inputs": False,
+        "use_memory_efficient_attention": False,
+    }
+    assert spec.fingerprint != replace(spec, config_options=()).fingerprint
+    assert embeddings.position_ids.tolist() == list(range(8))
+    assert torch.isfinite(embeddings.rotary_emb.inv_freq).all()
+    assert torch.equal(embeddings.word_embeddings.weight, original_weights)
+
+
+def test_protocol_rejects_unpadding_without_its_attention_backend():
+    payload = deepcopy(CHUNKING_PROTOCOL.meta.resolved)
+    payload["index"]["model_config"]["Snowflake/snowflake-arctic-embed-m-v2.0"][
+        "unpad_inputs"
+    ] = True
+    with pytest.raises(ValueError, match="unpadding requires"):
+        chunking_protocol_from_mapping(payload)
+
+
+def test_protocol_rejects_implicit_snowflake_configuration():
+    payload = deepcopy(CHUNKING_PROTOCOL.meta.resolved)
+    payload["index"]["model_config"] = {}
+    with pytest.raises(ValueError, match="must be explicit"):
+        chunking_protocol_from_mapping(payload)
+
+
+def test_structure_chunker_does_not_split_a_formula_at_a_hash_heading():
+    text = "# Topic\n\n$$\n# literal formula content\nx+y\n$$\n"
+    strategy = build_chunking_strategy(
+        "structure-aware-512-64", protocol=CHUNKING_PROTOCOL, tokenizer=WordTokenizer()
+    )
+    chunks = strategy.split(text)
+    assert any(text[start:end].count("$$") == 2 for start, end, _ in chunks)
+
+
+def test_zero_generated_chunks_are_known_but_not_a_completed_index(monkeypatch):
+    from experiments.benchmarks.rag import evaluation
+
+    monkeypatch.setattr(
+        evaluation,
+        "build_chunking_strategy",
+        lambda *args, **kwargs: SimpleNamespace(
+            name="empty",
+            fingerprint="empty",
+            tokenizer=WordTokenizer(),
+            split=lambda _: [],
+        ),
+    )
+    progress = {}
+    with pytest.raises(RuntimeError, match="empty corpus"):
+        evaluation.build_index(
+            _manifest(),
+            "token-256-32",
+            "Alibaba-NLP/gte-modernbert-base",
+            {"Alibaba-NLP/gte-modernbert-base": {"revision": "r", "model_path": "p"}},
+            with_bm25=False,
+            with_dense=False,
+            device="cpu",
+            dtype="float32",
+            chunking_protocol=CHUNKING_PROTOCOL,
+            progress=progress,
+        )
+    assert progress["generation_complete"] is True
+    assert progress["chunks"] == []
+    assert progress["processed_documents"] == 2
+
+
+def test_fatal_worker_retains_missing_records_without_inventing_attempts(monkeypatch):
+    from experiments.benchmarks.common.process import WorkerExecutionError
+
+    def crash(*args, **kwargs):
+        raise WorkerExecutionError("injected process exit", {"peak_vram_mb": 600})
+
+    monkeypatch.setattr(benchmark, "run_json_worker", crash)
+    plan = BenchmarkPlan(
+        "rag",
+        "chunking-embedding",
+        "smoke",
+        "fixture",
+        ("fixture|embedding",),
+        42,
+        3,
+        0,
+        0,
+        _protocol_settings(warmups=0, repetitions=3),
+    )
+    with pytest.raises(WorkerExecutionError) as caught:
+        benchmark.run_in_fresh_process(
+            "fixture|embedding", _manifest(), {}, plan, device="cuda", dtype="float16"
+        )
+    assert caught.value.samples == ()
+    report = caught.value.artifacts["validation_report"]
+    assert report["missing_attempt_record_count"] == 3
+    assert "failed_attempt_count" not in report
+    assert caught.value.operational["peak_vram_mb"] == 600
+    assert caught.value.parameters["measurement.resource_scope"] == "partial"
+
+
+@pytest.mark.parametrize(
+    "invalid_field",
+    [
+        "metrics",
+        "operational",
+        "samples",
+        "negative_peaks",
+        "nan_latency",
+        "negative_latency",
+        "bool_latency",
+    ],
+)
+def test_invalid_worker_schema_retains_missing_records_and_available_peaks(
+    monkeypatch, invalid_field
+):
+    result = {
+        "status": "success",
+        "samples": [],
+        "metrics": {},
+        "operational": {"peak_vram_mb": 600},
+    }
+    result[invalid_field] = (
+        [{"sample_id": "q"}] if invalid_field == "samples" else {"bad": "text"}
+    )
+    if invalid_field == "negative_peaks":
+        result["metrics"] = {"bad": "text"}
+        result["operational"] = {"peak_vram_mb": -1, "peak_process_tree_ram_mb": -2}
+    if invalid_field.endswith("_latency"):
+        result["samples"] = [
+            {
+                "sample_id": "q",
+                "metrics": {},
+                "latency_seconds": {
+                    "nan_latency": float("nan"),
+                    "negative_latency": -1,
+                    "bool_latency": True,
+                }[invalid_field],
+            }
+        ]
+    monkeypatch.setattr(benchmark, "run_json_worker", lambda *args, **kwargs: result)
+    plan = BenchmarkPlan(
+        "rag",
+        "chunking-embedding",
+        "smoke",
+        "fixture",
+        ("fixture|embedding",),
+        42,
+        1,
+        0,
+        1,
+        settings=_protocol_settings(),
+    )
+    with pytest.raises(benchmark.WorkerExecutionError) as caught:
+        benchmark.run_in_fresh_process(
+            "fixture|embedding", _manifest(), {}, plan, device="cpu", dtype="float32"
+        )
+    error = caught.value
+    assert (
+        error.artifacts["validation_report"]["reason_code"] == "missing_worker_result"
+    )
+    assert error.parameters["measurement.resource_scope"] == "partial"
+    if invalid_field not in {"operational", "negative_peaks"}:
+        assert error.operational["peak_vram_mb"] == 600
+    else:
+        assert error.operational == {}
+
+
+def test_successful_preflight_merges_supervisor_evidence_without_legacy_helper(
+    monkeypatch,
+):
+    from experiments.benchmarks.common.preflight import _probe_candidate
+
+    monkeypatch.setattr(
+        benchmark,
+        "run_json_worker",
+        lambda *args, **kwargs: {
+            "placement": {"status": "qualified"},
+            "_worker_supervision": {
+                "vram_measurement_method": "nvml-device-total",
+                "peak_vram_mb": 600,
+            },
+        },
+    )
+    plan = BenchmarkPlan(
+        "rag",
+        "chunking-embedding",
+        "development",
+        "fixture",
+        ("fixture|embedding",),
+        42,
+        1,
+        0,
+        0,
+        settings={
+            "chunking_embedding_protocol": CHUNKING_PROTOCOL.meta.worker_payload()
+        },
+    )
+    result = _probe_candidate(
+        "fixture|embedding",
+        lambda candidate: benchmark.preflight_in_fresh_process(
+            candidate,
+            _manifest(),
+            {},
+            plan,
+            vram_limit_mb=3584,
+            preflight=CHUNKING_PROTOCOL.preflight,
+        ),
+    )
+    assert result["status"] == "qualified"
+    assert result["peak_vram_mb"] == 600
+    assert "_worker_supervision" not in result
+
+
+def test_authoritative_data_validation_checks_complete_inventory_and_leakage(tmp_path):
+    from edumind.common.artifacts import atomic_write_json
+    from experiments.benchmarks.common.datasets import manifest_content_checksum
+    from experiments.benchmarks.rag.chunking_embedding.validation import prepare_report
+
+    payload = deepcopy(CHUNKING_PROTOCOL.meta.resolved)
+    payload["data"]["qasper_papers"] = dict.fromkeys(
+        ("development", "validation", "locked"), 1
+    )
+    payload["data"]["minimum_structured_questions"] = dict.fromkeys(
+        ("table", "formula", "mixed"), 1
+    )
+    protocol = chunking_protocol_from_mapping(payload)
+    manifests = []
+    for split in ("development", "validation", "locked-test"):
+        document = {
+            "id": split,
+            "kind": "document",
+            "text": f"alpha beta {split}",
+            "source_dataset": "allenai/qasper",
+            "source_license": "CC-BY-4.0",
+            "source_revision": "fixture",
+            "independent_source_id": split,
+        }
+        questions = []
+        for scope in ("table", "formula", "mixed"):
+            types = ("text", "formula") if scope == "mixed" else (scope,)
+            questions.append(
+                {
+                    "id": split + scope,
+                    "kind": "question",
+                    "question": "Which evidence?",
+                    "document_id": split,
+                    "answerable": True,
+                    "evidence_type": scope,
+                    "evidence": [
+                        {
+                            "id": f"{scope}-{i}",
+                            "evidence_type": kind,
+                            "document_id": split,
+                            "start": i * 6,
+                            "end": i * 6 + 4,
+                        }
+                        for i, kind in enumerate(types)
+                    ],
+                }
+            )
+        samples = [document, *questions]
+        manifest = {
+            **_manifest().__dict__,
+            "split": split,
+            "samples": samples,
+            "checksum": manifest_content_checksum(samples),
+        }
+        path = tmp_path / f"{split}.json"
+        atomic_write_json(path, manifest)
+        manifests.append(path)
+    root = tmp_path / "reports"
+    options = {"inventory": manifests, "report_root": root}
+    assert (
+        prepare_report(manifests[0], "development", protocol, **options)[1]["status"]
+        == "passed"
+    )
+    import json
+
+    leaked = json.loads(manifests[1].read_text(encoding="utf-8"))
+    leaked["samples"][0]["independent_source_id"] = "development"
+    leaked["checksum"] = manifest_content_checksum(leaked["samples"])
+    atomic_write_json(manifests[1], leaked)
+    report = prepare_report(manifests[0], "development", protocol, **options)[1]
+    assert report["status"] == "failed"
+    assert "Cross-split source leakage" in report["errors"][0]
+
+
+@pytest.mark.parametrize(
+    "profile,source_profile", [("validation", "development"), ("locked", "validation")]
+)
+def test_phase_decisions_reject_stale_protocols_and_select_exact_winners(
+    tmp_path, profile, source_profile
+):
+    from edumind.common.artifacts import atomic_write_json
+    from experiments.benchmarks.rag.chunking_embedding.run import _selected_candidates
+
+    candidate = CHUNKING_PROTOCOL.smoke_pair
+    summary = {
+        "run_id": "source-run",
+        "complete": True,
+        "plan": {
+            "suite": "rag",
+            "stage": "chunking-embedding",
+            "profile": source_profile,
+            "settings": {"preflight_fingerprint": "current-qualification"},
+        },
+        "protocols": {
+            "chunking_embedding": {"checksum": CHUNKING_PROTOCOL.meta.checksum}
+        },
+        "candidates": [{"candidate": candidate, "status": "success"}],
+    }
+    source = tmp_path / "summary.json"
+    decision = tmp_path / "decision.json"
+    atomic_write_json(source, summary)
+    atomic_write_json(
+        decision,
+        {
+            "schema_version": 1,
+            "source_summary": str(source),
+            "source_run_id": "source-run",
+            "selected_candidates": [candidate],
+            "selected_by": "reviewer",
+            "selected_date": "2026-10-13",
+            "reason": "fixture selection",
+        },
+    )
+    options = {"qualification_fingerprint": "current-qualification"}
+    assert _selected_candidates(profile, decision, CHUNKING_PROTOCOL, **options) == (
+        candidate,
+    )
+    summary["plan"]["settings"]["preflight_fingerprint"] = "old-qualification"
+    atomic_write_json(source, summary)
+    with pytest.raises(ValueError, match="different hardware qualification"):
+        _selected_candidates(profile, decision, CHUNKING_PROTOCOL, **options)
+    summary["plan"]["settings"]["preflight_fingerprint"] = "current-qualification"
+    summary["protocols"]["chunking_embedding"]["checksum"] = "old-protocol"
+    atomic_write_json(source, summary)
+    with pytest.raises(ValueError, match="different chunking_embedding protocol"):
+        _selected_candidates(profile, decision, CHUNKING_PROTOCOL, **options)
+
+
+def test_unchanged_production_embedding_keeps_its_persistent_fingerprint():
+    from dataclasses import asdict
+
+    from edumind.common.artifacts import stable_hash
+
+    spec = embedding_spec(
+        "Alibaba-NLP/gte-modernbert-base", revision="rev", local_path="path"
+    )
+    previous_contract = asdict(spec)
+    del previous_contract["config_options"]
+    del previous_contract["buffer_initialization"]
+    assert spec.fingerprint == stable_hash(previous_contract)

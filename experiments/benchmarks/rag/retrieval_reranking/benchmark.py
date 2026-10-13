@@ -398,7 +398,7 @@ def evaluate_candidate(
         "validity.nonfinite_score_count": float(nonfinite_score_count),
         "validity.pool_collection_match": float(query_pool_mismatches == 0),
         "validity.exact_pool_permutation": float(permutation_failures == 0),
-        **eligible_counts(samples, alpha_metrics=protocol.alpha_ndcg_metrics),
+        **eligible_counts(samples),
     }
     workload = {
         "workload.corpus_document_count": float(len(documents)),

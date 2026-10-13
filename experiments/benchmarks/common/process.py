@@ -228,20 +228,24 @@ def run_json_worker(
                     "vram_measurement_method": monitor.vram_measurement_method,
                     "resource_samples": monitor.samples(),
                 }
-        if returncode or not output_path.is_file():
+        evidence = dict(supervision or {})
+        result = None
+        if output_path.is_file():
+            try:
+                result = json.loads(output_path.read_text(encoding="utf-8"))
+            except (ValueError, OSError) as exc:
+                raise WorkerExecutionError(
+                    f"{error_label} returned unreadable worker output: {exc}", evidence
+                ) from exc
+        if returncode or not isinstance(result, dict):
             detail = (stderr or stdout or "no worker output").strip()
-            evidence = dict(supervision or {})
-            if output_path.is_file():
-                failed = json.loads(output_path.read_text(encoding="utf-8"))
-                if isinstance(failed, Mapping) and failed.get("worker_error"):
-                    detail = str(failed["worker_error"])
-                    evidence.update(payload_mapping(failed.get("resource_evidence")))
+            if isinstance(result, dict) and result.get("worker_error"):
+                detail = str(result["worker_error"])
+                evidence.update(payload_mapping(result.get("resource_evidence")))
+                evidence.update(payload_mapping(result.get("failure_evidence")))
             raise WorkerExecutionError(
                 f"{error_label} failed: {detail[-4000:]}", evidence
             )
-        result = json.loads(output_path.read_text(encoding="utf-8"))
-        if not isinstance(result, dict):
-            raise RuntimeError(f"{error_label} returned a non-object result")
         reported_peak = _reported_peak_vram_mb(result)
         if reported_peak is not None and supervision is not None:
             supervision["worker_reported_peak_vram_mb"] = reported_peak
@@ -340,6 +344,9 @@ def json_worker_main(
             {
                 "worker_error": f"{type(exc).__name__}: {exc}",
                 "resource_evidence": getattr(exc, "resource_evidence", {}),
+                "failure_evidence": {"input_validation": exc.report}
+                if hasattr(exc, "report")
+                else {},
             },
         )
         return 1
@@ -371,10 +378,18 @@ def numeric_payload(value: object) -> dict[str, float | None]:
 
 def sample_result_from_payload(value: object) -> SampleResult:
     row = payload_mapping(value)
+    latency = row["latency_seconds"]
+    if latency is not None and (
+        not isinstance(latency, (int, float))
+        or isinstance(latency, bool)
+        or not math.isfinite(latency)
+        or latency < 0
+    ):
+        raise ValueError("Worker sample latency must be finite, nonnegative or null")
     return SampleResult(
         str(row["sample_id"]),
         numeric_payload(row["metrics"]),
-        float(row["latency_seconds"]) if row["latency_seconds"] is not None else None,
+        float(latency) if latency is not None else None,
         payload_mapping(row.get("metadata")),
     )
 

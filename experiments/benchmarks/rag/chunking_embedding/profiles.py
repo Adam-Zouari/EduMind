@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import replace
 
 from edumind.rag.contracts import (
     EMBEDDING_SPECS,
@@ -27,6 +27,7 @@ EXPERIMENTAL_EMBEDDING_SPECS: dict[str, EmbeddingSpec] = {
         "cls",
         query_prompt_name="query",
         trust_remote_code=True,
+        buffer_initialization="gte-position-rope-v1",
     ),
     "codefuse-ai/F2LLM-v2-0.6B": EmbeddingSpec(
         "codefuse-ai/F2LLM-v2-0.6B",
@@ -100,27 +101,28 @@ def embedding_spec(
     local_path: str,
     document_device: str = "cpu",
     query_device: str = "cpu",
+    config_options: tuple[tuple[str, bool], ...] = (),
 ) -> EmbeddingSpec:
     if name in EMBEDDING_SPECS:
-        return production_embedding_spec(
+        spec = production_embedding_spec(
             name,
             revision=revision,
             local_path=local_path,
             document_device=document_device,
             query_device=query_device,
         )
-    try:
-        spec = EXPERIMENTAL_EMBEDDING_SPECS[name]
-    except KeyError as exc:
-        raise ValueError(
-            f"No experimental embedding contract for model: {name}"
-        ) from exc
-    return EmbeddingSpec(
-        **{
-            **asdict(spec),
-            "revision": revision,
-            "local_path": local_path,
-            "document_device": document_device,
-            "query_device": query_device,
-        }
+    else:
+        try:
+            spec = EXPERIMENTAL_EMBEDDING_SPECS[name]
+        except KeyError as exc:
+            raise ValueError(
+                f"No experimental embedding contract for model: {name}"
+            ) from exc
+    return replace(
+        spec,
+        revision=revision,
+        local_path=local_path,
+        document_device=document_device,
+        query_device=query_device,
+        config_options=config_options,
     )
