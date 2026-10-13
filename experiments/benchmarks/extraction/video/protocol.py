@@ -127,6 +127,10 @@ def protocol_from_mapping(
     )
     if not scenes or tuple(sorted(set(scenes))) != scenes:
         raise ValueError("Scene thresholds must be non-empty, unique, and increasing")
+    if any(float(f"{value:.2f}") != value for value in scenes):
+        raise ValueError(
+            "Scene thresholds must be representable by their two-decimal candidate IDs"
+        )
     include_zero = boolean(
         keyframes["include_frame_zero"], "keyframes.include_frame_zero"
     )
@@ -299,6 +303,8 @@ def protocol_from_mapping(
     maximum_finalists = integer(
         selection["maximum_finalists"], "selection.maximum_finalists", minimum=1
     )
+    if maximum_finalists > len(fixed) + len(scenes) + len(gaps):
+        raise ValueError("Video finalist limit exceeds the declared roster")
     profiles = execution_profiles(
         root["profiles"], names=("smoke", "development", "validation", "locked")
     )

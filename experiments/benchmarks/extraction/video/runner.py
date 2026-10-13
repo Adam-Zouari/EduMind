@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
+from types import SimpleNamespace
 
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.arguments import (
@@ -28,7 +31,7 @@ from experiments.benchmarks.common.datasets import load_manifest
 from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.preflight import eligible_candidates
 from experiments.benchmarks.common.preflight_reports import resolve_preflight_report
-from experiments.benchmarks.common.process import run_json_worker
+from experiments.benchmarks.common.process import WorkerExecutionError, run_json_worker
 from experiments.benchmarks.common.runner import run_benchmark
 from experiments.benchmarks.extraction.audio.adapters import profiles as audio_profiles
 from experiments.benchmarks.extraction.audio.protocol import (
@@ -53,6 +56,7 @@ from experiments.benchmarks.extraction.document.runner import (
     validate_prepared_components,
 )
 from experiments.benchmarks.extraction.media import ffmpeg_version
+from experiments.benchmarks.extraction.scoring import attempt_rates
 from experiments.benchmarks.extraction.video.candidates import (
     all_candidates,
     scene_candidates,
@@ -68,9 +72,12 @@ from experiments.benchmarks.extraction.video.frozen_asr_worker import (
 from experiments.benchmarks.extraction.video.metrics import (
     METRIC_DIRECTIONS,
     QUALITY_DIRECTIONS,
+    aggregate_quality,
 )
 from experiments.benchmarks.extraction.video.preflight import (
+    qualification_inputs,
     run_video_preflight,
+    validate_input_envelope,
     video_qualification_identity,
 )
 from experiments.benchmarks.extraction.video.protocol import (
@@ -120,6 +127,10 @@ def main():
     arguments = parser.parse_args()
     if arguments.phase == "scene-selection" and arguments.profile != "development":
         parser.error("Preliminary scene selection is a development-only comparison")
+    if arguments.profile == "smoke" and (
+        arguments.preflight_report or arguments.preflight_run_id
+    ):
+        parser.error("Smoke does not consume hardware qualification")
     if arguments.profile == "preflight" and any(
         (
             arguments.frozen_asr,
@@ -164,8 +175,8 @@ def main():
     manifest_path = (
         arguments.manifest or default_manifest_path("video", profile)
     ).resolve()
-    validation_path, _ = verified_inputs(manifest_path, profile, protocol)
-    manifest = load_manifest(manifest_path)
+    validation_path, validation = verified_inputs(manifest_path, profile, protocol)
+    manifest = load_manifest(manifest_path, validate_annotations=False)
     items = [
         {**item, "source_path": str((PROJECT_ROOT / item["source_path"]).resolve())}
         for item in manifest.samples
@@ -199,38 +210,34 @@ def main():
             )
         )
         return 0 if result.ready_for_development else 2
-    candidates, decisions = _candidates(arguments, protocol)
     qualification = qualification_path = None
     if profile != "smoke":
-        development_path = (
-            manifest_path
-            if profile == "development"
-            else default_manifest_path("video", "development")
-        )
-        verified_inputs(development_path, "development", protocol)
-        development = load_manifest(development_path)
-        stress = max(
-            (item for item in development.samples if item.get("kind") == "video"),
-            key=lambda item: float(item["duration_seconds"]),
-        )
-        declared, fingerprint, _ = video_qualification_identity(
+        qualification_path, qualification = _qualification(
+            profile,
+            manifest_path,
+            items,
+            validation,
             protocol,
             audio_protocol,
             document_protocol,
             audio_candidate,
             image_candidate,
-            development,
-            stress,
-        )
-        qualification_path, qualification = resolve_preflight_report(
-            benchmark="video",
-            fingerprint=fingerprint,
-            candidates=declared,
             explicit=arguments.preflight_report,
             run_id=arguments.preflight_run_id,
         )
-        if f"frozen-asr|{audio_candidate}" not in qualification["qualified_candidates"]:
-            raise ValueError("Selected frozen ASR did not pass video preflight")
+    candidates, decisions = _candidates(
+        arguments,
+        protocol,
+        expected_protocols={
+            "video": protocol.meta.checksum,
+            "audio": audio_protocol.meta.checksum,
+            "document": document_protocol.meta.checksum,
+        },
+        expected_qualification=qualification.get("qualification_fingerprint")
+        if qualification
+        else None,
+    )
+    if qualification is not None:
         candidates = tuple(
             value.removeprefix("visual|")
             for value in eligible_candidates(
@@ -302,7 +309,7 @@ def run_visual_benchmark(
     data_validation_report=None,
     scene_selection=False,
 ):
-    report_path, _ = verified_inputs(manifest_path, profile, protocol)
+    report_path, validation = verified_inputs(manifest_path, profile, protocol)
     if (
         data_validation_report is not None
         and Path(data_validation_report).resolve() != report_path.resolve()
@@ -311,7 +318,11 @@ def run_visual_benchmark(
             "Video data-validation report differs from the verified report"
         )
     data_validation_report = report_path
-    current_manifest = load_manifest(manifest_path)
+    canonical_checksums = {
+        sample_id: metadata["canonical_sha256"]
+        for sample_id, metadata in validation["metadata"]["samples"].items()
+    }
+    current_manifest = load_manifest(manifest_path, validate_annotations=False)
     expected_items = [
         {**item, "source_path": str((PROJECT_ROOT / item["source_path"]).resolve())}
         for item in current_manifest.samples
@@ -325,6 +336,80 @@ def run_visual_benchmark(
     ):
         raise ValueError("Video execution inputs differ from the validated manifest")
     execution = protocol.profile(profile)
+    if profile != "smoke":
+        selection = SimpleNamespace(
+            profile=profile,
+            audio_selection=audio_decision,
+            document_selection=image_decision,
+        )
+        if (
+            _selected_audio(selection, audio_protocol)[0] != audio_candidate
+            or _selected_image(selection, document_protocol)[0] != image_candidate
+        ):
+            raise ValueError(
+                "Video models differ from their reviewed selection decisions"
+            )
+        if preflight is None or preflight_report is None:
+            raise ValueError(
+                "Authoritative video execution requires matching preflight evidence"
+            )
+        _, verified_qualification = _qualification(
+            profile,
+            manifest_path,
+            items,
+            validation,
+            protocol,
+            audio_protocol,
+            document_protocol,
+            audio_candidate,
+            image_candidate,
+            explicit=preflight_report,
+        )
+        if verified_qualification != preflight:
+            raise ValueError("Video preflight object differs from its verified report")
+        eligible_candidates(
+            tuple(f"visual|{candidate}" for candidate in candidates),
+            preflight,
+            profile="validation",
+            label="Video visual",
+        )
+        if profile in {"validation", "locked"}:
+            selected, _ = _candidates(
+                SimpleNamespace(
+                    profile=profile,
+                    phase="all",
+                    shortlist=decision_files.get("shortlist"),
+                ),
+                protocol,
+                expected_protocols={
+                    "video": protocol.meta.checksum,
+                    "audio": audio_protocol.meta.checksum,
+                    "document": document_protocol.meta.checksum,
+                },
+                expected_qualification=preflight["qualification_fingerprint"],
+            )
+            if tuple(candidates) != selected:
+                raise ValueError("Video comparison differs from its reviewed shortlist")
+    if scene_selection and profile != "development":
+        raise ValueError("Scene selection is development-only")
+    declared = (
+        scene_candidates(protocol)
+        if scene_selection
+        else all_candidates(protocol, protocol.hybrid_threshold(profile))
+    )
+    if (
+        not candidates
+        or len(set(candidates)) != len(candidates)
+        or not set(candidates) <= set(declared)
+    ):
+        raise ValueError("Video comparison requires unique declared candidates")
+    if profile == "locked" and len(candidates) != 1:
+        raise ValueError("Locked video comparison requires exactly one candidate")
+    if (
+        protocol.window_length_seconds
+        > audio_protocol.audio["maximum_duration_seconds"]
+    ):
+        raise ValueError("Video ASR windows exceed the selected audio protocol limit")
     document_profile = parse_document_profile(image_candidate)
     document_protocol.validate_candidate_factors(document_profile.factors)
     engine = document_profile.runtime_engine
@@ -389,9 +474,16 @@ def run_visual_benchmark(
                 or Path(context["artifact_directory"]) / "frozen_asr.json"
             )
             if frozen_asr_path is None:
-                create_frozen_asr_artifact(
+                _preserve_worker_failure(
+                    create_frozen_asr_artifact,
                     path,
-                    items=items,
+                    items=[
+                        {
+                            **item,
+                            "canonical_sha256": canonical_checksums[str(item["id"])],
+                        }
+                        for item in items
+                    ],
                     manifest_checksum=manifest_checksum,
                     protocol=protocol,
                     audio_protocol=audio_protocol,
@@ -400,9 +492,10 @@ def run_visual_benchmark(
                     device=device,
                     ffmpeg_version=ffmpeg_version,
                     profile_name=profile,
-                    producer_run_id=context["mlflow_run_id"],
+                    producer_run_id=None if no_mlflow else context["mlflow_run_id"],
                 )
-            artifact, checksum = load_frozen_asr_artifact(
+            artifact, checksum = _preserve_worker_failure(
+                load_frozen_asr_artifact,
                 path,
                 manifest_checksum=manifest_checksum,
                 protocol_checksum=protocol.meta.checksum,
@@ -416,16 +509,8 @@ def run_visual_benchmark(
                     str(item["id"]): float(item["duration_seconds"]) for item in items
                 },
                 expected_ffmpeg_version=ffmpeg_version,
+                expected_canonical_checksums=canonical_checksums,
             )
-            if any(
-                len(row["windows"]) != row["scheduled_window_count"]
-                for row in artifact["videos"]
-            ):
-                raise CandidateExecutionError(
-                    "Frozen ASR preparation has an incomplete window inventory",
-                    metrics=artifact["metrics"],
-                    artifacts={"outputs": artifact},
-                )
             frozen.update(path=path, checksum=checksum, artifact=artifact)
             rows = artifact["videos"]
             samples = [
@@ -448,7 +533,9 @@ def run_visual_benchmark(
                 artifact["metrics"],
                 {
                     **artifact["parameters"],
-                    "run_type": "preparation",
+                    "candidate": preparation,
+                    "run_type": "input_preparation",
+                    "input_preparation_reused": frozen_asr_path is not None,
                     **expected_identity,
                     "frozen_asr_run_id": artifact["run_id"],
                     "frozen_asr_checksum": checksum,
@@ -472,6 +559,7 @@ def run_visual_benchmark(
                         for window in row["windows"]
                     ],
                     "resource_samples": artifact["resource_samples"],
+                    "metric_statuses": artifact["metric_statuses"],
                     "gpu_identity": artifact["gpu_identity"],
                     "ffmpeg_commands": artifact["ffmpeg_commands"],
                 },
@@ -480,7 +568,8 @@ def run_visual_benchmark(
             raise RuntimeError(
                 "Frozen-ASR preparation did not deliver a validated artifact"
             )
-        output = _run_visual_worker(
+        output = _preserve_worker_failure(
+            _run_visual_worker,
             candidate,
             items,
             image_engine=engine,
@@ -496,12 +585,17 @@ def run_visual_benchmark(
             frozen_asr_checksum=frozen["checksum"],
             manifest_checksum=manifest_checksum,
             frozen_asr_identity=expected_identity,
+            ffmpeg_version=ffmpeg_version,
+            canonical_audio_checksums=canonical_checksums,
         )
+        try:
+            _validate_visual_output(output, items, execution.repetitions, device)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise CandidateExecutionError(
+                f"Invalid visual worker result: {exc}",
+                artifacts={"worker_output": output},
+            ) from exc
         rows = output["samples"]
-        if sorted(row["sample_id"] for row in rows) != sorted(
-            str(item["id"]) for item in items
-        ):
-            raise ValueError("Visual worker sample inventory differs from the manifest")
         samples = [
             SampleResult(
                 str(row["sample_id"]),
@@ -515,6 +609,34 @@ def run_visual_benchmark(
             )
             for row in rows
         ]
+        artifacts = {
+            "samples": _flat_rows(rows, ("predictions",)),
+            **{
+                name: output[name]
+                for name in (
+                    "timings",
+                    "outputs",
+                    "ffmpeg_commands",
+                    "resource_samples",
+                    "gpu_identity",
+                    "metric_statuses",
+                )
+            },
+            "placement": {
+                "before": output.get("placement_before"),
+                "after": output.get("placement_after"),
+            },
+        }
+        if output.get("execution_error"):
+            raise CandidateExecutionError(
+                output["execution_error"]["error"],
+                samples=samples,
+                metrics=output["metrics"],
+                operational=output["operational"],
+                parameters=output["parameters"],
+                intervals=output["intervals"],
+                artifacts={**artifacts, "execution_error": output["execution_error"]},
+            )
         return (
             samples,
             output["operational"],
@@ -526,18 +648,7 @@ def run_visual_benchmark(
                 "frozen_asr_checksum": frozen["checksum"],
             },
             output["intervals"],
-            {
-                "samples": _flat_rows(rows, ("predictions",)),
-                "timings": output["timings"],
-                "outputs": output["outputs"],
-                "ffmpeg_commands": output["ffmpeg_commands"],
-                "resource_samples": output["resource_samples"],
-                "gpu_identity": output["gpu_identity"],
-                "placement": {
-                    "before": output.get("placement_before"),
-                    "after": output.get("placement_after"),
-                },
-            },
+            artifacts,
         )
 
     directions = {**METRIC_DIRECTIONS, **ASR_DIRECTIONS}
@@ -563,6 +674,7 @@ def run_visual_benchmark(
         required_metrics=tuple(directions),
         nullable_metrics=tuple(directions),
         candidate_metric_contracts=contracts,
+        candidate_run_types={preparation: "input_preparation"},
         candidate_run_names={
             candidate: candidate.removeprefix("video-") for candidate in candidates
         },
@@ -609,6 +721,347 @@ def _flat_rows(rows, excluded):
     ]
 
 
+def _qualification(
+    profile,
+    manifest_path,
+    items,
+    validation,
+    protocol,
+    audio_protocol,
+    document_protocol,
+    audio_candidate,
+    image_candidate,
+    *,
+    explicit=None,
+    run_id=None,
+):
+    development_path = (
+        manifest_path
+        if profile == "development"
+        else default_manifest_path("video", "development")
+    )
+    _, development_validation = verified_inputs(
+        development_path, "development", protocol
+    )
+    development = load_manifest(development_path, validate_annotations=False)
+    stress = qualification_inputs(development, development_validation)
+    declared, fingerprint, _ = video_qualification_identity(
+        protocol,
+        audio_protocol,
+        document_protocol,
+        audio_candidate,
+        image_candidate,
+        development,
+        stress,
+        development_validation,
+    )
+    path, qualification = resolve_preflight_report(
+        benchmark="video",
+        fingerprint=fingerprint,
+        candidates=declared,
+        explicit=explicit,
+        run_id=run_id,
+    )
+    eligible_candidates(
+        (f"frozen-asr|{audio_candidate}",),
+        qualification,
+        profile="validation",
+        label="Frozen ASR",
+    )
+    validate_input_envelope(items, validation, qualification)
+    return path, qualification
+
+
+def _preserve_worker_failure(function, *args, **kwargs):
+    """Keep request tables visible when the subprocess cannot deliver a result."""
+    try:
+        return function(*args, **kwargs)
+    except WorkerExecutionError as exc:
+        evidence = exc.resource_evidence
+        body = evidence.get("worker_result", {})
+        worker = (
+            body.get("resource_evidence", body)
+            if isinstance(body, Mapping) and body
+            else (
+                evidence
+                if "worker_result" not in evidence
+                and any(
+                    name in evidence
+                    for name in (
+                        "artifact_type",
+                        "videos",
+                        "timings",
+                        "cold_model_load_seconds",
+                        "cold_visual_pipeline_load_seconds",
+                        "operational",
+                    )
+                )
+                else {}
+            )
+        )
+        worker = worker if isinstance(worker, Mapping) else {}
+        if isinstance(body, Mapping):
+            evidence = {**evidence, **body, **worker}
+        exc.artifacts.update(
+            {
+                name: evidence[name]
+                for name in (
+                    "samples",
+                    "videos",
+                    "timings",
+                    "outputs",
+                    "resource_samples",
+                    "ffmpeg_commands",
+                    "execution_error",
+                )
+                if name in evidence
+            }
+        )
+        if "supervisor_resource_evidence" in exc.resource_evidence:
+            exc.artifacts["supervisor_resource_evidence"] = exc.resource_evidence[
+                "supervisor_resource_evidence"
+            ]
+        elif not worker:
+            exc.artifacts["supervisor_resource_evidence"] = {
+                name: evidence[name]
+                for name in (
+                    "peak_process_tree_ram_mb",
+                    "peak_vram_mb",
+                    "resource_samples",
+                    "vram_measurement_method",
+                )
+                if name in evidence
+            }
+        exc.parameters.update(evidence.get("parameters", {}))
+        if function in {create_frozen_asr_artifact, load_frozen_asr_artifact}:
+            # The canonical child ID is already logged. The runtime alias remains
+            # in raw preparation evidence, not under MLflow's immutable key.
+            exc.parameters.pop("candidate", None)
+            if isinstance(evidence.get("metrics"), Mapping):
+                exc.metrics.update(
+                    {
+                        name: value
+                        for name, value in evidence["metrics"].items()
+                        if value is None
+                        or (type(value) in (int, float) and math.isfinite(value))
+                    }
+                )
+                exc.intervals.update(evidence.get("intervals", {}))
+                exc.artifacts["metric_statuses"] = {
+                    name: {
+                        **report,
+                        "comparison_status": "incomplete",
+                        "comparison_reason": "preparation_failed",
+                    }
+                    for name, report in evidence.get("metric_statuses", {}).items()
+                }
+            for name in (
+                "cold_model_load_seconds",
+                "peak_process_tree_ram_mb",
+                "peak_vram_mb",
+            ):
+                value = worker.get("metrics", {}).get(name, worker.get(name))
+                exc.operational[name] = (
+                    value
+                    if value is None
+                    or (type(value) in (int, float) and math.isfinite(value))
+                    else None
+                )
+        if (
+            function is _run_visual_worker
+            and isinstance(body, dict)
+            and {
+                "samples",
+                "timings",
+                "operational",
+                "metrics",
+                "outputs",
+                "metric_statuses",
+            }
+            <= body.keys()
+        ):
+            try:
+                execution = protocol_from_worker(kwargs["protocol"]).profile(
+                    kwargs["profile"]
+                )
+                _validate_visual_output(
+                    body, args[1], execution.repetitions, kwargs["device"]
+                )
+            except (KeyError, TypeError, ValueError) as validation_error:
+                exc.artifacts["output_validation_error"] = {
+                    "error": str(validation_error)
+                }
+            else:
+                exc.metrics.update(body["metrics"])
+                exc.intervals.update(body.get("intervals", {}))
+                exc.operational.update(body["operational"])
+                exc.artifacts["metric_statuses"] = {
+                    name: {
+                        **report,
+                        "comparison_status": "incomplete",
+                        "comparison_reason": "worker_measurement_failed",
+                    }
+                    for name, report in body["metric_statuses"].items()
+                }
+        if function is _run_visual_worker:
+            measured = worker.get("operational", {})
+            exc.operational = {
+                **exc.operational,
+                "peak_visual_process_tree_ram_mb": measured.get(
+                    "peak_visual_process_tree_ram_mb",
+                    worker.get("peak_process_tree_ram_mb"),
+                ),
+                "peak_visual_vram_mb": measured.get(
+                    "peak_visual_vram_mb", worker.get("peak_vram_mb")
+                ),
+            }
+        if "cold_visual_pipeline_load_seconds" in worker:
+            exc.operational["cold_visual_pipeline_load_seconds"] = worker[
+                "cold_visual_pipeline_load_seconds"
+            ]
+        raise
+
+
+def _validate_visual_output(output, items, repetitions, device):
+    """Reject partial or contradictory transport results before publishing them."""
+    rows, timings = output["samples"], output["timings"]
+    ids = {str(item["id"]) for item in items}
+    durations = {str(item["id"]): float(item["duration_seconds"]) for item in items}
+    if len(rows) != len(ids) or {row["sample_id"] for row in rows} != ids:
+        raise ValueError("Visual worker sample inventory differs from the manifest")
+    expected = {
+        (sample_id, repetition)
+        for sample_id in ids
+        for repetition in range(1, repetitions + 1)
+    }
+    if (
+        len(timings) != len(expected)
+        or {(row["sample_id"], row["repetition"]) for row in timings} != expected
+    ):
+        raise ValueError("Visual worker attempt inventory is incomplete")
+    if not set(METRIC_DIRECTIONS) <= output["metric_statuses"].keys():
+        raise ValueError("Visual worker lacks metric status evidence")
+    for mapping in (output["metrics"], output["operational"]):
+        if any(
+            value is not None
+            and (type(value) not in (int, float) or not math.isfinite(value))
+            for value in mapping.values()
+        ):
+            raise ValueError("Visual worker metrics must be finite numbers or null")
+    for row in timings:
+        if (
+            type(row["repetition"]) is not int
+            or row["duration_seconds"] != durations[row["sample_id"]]
+        ):
+            raise ValueError("Visual attempt identity differs from the manifest")
+        if type(row["executed"]) is not bool or (
+            row["executed"] and type(row["success"]) is not bool
+        ):
+            raise ValueError("Visual attempt outcome is invalid")
+        elapsed = row["latency_seconds"]
+        if row["executed"] and (
+            type(elapsed) not in (int, float)
+            or not math.isfinite(elapsed)
+            or elapsed < 0
+        ):
+            raise ValueError("Executed visual attempt lacks a valid latency")
+        if not row["executed"] and (row["success"] is not None or elapsed is not None):
+            raise ValueError("Unexecuted visual attempts cannot contain outcomes")
+        count = row["selected_frame_count"]
+        if count is not None and (type(count) is not int or count < 0):
+            raise ValueError("Visual selected-frame count is invalid")
+        if row["success"] and (not count or not row["output_fingerprint"]):
+            raise ValueError(
+                "Successful visual attempt lacks selected frames or canonical output"
+            )
+        if row["success"] is False and not row.get("error"):
+            raise ValueError("Failed visual attempt lacks its error")
+        if row["success"] is not True and row["output_fingerprint"] is not None:
+            raise ValueError(
+                "Failed or unexecuted visual attempt cannot retain a success fingerprint"
+            )
+    attempts = output["outputs"]["attempts"]
+    if set(attempts) != ids or any(
+        len(attempts[sample_id]) != repetitions for sample_id in ids
+    ):
+        raise ValueError("Visual output inventory is incomplete")
+    for timing in timings:
+        attempt = attempts[timing["sample_id"]][timing["repetition"] - 1]
+        predictions = attempt["predictions"]
+        if attempt["fingerprint"] != timing["output_fingerprint"] or (
+            (predictions is not None) != (timing["success"] is True)
+        ):
+            raise ValueError("Visual output and timing outcomes disagree")
+        if predictions is not None and (
+            not isinstance(predictions, list)
+            or any(
+                not isinstance(prediction, Mapping)
+                or not isinstance(prediction.get("text"), str)
+                or type(prediction.get("timestamp")) not in (int, float)
+                or not math.isfinite(prediction["timestamp"])
+                or not 0 <= prediction["timestamp"] <= durations[timing["sample_id"]]
+                for prediction in predictions
+            )
+        ):
+            raise ValueError("Visual output has invalid timed text")
+    for row in rows:
+        for name in QUALITY_DIRECTIONS:
+            value = row.get(name)
+            if value is not None and (
+                type(value) not in (int, float)
+                or not math.isfinite(value)
+                or value < 0
+                or (name != "mean_visual_first_detection_delay_seconds" and value > 1)
+            ):
+                raise ValueError("Visual per-video quality value is invalid")
+        sample_id = row["sample_id"]
+        first = next(
+            timing
+            for timing in timings
+            if timing["sample_id"] == sample_id and timing["repetition"] == 1
+        )
+        if (
+            row["first_attempt_success"] is not first["success"]
+            or row["first_attempt_executed"] is not first["executed"]
+        ):
+            raise ValueError("Visual quality does not belong to the first attempt")
+        if row["selected_frame_count"] != first["selected_frame_count"] or row[
+            "quality_latency_seconds"
+        ] != (first["latency_seconds"] if first["success"] else None):
+            raise ValueError("Visual first-attempt descriptors disagree")
+        if row["predictions"] != attempts[sample_id][0]["predictions"]:
+            raise ValueError("Visual quality output differs from the first attempt")
+        if not first["success"] and any(
+            row.get(name) is not None
+            for name in QUALITY_DIRECTIONS
+            if name not in {"attempt_failure_rate", "repeatability_success_rate"}
+        ):
+            raise ValueError("Failed first attempt cannot receive quality scores")
+        scheduled = [timing for timing in timings if timing["sample_id"] == sample_id]
+        rates = (
+            attempt_rates([attempt["fingerprint"] for attempt in attempts[sample_id]])
+            if all(timing["executed"] for timing in scheduled)
+            else {"attempt_failure_rate": None, "repeatability_success_rate": None}
+        )
+        if any(row.get(name) != value for name, value in rates.items()):
+            raise ValueError("Visual reliability does not match its scheduled outcomes")
+    if any(
+        output["metrics"].get(name) != value
+        for name, value in aggregate_quality(rows).items()
+    ):
+        raise ValueError("Visual aggregate differs from its per-video values")
+    if device == "cpu" and output["operational"]["peak_visual_vram_mb"] is not None:
+        raise ValueError("CPU visual VRAM must be inapplicable")
+    if device == "cuda" and not output.get("execution_error"):
+        if output["operational"]["peak_visual_vram_mb"] is None:
+            raise ValueError("Visual CUDA telemetry is unavailable")
+        if any(
+            not output.get(name) or output[name].get("status") != "qualified"
+            for name in ("placement_before", "placement_after")
+        ):
+            raise ValueError("Visual CUDA placement was not verified")
+
+
 def _run_visual_worker(candidate, items, **settings):
     protocol = protocol_from_worker(settings["protocol"])
     return run_json_worker(
@@ -617,6 +1070,7 @@ def _run_visual_worker(candidate, items, **settings):
         device=str(settings["device"]),
         prefix="edumind-video-candidate-",
         error_label="Visual video worker",
+        require_vram_measurement=settings["device"] == "cuda",
         telemetry_interval_seconds=protocol.preflight.telemetry_interval_seconds,
         poll_interval_seconds=protocol.preflight.poll_interval_seconds,
         timeout_seconds=protocol.preflight.worker_timeout_seconds,
@@ -644,7 +1098,9 @@ def _run_smoke_devices(arguments, devices):
     return 0 if all(code == 0 for code in codes) else 2
 
 
-def _candidates(arguments, protocol):
+def _candidates(
+    arguments, protocol, *, expected_protocols=None, expected_qualification=None
+):
     if arguments.profile in {"validation", "locked"}:
         if arguments.phase != "all" or arguments.shortlist is None:
             raise ValueError(
@@ -661,6 +1117,8 @@ def _candidates(arguments, protocol):
                 else "video-validation",
                 "development" if arguments.profile == "validation" else "validation",
             ),
+            expected_protocols=expected_protocols,
+            expected_qualification=expected_qualification,
         )
         declared = set(
             all_candidates(protocol, protocol.hybrid_threshold(arguments.profile))
@@ -691,6 +1149,7 @@ def _selected_audio(arguments, protocol: AudioProtocol):
         expected_source=("extraction", "audio-validation", "validation")
         if arguments.profile != "smoke"
         else None,
+        expected_protocols={"audio": protocol.meta.checksum},
     )
     if decision.selected_candidates[0] not in candidates:
         raise ValueError("Selected audio candidate is not declared")
@@ -715,6 +1174,7 @@ def _selected_image(arguments, protocol: DocumentProtocol):
         )
         if arguments.profile != "smoke"
         else None,
+        expected_protocols={"document": protocol.meta.checksum},
     )
     parse_document_profile(decision.selected_candidates[0])
     return decision.selected_candidates[0], arguments.document_selection

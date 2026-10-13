@@ -20,7 +20,11 @@ from edumind.extraction.contracts import (
     SourceKind,
 )
 from edumind.extraction.errors import ExtractionBackendError, MissingDependencyError
-from edumind.extraction.extractors.document import DOCLING_VERSION, required_directory
+from edumind.extraction.extractors.document import (
+    DOCLING_VERSION,
+    docling_conversion_output,
+    required_directory,
+)
 from edumind.extraction.structured import (
     build_docling_document,
     build_structured_document,
@@ -47,7 +51,9 @@ class ExperimentalDocumentExtractor:
         warnings: tuple[ExtractionWarning, ...] = ()
         try:
             if self.engine == "docling-vlm-granite-258m":
-                document = self._docling_vlm(request)
+                document, outcome, warnings = docling_conversion_output(
+                    self._docling_vlm(request)
+                )
                 return build_docling_document(
                     request,
                     kind,
@@ -56,7 +62,9 @@ class ExperimentalDocumentExtractor:
                     metadata={
                         "engine": self.engine,
                         "engine_revision": request.profile.engine_revision,
+                        **outcome,
                     },
+                    warnings=warnings,
                     seconds=time.perf_counter() - started,
                 )
             elements, warnings = self._paddle_vl(request)
@@ -81,7 +89,7 @@ class ExperimentalDocumentExtractor:
 
     def _docling_vlm(self, request: ExtractionRequest):
         converter = self._docling_converter(request)
-        return converter.convert(str(request.source_path)).document
+        return converter.convert(str(request.source_path), raises_on_error=False)
 
     def initialize_image_pipeline(self, request: ExtractionRequest) -> None:
         """Initialize exactly the visual parser lifecycle measured by video."""

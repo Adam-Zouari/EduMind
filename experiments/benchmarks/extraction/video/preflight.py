@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import os
-import tempfile
+import json
 from dataclasses import asdict
 from pathlib import Path
 
@@ -23,6 +22,7 @@ from experiments.benchmarks.extraction.document.profiles import (
 from experiments.benchmarks.extraction.document.runner import (
     validate_prepared_components,
 )
+from experiments.benchmarks.extraction.media import ffmpeg_version
 from experiments.benchmarks.extraction.video.candidates import (
     fixed_candidates,
     hybrid_candidates,
@@ -46,7 +46,8 @@ def run_video_preflight(
     no_mlflow,
     data_validation_report,
 ):
-    stress = max(items, key=lambda item: float(item["duration_seconds"]))
+    validation = json.loads(Path(data_validation_report).read_text(encoding="utf-8"))
+    stress = qualification_inputs(manifest, validation)
     declared, fingerprint, context = video_qualification_identity(
         protocol,
         audio_protocol,
@@ -55,7 +56,18 @@ def run_video_preflight(
         image_candidate,
         manifest,
         stress,
+        validation,
     )
+    stress = [
+        {
+            **item,
+            "source_path": str((PROJECT_ROOT / item["source_path"]).resolve()),
+            "canonical_sha256": validation["metadata"]["samples"][str(item["id"])][
+                "canonical_sha256"
+            ],
+        }
+        for item in stress
+    ]
     audio_profile = audio_profiles(audio_protocol)[audio_candidate]
     audio_lock = load_selected_model_lock(
         PROJECT_ROOT / "data/benchmarks/models/selected.json",
@@ -97,7 +109,7 @@ def run_video_preflight(
             )
         supervision = result.pop("_worker_supervision", {})
         if isinstance(supervision, dict):
-            result.update(supervision)
+            result["supervisor_resource_evidence"] = supervision
         return result
 
     return run_preflight(
@@ -108,7 +120,7 @@ def run_video_preflight(
             **context,
             "stress_manifest": str(manifest_path),
             "stress_manifest_checksum": manifest.fingerprint,
-            "stress_sample_id": str(stress["id"]),
+            "stress_sample_ids": [str(item["id"]) for item in stress],
             "audio_decision": str(audio_decision),
             "image_decision": str(image_decision),
             "data_validation_report": str(data_validation_report),
@@ -133,20 +145,13 @@ def video_qualification_identity(
     image_candidate,
     manifest,
     stress,
+    validation,
 ):
     threshold = protocol.selected_scene_threshold
-    visual_candidates = tuple(
-        dict.fromkeys(
-            (
-                *fixed_candidates(protocol),
-                *scene_candidates(protocol),
-                *(
-                    hybrid_candidates(protocol, threshold)
-                    if threshold is not None
-                    else ()
-                ),
-            )
-        )
+    visual_candidates = (
+        *fixed_candidates(protocol),
+        *scene_candidates(protocol),
+        *(hybrid_candidates(protocol, threshold) if threshold is not None else ()),
     )
     declared = (
         f"frozen-asr|{audio_candidate}",
@@ -175,19 +180,73 @@ def video_qualification_identity(
             "visual_resource_policy": "backend-specific-reporting",
             "audio_candidate": audio_candidate,
             "image_candidate": image_candidate,
+            "audio_dtype": audio_protocol.dtype(audio_candidate, execution.device),
+            "ffmpeg_version": ffmpeg_version(),
             "preflight": asdict(protocol.preflight),
         },
         input_envelope={
-            **stress_input_identity(manifest, (stress,)),
+            **stress_input_identity(manifest, stress),
             "window_length_seconds": protocol.window_length_seconds,
             "overlap_seconds": protocol.overlap_seconds,
             "fixed_intervals": protocol.fixed_intervals,
             "scene_thresholds": protocol.scene_thresholds,
             "hybrid_gaps": protocol.hybrid_gaps,
-            "tested_video_duration_seconds": float(stress["duration_seconds"]),
+            "tested_video_envelopes": [
+                video_envelope(item, validation) for item in stress
+            ],
         },
     )
     return declared, fingerprint, context
+
+
+def video_envelope(item, validation):
+    metadata = validation["metadata"]["samples"][str(item["id"])]
+    return {
+        "duration_seconds": max(
+            float(item["duration_seconds"]),
+            float(metadata["canonical_duration_seconds"]),
+            float(metadata["actual_duration_seconds"]),
+        ),
+        "width": metadata["width"],
+        "height": metadata["height"],
+    }
+
+
+def qualification_inputs(manifest, validation):
+    """Keep reviewed inputs not dominated in duration and frame dimensions."""
+    items = sorted(
+        (item for item in manifest.samples if item.get("kind") == "video"),
+        key=lambda item: str(item["id"]),
+    )
+    selected = []
+    for item in items:
+        envelope = video_envelope(item, validation)
+        if any(
+            all(tested[key] >= envelope[key] for key in envelope)
+            for _, tested in selected
+        ):
+            continue
+        selected = [
+            (other, tested)
+            for other, tested in selected
+            if not all(envelope[key] >= tested[key] for key in envelope)
+        ]
+        selected.append((item, envelope))
+    if not selected:
+        raise ValueError("Video preflight requires reviewed stress videos")
+    return tuple(item for item, _ in selected)
+
+
+def validate_input_envelope(items, validation, qualification):
+    tested = qualification["context"]["input_envelope"]["tested_video_envelopes"]
+    for item in items:
+        envelope = video_envelope(item, validation)
+        if not any(
+            all(stress[key] >= envelope[key] for key in envelope) for stress in tested
+        ):
+            raise ValueError(
+                f"Video {item['id']} exceeds the qualified input envelope; review larger development stress inputs and rerun preflight"
+            )
 
 
 def _run_frozen_asr_probe(candidate, stress, audio_lock, protocol, audio_protocol):
@@ -196,7 +255,7 @@ def _run_frozen_asr_probe(candidate, stress, audio_lock, protocol, audio_protoco
         {
             "candidate": candidate,
             "model_lock": audio_lock,
-            "items": [stress],
+            "items": list(stress),
             "device": "cuda",
             "protocol": protocol.meta.worker_payload(),
             "audio_protocol": audio_protocol.meta.worker_payload(),
@@ -222,12 +281,11 @@ def _run_visual_probe(
     protocol,
     document_protocol,
 ):
-    temporary_root = Path(os.environ.get("TEMP", tempfile.gettempdir()))
     return run_json_worker(
         Path(__file__).with_name("visual_worker.py"),
         {
             "candidate": candidate,
-            "items": [stress],
+            "items": list(stress),
             "image_engine": image_profile.runtime_engine,
             "image_candidate": image_candidate,
             "image_revision": str(image_entry.get("revision", "")),
@@ -240,7 +298,6 @@ def _run_visual_probe(
         device="cuda",
         prefix="edumind-video-visual-preflight-",
         error_label=f"video visual preflight {candidate}",
-        temporary_root=temporary_root,
         require_vram_measurement=True,
         telemetry_interval_seconds=protocol.preflight.telemetry_interval_seconds,
         poll_interval_seconds=protocol.preflight.poll_interval_seconds,

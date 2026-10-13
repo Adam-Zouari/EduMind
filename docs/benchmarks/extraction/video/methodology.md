@@ -17,7 +17,8 @@ Visual extraction and frozen ASR execute sequentially in separate workers on
 the isolated GPU. Neither has an artificial VRAM cap in any phase, including
 preflight. GPU-backed model weights cannot offload or silently fall back to CPU.
 Peak VRAM is still measured; actual OOM, placement violations, and unavailable
-required telemetry remain failures. CPU smoke reports Peak VRAM as unavailable.
+required telemetry remain failures. CPU smoke reports Peak VRAM as null and
+inapplicable.
 
 RapidOCR visual parsing uses the document backend's verified CPU shape-only
 exception. Shape bookkeeping does not qualify CPU model computation or weight
@@ -61,11 +62,17 @@ SlideSpeech, AVLectures, and EduMind-owned allocation.
 Each video has a verified spoken transcript, positive duration, complete
 visible-text annotation (including explicit text-free negatives), occurrence IDs,
 and visibility intervals. A genuine reappearance has a new occurrence ID.
-Spoken timing metrics additionally require reviewed spoken segments; visual
+Spoken timing metrics additionally require reviewed spoken segments. An explicit
+`reference_segments: []` declares that no spoken-timing task is annotated; it does
+not remove the transcript from WER/CER scoring. A missing field is invalid. Visual
 appearance intervals cannot stand in for them. Reviewed nonspeech videos or
 actual ASR windows support Nonspeech False-Transcription Rate. Their consistent
 unit type and allocation are frozen after development data review, not inferred
 from missing transcripts or invented before review.
+
+Sources contain one visual track and one audio track. Remux multi-track containers
+to the intended tracks before annotation, so stream selection and measured frame
+dimensions cannot disagree.
 
 Manifests record exact assets, source intervals, revisions, licenses, checksums,
 split assignments, and independent source-group IDs. Related excerpts stay in
@@ -86,6 +93,16 @@ overlap/stitching, text unitization, matching, dataset requirements, and executi
 profiles. Frozen audio composes the video and ASR protocols; visual execution
 composes the video and document protocols and the selected image-parser decision.
 Workers verify their resolved identities before loading models.
+
+Preflight selects reviewed development videos that collectively cover the largest
+durations and frame dimensions. It retains each input not covered by another
+input in all three dimensions, rather than assuming the longest video also has
+the largest frames. The sealed data report supplies measured dimensions and
+decoded audio duration. Later inputs must fit within at least one tested input's
+envelope; otherwise review larger development stress inputs and rerun preflight.
+The fingerprint binds these inputs, FFmpeg, model identities, all composed
+protocols, and actual ASR dtype. Relative manifest paths and resolved worker paths
+identify the same assets.
 
 ### Shared audio preparation
 

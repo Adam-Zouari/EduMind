@@ -1311,7 +1311,9 @@ def test_workers_preserve_designated_quality_and_all_measured_attempts(
 
         def extract(self, request, kind):
             self.inference()
-            return document("alpha", [ExtractedSegment("alpha", 0, 5)])
+            return replace(
+                document("alpha", [ExtractedSegment("alpha", 0, 5)]), source_kind=kind
+            )
 
         def transcribe(self, path):
             self.inference()
@@ -1384,12 +1386,14 @@ def test_workers_preserve_designated_quality_and_all_measured_attempts(
             monkeypatch.setattr(
                 worker,
                 "_image_request",
-                lambda *_args: SimpleNamespace(source_kind=SourceKind.IMAGE),
+                lambda *_args: SimpleNamespace(
+                    source_kind=SourceKind.IMAGE, checksum="checksum"
+                ),
             )
             monkeypatch.setattr(
                 worker,
                 "_extract_frames",
-                lambda *_args: ([(Path("frame.png"), 0.0)], ["ffmpeg"]),
+                lambda *_args, **_kwargs: ([(Path("frame.png"), 0.0)], ["ffmpeg"]),
             )
             payload.update(
                 candidate="video-fixed-5s",
@@ -1403,6 +1407,8 @@ def test_workers_preserve_designated_quality_and_all_measured_attempts(
                 manifest_checksum="manifest",
                 frozen_asr_identity={},
                 frozen_asr_checksum="checksum",
+                canonical_audio_checksums={"one": "checksum"},
+                ffmpeg_version="test",
             )
     result = worker.execute(payload)
     if suite == "video":

@@ -96,6 +96,7 @@ def run_benchmark(
     protocols: Mapping[str, ProtocolMetadata] | None = None,
     candidate_metric_contracts: Mapping[str, Sequence[str]] | None = None,
     candidate_run_names: Mapping[str, str] | None = None,
+    candidate_run_types: Mapping[str, str] | None = None,
 ) -> BenchmarkResult:
     if not plan.candidates:
         raise ValueError("A benchmark plan must contain at least one candidate")
@@ -106,8 +107,16 @@ def run_benchmark(
     )
     contracts = dict(candidate_metric_contracts or {})
     names = dict(candidate_run_names or {})
-    if (set(contracts) | set(names)) - set(plan.candidates):
+    run_types = dict(candidate_run_types or {})
+    if (set(contracts) | set(names) | set(run_types)) - set(plan.candidates):
         raise ValueError("Candidate contracts/names reference undeclared candidates")
+    if any(
+        value not in {"quality-candidate", "input_preparation"}
+        for value in run_types.values()
+    ):
+        raise ValueError("Unknown benchmark child run type")
+    if run_types:
+        metric_contract["candidate_run_types"] = run_types
     if any(not fields or set(fields) - set(required) for fields in contracts.values()):
         raise ValueError(
             "Candidate metric contract contains missing or undeclared metrics"
@@ -302,6 +311,7 @@ def run_benchmark(
                     dataset_checksum,
                     decision_fingerprint,
                     (candidate_run_names or {}).get(candidate, candidate),
+                    run_types.get(candidate, "quality-candidate"),
                 )
             )
 
@@ -409,6 +419,29 @@ def _finalize_parent_run(
             ),
         },
     }
+    run_types = metric_contract.get("candidate_run_types", {})
+    if run_types:
+        preparation = [
+            candidate
+            for candidate in result.candidates
+            if run_types.get(candidate.candidate) == "input_preparation"
+        ]
+        comparison_runs = [
+            candidate for candidate in result.candidates if candidate not in preparation
+        ]
+        summary["completion"].update(
+            input_preparation_runs=len(preparation),
+            input_preparation_ready=all(
+                candidate.status == "success" for candidate in preparation
+            ),
+            comparison_candidates=len(comparison_runs),
+            successful_comparison_candidates=sum(
+                candidate.status == "success" for candidate in comparison_runs
+            ),
+            failed_comparison_candidates=sum(
+                candidate.status == "failed" for candidate in comparison_runs
+            ),
+        )
     directory = result.artifact_directory
     summary_path = directory / "summary.json"
     leaderboard_path = directory / "leaderboard.parquet"
@@ -439,6 +472,17 @@ def _finalize_parent_run(
             "planned_candidates": float(len(result.plan.candidates)),
             "successful_candidates": float(len(successful)),
             "failed_candidates": float(failed_count),
+            **{
+                name: float(summary["completion"][name])
+                for name in (
+                    "input_preparation_runs",
+                    "input_preparation_ready",
+                    "comparison_candidates",
+                    "successful_comparison_candidates",
+                    "failed_comparison_candidates",
+                )
+                if name in summary["completion"]
+            },
         }
     )
     tracking.tags(
@@ -474,6 +518,7 @@ def _run_candidate(
     dataset_checksum,
     decision_fingerprint,
     display_name,
+    run_type,
 ) -> CandidateResult:
     samples: list[SampleResult] = []
     metrics: dict[str, float | None] = {}
@@ -548,7 +593,7 @@ def _run_candidate(
                         if plan.profile == "smoke"
                         else plan.profile
                     ),
-                    "run_type": "quality-candidate",
+                    "run_type": run_type,
                     "device": str(plan.settings.get("device", "not-applicable")),
                     "candidate": candidate,
                     "dataset_checksum": dataset_checksum,
@@ -760,7 +805,9 @@ def _run_candidate(
             child_run_id,
             candidate_parameters,
         )
-        tracking.metrics(_reported_metrics(metrics, operational, operational_prefix))
+        tracking.metrics(
+            _reported_metrics(metrics, operational, operational_prefix, intervals)
+        )
         tracking.tags({"benchmark.valid": "false", "validation.status": "failed"})
         if candidate_parameters.get("measurement.resource_scope"):
             tracking.tags(

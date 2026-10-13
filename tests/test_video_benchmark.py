@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from edumind.common.artifacts import atomic_write_json
+from edumind.common.artifacts import atomic_write_json, stable_hash
 from experiments.benchmarks.extraction.audio.protocol import (
     load_protocol as load_audio_protocol,
 )
@@ -427,11 +427,18 @@ def test_mocked_visual_phase_runs_through_artifact_writer(
         "kind": "video",
         "source_path": str(tmp_path / "video.mp4"),
     }
-    monkeypatch.setattr(runner, "verified_inputs", lambda *args: (manifest_path, {}))
+    monkeypatch.setattr(
+        runner,
+        "verified_inputs",
+        lambda *args: (
+            manifest_path,
+            {"metadata": {"samples": {"video": {"canonical_sha256": "0" * 64}}}},
+        ),
+    )
     monkeypatch.setattr(
         runner,
         "load_manifest",
-        lambda *args: SimpleNamespace(
+        lambda *args, **kwargs: SimpleNamespace(
             name="smoke", fingerprint="manifest", samples=(item,)
         ),
     )
@@ -451,6 +458,11 @@ def test_mocked_visual_phase_runs_through_artifact_writer(
                     "duplicate_visual_text_rate": 0.0,
                     "quality_latency_seconds": 0.1,
                     "selected_frame_count": 1,
+                    "attempt_failure_rate": 0.0,
+                    "repeatability_success_rate": None,
+                    "first_attempt_executed": True,
+                    "first_attempt_success": True,
+                    "predictions": [{"text": "alpha", "timestamp": 0.0}],
                 }
             ],
             "operational": {
@@ -474,9 +486,33 @@ def test_mocked_visual_phase_runs_through_artifact_writer(
             },
             "parameters": {"candidate": "video-fixed-5s"},
             "intervals": {},
-            "timings": [{"sample_id": "video", "latency_seconds": 0.1}],
+            "metric_statuses": {
+                name: {"status": "scored", "reason": None}
+                for name in runner.METRIC_DIRECTIONS
+            },
+            "timings": [
+                {
+                    "sample_id": "video",
+                    "repetition": 1,
+                    "latency_seconds": 0.1,
+                    "duration_seconds": 1.0,
+                    "executed": True,
+                    "success": True,
+                    "selected_frame_count": 1,
+                    "output_fingerprint": "fingerprint",
+                }
+            ],
             "ffmpeg_commands": [{"command": ["ffmpeg"]}],
-            "outputs": {"attempts": []},
+            "outputs": {
+                "attempts": {
+                    "video": [
+                        {
+                            "predictions": [{"text": "alpha", "timestamp": 0.0}],
+                            "fingerprint": "fingerprint",
+                        }
+                    ]
+                }
+            },
             "resource_samples": [],
             "gpu_identity": {},
         },
@@ -508,7 +544,10 @@ def test_mocked_visual_phase_runs_through_artifact_writer(
     )
     assert result.complete, result.completion_problems
     assert len(result.candidates) == 2
-    assert result.candidates[0].parameters["run_type"] == "preparation"
+    assert result.candidates[0].parameters["run_type"] == "input_preparation"
+    assert (
+        result.candidates[0].parameters["candidate"] == result.candidates[0].candidate
+    )
     assert "word_error_rate" not in result.candidates[1].metrics
     assert result.candidates[1].operational["peak_visual_vram_mb"] is None
     assert (result.artifact_directory / "summary.json").is_file()
@@ -516,15 +555,116 @@ def test_mocked_visual_phase_runs_through_artifact_writer(
 
 
 def _frozen_payload(sample_id):
+    from experiments.benchmarks.extraction.audio.adapters import profiles
     from experiments.benchmarks.extraction.video.frozen_asr import execution_identity
     from experiments.benchmarks.extraction.video.frozen_asr_worker import (
-        METRIC_DIRECTIONS,
+        _score_videos,
     )
 
-    return {
+    executing = execution_identity()
+    candidate = "whisper-small-en-control"
+    profile = profiles(AUDIO_PROTOCOL)[candidate]
+    row = {
+        "sample_id": sample_id,
+        "canonical_sha256": "0" * 64,
+        "canonical_duration_seconds": 1.0,
+        "duration_seconds": 1.0,
+        "latency_seconds": 0.1,
+        "success": True,
+        "executed": True,
+        "first_attempt_executed": True,
+        "first_attempt_success": True,
+        "error": None,
+        "scheduled_window_count": 1,
+        "executed_window_count": 1,
+        "failed_window_count": 0,
+        "unexecuted_window_count": 0,
+        "transcript": "alpha",
+        "segments": [{"text": "alpha", "start": 0.0, "end": 1.0}],
+        "windows": [
+            {
+                "index": 0,
+                "start": 0.0,
+                "end": 1.0,
+                "success": True,
+                "executed": True,
+                "error": None,
+                "not_executed_reason": None,
+                "latency_seconds": 0.1,
+                "transcript": "alpha",
+                "warnings": [],
+                "segments": [{"text": "alpha", "start": 0.0, "end": 1.0}],
+            }
+        ],
+    }
+    evidence = {
+        "videos": [row],
+        "execution_error": None,
+        "placement_before": None,
+        "placement_after": None,
+        "cold_model_load_seconds": 0.1,
+        "peak_process_tree_ram_mb": 1.0,
+        "peak_vram_mb": None,
+        "resource_samples": [{"process_tree_ram_mb": 1.0, "vram_mb": None}],
+        "resource_measurement_scope": "full_lifecycle",
+        "gpu_identity": {},
+        "vram_measurement_method": "not-applicable",
+        "ffmpeg_commands": [
+            {
+                "phase": "decode",
+                "sample_id": sample_id,
+                "command": ["ffmpeg", "fixture.mp4"],
+            }
+        ],
+        "parameters": {
+            **{
+                name: value
+                for name, value in profile.decoding.items()
+                if name not in {"model_id", "cpu_dtype", "cuda_dtype"}
+            },
+            "num_beams": 1,
+            "candidate": candidate,
+            "model": profile.model,
+            "backend": profile.backend,
+            "model_path": "model",
+            "model_revision": "revision",
+            "selection_revision": "selection",
+            "model_cache_manifest_sha256": "cache",
+            "device": "cpu",
+            "dtype": AUDIO_PROTOCOL.dtype(candidate, "cpu"),
+            "decoder": profile.decoder,
+            "timestamp_method": profile.timestamp_method,
+            "language": profile.decoding["language"],
+            "batch_size": AUDIO_PROTOCOL.batch_size,
+            "sample_rate_hz": 16000,
+            "runtime_version": executing["package_versions"]["transformers"],
+            "package_versions": {
+                name: value
+                for name, value in executing["package_versions"].items()
+                if name != "numpy"
+            },
+        },
+    }
+    scored = _score_videos(
+        [
+            {
+                "id": sample_id,
+                "duration_seconds": 1.0,
+                "reference_transcript": "alpha",
+                "reference_segments": row["segments"],
+            }
+        ],
+        [row],
+        VIDEO_PROTOCOL,
+        AUDIO_PROTOCOL,
+        VIDEO_PROTOCOL.profile("smoke"),
+        evidence,
+    )
+    payload = {
+        **scored,
         "schema_version": 2,
         "artifact_type": "FrozenASRArtifact",
-        "execution_identity": execution_identity(),
+        "execution_identity": executing,
         "run_id": "asr-run",
         "manifest_checksum": "manifest",
         "protocol_checksum": VIDEO_PROTOCOL.meta.checksum,
@@ -534,47 +674,19 @@ def _frozen_payload(sample_id):
         "protocol": VIDEO_PROTOCOL.meta.worker_payload(),
         "audio_protocol": AUDIO_PROTOCOL.meta.worker_payload(),
         "model_decision_fingerprint": "decision",
-        "audio_candidate": "asr",
+        "audio_candidate": candidate,
         "model_path": "model",
         "model_revision": "revision",
         "selection_revision": "selection",
         "model_cache_manifest_sha256": "cache",
+        "model_lock_fingerprint": stable_hash({"fixture": "model"}),
+        "submodels": [],
         "ffmpeg_version": "ffmpeg test",
-        "ffmpeg_commands": [],
         "device": "cpu",
         "profile": "smoke",
-        "metrics": {
-            name: None if name == "peak_vram_mb" else 0.0 for name in METRIC_DIRECTIONS
-        },
-        "intervals": {},
-        "parameters": {"device": "cpu"},
-        "resource_samples": [],
-        "gpu_identity": {},
-        "videos": [
-            {
-                "sample_id": sample_id,
-                "duration_seconds": 1.0,
-                "latency_seconds": 0.1,
-                "success": True,
-                "error": None,
-                "scheduled_window_count": 1,
-                "transcript": "alpha",
-                "segments": [{"text": "alpha", "start": 0.0, "end": 1.0}],
-                "windows": [
-                    {
-                        "index": 0,
-                        "start": 0.0,
-                        "end": 1.0,
-                        "success": True,
-                        "error": None,
-                        "latency_seconds": 0.1,
-                        "transcript": "alpha",
-                        "segments": [{"text": "alpha", "start": 0.0, "end": 1.0}],
-                    }
-                ],
-            }
-        ],
     }
+    payload["artifact_content_sha256"] = stable_hash(payload)
+    return payload
 
 
 def test_duplicate_text_is_exact_and_scoped_to_visibility_occurrence():
@@ -720,6 +832,13 @@ def test_frozen_asr_rejects_execution_identity_and_inventory_drift(
     else:
         payload[field] = value
     path = tmp_path / "frozen.json"
+    payload["artifact_content_sha256"] = stable_hash(
+        {
+            key: value
+            for key, value in payload.items()
+            if key != "artifact_content_sha256"
+        }
+    )
     atomic_write_json(path, payload)
     with pytest.raises(ValueError, match=match):
         load_frozen_asr_artifact(

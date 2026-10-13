@@ -10,7 +10,12 @@ from typing import Any
 from edumind.common.artifacts import stable_hash
 from edumind.common.onnx_placement import cuda_shape_session, verified_cuda_graph
 
-from ..contracts import ExtractedDocument, ExtractionRequest, SourceKind
+from ..contracts import (
+    ExtractedDocument,
+    ExtractionRequest,
+    ExtractionWarning,
+    SourceKind,
+)
 from ..errors import ExtractionBackendError, MissingDependencyError
 from ..structured import build_docling_document
 
@@ -33,7 +38,9 @@ class DoclingExtractor:
             raise ValueError("Resolved extraction profile is required")
         started = time.perf_counter()
         try:
-            document = self._convert(request, kind)
+            document, outcome, warnings = docling_conversion_output(
+                self._convert(request, kind)
+            )
         except MissingDependencyError:
             raise
         except Exception as exc:
@@ -48,13 +55,15 @@ class DoclingExtractor:
             metadata={
                 "engine": self.engine,
                 "engine_revision": request.profile.engine_revision,
+                **outcome,
             },
+            warnings=warnings,
             seconds=time.perf_counter() - started,
         )
 
     def _convert(self, request: ExtractionRequest, kind: SourceKind) -> Any:
         converter, _ = self._converter(request, kind)
-        return converter.convert(str(request.source_path)).document
+        return converter.convert(str(request.source_path), raises_on_error=False)
 
     def initialize_image_pipeline(self, request: ExtractionRequest) -> None:
         """Initialize the image pipeline without converting a benchmark frame."""
@@ -156,6 +165,81 @@ class DoclingExtractor:
         ):
             _require_cuda_ocr(converter, input_format)
         return converter, input_format
+
+
+def docling_conversion_output(
+    result: Any,
+) -> tuple[Any, dict[str, object], tuple[ExtractionWarning, ...]]:
+    """Project a native conversion outcome without loading Docling or models.
+
+    Docling 2.117 marks recoverable page/model errors as PARTIAL_SUCCESS.
+    Text presence is not a completion test: SUCCESS may be genuinely blank,
+    while FAILURE may still contain a syntactically valid partial document.
+    """
+    raw_status = getattr(result, "status", None)
+    status = getattr(raw_status, "value", raw_status)
+    raw_errors = getattr(result, "errors", None)
+    if not isinstance(raw_errors, (list, tuple)):
+        raise ValueError("Docling conversion lacks native error records")
+    errors = []
+    for error in raw_errors:
+        record = {
+            name: getattr(
+                getattr(error, name, None), "value", getattr(error, name, None)
+            )
+            for name in (
+                "component_type",
+                "module_name",
+                "error_message",
+                "category",
+                "page_no",
+            )
+        }
+        if any(
+            not isinstance(record[name], str)
+            for name in ("component_type", "module_name", "error_message", "category")
+        ) or (record["page_no"] is not None and type(record["page_no"]) is not int):
+            raise ValueError("Docling conversion has malformed native error records")
+        errors.append(record)
+    messages = [
+        f"{error['component_type']}/{error['module_name']} ({error['category']}, "
+        f"page {error['page_no']}): {error['error_message']}"
+        for error in errors
+    ]
+    if any(
+        marker in error["error_message"].lower()
+        for error in errors
+        for marker in ("out of memory", "cuda oom", "out_of_memory")
+    ):
+        raise RuntimeError("Docling model memory failure: " + "; ".join(messages))
+    if not isinstance(status, str) or status not in {"success", "partial_success"}:
+        detail = "; ".join(messages) or "no native error details"
+        raise RuntimeError(
+            f"Docling conversion did not complete ({status!r}): {detail}"
+        )
+    document = getattr(result, "document", None)
+    if document is None:
+        raise ValueError("Completed Docling conversion lacks its document")
+    warnings = tuple(
+        ExtractionWarning("docling_conversion_error", message, recoverable=True)
+        for message in messages
+    )
+    if status == "partial_success" and not warnings:
+        warnings = (
+            ExtractionWarning(
+                "docling_partial_success",
+                "Docling reported partial_success without native error details",
+                recoverable=True,
+            ),
+        )
+    return (
+        document,
+        {
+            "docling_conversion_status": status,
+            "docling_conversion_errors": errors,
+        },
+        warnings,
+    )
 
 
 def _require_cuda_ocr(converter, input_format) -> None:

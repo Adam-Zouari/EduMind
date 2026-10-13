@@ -481,6 +481,33 @@ def _safe_name(value: str) -> str:
     return f"{slug[:80]}-{stable_hash(value)[:12]}"
 
 
+def _gpu_oom(message, evidence):
+    """A telemetry error cannot hide definitive OOM in a recorded child error."""
+    messages, pending, seen = [message], [evidence], set()
+    while pending:
+        value = pending.pop()
+        if not isinstance(value, (Mapping, list, tuple)) or id(value) in seen:
+            continue
+        seen.add(id(value))
+        if isinstance(value, Mapping):
+            for name, item in value.items():
+                if isinstance(item, str) and (
+                    name == "error" or str(name).endswith("_error")
+                ):
+                    messages.append(item)
+                elif isinstance(item, (Mapping, list, tuple)):
+                    pending.append(item)
+        else:
+            pending.extend(value)
+    return any(
+        ("cuda" in text or "gpu" in text)
+        and any(
+            marker in text for marker in ("out of memory", "cuda oom", "out_of_memory")
+        )
+        for text in (message.casefold() for message in messages)
+    )
+
+
 def _probe_candidate(candidate: str, probe) -> dict[str, object]:
     try:
         evidence = dict(probe(candidate))
@@ -495,18 +522,18 @@ def _probe_candidate(candidate: str, probe) -> dict[str, object]:
             "resource_samples": list(exc.resource_samples),
         }
     except WorkerMeasurementError as exc:
+        oom = _gpu_oom(str(exc), exc.resource_evidence)
         return {
             **exc.resource_evidence,
             "candidate": candidate,
-            "status": "blocked",
-            "reason_code": "measurement_unavailable",
-            "outcome": "measurement_unavailable",
+            "status": "excluded" if oom else "blocked",
+            "reason_code": "gpu_oom" if oom else "measurement_unavailable",
+            "outcome": "gpu_oom" if oom else "measurement_unavailable",
             "error": str(exc),
         }
     except Exception as exc:  # noqa: BLE001 - classify and preserve probe failures
         message = f"{type(exc).__name__}: {exc}"
-        lowered = message.casefold()
-        oom = "out of memory" in lowered or "cuda oom" in lowered
+        oom = _gpu_oom(message, getattr(exc, "resource_evidence", {}))
         return {
             **getattr(exc, "resource_evidence", {}),
             "candidate": candidate,

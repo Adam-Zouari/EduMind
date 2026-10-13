@@ -68,6 +68,7 @@ def score_speech(
     warnings: Sequence[str] = (),
     alignment_threshold: float,
     timestamp_tolerance_seconds: float,
+    allow_untimed_reference: bool = False,
 ) -> dict[str, object]:
     reference = normalize_transcript(str(item["reference"]))
     hypothesis = normalize_transcript(prediction)
@@ -76,7 +77,9 @@ def score_speech(
     word_alignment = process_words(reference, hypothesis)
     character_alignment = process_characters(reference, hypothesis)
     references = _segments(
-        item.get("reference_segments"), "reference", allow_empty=not reference_words
+        item.get("reference_segments"),
+        "reference",
+        allow_empty=not reference_words or allow_untimed_reference,
     )
     references = [
         segment for segment in references if normalize_transcript(segment["text"])

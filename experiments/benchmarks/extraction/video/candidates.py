@@ -48,6 +48,8 @@ def scene_candidates(protocol: VideoProtocol) -> tuple[str, ...]:
 def hybrid_candidates(
     protocol: VideoProtocol, scene_threshold: float
 ) -> tuple[str, ...]:
+    if scene_threshold not in protocol.scene_thresholds:
+        raise ValueError("Hybrid threshold is outside the declared scene range")
     return tuple(
         f"video-hybrid-{scene_threshold:.2f}-{seconds}s"
         for seconds in protocol.hybrid_gaps

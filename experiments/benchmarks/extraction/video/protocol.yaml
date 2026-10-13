@@ -1,5 +1,5 @@
 schema_version: 1
-protocol_version: video-v6
+protocol_version: video-v7
 seed: 42
 
 keyframes:
