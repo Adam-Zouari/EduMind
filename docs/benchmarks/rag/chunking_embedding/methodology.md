@@ -44,6 +44,13 @@ paper are related, the source document—not the individual question—is the
 independent resampling unit. Repeated query executions improve timing
 measurement but do not create additional quality samples.
 
+For example, a document with two first-ranking recall values `1` and `0`
+contributes `0.5`; a second document with one value `1` contributes `1`.
+The document-macro recall is `(0.5 + 1) / 2 = 0.75`, not the pooled
+question mean `2 / 3`. The same weighting is applied separately to each
+quality metric and evidence slice. Warm-latency percentiles instead use the
+per-query observations defined below; they are not document-macro latency means.
+
 ## Candidate pairs
 
 The declared matrix crosses every chunking strategy with every embedding model.
@@ -229,6 +236,12 @@ first-ranking quality. Keep one outcome per scheduled attempt, including an
 explicit unexecuted status when execution stops. Missing records are incomplete,
 not presumed request failures. Repetitions supply timing and the frozen ranking-
 consistency checks, not additional quality observations.
+
+The consistency check here compares repeated **ordered top-five IDs**. It is
+not generation's three-pair semantic/citation agreement and is not the
+retrieval–reranking benchmark's complete top-20 Ranking Agreement gate. Preserve
+each suite's scope rather than importing a stricter or looser comparison from
+another stage.
 
 A successful child must account for every expected document and answerable
 query and attempt, produce nonempty source-consistent chunks and the expected

@@ -67,14 +67,17 @@ progress, and safe errors; it does not duplicate extraction or RAG logic.
 | `src/edumind/extraction/` | Source contracts, detection, extraction adapters, normalization, provenance, and cache |
 | `src/edumind/rag/` | Chunking, embedding contracts, Chroma access, context packing, and direct HF generation |
 | `src/edumind/application.py` | Typed end-to-end application operations, timings, warnings, and progress events |
-| `experiments/benchmarks/` | Candidate matrices, datasets, metrics, statistical selection, MLflow, and reports |
-| `config/base.yaml` | The only production configuration source |
+| `experiments/benchmarks/` | Candidate matrices, datasets, metrics, statistical comparisons, MLflow, and reports for engineer selection |
+| `config/base.yaml` | Configurable provisional production defaults; extraction route profiles also have explicit defaults in code |
 | `data/benchmarks/` | Frozen manifests/fixtures plus ignored prepared assets and model snapshots |
 
 ## Configuration and model provenance
 
-`config/base.yaml` defines the current production profile. Environment variables
-may override only the small set documented in `.env.example`.
+`config/base.yaml` defines configurable production settings. Default extraction
+route profiles live in `src/edumind/extraction/pipeline.py`; request-level
+profiles can override those routes explicitly. Environment variables may
+override only the small set documented in `.env.example`, including selection
+of another configuration file. Benchmark decisions do not override these sources.
 
 Models are never downloaded at import or application startup. Explicit preparation
 writes exact snapshots under `data/benchmarks/downloads/` and generates

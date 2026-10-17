@@ -42,6 +42,12 @@ and MLflow runs preserve what was actually evaluated. Experiments never silently
 change the application's configuration. No final comparative result or selected
 component is claimed yet.
 
+The diagram is the target lifecycle, not a claim that every stage is executable.
+In particular, vector-database locked execution and some Final RAG integration
+remain pending; the [runbook's implementation status](docs/benchmarks/running.md)
+identifies the available entry points and remaining gaps. Vector-server checks
+are CPU workloads and do not use CUDA preflight.
+
 ## Reproduction
 
 The [installation guide](docs/setup/installation.md) covers Python 3.12, system
@@ -90,8 +96,9 @@ PDF / DOCX / image / audio / video
 ```
 
 The Streamlit interface accepts uploads, indexes extracted evidence, and shows
-numbered citations with answers. Current choices are defined in
-[config/base.yaml](config/base.yaml), not inferred from benchmark results. The
+numbered citations with answers. Configurable defaults live in
+[config/base.yaml](config/base.yaml); default extraction routes are explicit
+profiles in the extraction pipeline. Neither is inferred from benchmark results. The
 application does not download models, start Docker, or promote benchmark winners
 on its own. See the [architecture overview](docs/architecture/overview.md) for
 the implementation boundaries.

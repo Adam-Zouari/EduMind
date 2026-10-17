@@ -130,24 +130,11 @@ not certify model outputs. See [data validation](../../data-validation.md).
 
 ## Visual-content quality
 
-### Visual Content Precision, Recall, and F1
-
-**Question:** How much recovered visible text is supported, how much required
-text was recovered, and does the configuration balance both?
-
 Under `normalized_lines_distinct_v1`, apply the shared prose projection to each
 visible line and discard projected empty lines. Compare distinct normalized
 predicted/reference line sets by exact equality. Repeated copies count once
 for content, but remain separate detections for timing and duplication.
 These units are lines, not model-tokenizer IDs.
-
-Precision is matched distinct lines divided by predicted distinct lines.
-Recall is matched distinct lines divided by reference distinct lines.
-F1 is their harmonic mean; zero precision and recall give zero F1.
-
-**Example:** One video has 100 reference lines and 90 predicted lines, with 80
-matches. Precision is `80 / 90 = 0.89`, recall is `80 / 100 = 0.80`, and F1
-is approximately `0.84`. Average each metric's video values separately.
 
 | Edge case | Example | Value | Explanation |
 |---|---|---|---|
@@ -156,14 +143,62 @@ is approximately `0.84`. Average each metric's video values separately.
 | Nonempty reference, empty output | A title is required but nothing is extracted | P/R/F1 = 0/0/0 | Required content was missed. |
 | First attempt fails | Parser crash or invalid complete output | null/unavailable | No valid prediction exists. |
 
-**Range and direction:** All three values lie in `[0, 1]`; higher is better.
 Different raw strings that project to empty compare as empty; raw text is retained.
+Each metric is calculated per video before video-macro averaging. The following
+three definitions share the empty-output and failure rules above.
+
+### Visual Content Precision
+
+**Question:** How much extracted visible text is supported by the reference?
+
+```text
+Visual Content Precision = matched distinct lines / predicted distinct lines
+```
+
+**Example:** Eighty exact line matches among ninety predicted distinct lines give
+`80 / 90 ≈ 0.89`; ten predicted lines are unsupported. An extra copy of an
+already predicted line does not change this set-based score.
+
+High precision means few unsupported lines, not that every required line was
+captured or that the capture occurred while the line was visible.
+**Range and direction:** `[0, 1]`; higher is better.
+
+### Visual Content Recall
+
+**Question:** How much verified visible text was recovered?
+
+```text
+Visual Content Recall = matched distinct lines / reference distinct lines
+```
+
+**Example:** Eighty matches among one hundred distinct reference lines give
+`80 / 100 = 0.80`. Capturing a title once can satisfy content recall even if a
+later reappearance is missed; occurrence coverage measures that separate task.
+
+High recall means broad distinct-line recovery. Extra unsupported lines do not
+lower recall, so inspect precision too.
+**Range and direction:** `[0, 1]`; higher is better.
+
+### Visual Content F1
+
+**Question:** Does visible-text extraction balance support and completeness?
+
+```text
+Visual Content F1 = 2 × precision × recall / (precision + recall)
+```
+
+Use each video's precision and recall, with zero when both are zero; do not
+calculate F1 from averaged precision/recall.
+
+**Example:** Eighty matches, ninety predicted lines, and one hundred reference
+lines give `2 × 80 / (90 + 100) = 160 / 190 ≈ 0.84`.
+If a second video's F1 is `0.50`, macro F1 is `(160 / 190 + 0.50) / 2 ≈ 0.67`.
+
+High F1 balances extra and missing text but does not establish timing, layout,
+or successful recovery on failed first attempts.
+**Range and direction:** `[0, 1]`; higher is better.
 
 ## Visual timestamp quality
-
-### Mean Visual First-Detection Delay and Timed Visual Occurrence Coverage
-
-**Question:** Was each appearance captured while visible, and how quickly?
 
 Every reviewed occurrence has a stable ID, normalized nonempty text, and a
 visibility interval `[start, end)`. Reappearance after disappearance is a new
@@ -177,14 +212,8 @@ eligibility test is separate from exact distinct-line content scoring.
 Match reference occurrences and frame text detections one-to-one. Maximize
 match count first, then minimize total detection delay; remaining ties use
 stable occurrence IDs and chronological frame/unit order. A detection cannot
-cover two occurrences. Coverage is matched occurrences divided by required
-occurrences. Delay is the assigned frame time minus appearance start; average
-covered delays within each video, then average defined video values.
-
-**Example:** Eight of ten appearances are captured, giving coverage `0.80`.
-Their delays total 12 seconds, giving that video's mean delay `12 / 8 = 1.5 s`.
-Low delay must be read with coverage: detecting only an easy subset quickly
-does not establish complete recovery.
+cover two occurrences. The same fixed assignment supplies both metrics below;
+do not optimize a different assignment for each displayed score.
 
 | Edge case | Example | Coverage / delay | Explanation |
 |---|---|---|---|
@@ -193,9 +222,48 @@ does not establish complete recovery.
 | First attempt fails | Visual worker crashes | null/unavailable for both | No valid detection output exists. |
 | Required annotation missing | Visible text without its claimed interval | No scoring | Reject during data validation. |
 
-**Range and direction:** Coverage lies in `[0, 1]`, higher is better. Delay is
-non-negative seconds, lower is better. A missed occurrence does not receive an
-invented zero delay or an arbitrary maximum delay.
+### Mean Visual First-Detection Delay
+
+**Question:** How soon after an appearance starts is it first captured?
+
+Subtract appearance start from its assigned frame time. Average covered
+occurrence delays within the video, then average defined video values equally.
+
+```text
+Video mean delay = sum of assigned in-interval detection delays / covered occurrences
+```
+
+**Example:** An appearance starts at `10 s` and its assigned frame is at `12 s`,
+so delay is `2 s`. Eight covered appearances with `12 s` total delay give
+video mean `12 / 8 = 1.5 s`.
+
+Low delay describes captured appearances only. It can look good when difficult
+appearances are missed, so read it with coverage.
+**Range and direction:** Non-negative seconds; lower is better. Each delay is
+less than its own `[start, end)` interval length. No covered occurrence makes
+delay unavailable; no timing task is inapplicable. A failed first output is
+unavailable. Misses receive no fabricated delay penalty or zero.
+
+### Timed Visual Occurrence Coverage
+
+**Question:** How much of the reviewed appearance task was captured while visible?
+
+```text
+Video occurrence coverage = matched reference occurrences / required occurrences
+```
+
+Calculate each video's ratio before averaging; do not pool corpus appearances.
+
+**Example:** Eight captures among ten appearances give `8 / 10 = 0.80`.
+A second video with one capture out of two gives macro coverage
+`(0.80 + 0.50) / 2 = 0.65`, not the pooled ratio `9 / 12 = 0.75`.
+A frame exactly at an appearance's end receives no credit because the interval
+excludes its end; a genuine reappearance is a new required occurrence.
+
+High coverage means required appearances were captured, not that every word or
+boundary is exact. **Range and direction:** `[0, 1]`; higher is better. A valid
+output with no captures of required appearances receives zero. No appearance
+task is inapplicable; failed first output is unavailable, not zero coverage.
 
 ## Reliability and failure behavior
 
@@ -259,6 +327,10 @@ Each attempt executes extraction rather than returning a cached prior output.
 | A, failure, failure | 0 | 2/3 |
 | failure, failure, failure | 0 | 1 |
 
+**Example:** For `A, A, failure`, only pair `(1,2)` agrees successfully, so
+repeatability is `1 / 3`. Video scores `1`, `1/3`, and `0` macro-average to
+`(1 + 1/3 + 0) / 3 ≈ 0.444`.
+
 A/B/C are distinct valid outputs. Three valid empty outputs agree perfectly;
 their quality is scored independently. For `failure, A, A`, first-attempt
 quality stays unavailable. Identical error messages do not agree.
@@ -311,22 +383,42 @@ elapsed times remain in artifacts, not successful-speed aggregates.
 
 ### p50 and p95 Warm Visual Latency
 
-**Question:** What are typical and slow-tail complete visual-processing times?
-
 For each video, take the median latency of its successful measured warm attempts.
 Calculate p50/p95 across these video medians using shared linear interpolation.
 The timer covers exactly the complete visual request listed under RTF.
-
-**Example:** Video observations `10, 12, 14, 16, 18, 20` seconds give p50
-`15 s` and p95 `19.5 s`. An interpolated percentile need not equal a measured
-latency or put exactly 95% of a small observed sample below its value.
-
-**Range and direction:** Non-negative seconds/video; lower is better. No
-successful video observation gives null/unavailable. A video with failed
+No successful video observation gives null/unavailable. A video with failed
 attempt 1 can still contribute later successful timings without supplying
 quality. Report completion counts. Limited independent support keeps descriptive
 point estimates, flags p95 limitations, and withholds unsupported CI bounds.
-p50 can be the main summary but is not an arithmetic mean.
+
+#### p50 Warm Visual Latency
+
+**Question:** What is the typical successful complete visual-processing wait?
+
+Take the median of the video-level successful-attempt medians.
+
+**Example:** Video observations `10, 12, 14, 16, 18, 20 s` give p50
+`(14 + 16) / 2 = 15 s`. An attempt sequence `12, 14, failure` contributes
+median `13 s`, not the time taken to fail.
+
+This summarizes a typical complete-video wait, not average frame speed.
+**Range and direction:** Non-negative seconds/video; lower is better. The shared
+completion and independent-source support rules above apply.
+
+#### p95 Warm Visual Latency
+
+**Question:** What is the slow-tail successful complete visual-processing wait?
+
+Interpolate the 95th percentile of the same sorted video observations, at
+zero-based position `(n − 1) × 0.95`.
+
+**Example:** For `10, 12, 14, 16, 18, 20 s`, position `5 × 0.95 = 4.75` gives
+`18 + 0.75 × (20 − 18) = 19.5 s`.
+
+An interpolated p95 need not equal an observation or put exactly 95% of a small
+sample below it. **Range and direction:** Non-negative seconds/video; lower is
+better. Unsupported tail/CI estimates remain descriptive with null bounds;
+repeated attempts do not add independent videos.
 
 ### Cold Visual-Pipeline Load Time
 
@@ -345,25 +437,43 @@ cold load is `5.0 s`.
 gives null; retain elapsed time to setup failure. Successful readiness remains
 measured if a later inference fails. One observed load has no confidence interval.
 
-### Peak Visual Process-Tree RAM and Peak Visual Device VRAM
+### Peak Visual Process-Tree RAM
 
-**Question:** What host and GPU memory does the complete visual lifecycle require?
+**Question:** How much host memory does the complete visual lifecycle require?
 
 At each sample, sum resident RAM of the worker and its living children/
 grandchildren, including media subprocesses; report the largest simultaneous
-total. Do not sum independent process peaks. CUDA VRAM is the largest raw NVML
-device-total sample, not per-process memory or a baseline-subtracted increase.
+total. Do not sum independent process peaks.
 Monitor from before loading through warmup and final measured inference.
 Offline scoring and input validation are outside candidate monitoring.
 Frozen-ASR models are unloaded before the fresh visual worker.
 
-**Example:** Peaks of `5,600 MiB` RAM and `2,900 MiB` device VRAM are reported
-separately.
+**Example:** Simultaneous worker/subprocess samples of `4,000 + 1,600 MiB` and
+`4,500 + 800 MiB` give totals `5,600` and `5,300 MiB`, hence peak `5,600 MiB`.
+Adding the separate process peaks would incorrectly give `6,100 MiB`.
+
+This measures simultaneous host demand of the parser and its media subprocesses.
+**Range and direction:** Non-negative MiB; lower is better at equal quality.
+Missing RAM telemetry is unavailable. Retain real partial-window samples after
+failure with their scope; one observed peak has no CI.
+
+### Peak Visual Device VRAM
+
+**Question:** What total GPU memory is occupied during visual extraction?
+
+Take the largest raw NVML device-total sample from before initialization through
+warmup and the final measured visual request. Do not use per-process memory or
+subtract an idle baseline. Frozen ASR is unloaded before visual monitoring;
+input validation and offline scoring are outside this window.
+
+**Example:** Device samples `700, 2,900, 2,400 MiB` give peak `2,900 MiB`,
+not the baseline-subtracted `2,200 MiB`. This is device occupancy, not model size.
 
 **Range and direction:** Non-negative MiB; lower is better at equal quality.
 CPU VRAM is null/inapplicable; missing CUDA telemetry is null/unavailable.
-Missing RAM telemetry is unavailable. Retain real samples after failure with
-partial/full lifecycle scope. One observed peak has no confidence interval.
+Retain real samples after failure with partial/full lifecycle scope. One observed
+peak has no CI. There is no artificial extraction VRAM cap; actual OOM, placement,
+and required telemetry gates still apply.
 
 ## Workload descriptor
 
@@ -376,7 +486,11 @@ parser acceptance or failure, then average videos with known completed counts.
 Keep all per-attempt counts in timing records. Do not replace an unavailable
 first selection with a later favorable one.
 
-**Example:** If 360 frames are selected across 30 videos, the mean is `12`.
+In plain words, sum known completed first-selection counts and divide by the
+number of videos contributing those counts.
+
+**Example:** If 360 frames are selected across 30 videos, the mean is
+`360 / 30 = 12 frames/video`.
 If selection yields 12 frames and parsing later fails, retain `12`, not the
 number parsed successfully.
 
@@ -388,10 +502,6 @@ No completed selection counts gives an unavailable aggregate.
 
 ## Frozen-ASR diagnostics
 
-### Transcripts and word-error components
-
-**Question:** What recognition quality does the shared audio result provide?
-
 Decode each unique video once, transcribe each required 30-second/2-second-overlap
 window once, shift timestamps, and stitch its transcript. Compare the complete
 stitched result to that video's reviewed spoken reference. Do not score repeated
@@ -402,10 +512,6 @@ align each valid completed video separately, then pool word/character edit
 counts and contributing reference lengths. CER includes spaces left by the
 shared projection. Substitution/deletion/insertion rates reuse pooled word
 counts; raw integer counts stay in artifacts.
-
-**Example:** 40 substitutions, 20 deletions, and 10 insertions across 1,000
-contributing reference words give WER `0.07` and component rates `0.04`,
-`0.02`, and `0.01`.
 
 | Edge case | Example | Value | Explanation |
 |---|---|---|---|
@@ -421,9 +527,82 @@ are zero and insertion rate is the word insertion count. WER/CER/insertion rate
 can exceed one. Missing annotation is invalid data, not silence. Genuinely silent
 videos are valid: the standalone speech-corpus positive-word quota does not apply.
 
-### Spoken timestamps
+These shared recognition conventions apply to each of the five metrics below.
+Report planned and contributing videos, reference lengths, failed videos, and
+independent-source counts. A failed required window makes the complete video
+pair unavailable, not an empty transcript; later visual attempts cannot replace
+it. Their CIs resample complete source videos and recalculate pooled counts.
 
-**Question:** Are the frozen transcript's spoken boundaries accurate and usable?
+### Transcript WER
+
+**Question:** How wrong is the complete stitched ordered word transcript?
+
+```text
+Transcript WER = pooled word substitutions + deletions + insertions
+                 divided by contributing reference words
+```
+
+Align each completed video's projected words separately before pooling.
+**Example:** `40 + 20 + 10` edits across `1,000` reference words give
+`70 / 1,000 = 0.07`.
+
+This diagnoses the fixed ASR input; it cannot distinguish visual policies.
+**Range and direction:** Non-negative, unbounded; lower is better. Insertions can
+make WER exceed one; the shared empty-reference and unavailable rules above apply.
+
+### Transcript CER
+
+**Question:** How severe are character-level errors in the stitched transcript?
+
+Divide pooled character substitutions, deletions, and insertions by contributing
+projected reference characters, including remaining spaces.
+
+**Example:** `50` character edits across `5,000` reference characters give
+`50 / 5,000 = 0.01`. A single wrong character can count as one complete word
+error in WER, so the two metrics expose different error scales.
+
+**Range and direction:** Non-negative, unbounded; lower is better. Empty
+reference uses character insertion count; failed/partial video pairs are
+unavailable, not deletions. Apply the shared recognition support/CI rules.
+
+### Word Substitution Rate
+
+**Question:** How much required spoken content became different words?
+
+Use the same word alignment as WER: pooled substitutions divided by contributing
+reference words. **Example:** `40 / 1,000 = 0.04` means four substitutions per
+hundred reference words, not that four percent of videos failed.
+
+This isolates word confusion from omission and invention.
+**Range and direction:** `[0, 1]`; lower is better. Zero reference words gives
+zero substitutions under the explicit convention. Failed video pairs remain
+unavailable; use recognition support and CIs, not window-level resampling.
+
+### Word Deletion Rate
+
+**Question:** How much required speech was omitted from the complete transcript?
+
+Divide pooled word deletions by the same contributing reference-word count.
+**Example:** `20 / 1,000 = 0.02` exposes two missing words per hundred reference
+words, even when the retained words are accurate.
+
+**Range and direction:** `[0, 1]`; lower is better. Valid empty output against
+nonempty reference gives one; empty/empty gives zero. A failed window does not
+create invented deletions for its video. Shared recognition support/CIs apply.
+
+### Word Insertion Rate
+
+**Question:** How much unsupported speech was added?
+
+Divide pooled word insertions by contributing reference words.
+**Example:** `10 / 1,000 = 0.01`. These counts reuse WER's alignment, so rates
+`0.04 + 0.02 + 0.01 = 0.07` reconcile with WER, not with CER.
+
+**Range and direction:** Non-negative, unbounded; lower is better. With zero
+reference words, use insertion count: empty reference versus `go now` gives two.
+No completed pairs is unavailable, not zero. Shared recognition support/CIs apply.
+
+### Spoken timestamp matching
 
 Reuse [ASR span alignment](../audio/metrics.md#timestamp-quality-1) on the stitched
 video timeline: Content F1 ≥ `0.5`, ordered non-overlapping predicted spans,
@@ -431,24 +610,63 @@ no reuse, and the matched span's minimum start/maximum end. Pool real boundary
 errors for MAE and matched/required segment counts from valid completed eligible
 videos for coverage.
 
-**Example:** 18 of 20 reviewed spoken segments align with 7.2 seconds total
-error across their 36 boundaries: coverage `0.90`, MAE `0.20 s`.
-
 No reviewed spoken timing task gives null/inapplicable; visual appearance
 timestamps are not spoken timestamps. A claimed but missing spoken annotation
 fails data validation. Valid output with required timings but no matches gives
 coverage zero and MAE null/unavailable. Failed video transcription makes both
 unavailable. Retain planned/contributing reference and matched-boundary counts.
 
-### Empty and nonspeech behavior
+### Timestamp Boundary MAE
 
-**Question:** Does completed speech unexpectedly vanish, or does nonspeech
-produce invented lexical text?
+**Question:** How far are aligned spoken starts/ends from reviewed boundaries?
 
-Unexpected Empty Transcript Rate divides valid empty complete video transcripts
-by valid completed videos requiring nonempty projected spoken text.
-Nonspeech False-Transcription Rate divides valid completed reviewed nonspeech
-units producing lexical text by all valid completed reviewed nonspeech units.
+Sum absolute start and end errors and divide by the number of matched boundaries,
+pooling real errors across completed videos rather than averaging video MAEs.
+
+**Example:** Eighteen matched segments have 36 boundaries. Total absolute error
+`7.2 s` gives `7.2 / 36 = 0.20 s` MAE.
+
+Small MAE means precise matched boundaries, not complete alignment.
+**Range and direction:** Non-negative seconds; lower is better. No matches is
+unavailable; no reviewed timing task is inapplicable. Failed video transcription
+is unavailable. CI draws retain source videos and use actual matched errors.
+
+### Timestamp Alignment Coverage
+
+**Question:** How much of the reviewed spoken timing task received an alignment?
+
+Divide pooled matched reference segments by pooled required segments from valid
+completed eligible videos. **Example:** `18 / 20 = 0.90`; adding a valid video
+with ten required segments and no matches gives `18 / 30 = 0.60`.
+
+Coverage exposes missing alignment that a small MAE could hide.
+**Range and direction:** `[0, 1]`; higher is better. Completed output with no
+matches receives zero; no task is inapplicable. Failed transcripts are
+unavailable and retain their planned, not scored, denominators. Resample full
+source videos, including those failures, for conditional coverage CIs.
+
+### Unexpected Empty Transcript Rate
+
+**Question:** How often does completed video speech unexpectedly vanish?
+
+Divide valid empty complete video transcripts by valid completed video
+transcripts requiring nonempty projected spoken text.
+
+**Example:** Of 100 eligible videos, 10 fail complete transcription and four of
+the 90 completed transcripts are empty: `4 / 90 ≈ 0.044`.
+
+This measures empty successful execution, not failed windows. Read it with ASR
+Attempt Failure Rate and complete-video failure counts.
+**Range and direction:** `[0, 1]`; lower is better. No completed eligible videos
+is unavailable; no lexical reference task is inapplicable. Zero events with a
+positive completed denominator gives zero. CI draws recalculate that denominator.
+
+### Nonspeech False-Transcription Rate
+
+**Question:** How often does reviewed nonspeech produce invented lexical text?
+
+Divide valid completed reviewed nonspeech units producing lexical text by all
+valid completed reviewed nonspeech units.
 
 The protocol must freeze one nonspeech unit type before evaluation: whole
 nonspeech videos or explicitly reviewed actual ASR windows, including overlap.
@@ -456,16 +674,18 @@ Do not mix types, infer nonspeech from missing text, add separate inference
 repetitions, or impose the standalone control-category allocation on video.
 Require the reviewed units declared for the video corpus and retain their labels.
 
-**Example:** Four unexpected empties among 90 completed eligible speech videos
-give `4 / 90`; three invented outputs among 20 completed nonspeech units give
-`3 / 20`. Failed outputs are not empty/false-transcription events.
+**Example:** Three invented outputs among twenty completed reviewed units give
+`3 / 20 = 0.15`. Two other failed scheduled units remain failures, not events;
+the completed-output denominator remains twenty.
 
-**Range and direction:** Both rates lie in `[0, 1]`; lower is better. No events
+**Range and direction:** `[0, 1]`; lower is better. No events
 with a positive completed denominator gives zero; all give one. No valid
 completed eligible units gives null/unavailable. A legitimate slice without
 the task is null/inapplicable; absent required reviewed inputs fail preparation.
+For CIs, windows remain dependent parts of their source video, not independent
+control samples. The unit type/allocation are currently null pending data review.
 
-### Audio attempt failures
+### Audio Attempt Failure Rate
 
 **Question:** How often does a scheduled ASR window request fail?
 
@@ -484,9 +704,7 @@ decoding failure before window inference remains a setup/preprocessing outcome,
 with affected video status, not fabricated failed ASR requests.
 There is no audio repeatability score: each window is transcribed once.
 
-### Audio latency, RTF, loading, and resources
-
-**Question:** What cost did producing the shared complete audio results require?
+### Shared audio operational measurements
 
 One warmup follows cold ASR readiness. Time each complete video from audio
 decoding through window preparation, native features, transcription, required
@@ -495,26 +713,91 @@ synchronization. Exclude cold loading, warmup, input verification, and offline
 scoring. Record window timings, but p50/p95 use one completed warm
 audio-processing latency per video, with shared linear interpolation.
 
-Complete Audio-Pipeline RTF is summed successful complete-video processing time
-divided by those videos' original audio durations. Count each original duration
-once, not overlapping window durations.
+Successful video timings survive failures of other videos. Partial outputs and
+elapsed-to-failure diagnostics are retained but do not become complete-video
+speed observations. All measurements live on the frozen-ASR child, not on every
+visual child; component percentiles and resource peaks cannot be added to infer
+an integrated audio/visual measurement.
 
-**Example:** A four-minute video completed in one minute gives RTF `0.25`.
-Complete video latencies `10, 12, 14, 16, 18, 20` seconds give p50 `15 s`
-and p95 `19.5 s`.
+### Complete Audio-Pipeline Real-Time Factor
 
-Cold ASR loading ends at full model/profile readiness before warmup. Peak Audio
-Process-Tree RAM sums simultaneous worker/subprocess resident memory; Peak Audio
-Device VRAM follows raw NVML device-total sampling. Both monitor loading,
-warmup, and all measured audio work, then stop before scoring/visual processing.
+**Question:** How much complete audio-processing time is needed per unit duration?
 
-**Range and direction:** Latency/load are non-negative seconds, RTF is
-non-negative and unbounded, and peaks are non-negative MiB; lower is better at
-equal quality. No completed video timing gives null/unavailable latency and RTF.
-Incomplete loading has no completed cold-load value. Valid prior measurements
-survive later failure with scope. CPU VRAM is null/inapplicable; missing required
-telemetry is null/unavailable. Limited support retains descriptive p50/p95,
-not fabricated confidence bounds. Cold load and observed peaks have no interval.
+Divide summed successful complete-video processing time by those videos'
+original audio durations. Count original duration once, not each overlapping
+window duration. **Example:** `60 s / 240 s = 0.25` means four times playback
+speed for that completed video, including decoding and stitching.
+
+**Range and direction:** Non-negative, unbounded; lower is better. Above one
+means slower than playback. No complete timed success is unavailable; nonpositive
+duration is invalid reference data. CIs recalculate the time/duration ratio from
+full source units, not means of per-window RTFs.
+
+### p50 Warm Audio-Processing Latency
+
+**Question:** What is the typical complete audio-processing wait per video?
+
+Take the median of completed videos' warm audio latencies; there is one measured
+preparation per video, not three ASR repetitions.
+**Example:** `10, 12, 14, 16, 18, 20 s` gives `(14 + 16) / 2 = 15 s`.
+
+This describes a typical full preparation, not window latency.
+**Range and direction:** Non-negative seconds/video; lower is better. No complete
+timings is unavailable. Independent-source support governs its conditional CI.
+
+### p95 Warm Audio-Processing Latency
+
+**Question:** What is the slow-tail complete audio-processing wait per video?
+
+Use linear interpolation across completed video latencies at position
+`(n − 1) × 0.95`. **Example:** For `10, 12, 14, 16, 18, 20 s`, position `4.75`
+gives `18 + 0.75 × (20 − 18) = 19.5 s`.
+
+This is a percentile estimate, not a maximum or a guarantee for unseen videos.
+**Range and direction:** Non-negative seconds/video; lower is better. No complete
+timings is unavailable; limited tail support keeps a descriptive point with null
+CI bounds and reason. Overlapping windows do not increase independent support.
+
+### Cold ASR Model-Load Time
+
+**Question:** How long does initialization take before audio warmup?
+
+Subtract model/profile construction start from synchronized full readiness,
+including device placement and required components, ending before warmup.
+**Example:** Start `0.4 s`, readiness `5.4 s`: cold load is `5.0 s`.
+
+This is a one-time initialization cost, not per-video preparation latency.
+**Range and direction:** Non-negative seconds; lower is better. Failed readiness
+is unavailable with elapsed-to-failure retained. Completed load survives later
+transcription failure. One load observation has no CI.
+
+### Peak Audio Process-Tree RAM
+
+**Question:** How much simultaneous host memory does audio preparation require?
+
+At each sample sum resident RAM of the worker and its living descendants,
+including decoding subprocesses, then take the maximum. Monitor loading,
+warmup, and measured audio work, excluding data validation, scoring, and visuals.
+**Example:** Simultaneous totals `2,000 + 1,200 = 3,200 MiB` and
+`2,400 + 500 = 2,900 MiB` give peak `3,200 MiB`, not `3,600 MiB` from separate peaks.
+
+**Range and direction:** Non-negative MiB; lower is better at equal quality.
+Missing instrumentation is unavailable. Retain partial-window observed peaks
+with scope after failure; one observed peak has no CI.
+
+### Peak Audio Device VRAM
+
+**Question:** What total GPU memory is occupied during audio preparation?
+
+Take the maximum raw NVML device-total sample over loading, warmup, and measured
+audio preparation, ending before scoring and visual execution.
+**Example:** Device samples `700, 2,100, 1,900 MiB` give `2,100 MiB`; idle use
+is not subtracted. This measures occupancy, not isolated model-weight bytes.
+
+**Range and direction:** Non-negative MiB; lower is better at equal quality.
+CPU execution is null/inapplicable; missing CUDA telemetry is null/unavailable.
+Real partial-window peaks survive failure with scope. No artificial VRAM cap
+applies; OOM/placement/telemetry gates still apply. One observed peak has no CI.
 
 ## Worked candidate interpretation
 

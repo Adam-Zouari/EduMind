@@ -77,10 +77,12 @@ subject to hardware qualification**. It does not mean that the candidate has bee
 
 `public_benchmark`, `public_metric`, and `public_score` must be read together. A score is meaningful only under the dataset, metric, and evaluation protocol that produced it. Public scores are compared only when all of those details and the benchmark version are identical. Results from different MTEB/RTEB tables or other protocols are evidence that a candidate is worth testing, not proof that one candidate is better than another.
 
-Every shortlisted candidate is therefore qualified locally before entering
-EduMind's frozen quality benchmark. Definitive hardware exclusions remain
-visible in the qualification report; common local results compare the
-qualified candidates.
+GPU-backed shortlisted candidates require local hardware qualification before
+authoritative quality evaluation. Vector-server candidates instead follow their
+CPU-only conformance and index-selection procedure. Where runner alignment is
+still pending, the benchmark methodology distinguishes that intended contract
+from currently executable behavior. Definitive hardware exclusions remain
+visible in qualification provenance rather than receiving a modified protocol.
 
 `benchmark_source_url` and `benchmark_source_revision` identify where a public score came from. `candidate_source_url` and `candidate_revision` identify the model, composite profile, or server EduMind intends to execute. These may point to different artifacts: an ASR leaderboard can establish WER while the model page establishes timestamp support and the exact checkpoint.
 

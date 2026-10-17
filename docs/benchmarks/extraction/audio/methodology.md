@@ -54,8 +54,8 @@ The runner implements the failure and repeatability contract below. See the
 
 ## Data
 
-Smoke uses two committed audio clips. The authoritative corpus contains 90
-English clips split 54 development, 18 validation, and 18 locked. It includes:
+Smoke uses two committed audio clips. The authoritative corpus target is 90
+English clips split 54 development, 18 validation, and 18 locked. It requires:
 
 - verified transcripts;
 - complete audio duration;
@@ -69,6 +69,16 @@ source pools and the recommended allocation. The exact recordings are
 fixed by the manifests, which record source, revision, selected clip interval,
 license, checksum, duration, and speaker/document family. Public leaderboard
 scores are screening context; they do not replace this frozen corpus.
+
+The authoritative manifests and reviewed references must be prepared before
+these allocations become evaluation evidence. Implemented smoke execution does
+not establish a completed corpus or a winning ASR profile. Both
+`minimum_ci_sources` and `minimum_latency_ci_sources` are currently null in the
+protocol. Freeze those data-dependent support requirements after source review,
+before authoritative evaluation, using the
+[pending-data-review checklist](../../pending-data-review.md#audio-extraction).
+Until then, do not infer an authoritative confidence interval from clip counts
+or the number of measured attempts alone.
 
 A small fixed reliability set contains verified silence, music without lyrics,
 background noise, and other nonspeech audio. These controls are separate from the
@@ -241,8 +251,7 @@ changes application configuration.
 
 Content F1 and document Reading Order NED are not ASR metrics in this benchmark.
 Audio already supplies chronological order, so Corpus WER evaluates the required
-ordered transcript. Technical-Term Accuracy is also excluded because EduMind is
-not restricted to a stable subject vocabulary. Diarization is not scored unless
+ordered transcript. Diarization is not scored unless
 speaker identification becomes a product requirement.
 
 The exact calculations, examples, ranges, directions, and confidence-interval
@@ -369,8 +378,9 @@ Every completed development, validation, or locked child retains all 17 aggregat
 metric fields in JSON, even when a conditional value is null. Required artifact
 fields are not omitted to hide failures. MLflow receives only numeric scalars;
 artifacts retain nulls, reasons, scheduled/contributing/failure counts, and
-planned/contributing reference lengths. Historical runs preserve their recorded
-metric names and protocol versions, not a reinterpretation under this contract.
+planned/contributing reference lengths. A result is interpreted under its
+recorded metric definitions and protocol version; changing definitions requires
+new matching evidence.
 A CPU profile records VRAM as null/inapplicable. Missing CUDA instrumentation
 records null/unavailable, not zero.
 CUDA children record `vram_measurement_method="nvml-device-total"` and the

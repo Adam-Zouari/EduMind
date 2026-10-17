@@ -41,6 +41,11 @@ Upload a supported image, PDF, DOCX, audio, or video file, wait for extraction a
 indexing, then ask a question. Answers should cite the numbered evidence shown by
 the interface.
 
+Check the interface's extraction, vector-index, and generator readiness messages
+before uploading. They verify preparation/connectivity, not benchmark quality.
+Model operations share a process-wide lock; use one application process and
+avoid unrelated GPU workloads when choosing an explicit CUDA profile.
+
 ## 4. Stop the application dependencies
 
 Stop Streamlit with `Ctrl+C`, then stop Chroma:

@@ -26,7 +26,8 @@ cap in any profile, including preflight. GPU-backed parser components must
 remain on the requested GPU without framework offloading or silent CPU fallback;
 native DOCX and Tesseract retain their explicit CPU routes. Peak VRAM remains
 measured; actual OOM, placement violations, and missing required telemetry remain
-failures. CPU smoke reports Peak VRAM as unavailable, not zero.
+failures. CPU execution reports Peak VRAM as null/inapplicable, not zero;
+missing required CUDA telemetry is null/unavailable.
 
 RapidOCR's CUDA placement check inspects the optimized ONNX Runtime graph at
 initialization. CPU shape bookkeeping is permitted only when dimension-derived
@@ -227,6 +228,15 @@ names—define the actual cases and record every selected ID, source revision,
 license, checksum, document family, source type, and available annotations. An
 authoritative run cannot be claimed until those manifests and references are
 complete.
+
+The committed smoke fixtures demonstrate the implemented workflow, not a
+completed authoritative corpus or a selected parser. The protocol's
+`minimum_ci_sources` and `minimum_latency_ci_sources` are currently null pending
+review of independent-source support. Freeze them through the
+[pending-data-review checklist](../../pending-data-review.md#document-extraction)
+before authoritative evaluation; a null minimum is not permission to publish
+unsupported intervals. The target split sizes above do not establish that
+enough independent sources exist for every annotation subset or latency tail.
 
 The [shared data-validation contract](../../data-validation.md) defines checks
 for claimed capabilities, reviewed blanks/negative objects, complete page

@@ -22,6 +22,9 @@ first-ranking/failure rules, successful-attempt latency, one query warmup, and
 execution-only resource monitoring. Its standalone validator and sealed-report
 verification are available. Quality-CI support remains unset until data review;
 such results retain descriptive scores and null confidence bounds.
+Retrieval–reranking's expanded reporting contract also needs alignment,
+including one authoritative warmup and alpha-nDCG eligibility for single-unit
+questions. Its methodology marks those limitations explicitly.
 Document, ASR, and Video implement their revised metric, failure, repeatability,
 resource, and display-name contracts. Their standalone data validators and
 automatic sealed-report verification are available. Video uses grouped parents
@@ -64,22 +67,23 @@ First prepare and review the inputs. The approved workflow has two steps:
 Both steps are outside latency and candidate resource measurement. See the
 [data-validation guide](data-validation.md#preparation-and-execution) for the
 exact checks, example, and module layout. Full validation is available for the
-three extraction benchmarks; other suites retain their current input checks
+three extraction benchmarks and chunking–embedding; other suites retain their current input checks
 until their approved validators are implemented. Human annotation review remains
 necessary.
 
-Extraction preparation commands:
+Available preparation commands:
 
 ```powershell
 python -m experiments.benchmarks.validate audio --profile development
 python -m experiments.benchmarks.validate audio --profile all
 python -m experiments.benchmarks.validate document --profile all
 python -m experiments.benchmarks.validate video --profile all
+python -m experiments.benchmarks.validate chunking-embedding --profile all
 python -m experiments.benchmarks.validate all --profile all
 ```
 
 One domain validator serves its applicable profiles; the coordinator uses the
-same checks across the implemented extraction benchmarks. Missing required inputs make a validation batch
+same domain checks across the implemented benchmarks. Missing required inputs make a validation batch
 incomplete, not successful. `all --profile smoke` checks only applicable smoke
 fixtures when authoritative data is unavailable. Preflight uses validated
 development/stress inputs and never inspects held-out answers. Generated reports
@@ -430,12 +434,9 @@ locked result is reporting-only.
 
 ### Reading the chunking–embedding results
 
-The following is the approved contract; the implementation gaps above must be
-resolved before current outputs are treated as authoritative under it.
-
-- Prepare/review canonical sources and evidence separately. The standalone RAG
-  validator/report-reuse commands remain planned. Once implemented, each profile
-  verifies its matching successful report before candidate loading or measurement.
+- Prepare/review canonical sources and evidence separately. The standalone
+  chunking–embedding validator and sealed-report reuse are implemented. Each
+  profile verifies its matching report before candidate loading or measurement.
 - Execute only answerable questions. Keep the same searchable corpus for all
   pairs; shared-manifest unanswerable queries are not embedded, timed, or scored.
 - Build the corpus once after loading, including semantic boundary work and
@@ -488,13 +489,30 @@ Validation and locked execute exactly the candidates in
 `retrieval-reranking-locked.json`; a required owner pool is prepared as an
 input, not added as another finalist child.
 
-Pool artifacts and paired-comparison Parquet/CSV files are attached to the
-comparison parent. Exact NumPy dense search and local BM25 are benchmark
+The parent stores pool-collection metadata in `pool_collections.json` and
+paired-comparison Parquet/CSV files. Evaluated pool-owner children store ranked
+pool rows in `pool_collection.parquet`; when no owner child is evaluated, its
+internally prepared input collection remains referenced by the parent metadata
+without inventing an owner run. Exact NumPy dense search and local BM25 are benchmark
 controls, not production indexes.
+
+The [metric reference](rag/retrieval_reranking/metrics.md) explains each quality,
+latency, pool-size, token-workload, and storage value separately. Retrieval Warm
+Latency is the first-stage measurement stored under
+`operational.first_stage_latency_ms_p50/p95`; Full-Stack Warm Latency also
+includes learned reranking when present. No-reranker latency/input fields are
+inapplicable rather than measured zeros. Index build and storage are owned by
+Dense and BM25; RRF references both indexes instead of constructing a third.
 
 ## 9. Vector databases
 
-Start the four servers, run the CPU-only profiles, and stop them afterward:
+Start the four servers before available CPU-only runs and stop them afterward.
+The command sequence below also shows the approved target for frozen-finalist
+validation and a component locked report. Those final-stage contracts are not
+yet fully implemented; follow the
+[vector methodology's implementation status](vectordb/methodology.md#implementation-status)
+before interpreting a current run as that report. In particular, validation
+must not retune the index settings that it is supposed to confirm.
 
 ```powershell
 docker compose -f experiments/benchmarks/vectordb/compose.yml up -d
@@ -519,7 +537,10 @@ choice without further server or index selection.
 
 ## 10. Generation and Final RAG
 
-Generation uses frozen evidence contexts:
+Generation uses frozen evidence contexts. The commands below describe the
+approved model-mode/seed/judge contract; the
+[generation implementation boundary](rag/generation/methodology.md#implementation-boundary)
+identifies alignment still required before authoritative execution.
 
 ```powershell
 python -m experiments.benchmarks.rag.generation.run --profile smoke

@@ -17,7 +17,9 @@ applies to authorized contributions.
 1. Create a feature branch from `main`.
 2. Install the app and benchmark lock files in a fresh virtual environment.
 3. Install the source once with `python -m pip install -e . --no-deps`.
-4. Run the focused validity checks and the relevant benchmark's `--profile smoke` command.
+4. Run focused checks for the changed behavior; run the relevant benchmark's
+   `--profile smoke` command when runtime behavior changes. Documentation-only
+   changes need documentation checks, not model inference.
 5. Keep generated outputs in `artifacts/`, not in Git.
 
 For authorized Python changes, run `python -m ruff check .` and
@@ -50,6 +52,18 @@ python -m pytest tests/test_benchmark_metrics.py tests/test_benchmark_datasets.p
   [shared metric reference](docs/benchmarks/metrics.md). Keep individual metric
   definitions, calculations, examples, and edge cases in the linked benchmark
   metric pages.
+- Use the [document metric reference](docs/benchmarks/extraction/document/metrics.md)
+  and [methodology](docs/benchmarks/extraction/document/methodology.md) as the
+  explanation standard: each numeric metric needs its question, plain-language
+  calculation, accurate worked example, interpretation, range/direction, and
+  relevant eligibility, failure, support, and interval rules. Keep setup and
+  architecture pages concise rather than giving them metric templates.
+- Distinguish implemented behavior, intended contracts, and pending execution
+  paths. A documentation clarification must not silently change attempt counts,
+  designated quality outputs, gates, candidate rosters, or numeric settings.
+  Preserve valid earlier observations after later failure; unavailable quality
+  is not a fabricated empty result. Record historical changes accurately in the
+  changelog rather than rewriting earlier evidence as if new behavior existed.
 - Put benchmark commands and operational troubleshooting in the
   [benchmark runbook](docs/benchmarks/running.md).
 - Put preparation-time data checks, reusable reports, and automatic

@@ -76,7 +76,8 @@ inputs:
   candidate roster; fixed adapter support is defined in code.
 - Frozen dataset manifests define samples, splits, checksums, and provenance.
 - Generated data-validation reports identify checked inputs and requirements;
-  extraction benchmarks implement standalone validation and report verification;
+  Document, ASR, Video, and Chunking–Embedding implement standalone validation
+  and report verification;
   the remaining suites retain inline checks pending that migration.
 - `data/benchmarks/models/selected.json` records model revisions, prepared local
   snapshot paths, and checksums.

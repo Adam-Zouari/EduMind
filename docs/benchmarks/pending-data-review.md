@@ -175,9 +175,30 @@ the authoritative dataset manifests and methodology, then remove the item.
   locked-test questions. Do not fabricate acceptance thresholds before review.
 - Inspect the resulting question and document counts by evidence type before
   deciding which slice confidence intervals are sufficiently supported.
+- Freeze the run-level Decode Throughput estimator and contributing stream
+  cohort before generation comparisons. Request-level token-event counts and
+  first/last-token intervals are defined; averaging request rates and dividing
+  pooled tokens by pooled intervals are different summaries. Record the chosen
+  weighting, partial-stream treatment, and any applicable uncertainty rule in
+  the generation contract before publishing a comparable aggregate.
 - Publish one complete authoritative RAG document row and answerable,
   unanswerable, table, formula, and mixed question examples after the real
   manifests and checksums exist.
+
+## Final RAG human review
+
+- Freeze the rule selecting one measured response per sampled question before
+  inspecting answer quality. Record its seed/response ID and preserve failures;
+  do not choose a best response or silently replace a missing item.
+- Calibrate the refusal-specific instructions for Human Faithfulness, Answer
+  Correctness, Completeness, and Citation Accuracy on non-locked review examples.
+  A valid refusal does not automatically imply four perfect substantive ratings.
+  Freeze applicability, rating, and missing-item handling before exporting the
+  locked blinded packet; Human Answerability Correctness keeps its separate
+  behavior judgment.
+- Keep the anonymous item-to-run/response mapping outside the reviewer's packet,
+  verify evidence identity on import, and retain all 20 planned items. A partial
+  review remains a diagnostic, not a completed reporting-only human report.
 
 ## Vector databases
 

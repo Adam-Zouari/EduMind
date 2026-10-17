@@ -5,6 +5,7 @@
 On this page:
 
 - [Metric summary](#metric-summary)
+- [Implementation boundary and result status](#implementation-boundary-and-result-status)
 - [Semantic quality and judge responsibilities](#semantic-quality-and-judge-responsibilities)
 - [Citation quality](#citation-quality)
 - [Response, refusal, and output validity](#response-refusal-and-output-validity)
@@ -20,6 +21,36 @@ when generation is embedded in Final RAG. Once selected, calibrated, and frozen,
 one pinned LLM judge supplies structured semantic labels; deterministic
 benchmark code calculates the metric values and aggregates. Blinded human review
 provides separate reporting-only evidence about the selected complete system.
+
+## Implementation boundary and result status
+
+This is the approved metric contract, not a claim that the current runner
+implements it. The existing generation evaluator still exposes lexical scores
+and a local sequence-classification faithfulness scorer; neither substitutes
+for the claim-level calibrated judge defined here. Judge identity, calibration
+acceptance evidence, prompts, and retry policy must be frozen before an
+authoritative semantic report. No judge or authoritative result is designated
+by these examples. See the [methodology's implementation boundary](methodology.md#implementation-boundary).
+
+Generation deliberately differs from extraction and chunking/embedding:
+quality is scored across all three scheduled seeds, not only attempt 1.
+An observed candidate failure on an answerable question receives zero under
+this suite's failed-quality rule, but its absent response is still stored as
+null with the actual outcome, not fabricated as a completed empty answer.
+
+| Case | Treatment |
+|---|---|
+| Normal, schema-valid answered output | Score answerable quality, behavioral validity, and applicable diagnostics. A valid but incorrect answer can score poorly without being malformed. |
+| Observed refusal, malformed output, execution error, timeout, or context-limit termination on an answerable question | Apply the documented zero-quality rule; retain the actual output if any and distinct outcome. Runtime errors do not become malformed outputs. |
+| No questions in a metric's reference-fixed eligibility slice | Null/inapplicable, with zero eligible support. |
+| Judge error, missing instrumentation, or missing scheduled record | Null/unavailable or incomplete with a reason; do not fabricate candidate zero, a refusal, or agreement. |
+
+Required attempts, labels, fields, and measurements must be accounted for before
+calling a report complete. Valid observations survive later failures: an
+observed TTFT, completed cold load, earlier answer score, or partial resource
+peak is not erased. Artifacts retain scheduled, eligible, observed/scored,
+failed, unavailable, and unexecuted counts as applicable. MLflow omits null
+scalar keys; a missing key never means a measured zero.
 
 ## Metric summary
 
@@ -160,6 +191,11 @@ Repeating a fact or adding a different correct fact cannot increase recall.
 
 **Range and direction:** `[0, 1]`; higher is better.
 
+Every answerable reference must have at least one required atomic gold claim.
+An absent or empty required-claim list is invalid reference data, not a
+perfect empty-recall case. A valid substantive response covering none receives
+zero; absent judge labels are unavailable evaluation, not zero matching.
+
 ### Factual Correctness F1
 
 **Question:** Does the response balance avoiding incorrect claims with covering
@@ -208,8 +244,8 @@ still measured separately by Factual Correctness Recall.
 **Range and direction:** `[0, 1]`; higher is better.
 
 The exact judge model version, decoding settings, prompts, rubric checksums,
-schema, and retry policy are frozen. Candidate identities are hidden from the
-judge. Before authoritative use, its labels must satisfy the protocol's agreement
+schema, and retry policy must be frozen before authoritative use. Candidate
+identities are hidden from the judge. Its labels must satisfy the recorded agreement
 criteria for each responsibility on a human-labeled development calibration set.
 A judge failure makes evaluation
 incomplete. Judge latency and resources are excluded from candidate operational
@@ -265,6 +301,11 @@ correct citations cover `G1` and `G2`, Citation Recall is `2 / 3`, approximately
 
 **Range and direction:** `[0, 1]`; higher is better.
 
+No correct citations gives zero. The denominator remains the question's full
+required evidence inventory, including units missing from Final RAG's retrieved
+context. Restricting it to retrieved units would hide retrieval misses. Missing
+gold annotations are invalid reference data, not an empty citation task.
+
 ### Citation F1
 
 **Question:** Does the response balance citing only correct evidence with citing
@@ -316,7 +357,9 @@ question's Response Validity Rate is `2 / 3`, approximately `0.67`. The refusal
 is well formed but fails the required answer behavior.
 
 **Range and direction:** `[0, 1]`; higher is better. It is null when the split
-contains no answerable questions.
+contains no answerable questions (inapplicable). Passing this metric does not
+prove correctness or that citations entail the answer; it establishes valid
+answer behavior and legal evidence IDs.
 
 ### Refusal Validity Rate
 
@@ -339,7 +382,8 @@ the required refusal and one produces a substantive answer. That question's
 Refusal Validity Rate is `2 / 3`, approximately `0.67`.
 
 **Range and direction:** `[0, 1]`; higher is better. It is null when the split
-contains no unanswerable questions.
+contains no unanswerable questions (inapplicable). On this slice a timeout or
+runtime failure is not a valid refusal, even if partial text resembles one.
 
 ### Malformed Output Rate
 
@@ -395,20 +439,45 @@ This category counts execution errors. Timeout and context-boundary termination
 have their own finish reasons and rates below; they are not counted again as
 execution errors. Each scheduled attempt retains its exact outcome.
 
-### Timeout Rate and Context-Limit-Reached Rate
+**Range and direction:** `[0, 1]`; lower is better. No execution errors means
+zero only when scheduled outcomes are fully accounted for. Unexecuted requests
+and setup failures are not invented per-question runtime errors.
 
-**Question:** How often is output stopped by the wall-clock boundary or model
-context boundary instead of normal EOS termination?
+### Timeout Rate
 
-Each question's rate divides the corresponding finish-reason count by its
-scheduled seed count, then follows document-macro aggregation. If one seed
-times out, one reaches the context boundary, and one finishes normally, both
-question-level rates are `1 / 3`.
+**Question:** How often does the frozen wall-clock timeout stop generation?
 
-All three reliability rates lie in `[0, 1]`; lower is better. A failed, timed-out,
-or context-limited answerable attempt receives failed-quality treatment. A judge
-or benchmark-infrastructure failure makes the comparison incomplete instead of
-becoming a candidate reliability event.
+```text
+Timeout Rate = timed-out attempts for this question / its scheduled seeds
+```
+
+**Example:** With one timeout and two normal completions, the question's rate
+is `1 / 3 ≈ 0.33`. A timeout is counted even if tokens were emitted before the
+boundary; observed TTFT can survive but successful-completion latency cannot.
+
+**Range and direction:** `[0, 1]`; lower is better. It is not also an execution
+error. A timed-out answerable attempt receives failed-quality treatment.
+Missing finish-reason records make evaluation incomplete, not timeout-free.
+
+### Context-Limit-Reached Rate
+
+**Question:** How often does output exhaust the model context before EOS?
+
+```text
+Context-Limit-Reached Rate = context-boundary terminations for this question
+                            / its scheduled seeds
+```
+
+**Example:** If one seed times out, one reaches the context boundary, and one
+finishes at EOS, the question's Context-Limit-Reached Rate and Timeout Rate are
+each `1 / 3`. They describe different recorded termination causes.
+
+**Range and direction:** `[0, 1]`; lower is better. A context-limited answerable
+attempt receives failed-quality treatment even if its partial output parses.
+The available output capacity is the frozen context minus the complete prompt,
+not an independent answer-token budget. A judge or benchmark-infrastructure
+failure makes evaluation incomplete rather than becoming any candidate
+reliability event. All three reliability rates follow document-macro aggregation.
 
 ## Repeatability
 
@@ -431,11 +500,18 @@ judge error makes evaluation incomplete rather than assigning candidate zero.
 Each valid, completed response pair receives `1` when both statuses match and
 `0` otherwise. Invalid or interrupted pairs follow the zero rule above.
 
+```text
+Question Repeat Status Agreement = matching valid-status pairs / 3 scheduled pairs
+```
+
 **Example:** Statuses `answered`, `answered`, and `insufficient_evidence` create
 three pairs. One pair agrees, so Repeat Status Agreement is `1 / 3`,
 approximately `0.33`.
 
 **Range and direction:** `[0, 1]`; higher is better.
+
+Three identical refusals on an answerable question can agree perfectly while
+Response Validity and answerable quality are zero. Agreement is not correctness.
 
 ### Repeat Citation Agreement
 
@@ -467,6 +543,11 @@ The frozen judge labels each valid, completed response pair with matching
 statuses as semantically equivalent or not.
 Equivalent pairs receive `1`; non-equivalent pairs, status disagreements, and
 failed attempts receive `0`.
+
+```text
+Question Repeat Semantic Agreement = semantically equivalent valid pairs
+                                     / 3 scheduled pairs
+```
 
 **Example:** If two answers state that 500 people participated and the third
 states that 800 participated, only the first pair agrees. Repeat Semantic
@@ -501,9 +582,11 @@ erase an already-observed first token. Report scheduled attempts, attempts with
 observed TTFT, and contributing questions alongside the percentiles. p50
 summarizes a typical contributing question and p95 its slow tail.
 
-**Example:** TTFT p50 `0.35 seconds` describes the typical question-level
-first-token wait; p95 `0.90 seconds` describes its slow tail. Percentiles are
-estimated from the observed requests and may be interpolated.
+**Example:** Token waits of `0.2`, `0.4`, and no token give that question an
+observed median TTFT of `0.3 seconds`. Across question medians
+`0.1, 0.2, 0.3, 0.4, 0.5`, p50 is `0.3` and p95 is
+`0.4 + 0.8 × (0.5 - 0.4) = 0.48 seconds`. Thus p50 describes typical
+responsiveness and p95 the slow tail, not an uncertainty bound.
 
 **Range and direction:** Non-negative seconds; lower is better. TTFT percentiles
 are null when no measured request emits a generated token.
@@ -522,9 +605,12 @@ times are not treated as successful completion latency. Report scheduled and
 successful attempt counts and contributing question counts, and read latency
 alongside the failure and termination rates.
 
-**Example:** p95 `8.4 seconds` estimates the slow 95th-percentile successful
-warm request; it is not a guarantee that exactly 95% of a small sample completes
-within that interpolated value.
+**Example:** Successful attempts of `4` and `6 seconds` plus one timeout give
+that question a completion observation of `(4 + 6) / 2 = 5 seconds`.
+Question observations `2, 3, 4, 5, 10` have p50 `4` and interpolated p95
+`5 + 0.8 × (10 - 5) = 9 seconds`. This is not a guarantee that exactly 95%
+of a small sample completes within that value; the timeout stays visible
+separately.
 
 For Final RAG, retrieval, reranking, context packing, generation, and complete
 system latency are also reported separately.
@@ -559,6 +645,13 @@ when fewer than two tokens are generated or no positive inter-token interval
 can be measured. Missing required timing instrumentation makes measurement
 incomplete. Throughput has no upper bound of one.
 
+Retain the request-level numerator and interval, including a partial stream's
+outcome if token timing was observed before termination. Any run summary must
+identify its contributing requests and whether it averages request rates or
+divides pooled tokens by pooled intervals; those are not interchangeable.
+The approved contract does not yet name that summary estimator. It must be
+frozen and implemented before a run-level throughput scalar is comparable.
+
 ### Cold Model-Load Time
 
 **Question:** How long does a fresh worker need to make the generator ready?
@@ -574,34 +667,184 @@ ready at `5.4 seconds`, Cold Model-Load Time is `5.4 seconds`.
 **Range and direction:** Non-negative seconds; lower is better. One cold-load
 observation receives no confidence interval.
 
-### Peak Process-Tree RAM and Peak Device VRAM
+An interrupted load has null/unavailable completed load time, with its
+elapsed-to-failure retained separately. A completed load remains known if
+warmup or a later measured request fails; a setup error does not create
+per-question failed responses for requests that never ran.
 
-**Question:** What peak host memory does the generator worker use, and what peak
-total memory is occupied on its assigned GPU?
+### Peak Process-Tree RAM
 
-Peak RAM is the largest sampled resident-memory total for the worker and its
-child processes. Peak Device VRAM follows the shared raw NVML device-total
-contract from before loading through the final measured request.
+**Question:** What peak host memory does the generator worker require?
 
-**Example:** RAM samples peaking at `3,100 MiB` and VRAM samples peaking at
-`2,850 MiB` produce those two reported peaks.
+At each sample, sum resident memory for the worker and its child processes;
+report the largest simultaneous sum. Do not add independent process peaks.
+The monitoring window includes loading, warmup, and measured generation, not
+offline judging or bootstrap calculations.
+
+**Example:** Simultaneous worker/child totals of `2,000 + 600 = 2,600 MiB`
+and `1,900 + 1,200 = 3,100 MiB` give a peak of `3,100 MiB`, not
+`2,000 + 1,200 = 3,200 MiB`.
 
 **Range and direction:** Non-negative MiB; lower is better at equal quality.
-Unavailable measurement is null with a reason in diagnostic artifacts, not
-zero. Missing required RAM or authoritative CUDA telemetry makes the report
-incomplete; a null diagnostic cannot satisfy that measurement requirement.
+No samples means null/unavailable, not zero. Samples before a failure remain
+valid partial-window observations with start/end scope; they do not establish
+the memory needed for the unexecuted workload. Missing required instrumentation
+makes the report incomplete. An observed peak receives no confidence interval.
+
+### Peak Device VRAM
+
+**Question:** How much total assigned-GPU memory is occupied at the observed peak?
+
+Take the maximum raw NVML `memory.used` sample from before loading through
+the last measured request. Include desktop/driver allocations; the idle baseline
+is explanatory and is not subtracted. This device-total value does not prove
+correct model placement, which is checked separately.
+
+**Example:** Device samples `700, 2,850, 2,500 MiB` report `2,850 MiB`,
+not `2,150 MiB` above the baseline. A peak retained before an OOM is partial
+evidence, not proof that the complete workload fits.
+
+**Range and direction:** Non-negative MiB; lower is better at equal quality.
+CPU execution is null/inapplicable; missing required CUDA telemetry is
+null/unavailable and makes measurement incomplete. Preserve observed values
+and their scope after failure; do not clamp them to a hardware threshold.
+The existing generation resource limit is an execution gate, not this metric's
+upper range, and does not impose a cap on extraction. One peak has no CI.
 
 ## Workload descriptors
 
-Prompt, supplied-context, reasoning, visible-answer, and total output token counts
-use each candidate's native tokenizer. Citation count, generated-claim count, and
-finish reason are retained with every question and summarized with their
-observation counts. Separate reasoning counts remain null when the runtime does
-not expose a reliable boundary.
+These are per-attempt workload observations, not higher-is-better quality
+metrics. Keep question/seed identity and outcome, and identify the observed
+attempts and weighting of each descriptive summary. Token counts use the
+candidate's native tokenizer, not retrieval's fixed evidence-scoring tokenizer;
+equal token counts across different models need not represent equal text or work.
+Missing observations remain null, while genuine empty components can count zero.
+These descriptors receive no sample-based quality confidence interval.
 
-These values explain performance and quality differences. For example, a
-reasoning configuration may produce better factual recall while generating four
-times as many output tokens and therefore taking longer.
+### Prompt Tokens
+
+**Question:** How much input does the complete model request consume?
+
+Count the fully rendered native chat-template input, including instructions,
+question, evidence, and special input tokens. Do not count padding as real input.
+
+**Example:** A rendered prompt containing `1,200` native input tokens in an
+`8,192`-token context leaves `8,192 - 1,200 = 6,992` tokens of output capacity.
+It is this complete count, not the evidence count alone, that consumes context.
+
+**Range and direction:** Non-negative integer tokens; descriptive. A missing
+tokenization record is unavailable, not an empty prompt. An overlength input is
+an input-contract problem, not permission to truncate or alter context settings.
+
+### Context Tokens
+
+**Question:** How much supplied evidence text accompanies this question?
+
+Count the supplied evidence component with the same native tokenizer, retaining
+its text and counting boundary. It is part of, not additional to, Prompt Tokens.
+Separate component tokenizations need not sum to the complete chat tokenization.
+
+**Example:** The `1,200`-token prompt above may contain evidence measured as
+`900` native tokens. Reporting both distinguishes evidence workload from the
+complete input cost without asserting that every remaining token is an instruction.
+
+**Range and direction:** Non-negative integer tokens; descriptive. A known
+empty supplied context counts zero; an unrecorded context is unavailable.
+Retrieved-token descriptors using `cl100k_base` are separate measurements.
+
+### Reasoning Tokens
+
+**Question:** How much output belongs to the exposed reasoning stream?
+
+Count generated tokens in the runtime's reliably separated reasoning component.
+Hidden or unexposed reasoning is not inferred from elapsed time or the answer.
+
+**Example:** An exposed reasoning span of `30` tokens records `30`. A runtime
+that returns only a visible answer without a reliable reasoning boundary records
+null, not an assumption of zero reasoning.
+
+**Range and direction:** Non-negative integer tokens when observed; descriptive.
+Verified absence can count zero. Boundary uncertainty is null/unavailable.
+
+### Visible-Answer Tokens
+
+**Question:** How much visible answer text did the model deliver?
+
+Count the `answer` string with the native tokenizer, excluding separated
+reasoning and the JSON wrapper/citation fields. This describes answer length,
+not the number of required facts recovered.
+
+**Example:** A valid response whose answer string encodes to `20` native tokens
+records `20`, whether those tokens express correct facts or unsupported claims.
+
+**Range and direction:** Non-negative integer tokens; descriptive. An absent
+response or unparseable answer field has no defined answer-string count.
+Retain any available raw generated tokens separately rather than inventing an
+empty answer. A known empty string counts zero even if it fails answer behavior.
+
+### Total Output Tokens
+
+**Question:** How many native generated-token events did the request produce?
+
+Count all generated events, including reasoning, visible output, JSON/control
+syntax, and emitted termination tokens; exclude input/padding. This is the `N`
+used for Decode Throughput, not just the retokenized visible answer string.
+
+**Example:** A request producing `60` output tokens can have `30` reasoning
+tokens and a visible answer counted as `20` tokens, with the rest belonging to
+other output syntax/control events. Do not require these separately measured
+components to sum to `60` when boundaries or retokenizations differ.
+
+**Range and direction:** Non-negative integer tokens; descriptive. A measured
+attempt known to emit no tokens counts zero. Partial tokens before timeout remain
+observed workload with that outcome; a missing event record is unavailable.
+
+### Citation Count
+
+**Question:** How many distinct evidence IDs does the response select?
+
+Count distinct citation IDs after the scoring deduplication; retain the original
+ordered list and invalid-ID diagnostics. A large count is not automatically
+better citation quality.
+
+**Example:** `["E1", "E1", "E2"]` has a distinct Citation Count of `2`,
+not `3`. If `E2` is legal but irrelevant, count is still `2` while Citation
+Precision is only `1 / 2`.
+
+**Range and direction:** Non-negative integer IDs; descriptive. A valid empty
+list counts zero. Missing/unparseable citation fields are unavailable rather
+than fabricated empty lists; unknown IDs remain malformed-output evidence.
+
+### Generated-Claim Count
+
+**Question:** How many distinct factual assertions must be verified?
+
+Count atomic, semantically deduplicated visible-answer claims from the calibrated
+judge's extraction labels, not sentences or required gold facts.
+
+**Example:** "The trial enrolled 500 adults and lasted six months" yields
+three claims: enrollment count, adult population, and duration. Repeating the
+duration does not create a fourth distinct claim.
+
+**Range and direction:** Non-negative integer claims; descriptive. Completed
+claim extraction finding none gives zero. Missing judge labels give
+null/unavailable and incomplete semantic evaluation, not a claim-free answer.
+
+### Finish-Reason Distribution
+
+**Question:** Why did scheduled generation attempts terminate?
+
+Retain counts for the exact recorded finish reasons and their observed/scheduled
+support. A descriptive observed share is `reason count / attempts with a recorded
+termination`. It is not a replacement for the document-macro reliability rates.
+
+**Example:** Recorded reasons `EOS, EOS, timeout` give counts `2, 1` and
+observed shares `2 / 3, 1 / 3`. If one required attempt never ran, keep it
+unexecuted and the run incomplete, not an invented EOS or timeout.
+
+**Range and direction:** Counts are non-negative integers, shares are `[0, 1]`;
+descriptive. No recorded terminations means no defined shares, not all-zero
+successful behavior. These frequencies do not receive confidence intervals.
 
 ## Worked candidate interpretation
 
@@ -622,9 +865,12 @@ TTFT p95                              = 0.90 seconds
 End-to-End Latency p95                = 8.40 seconds
 ```
 
-The answers are usually well supported and directly relevant. Factual
-Correctness Recall is lower than Factual Correctness Precision, so omitted
-required facts are a larger problem than false additions. Refusal Validity shows
+These are document-macro quality/rate estimates, not pooled percentages of all
+claims or attempts. Calculate F1 per response before averaging, not from the
+displayed aggregate precision and recall. The answers are usually well supported
+and directly relevant. Required-fact coverage is weaker than generated-claim
+precision; the different denominators do not establish corpus-wide error counts.
+Refusal Validity shows
 that unanswerable questions remain a distinct weakness. The non-zero malformed
 rate identifies a schema issue separate from answer/refusal behavior, while
 repeatability and latency describe stability and runtime cost.
@@ -663,3 +909,40 @@ that emits no token has no TTFT observation; its failure or completion outcome
 still contributes to the applicable reliability metrics. This differs from a
 missing required attempt record, artifact, metric field, or timing instrument:
 those omissions make the evaluation incomplete, not a valid null observation.
+
+### Interval support and calculation
+
+Quality, validity, reliability, and repeatability aggregates receive 95% bounds
+only with sufficient independent source support. Warm TTFT and completion-latency
+p50/p95 receive conditional intervals under the same frozen support requirement.
+One cold load, a resource peak, token/citation/claim counts, and finish-reason
+inventories do not acquire intervals merely because they are numeric. A decode
+throughput summary needs its estimator defined before its uncertainty can be
+specified.
+
+For each of the 10,000 draws, resample complete reference-eligible source
+documents with replacement, retaining questions, all scheduled seeds, pair
+labels, failures, and unavailable evaluations. Recalculate the same
+seed-then-question-then-document aggregate. A source drawn twice contributes
+twice. Do not prefilter to successful answers: observed candidate zeros remain,
+and unavailable evaluations retain their coverage/incomplete status. For latency,
+recalculate percentiles from the sampled documents' per-question observations,
+not from document-average times. Paired comparisons use the same source draw
+for both configurations.
+
+Report eligible and contributing independent-source counts, not `3 × questions`
+as independent support. If no eligible questions exist, the result is
+inapplicable; if required labels or attempts are missing, any surviving-output
+estimate is explicitly incomplete/diagnostic. Do not turn it into a normal
+complete comparison by omitting missing rows.
+
+Below the support minimum frozen after data review and before held-out use,
+keep a defined descriptive point estimate with null bounds and a reason. No
+numeric support minimum is set until that review. Record defined/undefined bootstrap draws for each
+conditional metric. Identical resamples can yield bounds such as `[1, 1]`;
+retain them with a degenerate-interval flag, not a claim of future certainty.
+
+For example, `Faithfulness = 0.90, 95% CI [0.86, 0.94]` describes uncertainty
+in the document-macro estimate, not a range of individual answers. Bootstrap
+resampling performs arithmetic on saved labels; it launches neither extra
+generation nor extra judge calls.

@@ -118,11 +118,24 @@ pair's complete corpus from highest to lowest and applies the same discount and
 cutoff. The reported score compares the retrieved ranking with this exact
 ideal; the ideal is never restricted to the retrieved top-20 list.
 
+In plain words:
+
+```text
+discounted gain at rank r = complete evidence units in that chunk / log2(r + 1)
+DCG@K = sum of those discounted gains through rank K
+nDCG@K = observed DCG@K / ideal DCG@K over the complete corpus
+```
+
 **Example:** Suppose the corpus has only two evidence-bearing chunks: one covers
 one required unit and the other covers all three. At `@3`, ordering their gains
 as `[3, 1, 0]` gives `1.00`, while `[1, 3, 0]` gives approximately `0.80`. Both
 orders recover the same units and return the same text, but the first places
 more evidence earlier.
+
+The rank discounts at ranks 1, 2, and 3 are `1`, approximately `0.631`,
+and `0.5`. Thus the ideal DCG is `3 + 1 × 0.631 = 3.631`; the reversed
+order gives `1 + 3 × 0.631 = 2.893`, and `2.893 / 3.631 ≈ 0.797`.
+Use unrounded values for actual scoring.
 
 nDCG is primary because this benchmark evaluates relevance ranking rather than
 diversity-aware selection. Evidence-unit Recall separately measures distinct
@@ -142,6 +155,11 @@ three or first five chunks, regardless of their order?
 Each required evidence unit counts once when at least one chunk inside the
 cutoff contains it completely. Repeated copies do not add credit, and partial
 fragments do not count as recovered units.
+
+```text
+Evidence-unit Recall@K = distinct required units completely covered by top K
+                        / all required units for the question
+```
 
 **Example:** If the first three chunks recover one of three required units and
 the next two recover another, Recall@3 is approximately `0.33` and Recall@5 is
@@ -167,6 +185,11 @@ overlap it. All returned source-token occurrences form the denominator; text
 repeated in different chunks counts each time in both numerator and denominator.
 Native model prefixes and special inference tokens are not source content.
 
+```text
+Evidence-token Precision@K = evidence-bearing returned token occurrences
+                            / all returned source-token occurrences
+```
+
 **Example:** If 160 of 600 retrieved tokens are relevant evidence, precision is
 approximately `0.27`. The remaining tokens are additional context not counted
 as relevant evidence by the reference annotations.
@@ -191,6 +214,22 @@ the credit for later chunks that repeat the same evidence. With the frozen
 **Example:** If the first two chunks contain the same evidence and the third
 contains different evidence, the second chunk is discounted. Moving the
 different evidence to rank 2 improves the score.
+
+For two required units, consider three corpus chunks `A={G1}`, `B={G1}`,
+and `C={G2}`. Order `A,B,C` has novelty gains `1,0.5,1`; greedy order
+`A,C,B` has `1,1,0.5`. At `@3`, their discounted sums are approximately
+`1 + 0.5 × 0.631 + 1 × 0.5 = 1.815` and
+`1 + 1 × 0.631 + 0.5 × 0.5 = 1.881`. The reported ratio is about
+`0.965`, rather than `1`, even though both orders cover both units.
+
+In plain words:
+
+```text
+novelty gain of a chunk = sum, over its complete gold units, of
+                         0.5 raised to the number of earlier chunks covering that unit
+alpha-DCG@K = sum of novelty gains / log2(rank + 1) through rank K
+alpha-nDCG@K = min(1, observed alpha-DCG@K / greedy-baseline alpha-DCG@K)
+```
 
 Here, repetition is not decided by text similarity. It means that a chunk
 covers an evidence-unit ID already covered by a higher-ranked chunk. Exact
@@ -456,20 +495,39 @@ its complete matrix.
 chunks is an observed count, not a successful empty index for the required
 nonempty workload.
 
-### Mean and p95 Chunk Tokens
+### Mean Chunk Tokens
 
-**Question:** How large are typical chunks and the long tail of the chunk sizes?
+**Question:** How many tokens does a generated chunk contain on average?
 
-Calculate the arithmetic mean and the linearly interpolated 95th percentile of
-generated chunk lengths using `tiktoken:cl100k_base`. These describe actual
-boundaries, not just the configured target size.
+Count each generated chunk with `tiktoken:cl100k_base`, then divide the sum
+of those lengths by Chunk Count. Overlap counts again in each chunk. This is
+an arithmetic mean over chunks, not a document-macro score or configured target.
 
-**Example:** Mean chunk length of 310 tokens and p95 of 500 tokens show that
-most chunks are shorter than the largest passages the strategy produces.
+**Example:** Chunk lengths `100, 200, 300, 400, 500` give
+`(100 + 200 + 300 + 400 + 500) / 5 = 300 tokens/chunk`.
+The mean summarizes average size but can hide long chunks.
 
 **Range and direction:** Non-negative token counts; descriptive. With no
-generated chunks, both summaries are null/unavailable rather than zero; retain
+generated chunks, the mean is null/unavailable rather than zero; retain
 Chunk Count = 0 and the execution failure separately.
+
+### p95 Chunk Tokens
+
+**Question:** How long are chunks near the upper end of the size distribution?
+
+Sort the same fixed-tokenizer chunk lengths and take their linearly
+interpolated 95th percentile. This is a size percentile, not a confidence bound
+or a native model-input limit.
+
+**Example:** For `100, 200, 300, 400, 500`, the percentile lies 80% of the
+way from `400` to `500`: `400 + 0.8 × 100 = 480 tokens`. The mean is `300`,
+so a mean alone would conceal the longer passages. An interpolated size need
+not be an integer even though each observed chunk length is an integer.
+
+**Range and direction:** Non-negative tokens; descriptive. No chunks means
+null/unavailable; one chunk makes p95 equal its length. Partial inventories
+remain labelled partial, not full-corpus summaries. Neither chunk-size summary
+receives a confidence interval.
 
 ### Embedding Dimension and Dtype
 
@@ -494,6 +552,10 @@ Record the complete dense matrix's raw payload bytes, excluding metadata,
 serialization headers, and model weights. For the stored contiguous FP32
 matrix, cross-check its actual payload against chunk count, embedding dimension,
 and four bytes per coordinate.
+
+```text
+Embedding-Matrix Bytes = chunk rows × coordinates per row × bytes per coordinate
+```
 
 **Example:** 1,000 vectors with 768 FP32 coordinates occupy 3,072,000 raw
 payload bytes. A serialized `.npy` file can legitimately be larger because it

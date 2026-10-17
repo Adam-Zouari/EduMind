@@ -122,7 +122,9 @@ types, the smoke profile records an explicit dtype for each device; the current
 embedding, retrieval, and generation CUDA smoke paths use the same
 FP16 contract as their authoritative CUDA execution.
 
-Vector Database is CPU-only: it has one smoke execution and no CUDA preflight.
+The Vector Database server workload is CPU-only: it has one smoke execution and
+no CUDA preflight. The separate real-retrieval path composes the frozen
+embedding/reranking contracts; model preparation is not server-side inference.
 Its server/configuration roster advances through conformance checks and reviewed
 decisions. Document locks one routing policy containing a frozen route for each
 source type, rather than forcing PDF, image, and native DOCX through one parser.
@@ -201,6 +203,34 @@ device, fresh worker, and materially distinct execution path. Preflight always
 uses zero. Vector-server startup, index readiness, and warm query measurement
 follow the [Vector Database methodology](vectordb/methodology.md), not the model
 constructor lifecycle.
+
+### What the measured attempts contribute
+
+Scoring and execution are separate steps. All scheduled attempts retain their
+output or error and timing, even when only one output supplies quality.
+The benchmark-specific metric contract determines which saved outputs are
+scored; it is not an automatic property of MLflow or the number of repetitions.
+Attempts 1, 2, and 3 are repeated measured executions, not a loading attempt,
+a warmup attempt, and a quality attempt. Loading and warmup precede them in
+the same worker. Repeated requests do not inherit conversational history from
+one another. Unless a suite explicitly defines retries, a later attempt is
+another observation, not an automatic replacement for a failed earlier one.
+
+| Evidence | Observation used |
+|---|---|
+| Document, standalone ASR, visual Video, and chunking–embedding quality | The designated first measured output; later attempts provide other evidence. |
+| Retrieval–reranking quality | The designated first measured ranking; later rankings supply its recorded consistency check and timing. |
+| Frozen Video ASR | One complete stitched result per video from its scheduled windows; no transcription repeatability score. |
+| Generation quality | The protocol's measured seed outputs, aggregated within each question before source-document aggregation. |
+| Warm latency | Successful completed measured operations under each suite's component/request boundaries. |
+| Repeatability or ranking consistency | The exact attempt comparisons and representation specified by that suite, not extra quality samples. |
+
+For example, a document's attempts `A, A, failure` preserve the first
+`A` for quality, both successful durations for latency, and all three outcomes
+for failure and pairwise repeatability. A generation question's three measured
+seed outputs instead all belong to its declared quality evaluation. These
+are different output-sampling contracts; equal repetition counts do not make
+the contracts identical.
 
 Chunking–embedding first measures one complete corpus build after model/tokenizer
 loading, because the searchable matrix is needed before a representative query
@@ -459,8 +489,8 @@ gate.
 
 Authoritative development, validation, and locked comparisons for ASR, embedding,
 learned reranking, and generation use the laptop's RTX 3050 through CUDA. Each
-stage freezes one supported 16-bit dtype, keeps the whole active model on that
-GPU, and forbids CPU fallback, CPU/GPU offload, automatic device splitting, and
+complete candidate profile freezes its supported dtype, keeps the whole active
+model on that GPU, and forbids CPU fallback, CPU/GPU offload, automatic device splitting, and
 quantization. Embedding, learned-reranking, and generation retain a `3,584 MiB`
 Peak Device VRAM limit; extraction does not. Smoke executes both
 CPU and CUDA by default, but neither result is selection evidence.
@@ -561,8 +591,15 @@ word_error_rate.ci_lower
 word_error_rate.ci_upper
 ```
 
-`sample_count` records how many independent samples contributed to the point
-estimate. The CI keys exist only when the metric qualifies for a 95% confidence
+`sample_count` records the metric's contributing observation count using its
+declared unit; it is not a universal guarantee of independence. For example,
+two document capture variants can contribute two document values but belong to
+one independent source. Document additionally records
+`<metric_key>.independent_source_count`; other suites retain their independent
+source support in the applicable metric artifacts. Source-document macro
+metrics count their contributing document values rather than raw questions.
+Always identify both contributing observations and independent sources; the
+latter determines bootstrap/CI support. The CI keys exist only when the metric qualifies for a 95% confidence
 interval under [metrics.md](metrics.md). Their absence means that no interval
 was calculated; it never means zero. A numerically degenerate calculated
 interval is flagged in the artifact rather than interpreted as certainty.

@@ -55,6 +55,9 @@ reuse results produced under the previous policy.
 
 ## Readiness
 
-Readiness reports the vector-server connection and local generator availability.
+Readiness combines extraction-source/model checks, vector-server/index checks,
+and local generator availability. The generator is required when the pipeline
+is constructed with generation enabled; readiness does not prove extraction
+quality or constitute a benchmark result.
 The pipeline does not start Docker or download models. Missing dependencies return
 an actionable preparation or Compose command through the application layer.

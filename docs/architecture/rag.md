@@ -31,8 +31,9 @@ budget when comparing candidates.
 
 Numbered contexts are passed to a citation-constrained prompt. The generator uses
 the checkpoint chat template, native checkpoint dtype, one whole-model device,
-temperature 0, seed 42, and a fixed output limit. It never falls back to a hosted
-service or downloads a missing checkpoint.
+greedy decoding (`do_sample=false`), seed 42, and a fixed output limit. The
+configured temperature is zero but is not passed to greedy generation.
+It never falls back to a hosted service or downloads a missing checkpoint.
 
 ## Contracts and compatibility
 

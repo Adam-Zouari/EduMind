@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Expanded vector-database metric explanations and documented current runner
+  limitations; clarified setup, architecture, and contribution guidance without
+  changing benchmark implementation or methodology settings.
 - Changed the project license to PolyForm Strict License 1.0.0; third-party
   dependencies, model weights, and datasets retain their upstream licenses.
 - Reworked the documentation hierarchy around project purpose, architecture,

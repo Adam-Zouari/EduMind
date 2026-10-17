@@ -65,17 +65,15 @@ under [Timestamp quality](#timestamp-quality-1).
 | Peak Process-Tree RAM | Operational | How much total system memory does the candidate require? | Lower |
 | Peak Device VRAM | Operational | How much total GPU memory is occupied during candidate execution? | Lower |
 
-These 17 metrics define the implemented ASR evaluation contract. Technical-Term
-Accuracy is excluded because EduMind has no fixed subject vocabulary;
-diarization metrics remain out of scope until speaker identification becomes a
+These 17 metrics define the implemented ASR evaluation contract.
+Diarization metrics remain out of scope until speaker identification becomes a
 product requirement.
 
 ## Scoring inputs and result status
 
 Quality uses only the designated first measured attempt, after the warmup. Its
-index is fixed before execution. A failed first attempt is never replaced by a
-successful later one: doing so would select a favorable output rather than
-evaluate the same request for every candidate. Later attempts supply timing,
+index is fixed before execution. Under this output-sampling contract, a failed
+first attempt is never replaced by a successful later one. Later attempts supply timing,
 repeatability, and failure evidence, not additional quality scores.
 
 Corpus WER/CER and the three word-error rates pool counts from valid completed
@@ -268,11 +266,6 @@ when the model inserts more words than the entire reference contains.
 
 ## Timestamp quality
 
-### Timestamp Boundary MAE and Timestamp Alignment Coverage
-
-**Question:** How accurate are the predicted start/end times, and how much of
-the timed reference could actually be aligned?
-
 For each reference segment, the evaluator enumerates contiguous spans of
 predicted timestamp units and keeps spans whose normalized token Content F1 is
 at least `0.5`. Dynamic programming selects ordered, non-overlapping one-to-one
@@ -280,22 +273,8 @@ matches by maximum total similarity, then match count, then earliest spans.
 No predicted unit can be reused. This lets a segment-level reference match
 several word-level predictions while preventing one broad prediction from
 covering multiple references. The span envelope supplies its minimum start and
-maximum end. Timestamp Boundary MAE is then calculated as follows:
-
-1. Find the absolute start-time error for every aligned segment.
-2. Find the absolute end-time error for every aligned segment.
-3. Average all start and end errors.
-
-```text
-Timestamp Alignment Coverage =
-reference segments successfully aligned
----------------------------------------
-reference segments with timestamps
-```
-
-**Example:** If 18 of 20 reference segments align, coverage is `18 / 20 =
-0.90`. If their 36 start/end boundaries have 7.2 seconds of total absolute
-error, Timestamp Boundary MAE is `7.2 / 36 = 0.20 seconds`.
+maximum end. Matching uses content and order, not boundary-error minimization;
+the timing errors are scored only after the matches are fixed.
 
 Boundary MAE alone can look excellent when only easy segments align. Coverage
 shows how much of the timed reference actually contributed. The two metrics are
@@ -318,8 +297,55 @@ outputs; Attempt Failure Rate diagnoses execution failures.
 | Legitimately no required timed segments | null, inapplicable | null, inapplicable | There is no spoken timing task, unlike an empty prediction for a real task. |
 | Claimed required timing annotation missing | No scoring | No scoring | Reject invalid data before execution. |
 
-**Range and direction:** Boundary MAE is a non-negative number of seconds and
-lower is better. Alignment Coverage lies in `[0, 1]` and higher is better.
+### Timestamp Boundary MAE
+
+**Question:** How far are aligned spoken start/end boundaries from their
+reviewed times?
+
+```text
+Timestamp Boundary MAE = sum of absolute start and end errors / matched boundaries
+```
+
+Take both errors per aligned segment and pool their totals across valid first
+outputs; do not average clip MAEs equally. A matched span has two boundaries.
+
+**Example:** Reference `[2.0, 4.0]` seconds and predicted span `[2.3, 3.9]`
+give errors `0.3` and `0.1`, hence MAE `(0.3 + 0.1) / 2 = 0.20 s`.
+Across 18 matched segments with `7.2 s` total error, MAE is likewise
+`7.2 / 36 = 0.20 s`.
+
+Low MAE means aligned segments are precisely timed, not that all speech aligned.
+Read it with Alignment Coverage to expose a small easy matched subset.
+
+**Range and direction:** Non-negative seconds; lower is better. No matches
+makes MAE null/unavailable, not zero. No reference timing task is inapplicable;
+a failed first attempt is unavailable. Keep matched-boundary and independent
+source support for the conditional CI described below.
+
+### Timestamp Alignment Coverage
+
+**Question:** How much of the required spoken timing task received an alignment?
+
+```text
+Timestamp Alignment Coverage = matched reference segments / required reference segments
+```
+
+Pool segment counts from valid completed first outputs, including valid outputs
+with zero matches. Do not divide by predicted segments or include the planned
+denominators of failed first attempts as observed misses.
+
+**Example:** Eighteen matches among twenty required segments give
+`18 / 20 = 0.90`. If another valid clip has ten required segments and no matches,
+pooled coverage is `18 / 30 = 0.60`, not the mean of `0.90` and `0`.
+
+High coverage means most required segments align; it does not establish accurate
+boundaries or penalize every extra predicted segment. Boundary MAE and WER supply
+those complementary views.
+
+**Range and direction:** `[0, 1]`; higher is better. A real completed timing task
+with no matches receives zero. No reference task is inapplicable; failed first
+outputs are unavailable. If none of the eligible first outputs completes, the
+aggregate is null/unavailable. Planned/contributing support remains visible.
 
 ## Reliability and failure behavior
 
@@ -474,20 +500,45 @@ non-finite required timing is unavailable and blocks a complete timing report.
 
 ### p50 and p95 Warm Clip Latency
 
-**Question:** What are the typical and slow-tail steady-state transcription
-times per clip?
-
 For each speech clip, take the median latency of its successful measured warm
 attempts, then report p50/p95 across those clip medians. Report contributing and
 failed-attempt counts; a clip with no completed timed attempt contributes no
 completed latency. Retain failed elapsed times separately. No valid clip
 latencies gives null/unavailable, not zero. Missing timing records are incomplete.
 
-**Example:** A p95 of `5.2 seconds` estimates the slow 95th-percentile warm
-request, rather than the typical clip. An interpolated percentile does not
-require exactly 95% of a small observed sample to fall below that value.
+Use the shared linear-interpolation quantile: in a sorted list of `n` clip
+medians, the zero-based position is `(n − 1) × p`, with `p = 0.50` or `0.95`.
+Interpolate between adjacent positions when needed. This describes observed clips, not
+an authoritative tail estimate from a tiny sample.
 
-**Range and direction:** Non-negative seconds per clip; lower is better.
+#### p50 Warm Clip Latency
+
+**Question:** What is the typical successful warm transcription wait per clip?
+
+Take the median of the clip-level successful-attempt medians.
+
+**Example:** Clip observations `2, 3, 4, 5, 11 s` have p50 `4 s`.
+One clip's attempts `3, 4, failure` supply median `3.5 s`, not the failure time.
+
+The median is a typical wait, not an arithmetic mean or duration-normalized speed.
+**Range and direction:** Non-negative seconds/clip; lower is better. No completed
+timed clips gives null/unavailable. Apply the completion/support rules above and
+the independent-source CI rules below.
+
+#### p95 Warm Clip Latency
+
+**Question:** What is the slow-tail successful warm transcription wait per clip?
+
+Take the linearly interpolated 95th percentile of the same clip observations.
+
+**Example:** For `2, 3, 4, 5, 11 s`, position `4 × 0.95 = 3.8` lies 80% of
+the way from `5` to `11`; p95 is `5 + 0.8 × (11 − 5) = 9.8 s`.
+
+This is not a maximum, nor does it imply exactly 95% of five observations falls
+below `9.8 s`. **Range and direction:** Non-negative seconds/clip; lower is
+better. No completed timed clips gives null/unavailable. Insufficient independent
+tail support keeps a descriptive point estimate with null CI bounds and reason;
+three attempts do not create three independent clips.
 
 ### Cold Model-Load Time
 
@@ -502,23 +553,38 @@ A loading failure has no completed cold-load observation: retain null and the
 elapsed time to setup failure separately. An initialized model with later
 inference failures still has a measured cold-load time.
 
-**Range and direction:** Non-negative seconds; lower is better.
+**Example:** Construction starts at `0.4 s` and full readiness at `5.4 s`:
+cold load is `5.4 − 0.4 = 5.0 s`. This is initialization cost, not warm latency
+or first-request latency including warmup.
 
-### Peak Process-Tree RAM and Peak Device VRAM
+**Range and direction:** Non-negative seconds; lower is better. One observed
+load has no CI. Missing timing is unavailable, not a zero-second initialization.
 
-**Question:** What is the worker's peak host-memory use and the assigned GPU's
-peak total memory use during complete candidate execution?
+### Peak Process-Tree RAM
+
+**Question:** How much host memory does the complete ASR worker require?
 
 Peak Process-Tree RAM is the largest sampled resident-memory total for the
 worker, children, and grandchildren alive at each sample, then the maximum of
-those simultaneous totals. Do not add each process's independent peak. Peak
-Device VRAM follows the shared raw NVML
-device-total contract, including loading and first-use allocations.
-Every result records the explicit CPU or GPU
-profile; silent device fallback is invalid.
+those simultaneous totals. Do not add each process's independent peak.
 
-**Example:** Process-tree samples peaking at `3,200 MiB` and GPU samples peaking
-at `2,100 MiB` produce those two reported peaks.
+**Example:** At two samples, worker/child RAM is `2,000 + 1,200 = 3,200 MiB`
+and `2,400 + 500 = 2,900 MiB`. The peak is `3,200 MiB`, not the sum of the
+processes' separate peaks (`3,600 MiB`). This estimates simultaneous host demand.
+
+**Range and direction:** Non-negative MiB; lower is better at equal quality.
+Missing RAM instrumentation is null/unavailable. A single observed peak has no CI.
+
+### Peak Device VRAM
+
+**Question:** How much total GPU memory is occupied during the ASR lifecycle?
+
+Take the largest raw NVML device-total sample, including loading and first-use
+allocations. Do not subtract idle use or substitute framework/per-process memory.
+Every result records its explicit CPU/GPU profile; silent fallback is invalid.
+
+**Example:** Device samples `700, 2,100, 1,900 MiB` give `2,100 MiB`, not a
+baseline-subtracted `1,400 MiB`. This is observed device demand, not model size.
 
 **Range and direction:** Non-negative MiB; lower is better at equal quality. A
 CPU-only profile records VRAM as null/inapplicable; missing CUDA measurement is
@@ -526,6 +592,9 @@ null/unavailable, never zero. Retained samples after a failure may establish an 
 partial-window peak, explicitly labelled with its scope; they cannot establish
 a missing completed-window measurement. Candidate monitoring excludes data
 preparation/validation and includes loading, warmup, and measured inference.
+These lifecycle/partial-window rules also apply to RAM. Extraction has no
+artificial VRAM cap; observed use alone does not exclude a profile. One observed
+device peak has no CI.
 
 ## Worked candidate interpretation
 
@@ -596,6 +665,10 @@ from retained records or other defined calculations. Freeze minimum independent
 support after data review and before evaluation; insufficient support retains
 the point estimate with null bounds and a reason. Degenerate calculated bounds
 are flagged, not interpreted as proof of certainty.
+
+Both support minima are currently null in the protocol pending data review;
+the calculation is implemented, but this does not supply an authoritative
+support threshold. See [pending data review](../../pending-data-review.md#audio-extraction).
 
 If valid completed first outputs contain a timed reference task but no segment
 aligns, Timestamp Boundary MAE is null and Alignment Coverage is `0`. If no valid

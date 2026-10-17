@@ -984,54 +984,78 @@ approximately `0.84`.
 **Range and direction:** `[0, 1]`; higher is better. It is zero when precision
 and recall are both zero.
 
-### Table Content Precision, Recall, and F1
+### Table-content scoring rules
 
-**Question:** How much extracted table text is supported, how much reference
-table text was recovered, and does the result balance both?
+The three table-content metrics below share reference-table eligibility and
+matching. Count repeated projected cell-text token occurrences up to the smaller
+reference/prediction count, without using cell position. Calculate each
+reference-table score, average within its document, then macro-average eligible
+documents separately for each metric. Extra unmatched predicted tables do not
+enter these reconstruction scores; Table Detection Precision exposes them.
 
-Each reference table is paired with its matched prediction. Repeated projected
-cell-text token occurrences are counted. A missed table receives zero for all
-three Content scores before any empty-text convention is applied. For a
-recovered blank-cell table, valid empty/empty cell text receives one; one-sided
-empty cell text receives zero. With no reference tables these metrics are
-inapplicable, while table detection still evaluates verified negatives.
+A missed table receives zero for all three scores before empty-text conventions
+apply. A recovered blank-cell table with empty predicted cell text receives one;
+one-sided empty cell text receives zero. No reference tables makes these tasks
+inapplicable. Failed first outputs are null/unavailable, not missed-table scores.
 
-In plain language:
+### Table Content Precision
+
+**Question:** How much text in each recovered expected table is supported?
 
 ```text
-Table Content Precision =
-matched predicted table-text units
-----------------------------------
- all predicted table-text units
-
-Table Content Recall =
-matched reference table-text units
-----------------------------------
- all reference table-text units
-
-Table Content F1 =
-the balance between Table Content Precision and Table Content Recall
-
-Document result =
-sum of reference-table Content F1 scores
-────────────────────────────────────────
-  number of reference tables in that document
+Table Content Precision = matched token occurrences / predicted token occurrences
 ```
 
-Repeat that within-document averaging for Precision and Recall, then
-macro-average eligible documents for each metric. These scores evaluate the
-content of expected tables; they do not include unmatched extra predicted
-tables. Table Detection Precision exposes those false tables instead.
-Precision exposes unsupported cell text in reference-paired tables, recall
-exposes missing cell text, and F1 summarizes their balance.
+**Example:** A reference-paired table contains ten predicted token occurrences,
+of which eight are supported. Its precision is `8 / 10 = 0.80`. If this document
+also has one missed table, document precision is `(0.80 + 0) / 2 = 0.40`.
 
-**Example:** If a table prediction contains ten text units, eight match, and the
-reference contains twelve units, precision is `8 / 10 = 0.80`, recall is
-`8 / 12 = 0.67`, and F1 is approximately `0.73`. For per-table F1 values
-`1.00`, `0.80`, and `0.00` for a missed table in one document, that document's
-Table Content F1 is `0.60`.
+Low precision exposes extra cell text within expected tables. High precision
+does not establish complete recovery or correct row/column placement.
 
-**Range and direction:** All three values lie in `[0, 1]`; higher is better.
+**Range and direction:** `[0, 1]`; higher is better, with the shared
+table-content empty/missing/status rules above.
+
+### Table Content Recall
+
+**Question:** How much of each expected table's text was recovered?
+
+```text
+Table Content Recall = matched token occurrences / reference token occurrences
+```
+
+**Example:** Eight recovered occurrences out of twelve required occurrences give
+`8 / 12 ≈ 0.67`. A second missed table makes document recall
+`(8 / 12 + 0) / 2 ≈ 0.33`.
+
+Low recall exposes missing cell text. It does not penalize extra text or establish
+that recovered values were assigned to the right cells.
+
+**Range and direction:** `[0, 1]`; higher is better, with the shared
+table-content empty/missing/status rules above.
+
+### Table Content F1
+
+**Question:** Does each expected table balance supported and complete cell text?
+
+```text
+Table Content F1 = 2 × table precision × table recall / (table precision + table recall)
+```
+
+Calculate F1 per reference table before averaging, using zero when precision and
+recall are both zero. Do not derive it from averaged table or document precision
+and recall.
+
+**Example:** Eight matches, ten predicted occurrences, and twelve reference
+occurrences give F1 `2 × 8 / (10 + 12) = 16 / 22 ≈ 0.73`. Per-table F1 values
+`1.00`, `0.80`, and `0.00` for a missed table give document F1
+`(1.00 + 0.80 + 0.00) / 3 = 0.60`.
+
+High F1 means the expected tables' text is supported and largely complete. It
+can still coexist with wrong cells or merged spans; TEDS evaluates those errors.
+
+**Range and direction:** `[0, 1]`; higher is better, with the shared
+table-content empty/missing/status rules above.
 
 ### TEDS
 
@@ -1042,15 +1066,25 @@ TEDS represents the HTML table as a tree and converts the normalized edit
 distance between the reference and prediction into a similarity score. Unlike
 TEDS-S, edits to cell text affect the result.
 
+In plain language, subtract the official tree-edit cost divided by the larger
+table-tree size from one. Node edits include structural differences and the
+official cell-text substitution cost; they are not simply a count of wrong
+cells. The pinned evaluator supplies the tree parsing, costs, and normalization.
+
 ```text
 TEDS = 1.0       → identical structure and cell text
 TEDS near 1.0    → small table-tree or cell-text differences
 TEDS near 0.0    → severely incorrect complete table
 ```
 
-**Example:** A table with the right words but the wrong column assignments loses
-TEDS credit because the complete tree is wrong. A structurally perfect table
-with incorrect cell values also loses credit.
+**Example:** The reference is one row with two cells, `mass | 2`. A prediction
+with the same canonical tags, spans, and cell text has tree-edit cost zero:
+TEDS is `1 − 0 = 1.00`. If the document has a second reference table that is
+missed, document TEDS is `(1.00 + 0) / 2 = 0.50`. For a non-identical table,
+an official normalized edit cost of `0.20` would give `1 − 0.20 = 0.80`;
+the cost must come from the evaluator, not an assumed number of wrong cells.
+A table with the right words in the wrong cells can lose TEDS even when that
+table's text-only Content F1 is one.
 
 TEDS is primary because it supplies one established end-to-end table score.
 The separate Table Content scores and TEDS-S show whether a TEDS loss came
@@ -1075,8 +1109,8 @@ TEDS-S = 1 − normalized table-tree edit distance
 ```
 
 The evaluator compares the canonical HTML table trees, including row/cell tags
-and row/column spans. It measures how many tree edits separate them, normalizes
-that distance for table size, converts it to similarity, and then averages
+and row/column spans. It divides the official structural edit cost by the larger
+tree size, subtracts that normalized distance from one, and then averages
 reference-table scores within each document before averaging eligible documents
 equally. Cell text is ignored, so this score focuses on structure rather than
 header wording or cell-value placement:
@@ -1087,11 +1121,15 @@ TEDS-S near 1.0    → small structural differences
 TEDS-S near 0.0    → severely incorrect structure
 ```
 
-**Example:** A parser may recover every table word but merge two separate cells
-into one. Table Content F1 can remain high while TEDS-S exposes the incorrect
-structure. Swapping words between otherwise unchanged cells does not lower
-TEDS-S; TEDS detects that cell-content error. Conversely, high TEDS-S with low
-Table Content Recall means the shape is right but text is missing.
+**Example:** A reference row `mass | 2` and predicted row `weight | 9` have the
+same two-cell tree and spans. Removing cell text leaves identical trees, so
+normalized structure-only edit cost is zero and TEDS-S is `1 − 0 = 1.00`.
+If a second reference table in the document is missed, document TEDS-S is
+`(1.00 + 0) / 2 = 0.50`, even though the recovered table's shape is perfect.
+Recovering every word but merging separate cells can leave Table Content F1
+high while lowering TEDS-S. Swapping words between otherwise unchanged cells
+does not lower TEDS-S; TEDS detects that cell-content error. Conversely, high
+TEDS-S with low Table Content Recall means the shape is right but text is missing.
 
 **Range and direction:** `[0, 1]`; higher is better. A missed table receives
 zero, including a real table with blank cells. No reference table makes the task
@@ -1224,13 +1262,20 @@ CDM = 0.0  → no useful match
 ```
 
 **Example:** CDM scores `1.0`, `0.9`, `1.0`, and `0.7` in one document produce
-that document's Mean CDM `0.90`. A missed formula receives zero. Macro-average
+that document's Mean CDM `(1.0 + 0.9 + 1.0 + 0.7) / 4 = 0.90`.
+For one formula, 8 matched, 1 extra, and 3 missed character regions would give
+`2 × 8 / (2 × 8 + 1 + 3) = 0.80`; the official renderer/matcher supplies those
+counts, not a prose-token comparison. A missed formula receives zero. Macro-average
 the eligible document values rather than pooling formulas across the corpus.
 
 CDM compares rendered character positions, so equivalent renderings are not
 penalized merely for using different LaTeX source.
 
-**Range and direction:** `[0, 1]`; higher is better.
+**Range and direction:** `[0, 1]`; higher is better. No reference formulas
+makes recognition inapplicable. A missing or known invalid prediction receives
+zero; an official evaluator failure or failed first attempt is unavailable.
+Keep reference-formula and contributing-document support for the document-macro
+CI; matched formula regions are not independent corpus samples.
 
 ### Formula Exact Match (ExpRate@CDM)
 
@@ -1482,8 +1527,6 @@ time and failure separately. A single observation has no confidence interval.
 
 ### p50 and p95 Warm Latency per Page
 
-**Question:** What are the typical and slow-tail steady-state page speeds?
-
 Use successful measured request durations after the one warmup. For each
 document, take the median successful attempt duration and normalize it by the
 verified number of physical input pages, not the number of pages emitted by the
@@ -1496,26 +1539,42 @@ median successful warm document latency
 ```
 
 Each observation is a document-normalized page speed, not the latency of an
-individually timed page. The benchmark then reports:
+individually timed page. For example, a ten-page PDF with successful warm times
+`18, 20, 26 s` contributes `20 / 10 = 2 s/page`, regardless of how many page
+records the parser emits. Shared linear interpolation supplies the percentiles.
 
-- p50: the median, representing typical performance;
-- p95: the estimated 95th percentile of those document-normalized observations,
-  using the frozen quantile method.
-
-**Example:** A p95 of `2.4 seconds/page` describes the slow tail of the normalized
-document speeds. It does not mean every individual page was timed separately or
-that exactly 95% of a small observed sample falls below an interpolated bound.
-
-**Range and direction:** Non-negative seconds/page; lower is better. Native
-DOCX without a fixed renderer has no physical-page latency. Missing or invalid
-input page counts make the normalization unavailable or invalid-reference,
+Native DOCX without a fixed renderer has no physical-page latency. Missing or
+invalid input page counts make the normalization unavailable or invalid-reference,
 not division by zero. A document with no successful measured attempts has
 unavailable successful-completion latency. Record successful and failed attempt
 counts; do not substitute fast failure times as completed-page timings.
 
-### Complete Document Latency
+#### p50 Warm Latency per Page
 
-**Question:** How long does a user wait for a complete source?
+**Question:** What is the typical document-normalized warm page speed?
+
+Take the median of the eligible document-normalized observations.
+**Example:** Observations `1, 2, 3, 4, 5 s/page` give p50 `3 s/page`.
+
+This gives equal weight to document speeds, not to every page in a large PDF.
+**Range and direction:** Non-negative seconds/page; lower is better. The shared
+page-count/completion rules above and source-document CI rules below apply.
+
+#### p95 Warm Latency per Page
+
+**Question:** What is the slow tail of document-normalized warm page speeds?
+
+Use the linearly interpolated 95th percentile at sorted zero-based position
+`(n − 1) × 0.95`. **Example:** For `1, 2, 3, 4, 5 s/page`, position `3.8`
+gives `4 + 0.8 × (5 − 4) = 4.8 s/page`.
+
+This is not an individual-page timer or a guarantee that exactly 95% of a small
+sample falls below the estimate. **Range and direction:** Non-negative
+seconds/page; lower is better. No completed eligible observations is unavailable;
+insufficient independent tail support keeps a descriptive point with null CI
+bounds and reason. Neither pages nor repetitions increase source support.
+
+### Complete Document Latency
 
 This is the warm end-to-end request time for one whole source, including
 preprocessing, extraction, postprocessing, validation, and synchronization but
@@ -1524,15 +1583,35 @@ median successful measured attempt as its observation, then calculate p50/p95
 across documents. It is retained alongside per-page latency because a large PDF
 can have reasonable page speed but still require a long total wait.
 
-**Example:** For document times `2`, `3`, `4`, `5`, and `11` seconds, the median
-is `4 seconds`; the slow `11-second` document influences the upper tail. The
-benchmark reports the exact p95 using its fixed quantile implementation.
-
-**Range and direction:** Non-negative seconds/document; lower is better. Results
-are also reported by document group. With no successful completions the latency
-is unavailable, not zero. Artifacts retain all attempt durations, including
+Results are also reported by document group. With no successful completions the
+latency is unavailable, not zero. Artifacts retain all attempt durations, including
 time-to-failure, and successful-completion coverage; a partial successful-latency
 aggregate must be read with Attempt Failure Rate.
+
+#### p50 Complete Document Latency
+
+**Question:** What is the typical successful wait for a complete document?
+
+Take the median of document-level median successful attempt times.
+**Example:** Document observations `2, 3, 4, 5, 11 s` give p50 `4 s`.
+
+This is a whole-source wait, not a normalized page speed or arithmetic mean.
+**Range and direction:** Non-negative seconds/document; lower is better. No
+successful document timing is unavailable; CI support uses independent sources.
+
+#### p95 Complete Document Latency
+
+**Question:** What is the slow-tail successful wait for a complete document?
+
+Interpolate the 95th percentile of the same document observations.
+**Example:** For `2, 3, 4, 5, 11 s`, sorted position `4 × 0.95 = 3.8` gives
+`5 + 0.8 × (11 − 5) = 9.8 s`.
+
+This exposes long user waits that a good per-page speed can hide.
+**Range and direction:** Non-negative seconds/document; lower is better. No
+successful timings is unavailable. A tiny cohort can yield this arithmetic
+percentile without supporting an authoritative tail CI; retain null bounds and
+support reason rather than counting attempts as independent documents.
 
 ### Batch Pages per Minute
 
@@ -1569,11 +1648,16 @@ by zero or an invented throughput.
 
 At every sampling point, add the resident RAM of the benchmark candidate and
 all extractor child processes. The largest observed total is reported.
+Use simultaneous totals, not the sum of each process's separate peak. Monitoring
+includes loading, warmup, and measured extraction, and excludes offline scoring.
 
 **Example:** If sampled process-tree totals are `1,200`, `2,450`, and `2,100`
 MiB, Peak Process-Tree RAM is `2,450 MiB`.
 
 **Range and direction:** Non-negative MiB; lower is better at equal quality.
+Missing instrumentation is unavailable. A partial-window observed peak survives
+failure with its scope, not as a complete-lifecycle peak. One observed peak has
+no CI.
 
 ### Peak Device VRAM
 
@@ -1601,11 +1685,20 @@ largest temporary-file footprint during extraction
 ```
 
 It shows the maximum extra working-disk space required by the profile.
+Measure the designated temporary workspace through loading, warmup, and measured
+extraction; exclude offline scoring and pre-existing model caches. The runner
+creates a fresh empty temporary directory, so its baseline is zero and the
+reported footprint is already the additional space. This does not measure
+unrelated directories or a model's pre-existing cache size.
 
-**Example:** If temporary storage starts at `20 MiB` and reaches `370 MiB`, Peak
-Temporary Disk is `350 MiB`.
+**Example:** A fresh workspace starts at `0 MiB` and sampled file totals reach
+`20`, `370`, and `150 MiB`: Peak Temporary Disk is `370 − 0 = 370 MiB`, not
+the sum of all sampled totals.
 
-**Range and direction:** Non-negative MiB; lower is better.
+**Range and direction:** Non-negative MiB; lower is better. Missing sampling
+makes the value unavailable, not zero. A retained peak from interrupted monitoring
+is only a partial-window observation; do not infer an unrecorded disk peak from
+RAM/VRAM samples. One observed peak has no CI.
 
 p50/p95 latency intervals are reported only when enough independent source
 documents support them; pages and attempts do not increase that count. A single
@@ -1678,6 +1771,12 @@ When an interval is required but the available independent observations are too
 few to support it, the report keeps the point estimate, omits the interval, and
 marks the metric as descriptive rather than authoritative selection evidence.
 EduMind does not invent a zero-width interval.
+
+The protocol currently leaves `minimum_ci_sources` and
+`minimum_latency_ci_sources` null pending independent-source review. The
+[data-review checklist](../../pending-data-review.md#document-extraction) must
+resolve those support requirements before authoritative evaluation. Implemented
+bootstrap arithmetic and target corpus sizes do not themselves establish support.
 
 ### Calculation
 

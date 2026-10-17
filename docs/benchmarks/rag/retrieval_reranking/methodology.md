@@ -4,6 +4,7 @@
 
 On this page:
 
+- [Implementation boundary](#implementation-boundary)
 - [Candidate matrix](#candidate-matrix)
 - [Frozen candidate pools and execution](#frozen-candidate-pools-and-execution)
 - [Execution profiles and selection](#execution-profiles-and-selection)
@@ -14,6 +15,22 @@ On this page:
 Which complete first-stage retriever and reranker gives the best evidence
 ordering for the selected chunker/embedding pair, and is any quality improvement
 worth its latency and resource cost?
+
+## Implementation boundary
+
+This page and the metric reference define the approved reporting contract.
+The current runner/protocol still require alignment with parts of it: authoritative
+retrieval profiles specify two warmups rather than the shared one-warmup rule,
+and current alpha-nDCG eligibility still filters out single-unit questions.
+The expanded metric-specific status/support rules and small-corpus handling
+must also be verified before treating current artifacts as that complete
+contract. The standalone validator/report-reuse interface remains planned.
+Current RRF output may also expose a combined dependency-build time and a
+legacy constant-zero incremental-index-storage counter. RRF builds no third
+fusion index: the combined build value must not be interpreted as such, and
+the redundant storage counter is not part of the approved reporting contract.
+These are implementation limitations, not alternative metric definitions or
+permission to silently relabel old results.
 
 ## Candidate matrix
 
@@ -70,7 +87,8 @@ The three no-reranker candidates own those artifacts:
 | `rrf\|none` | All five RRF candidates. |
 
 A reranker receives exactly the query pool owned by its matching no-reranker
-child for every question. It may only permute those 20 chunk IDs: it cannot add,
+child for every question. Its expected size is `min(20, chunk_count)`; a corpus
+with fewer chunks uses all available chunks. It may only permute those IDs: it cannot add,
 remove, duplicate, or retrieve chunks. The reranker child records the checksum
 of the complete pool collection. It also records the owner's MLflow child-run ID
 when an owner child exists. When the evaluated roster does not contain its
@@ -118,7 +136,7 @@ Truncation is forbidden.
 
 The target-hardware profile uses CUDA `float16`. The protocol fixes both
 embedding and reranker inference to batch size `1`; learned rerankers therefore
-score the 20 query-passage pairs sequentially. Qualification includes
+score each actual query pool's `min(20, chunk_count)` pairs sequentially. Qualification includes
 both components under the planned lifecycle and requires NVML-measured peak
 device-total VRAM at or below 3,584 MiB under the shared hardware contract.
 Per-candidate quantization, offload, fallback, or batch reduction is not an
@@ -195,9 +213,9 @@ winner rule is used.
 | Primary | **nDCG@3/@5**, **Evidence-unit Recall@3/@5**, **Evidence-token Precision@3/@5** | Separates evidence-richness ordering, evidence completeness, and concentration of retrieved text. |
 | Diagnostic | alpha-nDCG@3/@5, candidate-pool Evidence-unit Recall@20 | Diagnoses repeated evidence and first-stage pool limits without replacing the primary decision. |
 | Validity gate | Ranking Agreement | Requires repeated inference to return the same complete ordering before the run may be used as evidence. |
-| Operational | Full-stack warm p50/p95 latency, first-stage warm p50/p95 latency, reranker warm p50/p95 latency when applicable, cold initialization, peak process-tree RAM, peak device VRAM, index-build time | Separates retriever cost, incremental reranker cost, startup, memory, and one-time index preparation. |
+| Operational | Full-stack warm p50/p95 latency, retrieval (first-stage) warm p50/p95 latency, reranker warm p50/p95 latency when applicable, cold initialization, peak process-tree RAM, peak device VRAM, separate Dense/BM25 index-build times | Separates retriever cost, incremental reranker cost, startup, memory, and one-time index preparation. |
 | Workload descriptor | Corpus/query/chunk/pool counts, retrieved tokens at @3/@5, reranker input tokens when applicable | Explains the amount of work behind quality and operational results. |
-| Storage descriptor | Dense/BM25 index bytes, RRF required and incremental index bytes, reranker snapshot bytes | Describes the local searchable state and model storage each candidate requires. |
+| Storage descriptor | Dense/BM25 index bytes, RRF required index bytes, reranker snapshot bytes | Describes the local searchable state and model storage each candidate requires. |
 
 The three bold quality families are primary and are reviewed separately at both
 cutoffs. Linear nDCG credits each chunk independently; repeated relevant evidence
@@ -221,6 +239,25 @@ answerable-question eligibility, document-macro aggregation, confidence
 intervals, and text/table/formula/mixed slices are the same as in the
 chunking/embedding phase. Exact definitions and comparison rules are in
 [retrieval and reranking metrics](metrics.md).
+
+Retrieval Warm Latency is the reader-facing name for the existing first-stage
+latency keys. It times Dense, BM25, or both source retrievals plus RRF fusion,
+before learned reranking. Full-stack latency additionally includes the
+reranker when present. All warm timers begin after the complete warmup; a
+fresh-worker startup is reported separately as Cold Initialization Time.
+That initialization counter excludes separately timed offline index construction
+and input preflight. Dense and BM25 own their build-time observations; RRF
+references those dependencies and has no separate third-index-build scalar.
+The [metric reference](metrics.md#cold-initialization-time) gives the explicit
+non-overlapping timing calculation rather than treating cold initialization
+as the full elapsed readiness wait including corpus construction.
+
+Quality uses the designated first measured ranking at both cutoffs. Later
+measured attempts supply timing and the current Ranking Agreement gate, not
+additional quality scores. A failed first ranking is unavailable; later success
+does not replace it. A later failure does not erase valid first-ranking quality,
+but still affects run-level validity. Required partial quality remains a labelled
+diagnostic rather than a complete comparison result.
 
 Failures and truncation are validity conditions rather than quality metrics.
 
@@ -310,11 +347,10 @@ operational.reranker_latency_ms_p95          # reranked children only
 operational.cold_initialization_seconds
 operational.peak_process_tree_ram_mb
 operational.peak_vram_mb
-operational.index_build_seconds              # pool owners only
+operational.index_build_seconds              # Dense/BM25 index owners; no third RRF build
 
 storage.index_bytes                          # Dense and BM25 owners
 storage.required_index_bytes                 # RRF owner: unique Dense + BM25 bytes
-storage.incremental_index_bytes              # RRF owner: zero
 storage.reranker_snapshot_bytes              # reranked children only
 
 workload.corpus_document_count
@@ -333,6 +369,32 @@ workload.reranker_input_tokens_per_query_p95  # reranked children only
 ```
 
 Eligibility counts and validity counters are logged under `validity.*`.
+They are observed counts or integrity gates, not additional quality families:
+
+| Key | Unit and meaning | Required complete-result interpretation |
+|---|---|---|
+| `validity.expected_query_count` | Unique scheduled answerable question IDs, not repetitions. | Equals the planned answerable workload. |
+| `validity.processed_query_count` | Unique questions with produced query-result records, not necessarily successful attempts. | Must account for every planned question; complete attempt rows are checked separately. |
+| `validity.failed_query_count` | Unique questions with at least one recorded failed measured attempt. | Current validity requires zero; one question failing twice still counts once here. |
+| `validity.truncated_input_count` | Model inputs actually truncated, not native-token counts or unexecuted inputs. | Must be zero; rejected oversized inputs retain their separate failure report. |
+| `validity.nonfinite_score_count` | Recorded attempt-level nonfinite-score errors in the current counter, not the number of bad scalar entries. | Must be zero; preserve errors rather than inferring individual bad-score counts. |
+| `validity.pool_collection_match` | Binary check that all consumed query pools match the required frozen collection. | One passes; zero fails; missing verification is not a pass. |
+| `validity.exact_pool_permutation` | Binary check of exact output membership/uniqueness for each required pool. | One passes; zero fails; missing required checks are incomplete. |
+
+The per-scope keys below use `overall`, `text`, `table`, `formula`, or
+`mixed`. They describe reference eligibility, not successful execution:
+
+| Scoped key suffix under `validity.quality.<scope>.` | Meaning |
+|---|---|
+| `eligible_question_count` | Eligible answerable questions for that scope. |
+| `eligible_document_count` | Distinct source documents containing eligible questions. |
+| `alpha_ndcg_eligible_question_count` | Alpha-nDCG-eligible questions; the approved contract uses the same questions as primary quality, including single-unit questions. |
+| `alpha_ndcg_eligible_document_count` | Their distinct source documents; it must match primary eligibility under the approved rule. |
+
+Current alpha eligibility differs as described in the implementation boundary.
+Scored/unavailable support and independent source grouping remain separate from
+these reference counts. A contributing `sample_count` is not permission to
+discard planned questions or treat repetitions as independent documents.
 Required checks include expected/processed/failed queries, zero truncation,
 finite scores, pool-collection agreement, exact pool permutation, and deterministic
 rank agreement. Every child stores `query_metrics.parquet`, `rankings.parquet`,
@@ -340,6 +402,12 @@ rank agreement. Every child stores `query_metrics.parquet`, `rankings.parquet`,
 `candidate.json`, and `validation_report.json`. Pool-owner children additionally
 store `pool_collection.parquet` and `index_build.json`. Raw documents and model
 weights are never copied into child artifacts.
+
+The parent's `pool_collections.json` identifies collections and their owners;
+owner-child `pool_collection.parquet` stores ranked query rows. An RRF
+`index_build.json` identifies both dependency indexes, not a separately built
+fusion index. Internally prepared collections retain input-artifact provenance
+without an invented owner child.
 
 ## Paired comparisons and advancement
 
@@ -412,6 +480,9 @@ They do not pretend that shared pool Recall@20, shared index build, first-stage
 latency, or reranker-only fields are reranker improvements. Retriever-effect rows
 may compare quality, pool Recall@20, full-stack and first-stage latency, cold
 initialization, RAM, VRAM, retrieved tokens, index-build time, and index bytes.
+Index-build point differences require two defined independent-index observations,
+such as Dense versus BM25. Do not invent a zero RRF build-time observation or
+substitute an unmeasured sum; its required dependency storage is reported separately.
 Validity counters are gates, not winner metrics, and receive no comparison rows.
 
 Quality differences use 10,000 paired bootstrap resamples of aligned source

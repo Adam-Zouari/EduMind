@@ -27,6 +27,52 @@ The shared rules on this page apply alongside each benchmark's specific contract
 
 ## Shared conventions
 
+### Reading an individual metric
+
+Each benchmark's metric reference gives the question, counted or timed units,
+calculation, a worked example, interpretation, range/direction, and
+availability rules. A word formula names its actual denominator: reference
+objects, generated claims, returned tokens, completed requests, and scheduled
+attempts are not interchangeable.
+
+For example, recovering two of three required evidence units gives Recall
+`2 / 3`. Finding evidence in 240 of 600 returned token occurrences gives
+token Precision `240 / 600`. The first measures completeness; the second
+measures concentration. Their denominators answer different questions even
+when both come from the same ranking.
+
+A **sample** is an input such as a document, clip, or question. An **attempt**
+is one measured execution on that input. A **candidate** is one complete
+configuration being evaluated. Repeated attempts remain attached to their
+sample; they are not new independent sources.
+
+The metric's preferred direction applies only to defined comparable values.
+Null is not a score below zero, and a workload descriptor has no automatic
+better direction. Metric roles describe the evidence an engineer reviews;
+they do not assign a weighted winner score.
+
+### Latency and warm latency
+
+**Latency** is the elapsed time of an operation, measured between the start and
+end boundaries defined by its benchmark. **Warm latency** is latency measured
+after the candidate is ready and its warmup has finished. The word "warm"
+describes the runtime state; it does not add another duration to the request.
+
+For example, a model takes 8 seconds to load, its warmup request takes
+200 milliseconds, and a subsequent measured request takes 50 milliseconds.
+The measured request's warm latency is **50 milliseconds**, not 8.25 seconds.
+Cold loading is measured separately. The warmup prepares reusable inference
+state; its latency and output do not enter measured-request aggregates.
+
+Each successful measured request contributes its own duration under the suite's
+observation rules. A p50 or p95 then summarizes those observations; it is not
+the duration of model loading or warmup. Component latency and complete-request
+latency can have different boundaries, so their names must identify what is
+timed. See the [shared lifecycle](methodology.md#preflight-and-measured-run-lifecycles)
+for monitoring, synchronization, loading, and warmup order.
+
+### Calculation and result rules
+
 - Prose comparison uses one symmetric, evaluation-only projection on both the
   reference and prediction: Unicode NFC, case-folding, replacement of Unicode
   punctuation with spaces, and whitespace collapse. The resulting whitespace-
@@ -109,3 +155,19 @@ statuses, fixed identifiers, and single operational observations do not have
 authoritative intervals. An engineer reviews the complete evidence; EduMind
 does not combine unrelated metrics into a weighted overall score or promote a
 candidate automatically.
+
+### A missing value is not a missing run
+
+| Case | Stored result | What remains visible |
+|---|---|---|
+| A valid result recovers none of the required evidence | A normal numeric zero for recall | The valid ranking and its evidence matches. |
+| The measured request fails before a valid ranking exists | Null/unavailable quality | Scheduled input, attempt failure, error, and any completed independent measurements. |
+| An optional formula slice has no formula questions | Null/inapplicable slice aggregate | Zero eligible support and the slice's reason. |
+| Required attempts were never executed | Incomplete execution | Actual completed outcomes and explicit missing/unexecuted records. |
+
+Artifacts preserve the rows and reasons in every case. A numeric aggregate
+uses only values defined under that metric's contract, while support counts
+still account for all scheduled and eligible work. Partial required quality is
+not a complete selection result merely because its surviving average is high.
+One metric becoming unavailable does not erase another independently completed
+measurement, such as cold loading or sampled RAM.

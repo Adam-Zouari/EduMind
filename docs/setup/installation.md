@@ -20,7 +20,7 @@ Install these programs before creating the Python environment:
 | Docker Desktop with Compose | Chroma, vector-server benchmarks, and official OmniDocBench table/formula scoring | [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/) |
 | FFmpeg | audio/video decoding and video keyframes | [FFmpeg download page](https://ffmpeg.org/download.html) |
 | Tesseract 5 with English data | one Docling Standard configuration | [Tesseract installation](https://tesseract-ocr.github.io/tessdoc/Installation.html) and [Windows builds](https://tesseract-ocr.github.io/tessdoc/Downloads.html) |
-| NVIDIA driver | Required for authoritative ASR and RAG model comparisons; optional for the CPU application and smoke/debug runs | [NVIDIA drivers](https://www.nvidia.com/Download/index.aspx) |
+| NVIDIA driver | Required for authoritative GPU-backed extraction and RAG comparisons; optional for the CPU application and CPU smoke/debug runs | [NVIDIA drivers](https://www.nvidia.com/Download/index.aspx) |
 
 The application does not require a separate model-serving service. Generation uses exact local Hugging Face snapshots directly. Docker is never started by an import, preparation command, or application startup.
 
@@ -83,6 +83,9 @@ python -m pip check
 The version numbers must stay aligned with `requirements/app.lock`. A CUDA
 benchmark is valid only when the requested model remains on `cuda` and the run
 records a non-zero measured VRAM peak; there is no CPU fallback.
+CPU execution instead records VRAM as null/inapplicable, never a zero-byte
+GPU measurement. Missing required CUDA telemetry is null/unavailable and fails
+qualification; it is not interchangeable with CPU inapplicability.
 
 The Windows Python 3.12 benchmark lock installs PaddlePaddle GPU 3.3.1 from
 [Paddle's official CUDA 11.8 distribution](https://www.paddlepaddle.org.cn/packages/stable/cu118/paddlepaddle-gpu/).
@@ -180,8 +183,9 @@ calibrated evaluation contract: a hosted judge needs credentials rather than a
 local snapshot, while a self-hosted judge needs an explicit pinned preparation
 step. No unselected judge is downloaded by these commands.
 The application's provisional CPU Qwen3-1.7B snapshot is separate from the
-generation benchmark: it is not the benchmark control and is not part of the
-three-candidate generator shortlist.
+generation benchmark: it is neither the reasoning control nor one of its three
+challengers. The declared generator roster has four model identities; direct
+and reasoning modes produce separate applicable configurations.
 Embedding preparation excludes alternate ONNX, OpenVINO, GGUF, TensorFlow,
 Flax, and TFLite exports because these benchmarks load the native Transformers
 checkpoint. The exact exclusions and resulting directory checksum are recorded

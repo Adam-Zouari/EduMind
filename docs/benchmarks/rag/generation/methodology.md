@@ -4,6 +4,7 @@
 
 On this page:
 
+- [Implementation boundary](#implementation-boundary)
 - [Models and modes](#models-and-modes)
 - [Data](#data)
 - [Frozen decoding and output contract](#frozen-decoding-and-output-contract)
@@ -16,6 +17,22 @@ On this page:
 
 Which local Hugging Face generator produces the best grounded, cited answer when
 every model receives exactly the same verified evidence?
+
+## Implementation boundary
+
+This page specifies the approved generation design. The current runner and
+`protocol.yaml` have not yet been aligned with all of it: they retain a
+reasoning-only roster, greedy decoding with a separate answer-length cap,
+a development screen, two warmups, and lexical/local-classifier evaluation.
+Those paths do not establish the seven model-mode, full-question-set,
+one-warmup, calibrated-semantic-judge comparison described below. The
+standalone validation/report-reuse interface also remains planned.
+
+Judge identity is pending calibration, not selected by this document. No
+authoritative claim-level score or complete comparison is established until
+the implementation, resolved settings, reference data, and calibration artifact
+meet this contract. The existing local faithfulness classifier is not a
+calibrated replacement for all semantic responsibilities.
 
 ## Models and modes
 
@@ -105,7 +122,8 @@ Every visible model response contains exactly three fields:
 An answerable response uses `status="answered"`, contains a non-empty substantive
 answer, and cites the supplied evidence blocks used by that answer. Only IDs
 from evidence blocks supplied with the current question are valid; this isolated
-generation benchmark does not provide conversation history. For example:
+generation benchmark does not provide conversation history. For this illustrative
+request, block `E1` states "The trial included 500 participants." A valid answer is:
 
 ```json
 {
@@ -132,6 +150,15 @@ content, and unparsable output are malformed. Repeated citation IDs are
 deduplicated before citation scoring. Runtime failures, timeouts, and
 context-boundary termination are recorded by the runner as attempt outcomes
 rather than invented model statuses.
+
+Schema validity and required behavior are different. An otherwise well-formed
+`answered` object with `citations: []` fails Response Validity and citation
+quality but is not malformed solely for having no citations. A correctly formed
+refusal on an answerable question is likewise a behavioral/quality failure,
+not a parsing error. A citation such as `E9` is legal only if `E9` was supplied;
+legal but irrelevant evidence lowers citation quality, while an unknown ID
+makes the output malformed. Accepted answers and evaluator-only verification
+material never become extra model-visible evidence blocks.
 
 ## Semantic judge contract
 
@@ -237,6 +264,7 @@ unload previous generator
 -> generate sequentially with aligned seeds 42, 43, and 44
 -> separate reasoning from the visible answer where supported
 -> validate schema, answer/refusal behavior, citations, and finish reason
+-> end generator resource monitoring after the last measured request
 -> apply the frozen semantic judge after generator timing is complete
 -> aggregate quality, validity, repeatability, workload, and operational results
 ```
@@ -255,6 +283,15 @@ Repeatability retains all three scheduled response pairs, assigns zero to pairs
 containing schema-invalid, failed, or interrupted attempts, and follows the same document-macro
 aggregation. Raw event counts remain in artifacts and are not substituted for
 these equal-document-weight results.
+
+This all-seed quality policy is generation-specific. It does not change the
+first-measured-output policy of extraction or chunking/embedding. An observed
+failed candidate attempt receives this suite's failed-quality treatment; an
+unexecuted request or unresolved judge failure is unavailable/incomplete,
+not an invented answer with zero claims. Earlier completed labels, observed
+TTFT, cold load, and partial resource records survive later failure. Keep
+outcome, schema validity, behavioral validity, and evaluator availability as
+separate fields so none is inferred from a missing scalar.
 
 ## Metrics and why they are used
 

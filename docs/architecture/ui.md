@@ -33,9 +33,11 @@ can be checked without duplicating business logic in the view.
 - The UI constructs one cached `EduMindPipeline` for the process.
 - Uploads are limited to the configured 100 MiB default and written to a temporary
   file that is removed after processing.
-- Content checksums prevent duplicate ingestion during Streamlit reruns.
+- Session records keyed by content checksum prevent duplicate ingestion during
+  Streamlit reruns; this is not cross-process ingestion coordination.
 - Re-uploading a changed file with the same logical name replaces its old chunks.
-- Readiness distinguishes the Chroma connection from the local generator snapshot.
+- Readiness reports extraction/model requirements, Chroma/index state, and the
+  local generator snapshot separately.
 - Starting the UI never starts Docker or downloads models.
 - User-visible errors are safe; full exceptions remain in local logs.
 

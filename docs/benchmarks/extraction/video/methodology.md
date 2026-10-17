@@ -53,11 +53,20 @@ the fixed intervals for direct cost comparison.
 
 ## Data
 
-Smoke uses two committed videos. The reviewed authoritative allocation is 30
+Smoke uses two committed videos. The authoritative corpus target is 30
 educational videos: 18 development, 6 validation, and 6 locked. Sources cover
 slides, screen recordings, presenter video, gradual changes, and genuine repeated
 appearances. The [dataset guide](../../datasets.md#video-extraction) defines the
 SlideSpeech, AVLectures, and EduMind-owned allocation.
+
+This is an allocation contract, not a claim that the reviewed corpus or a
+winning keyframe policy already exists. Authoritative manifests and references
+remain preparation work. The protocol currently leaves the selected scene
+threshold/source run, nonspeech unit type/allocation, and both independent-source
+CI minima null. Those are explicit pending decisions in the
+[data-review checklist](../../pending-data-review.md#video-extraction), not
+defaults the evaluator may invent. Freeze them at their documented stages;
+implemented smoke/runner support alone is not authoritative evidence.
 
 Each video has a verified spoken transcript, positive duration, complete
 visible-text annotation (including explicit text-free negatives), occurrence IDs,
@@ -218,9 +227,11 @@ with retained failure and support counts, not mistaken for zero error.
 Spoken and visible content are separate. Combined audio/visual usefulness is
 checked through the non-locked
 [extraction-to-RAG confirmation](../../rag/final/methodology.md#extraction-to-rag-confirmation),
-not a transcript-dominated combined recall score. An integrated confirmation
-measures actual full-path latency/RTF/resources; adding component percentiles or
-peaks cannot reconstruct that measurement.
+not a transcript-dominated combined recall score. Confirmation reports the
+actual full-path latency defined in its metric list, rather than a sum of
+component percentiles. Any additional integrated RTF or resource observation
+would need its own explicit boundary; component ratios or peaks cannot be
+added to invent such a measurement.
 
 ## MLflow result structure
 
@@ -343,4 +354,4 @@ All nulls remain in JSON/Parquet even when MLflow scalar keys are absent.
 
 Every decoding/selection step records the FFmpeg version and exact argument
 vector. Raw source videos are not duplicated into candidate artifacts.
-Historical runs keep their original names, definitions, and protocol identity.
+Interpret each result under its recorded names, definitions, and protocol identity.
