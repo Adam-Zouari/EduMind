@@ -497,12 +497,30 @@ without inventing an owner run. Exact NumPy dense search and local BM25 are benc
 controls, not production indexes.
 
 The [metric reference](rag/retrieval_reranking/metrics.md) explains each quality,
-latency, pool-size, token-workload, and storage value separately. Retrieval Warm
-Latency is the first-stage measurement stored under
-`operational.first_stage_latency_ms_p50/p95`; Full-Stack Warm Latency also
+latency, pool-size diagnostic, token-workload, and storage value separately.
+The following reporting layout is the approved contract; consult the
+[implementation boundary](rag/retrieval_reranking/methodology.md#implementation-boundary)
+before interpreting current runner output. Retrieval Warm Latency uses target
+keys `operational.retrieval_latency_ms_p50/p95`; Full-Stack Warm Latency also
 includes learned reranking when present. No-reranker latency/input fields are
 inapplicable rather than measured zeros. Index build and storage are owned by
 Dense and BM25; RRF references both indexes instead of constructing a third.
+
+Every profile prepares fresh query pools for its own inputs. Ranking
+Repeatability compares all measured-attempt pairs over the complete ordered
+result and is diagnostic, while pool provenance, live retrieval consistency,
+exact permutation, and final ordered-prefix checks remain enforced integrity
+checks. No separate pool-match scalar is required.
+
+Index owners use `storage.index_size_bytes` and
+`operational.index_build_seconds`. RRF uses the same size key for its dependency
+total plus `storage.dense_index_size_bytes` and `storage.bm25_index_size_bytes`;
+its artifact references both build observations without a third build scalar.
+Mean/p95 Retrieved Context Tokens@3/@5 describe the final ranking. Optional
+Candidate-Pool Tokens@20 stays in per-query pool artifacts; native Reranker Input
+Tokens describes all prepared query-passage pairs. Fixed inventory counts belong
+to parameters/input artifacts. Local snapshot size belongs to the generated
+model lock, not candidate-run metrics.
 
 ## 9. Vector databases
 

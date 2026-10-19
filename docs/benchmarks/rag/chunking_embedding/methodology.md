@@ -239,9 +239,9 @@ consistency checks, not additional quality observations.
 
 The consistency check here compares repeated **ordered top-five IDs**. It is
 not generation's three-pair semantic/citation agreement and is not the
-retrieval–reranking benchmark's complete top-20 Ranking Agreement gate. Preserve
-each suite's scope rather than importing a stricter or looser comparison from
-another stage.
+retrieval–reranking benchmark's diagnostic complete top-20 Ranking Repeatability.
+Preserve each suite's scope rather than importing a stricter or looser
+comparison from another stage.
 
 A successful child must account for every expected document and answerable
 query and attempt, produce nonempty source-consistent chunks and the expected

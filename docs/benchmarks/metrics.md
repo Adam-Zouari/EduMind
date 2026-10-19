@@ -85,8 +85,9 @@ for monitoring, synchronization, loading, and warmup order.
 - Empty denominators use the explicit behavior stated in each benchmark's metric contract; they never produce
   fabricated zero-quality observations.
 - A valid empty comparison can have the contract's best or worst numeric value.
-  A failed request is not an observed empty output. Extraction and
-  chunking–embedding quality use the designated first measured attempt; failure
+  A failed request is not an observed empty output. Extraction,
+  chunking–embedding, and retrieval–reranking quality use the designated first
+  measured attempt; failure
   makes applicable output-dependent quality unavailable, never a fabricated zero
   or best/worst score. Later success
   cannot replace that output, and a later failure does not erase valid

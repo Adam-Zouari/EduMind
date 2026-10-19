@@ -56,7 +56,7 @@ reranker's input and a diagnostic depth, not another final context cutoff.
 
 | Metric | Role | Question answered | Direction |
 |---|---|---|---|
-| Ranking Agreement | Validity gate | Do later measured attempts reproduce the first complete ordering? | Must equal 1 for authoritative validity |
+| Ranking Repeatability | Diagnostic | How often do repeated requests return the same complete valid ordering? | Higher |
 
 ### Operational performance
 
@@ -68,33 +68,32 @@ reranker's input and a diagnostic depth, not another final context cutoff.
 | Cold Initialization Time | Operational | How much fresh query-runtime initialization time is required, excluding offline index build? | Lower |
 | Peak Process-Tree RAM | Operational | What peak host memory does the worker and its children occupy? | Lower at equal quality |
 | Peak Device VRAM | Operational | What peak total memory is occupied on the assigned GPU? | Lower at equal quality |
-| Dense Index-Build Time | Operational, Dense owner | How long does preparing the searchable Dense state take? | Lower |
-| BM25 Index-Build Time | Operational, BM25 owner | How long does preparing the searchable lexical state take? | Lower |
+| Index Build Time | Operational, separate Dense/BM25 owners | How long does preparing each searchable index take? | Lower |
 
-Retrieval latency is the same measurement called first-stage latency in
-artifact keys. This reader-facing name does not rename the existing
-operational.first_stage_latency_ms_p50/p95 keys.
+Each latency family has separate p50 and p95 scalars on the complete-stack
+child. The retriever's identity comes from that child; Dense, BM25, and RRF do
+not need three differently named retrieval-latency metrics. Units are explicit
+in the [MLflow keys](methodology.md#mlflow-result-structure).
 
 ### Workload descriptors
 
 | Value | Role | Question answered | Direction |
 |---|---|---|---|
-| Corpus Document Count | Workload descriptor | How many canonical documents are searchable? | Descriptive |
-| Answerable Query Count | Workload descriptor | How many reviewed questions are scheduled? | Descriptive |
-| Chunk Count | Workload descriptor | How many canonical passages are searchable? | Descriptive |
-| Requested Pool Size | Workload descriptor | How many candidates does each retriever request? | Descriptive |
-| Mean/Minimum Actual Pool Size | Workload descriptor | How large are the produced query pools? | Descriptive |
-| Short-Pool Query Count | Workload descriptor | How many pools contain fewer than requested? | Descriptive |
-| Mean/p95 Retrieved Tokens@3/@5 | Workload descriptor | How much source text would the ranked context pass downstream? | Descriptive |
+| Mean Retrieved Context Tokens@3/@5 | Workload descriptor | How much source text does the final ranked context contain on average? | Descriptive |
+| p95 Retrieved Context Tokens@3/@5 | Workload descriptor | How large is the long tail of final context sizes? | Descriptive |
 | Mean/p95 Reranker Input Tokens | Workload descriptor | How much native-tokenizer input is prepared for one reranked query? | Descriptive |
+
+Corpus/query/chunk counts belong to the parent input inventory, and requested
+pool depth is a protocol parameter. Actual pool sizes and optional
+Candidate-Pool Tokens@20 belong to pool artifacts. They explain and verify the
+workload without becoming mandatory leaderboard metrics.
 
 ### Storage descriptors
 
 | Value | Role | Question answered | Direction |
 |---|---|---|---|
-| Dense/BM25 Index Bytes | Storage descriptor, index owners | How much searchable state does each independent index require? | Descriptive |
-| RRF Required Index Bytes | Storage descriptor, RRF owner | What total index storage does RRF depend on? | Descriptive |
-| Reranker Snapshot Bytes | Storage descriptor | How much local model storage does the learned reranker require? | Descriptive |
+| Index Size | Storage descriptor, separate Dense/BM25 owners | How much searchable state does each independent index require? | Descriptive |
+| Index Size, with Dense/BM25 breakdown | Storage descriptor, RRF owner | What total storage does RRF require, and how much belongs to each dependency? | Descriptive |
 
 Descriptors explain operational differences. A smaller value is not
 automatically better and cannot compensate for worse quality.
@@ -136,8 +135,9 @@ erase valid first-ranking quality.
 
 Each reranker must receive the correct checksummed query pool and return exactly
 its chunk IDs once each, possibly in a different order. It cannot add, remove,
-duplicate, or replace chunks. Nonfinite scores, silent truncation, invalid IDs,
-and unexpectedly empty/short rankings are integrity failures, not valid
+duplicate, or replace chunks. Final top-K must be the ordered prefix of that
+validated complete ranking, not an arbitrary subset. Nonfinite scores, silent
+truncation, invalid IDs, and unexpectedly empty/short rankings are integrity failures, not valid
 zero-quality outputs. Distinct IDs containing identical text remain legitimate;
 matching text does not make their source identities interchangeable.
 
@@ -158,6 +158,15 @@ Report scheduled, eligible, scored, failed, unavailable, and independent-source
 support. Nulls/reasons remain in JSON/Parquet; MLflow omits null scalar keys.
 A failed child may retain valid measurements but is not a complete selection
 result. Failure counts are validity evidence, not fabricated irrelevant chunks.
+
+Integrity checks verify pool provenance, exact live retrieval order against the
+frozen reference, output permutation/prefix, finite scores, and absence of
+truncation. They remain enforced checks with detailed outcomes in
+`validation_report.json`, not a separate `pool_collection_match` leaderboard
+indicator. Missing verification is not a pass. A violation stops the affected
+attempt's downstream work; shared invalid inputs also stop dependent work.
+Preserve independent completed measurements and safe independent execution,
+but do not accept the affected evaluation as complete authoritative evidence.
 
 ## Retrieval quality
 
@@ -321,31 +330,43 @@ available pool, with the requested depth and actual size recorded separately.
 
 ## Ranking consistency
 
-### Ranking Agreement
+### Ranking Repeatability
 
-**Question:** Do later identical requests reproduce the first complete measured
+**Question:** How often do identical requests reproduce the complete valid
 chunk ordering?
 
-The first ranking is the anchor. Compare each later attempt's ordered top-20
-chunk IDs with it. A comparison agrees only when both attempts are valid and
-all IDs have the same positions. Floating-point scores need not be bit-identical.
+Compare every unordered pair of measured attempts: (1,2), (1,3), and (2,3)
+for three attempts. Compare the complete ordered result, normally 20 IDs or all
+available IDs for a legitimately smaller corpus. A pair agrees only when both
+attempts are valid and all IDs have the same positions. Floating-point scores
+need not be bit-identical.
 
 In plain language:
 
-    later measured rankings matching the valid first ranking
-    --------------------------------------------------------
-                 expected later-ranking comparisons
+    scheduled attempt pairs with identical valid complete rankings
+    --------------------------------------------------------------
+                     scheduled attempt pairs
 
-**Example:** With three attempts A, A, B, comparisons (1,2) and (1,3) give
-1 / 2. A, A, failure also gives 1 / 2. Failure, A, A gives zero because
-no valid anchor exists. Identical error messages never agree.
+**Example:** A, A, A gives 3 / 3 = 1. A, A, B gives 1 / 3; so does
+failure, A, A, because (2,3) still agrees. A with two failures gives zero,
+and three executed failures give zero. Identical error messages are not
+successful rankings and never agree.
 
-This is the current validity gate, not an extra quality score. It differs
-from extraction's all-pairs repeatability and chunking/embedding's top-five
-consistency check; these definitions are not interchangeable.
+Calculate the pair rate for each question, then average within source documents
+and macro-average documents. Retain scheduled/matching pair counts and complete
+attempt outcomes so a high score cannot hide failed execution.
 
-**Range and direction:** [0, 1]; authoritative validity requires one.
-All recorded comparisons failing gives zero. One-attempt smoke is
+This diagnostic measures output-order repeatability, not repeatability of every
+quality score or latency. It does not require a perfect score for selection.
+Execution and integrity failures remain subject to their own validity rules.
+For learned rerankers, the enforced live-pool check already establishes retrieval
+order consistency among passing executions; no extra retrieval-repeatability
+scalar is required. For `none`, the complete output is the retrieval ordering.
+Unlike chunking/embedding's top-five check, this examines the reranker's full
+input/output ordering and can expose changes hidden below rank five.
+
+**Range and direction:** [0, 1]; higher is more repeatable, not necessarily more
+relevant. One-attempt smoke is
 null/inapplicable. Missing/unexecuted required outcomes are incomplete, not
 invented disagreements or a favorable surviving-only rate.
 
@@ -504,13 +525,16 @@ In plain language:
 **Example:** Model loading takes 3 seconds, offline index build 12 seconds,
 input preflight 0.2 seconds, and remaining reranker/runtime loading 2 seconds.
 Initialization elapsed is 17.2 seconds; Cold Initialization Time is
-17.2 - 12 - 0.2 = 5 seconds. Index-Build Time separately reports 12 seconds.
+17.2 - 12 - 0.2 = 5 seconds. Index Build Time separately reports 12 seconds.
 Do not describe the five-second scalar as the full 17.2-second first readiness
 wait, or count offline build again as part of cold loading.
 
 **Range and direction:** Non-negative seconds; lower is better. Failure
 before readiness is unavailable, with elapsed-to-setup-failure retained.
 Successful readiness survives later inference failure. One observation has no CI.
+Negative or nonfinite derived time is an unavailable instrumentation error,
+not a value to clamp to zero. BM25 without a learned model still has runtime
+initialization; model absence does not imply zero initialization time.
 
 ### Peak Process-Tree RAM
 
@@ -543,7 +567,7 @@ CPU execution is null/inapplicable; missing required CUDA telemetry is
 null/unavailable, never zero. Preserve peaks after OOM/hardware-gate failure
 with partial scope, without clamping to the protocol cap. One peak has no CI.
 
-### Dense Index-Build Time
+### Index Build Time — Dense
 
 **Question:** How long does preparation of the Dense searchable state take?
 
@@ -556,13 +580,15 @@ In plain language:
     validated Dense state readiness - Dense build start
 
 **Example:** A build from second 2 to second 14 reports 12 seconds once on
-dense|none. Reranked Dense children reference that owner.
+the Dense owner, normally dense|none. Reranked children reference the same
+observation. If no baseline child is evaluated, the preparation input artifact
+owns the observation; no baseline run is invented.
 
 **Range and direction:** Non-negative seconds; lower is better. Failed builds
 have unavailable completed time, with elapsed-to-failure retained. Completed
 builds survive later failures. One build has no CI.
 
-### BM25 Index-Build Time
+### Index Build Time — BM25
 
 **Question:** How long does preparation of the lexical searchable state take?
 
@@ -578,6 +604,9 @@ not the Dense owner's 12 seconds. Reranked BM25 children reference this owner.
 
 RRF depends on both owner indexes and builds no third searchable index. Fusion
 belongs to Retrieval Warm Latency, not an invented third index build.
+Both independent owners use the same `operational.index_build_seconds` key.
+RRF's `index_build.json` references their separate observations; it does not
+copy component build scalars or invent a combined third build time.
 
 **Range and direction:** Non-negative seconds; lower is better. Failed builds
 are unavailable; completed builds survive later failure. One build has no CI.
@@ -587,7 +616,14 @@ are unavailable; completed builds survive later failure. One build has no CI.
 Verified input counts remain known after failure. Actual generated or measured
 quantities keep their own availability and complete/partial scope.
 
-### Corpus Document Count
+### Inventory and pool diagnostics
+
+The following counts are stored in parent input inventory/parameters and pool
+artifacts, not required scalar metrics. Pool-size summaries are optional
+integrity diagnostics. Required eligibility/failure support remains in result
+artifacts and validity counters; inventory does not replace it.
+
+#### Corpus Document Count
 
 **Question:** How many canonical documents are searchable?
 
@@ -600,7 +636,7 @@ before its first query.
 **Range and direction:** Non-negative integer; descriptive. Missing required
 inputs fail preparation rather than supplying a valid empty corpus.
 
-### Answerable Query Count
+#### Answerable Query Count
 
 **Question:** How many reviewed retrieval questions are scheduled?
 
@@ -614,7 +650,7 @@ scheduled attempts, not necessarily 360 successful requests.
 processed/successful/failed/unexecuted counts separately. Missing required
 answerable allocation is invalid input, not perfect empty-reference quality.
 
-### Chunk Count
+#### Chunk Count
 
 **Question:** How many canonical passages are searchable?
 
@@ -627,7 +663,7 @@ queries. Distinct IDs can legitimately contain identical text.
 nonempty index producing zero chunks is invalid; retain observed zero without
 calling it successful indexing.
 
-### Requested Pool Size
+#### Requested Pool Size
 
 **Question:** How many first-stage candidates are requested per question?
 
@@ -638,7 +674,7 @@ retain the observed short pool and failure separately.
 
 **Range and direction:** Positive integer; descriptive execution control.
 
-### Mean Actual Pool Size
+#### Mean Actual Pool Size
 
 **Question:** How many chunks does a produced pool contain on average?
 
@@ -656,8 +692,10 @@ If the entire corpus has 12 chunks, every valid pool instead has size 12.
 **Range and direction:** Non-negative chunks/query; descriptive. No produced
 pool is unavailable, not zero. Incomplete collections retain a partial
 diagnostic and planned/observed query support, not a complete collection result.
+An actually emitted empty pool has observed size zero but is invalid output;
+keep its row/duplicate-ID errors rather than confusing it with a missing pool.
 
-### Minimum Actual Pool Size
+#### Minimum Actual Pool Size
 
 **Question:** What is the smallest produced query pool?
 
@@ -669,7 +707,7 @@ that an average alone can obscure.
 **Range and direction:** Non-negative integer; descriptive. No produced pools
 is unavailable. Incomplete collections retain partial scope.
 
-### Short-Pool Query Count
+#### Short-Pool Query Count
 
 **Question:** How many produced pools are shorter than requested?
 
@@ -685,14 +723,15 @@ depth but complete relative to the available corpus; retain that distinction.
 collection without short pools gives zero. Partial collections retain their
 observed count and missing-query accounting rather than a complete total.
 
-### Mean Retrieved Tokens@3/@5
+### Mean Retrieved Context Tokens@3/@5
 
 **Question:** How much canonical source text would the selected context pass
 downstream on average?
 
-For each valid first ranking, sum tiktoken:cl100k_base occurrences in its first
-three/five chunks. Average per-query totals. Text repeated across chunks counts
-again; model prefixes do not count.
+For each valid first ranking after any enabled reranking, sum
+tiktoken:cl100k_base occurrences in its first three/five chunks. Average
+per-query totals. Text repeated across chunks counts again; model prefixes do
+not count.
 
 In plain language:
 
@@ -707,8 +746,10 @@ and is not inherently better when smaller.
 **Range and direction:** Non-negative tokens/query; descriptive. Failed first
 rankings have unavailable counts. No contributing ranking is unavailable;
 a partial set is a labelled workload diagnostic.
+Counting failure makes the affected count unavailable. A complete count remains
+known if a later offline quality evaluator fails.
 
-### p95 Retrieved Tokens@3/@5
+### p95 Retrieved Context Tokens@3/@5
 
 **Question:** How large is the long tail of selected context sizes?
 
@@ -722,6 +763,27 @@ statistics rather than latency or correctness.
 **Range and direction:** Non-negative tokens/query; descriptive. No complete
 observations is unavailable; one gives that observation. Fixed-workload
 descriptors receive no invented CI.
+
+### Candidate-Pool Tokens@20
+
+**Question:** How much canonical source text enters the complete reranking pool?
+
+Store an optional per-query field in the pool artifact. Sum
+`tiktoken:cl100k_base` lengths of the verified pool's canonical chunks, including
+repeated text occurrences across distinct chunks. For RRF, count the fused pool,
+not both source lists. This is not an additional mandatory MLflow metric.
+
+**Example:** A verified 20-chunk pool totals 6,000 source tokens. Reranking its
+exact permutation still totals 6,000; selecting the final five might total
+1,500. The first count describes candidate preparation, the second downstream
+context. Native reranker templates and the repeated query belong to Reranker
+Input Tokens, not this source-text count.
+
+**Range and direction:** Non-negative tokens/query; descriptive. A valid smaller
+corpus counts its actual pool. No complete verified pool gives an unavailable
+complete count; retain partial progress separately. A complete pool count
+survives later reranker failure. Aggregate from saved fields when needed rather
+than duplicating it as a separate Mean Retrieved Tokens@20 metric.
 
 ### Mean Reranker Input Tokens
 
@@ -747,6 +809,8 @@ The same passage can have different native lengths for different rerankers.
 reranker is inapplicable. Partially tokenized pools have no complete total.
 Fully prepared totals can survive later inference failure, but do not imply
 that all pairs completed inference.
+Retain known native lengths when rejecting oversized inputs; do not truncate
+to make a complete pool fit. A partial pool total is not a complete query total.
 
 ### p95 Reranker Input Tokens
 
@@ -763,13 +827,13 @@ completed-pair outcomes remain distinguishable in artifacts.
 
 ## Storage descriptors
 
-Dense and BM25 each record the same Index Bytes field on their own owner.
+Dense and BM25 each record the same Index Size field on their own owner.
 Measure the complete declared searchable-state representation, excluding model
 weights and unrelated artifacts. State whether bytes describe raw arrays or
 serialized storage; headers and metadata can legitimately make files larger
 than the vector payload alone.
 
-### Dense Index Bytes
+### Index Size — Dense
 
 **Question:** How much stored searchable state does semantic retrieval require?
 
@@ -781,13 +845,17 @@ stores a header can legitimately be larger; record its actual measurement
 boundary rather than enforcing the raw-payload formula on the whole file.
 
 This is index storage, not model VRAM or the reranker's checkpoint size.
+For raw matrices, bytes must agree with shape and dtype. For serialized state,
+validate the declared format and included components as well: a `.npy` header
+is not a payload-integrity error. A contradictory shape, dtype, or storage
+manifest is an integrity failure, not a valid unusually small index.
 
 **Range and direction:** Non-negative bytes; descriptive. Incomplete/unverified
 state has unavailable final size, with progress retained in artifacts. A
 verified index's size survives later query failure. Rerankers reference the
 owner rather than claiming separately built copies.
 
-### BM25 Index Bytes
+### Index Size — BM25
 
 **Question:** How much stored searchable state does lexical retrieval require?
 
@@ -803,7 +871,7 @@ This separates the disk/search-state cost of lexical and semantic retrieval.
 state is unavailable as a completed index; verified size survives later failure.
 RRF references this state alongside Dense rather than creating a third copy.
 
-### RRF Required Index Bytes
+### Index Size — RRF and component sizes
 
 **Question:** How much index storage must exist for RRF to operate?
 
@@ -813,29 +881,22 @@ In plain language:
 
     required Dense index bytes + required BM25 index bytes
 
-**Example:** Dense requires 12 MiB and BM25 requires 3 MiB: RRF depends on
-15 MiB, not zero.
+**Example:** Dense requires 12,000,000 bytes and BM25 requires 3,000,000:
+RRF reports Index Size 15,000,000, Dense Index Size 12,000,000, and BM25
+Index Size 3,000,000 bytes. The breakdown references the same verified source
+observations rather than independently remeasuring or counting them twice.
 
 **Range and direction:** Non-negative bytes; descriptive. A missing required
 dependency makes the complete total unavailable, not the remaining index's size.
+Preserve the known component size separately.
 This is dependency storage, not a third index.
 RRF creates no additional persistent search index, so no constant-zero
 incremental-index metric is reported. Query-time buffers belong to execution
 memory; saved pools are artifacts rather than search indexes.
 
-### Reranker Snapshot Bytes
-
-**Question:** How much local model storage does the learned reranker require?
-
-Measure the prepared verified snapshot from the model lock, excluding indexes
-and run artifacts. Do not multiply by query count.
-
-**Example:** A 300 MiB snapshot remains 300 MiB across 100 queries or separate
-Dense/BM25 candidates referencing the same snapshot.
-
-**Range and direction:** Non-negative bytes; descriptive. No learned reranker
-is inapplicable. Incomplete/unverified snapshots are unavailable as complete
-model storage. Verified size survives inference failure.
+Model snapshot size is preparation metadata (`snapshot_size_bytes`) in the model
+lock, not a per-candidate benchmark metric. See the
+[installation guide](../../../setup/installation.md#snapshot-size-metadata).
 
 ## Worked candidate interpretation
 
@@ -885,7 +946,8 @@ later failed attempt while the candidate still fails run-level validity.
 | Development/validation/locked @3/@5 quality and pool recall | When defined and sufficiently supported | Resample independent source documents and recalculate the macro statistic. |
 | Text, table, formula, and mixed quality slices | When defined and sufficiently supported | Preserve eligible source question/failure records. |
 | Full-stack, retrieval, and reranker warm p50/p95 | Conditional | Resample source documents with query-level successful-attempt medians; recalculate percentiles. |
-| Ranking Agreement and validity counters | No selection-uncertainty interval | Retain expected comparisons and actual gate outcomes. |
+| Ranking Repeatability | No selection-uncertainty interval | Retain all scheduled attempt pairs, valid ordering matches, and failures. |
+| Validity counters | No selection-uncertainty interval | Retain actual checks, support, and failure details. |
 | Smoke | No authoritative interval | Wiring evidence only. |
 | One cold initialization, index build, or observed memory peak | No | One lifecycle observation cannot estimate uncertainty. |
 | Workload/storage descriptors | No | Observed properties, not invented sampling uncertainty. |

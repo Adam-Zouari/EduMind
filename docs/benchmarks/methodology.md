@@ -219,7 +219,7 @@ another observation, not an automatic replacement for a failed earlier one.
 | Evidence | Observation used |
 |---|---|
 | Document, standalone ASR, visual Video, and chunking–embedding quality | The designated first measured output; later attempts provide other evidence. |
-| Retrieval–reranking quality | The designated first measured ranking; later rankings supply its recorded consistency check and timing. |
+| Retrieval–reranking quality | The designated first measured ranking; later rankings supply diagnostic Ranking Repeatability and timing. |
 | Frozen Video ASR | One complete stitched result per video from its scheduled windows; no transcription repeatability score. |
 | Generation quality | The protocol's measured seed outputs, aggregated within each question before source-document aggregation. |
 | Warm latency | Successful completed measured operations under each suite's component/request boundaries. |
@@ -411,7 +411,8 @@ Configuration files have separate responsibilities:
   roster that is genuinely configurable; code defines supported adapters and
   generated candidate combinations. There are no separate candidate registries.
 - `data/benchmarks/models/selected.json` stores pinned revisions, snapshot
-  locations, and checksums.
+  locations, checksums, and preparation-time `snapshot_size_bytes` inventory.
+  Snapshot size is not a per-run quality, resource, or storage-performance metric.
 - dataset manifests store samples, splits, annotations, and data provenance.
 - Generated data-validation reports under
   `artifacts/benchmarks/data-validation/` attest to the exact checked inputs and
