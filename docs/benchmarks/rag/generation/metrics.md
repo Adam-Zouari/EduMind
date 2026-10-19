@@ -32,7 +32,8 @@ acceptance evidence, prompts, and retry policy must be frozen before an
 authoritative semantic report. No judge or authoritative result is designated
 by these examples. See the [methodology's implementation boundary](methodology.md#implementation-boundary).
 
-Generation deliberately differs from extraction and chunking/embedding:
+Apply the [shared availability and support rules](../../metrics.md#shared-availability-rules)
+with this generation-specific exception: unlike extraction and chunking/embedding,
 quality is scored across all three scheduled seeds, not only attempt 1.
 An observed candidate failure on an answerable question receives zero under
 this suite's failed-quality rule, but its absent response is still stored as
@@ -42,15 +43,11 @@ null with the actual outcome, not fabricated as a completed empty answer.
 |---|---|
 | Normal, schema-valid answered output | Score answerable quality, behavioral validity, and applicable diagnostics. A valid but incorrect answer can score poorly without being malformed. |
 | Observed refusal, malformed output, execution error, timeout, or context-limit termination on an answerable question | Apply the documented zero-quality rule; retain the actual output if any and distinct outcome. Runtime errors do not become malformed outputs. |
-| No questions in a metric's reference-fixed eligibility slice | Null/inapplicable, with zero eligible support. |
-| Judge error, missing instrumentation, or missing scheduled record | Null/unavailable or incomplete with a reason; do not fabricate candidate zero, a refusal, or agreement. |
+| Judge error | Apply shared unavailable/incomplete reporting, not candidate zero, a refusal, or agreement. |
 
-Required attempts, labels, fields, and measurements must be accounted for before
-calling a report complete. Valid observations survive later failures: an
-observed TTFT, completed cold load, earlier answer score, or partial resource
-peak is not erased. Artifacts retain scheduled, eligible, observed/scored,
-failed, unavailable, and unexecuted counts as applicable. MLflow omits null
-scalar keys; a missing key never means a measured zero.
+The shared retention rules apply to observed TTFT, completed cold load, earlier
+answer scores, and partial resource peaks. Judge labels and timing instrumentation
+remain required for a complete report.
 
 ## Metric summary
 
@@ -561,6 +558,10 @@ while factual correctness and faithfulness measure quality.
 
 ## Operational measurement
 
+Use the [shared latency-percentile calculation](../../metrics.md#latency-percentiles)
+on the per-question observations defined below; TTFT and successful-completion
+latency deliberately have different observation eligibility.
+
 ### Time to First Token p50/p95
 
 **Question:** After a warm request begins, how long does the generator take to
@@ -676,8 +677,8 @@ per-question failed responses for requests that never ran.
 
 **Question:** What peak host memory does the generator worker require?
 
-At each sample, sum resident memory for the worker and its child processes;
-report the largest simultaneous sum. Do not add independent process peaks.
+Use the [shared simultaneous process-tree RSS calculation](../../metrics.md#peak-process-tree-ram)
+for the generator worker and its children.
 The monitoring window includes loading, warmup, and measured generation, not
 offline judging or bootstrap calculations.
 
@@ -686,30 +687,26 @@ and `1,900 + 1,200 = 3,100 MiB` give a peak of `3,100 MiB`, not
 `2,000 + 1,200 = 3,200 MiB`.
 
 **Range and direction:** Non-negative MiB; lower is better at equal quality.
-No samples means null/unavailable, not zero. Samples before a failure remain
-valid partial-window observations with start/end scope; they do not establish
-the memory needed for the unexecuted workload. Missing required instrumentation
-makes the report incomplete. An observed peak receives no confidence interval.
+Availability, partial-window reporting, and single-peak uncertainty follow the
+[shared resource rules](../../metrics.md#resource-measurements).
 
 ### Peak Device VRAM
 
 **Question:** How much total assigned-GPU memory is occupied at the observed peak?
 
-Take the maximum raw NVML `memory.used` sample from before loading through
-the last measured request. Include desktop/driver allocations; the idle baseline
-is explanatory and is not subtracted. This device-total value does not prove
-correct model placement, which is checked separately.
+Use the [shared NVML device-total peak](../../metrics.md#peak-device-vram) from
+before loading through the last measured request. This device-total value does
+not prove correct model placement, which is checked separately.
 
 **Example:** Device samples `700, 2,850, 2,500 MiB` report `2,850 MiB`,
 not `2,150 MiB` above the baseline. A peak retained before an OOM is partial
 evidence, not proof that the complete workload fits.
 
 **Range and direction:** Non-negative MiB; lower is better at equal quality.
-CPU execution is null/inapplicable; missing required CUDA telemetry is
-null/unavailable and makes measurement incomplete. Preserve observed values
-and their scope after failure; do not clamp them to a hardware threshold.
+Apply the [shared resource availability and scope rules](../../metrics.md#resource-measurements);
+do not clamp observed values to a hardware threshold.
 The existing generation resource limit is an execution gate, not this metric's
-upper range, and does not impose a cap on extraction. One peak has no CI.
+upper range, and does not impose a cap on extraction.
 
 ## Workload descriptors
 
@@ -892,23 +889,20 @@ reported document-macro value is `0.75`. The pooled question average would be
 `3 / 5 = 0.60`, giving the longer document four times the influence. Equal
 document weight is used consistently for generation quality and rates.
 
-Development, validation, and locked runs use
-10,000 bootstrap resamples of complete documents with bootstrap seed `42`; that
-seed is independent of generation seeds. The 2.5th and 97.5th percentiles are
-the 95% confidence bounds. Answerable-only, unanswerable-only, and evidence-type
+Development, validation, and locked runs apply the
+[shared bootstrap and confidence-interval rules](../../metrics.md#confidence-intervals)
+to complete source documents; the bootstrap seed is independent of generation
+seeds. Answerable-only, unanswerable-only, and evidence-type
 results always report eligible question and document counts. Substantive-answer-only
 diagnostics, if reported, do not replace primary answerable results that
 include refusals and failed attempts.
 
 Warm latency and token-workload summaries use the same fixed question set and
-report their observation counts. Cold load and observed RAM/VRAM peaks are
-single-run measurements and receive no fabricated interval. An explicitly
-inapplicable metric or an operational value with no valid observation is null,
-with its reason and observation counts retained. For example, a recorded request
-that emits no token has no TTFT observation; its failure or completion outcome
-still contributes to the applicable reliability metrics. This differs from a
-missing required attempt record, artifact, metric field, or timing instrument:
-those omissions make the evaluation incomplete, not a valid null observation.
+report their observation counts under the shared availability rules. For example,
+a recorded request that emits no token has no TTFT observation; its failure or
+completion outcome still contributes to the applicable reliability metrics. A missing required
+attempt record, artifact, metric field, or timing instrument instead makes
+evaluation incomplete.
 
 ### Interval support and calculation
 
@@ -920,27 +914,24 @@ inventories do not acquire intervals merely because they are numeric. A decode
 throughput summary needs its estimator defined before its uncertainty can be
 specified.
 
-For each of the 10,000 draws, resample complete reference-eligible source
-documents with replacement, retaining questions, all scheduled seeds, pair
-labels, failures, and unavailable evaluations. Recalculate the same
-seed-then-question-then-document aggregate. A source drawn twice contributes
-twice. Do not prefilter to successful answers: observed candidate zeros remain,
-and unavailable evaluations retain their coverage/incomplete status. For latency,
-recalculate percentiles from the sampled documents' per-question observations,
-not from document-average times. Paired comparisons use the same source draw
-for both configurations.
+The independent bootstrap unit is the complete reference-eligible source
+document, including its questions, all scheduled seeds, pair labels, failures,
+and unavailable evaluations. Each draw uses the same seed-then-question-then-document
+aggregate: candidate zeros remain and unavailable evaluations retain their
+coverage/incomplete status. For latency, recalculate percentiles from the sampled
+documents' per-question observations, not from document-average times.
 
 Report eligible and contributing independent-source counts, not `3 × questions`
-as independent support. If no eligible questions exist, the result is
-inapplicable; if required labels or attempts are missing, any surviving-output
-estimate is explicitly incomplete/diagnostic. Do not turn it into a normal
-complete comparison by omitting missing rows.
+as independent support. Missing required judge labels or scheduled seeds keep
+any surviving-output estimate incomplete/diagnostic under the shared availability
+rules, not a complete comparison obtained by omitting missing rows.
 
-Below the support minimum frozen after data review and before held-out use,
-keep a defined descriptive point estimate with null bounds and a reason. No
-numeric support minimum is set until that review. Record defined/undefined bootstrap draws for each
-conditional metric. Identical resamples can yield bounds such as `[1, 1]`;
-retain them with a degenerate-interval flag, not a claim of future certainty.
+The numeric independent-source support minimum remains pending data review.
+Its freeze follows the [shared CI-support deadline](../../metrics.md#confidence-intervals),
+before any authoritative comparison, including development. Earlier exploratory
+points remain descriptive, with null bounds and a reason. Apply the shared
+undefined-draw and degeneracy rules;
+calculated bounds such as `[1, 1]` are not a claim of future certainty.
 
 For example, `Faithfulness = 0.90, 95% CI [0.86, 0.94]` describes uncertainty
 in the document-macro estimate, not a range of individual answers. Bootstrap

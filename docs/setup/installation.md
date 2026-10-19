@@ -47,11 +47,9 @@ or quantization. Extraction (document, ASR, video visual processing, and frozen
 video ASR) uses the isolated GPU without an artificial VRAM cap in any profile,
 including preflight. Actual OOM, offloading, and unavailable required telemetry
 remain failures. Embedding, learned-reranking, and generation retain their
-`3,584 MiB` limit. Measure raw NVML `memory.used`, including driver/desktop
-allocations, without subtracting the idle baseline. Close other GPU workloads
-and keep background usage stable across candidates; record GPU identity,
-baseline, total/free memory, and the `nvml-device-total` measurement method.
-This whole-device contract is defined in the
+`3,584 MiB` limit. Measurement follows the
+[Peak Device VRAM contract](../benchmarks/metrics.md#peak-device-vram); execution
+requirements and background-workload checks are in the
 [methodology](../benchmarks/methodology.md) and [runbook](../benchmarks/running.md).
 
 ## 2. Create an isolated Python environment
@@ -83,9 +81,9 @@ python -m pip check
 The version numbers must stay aligned with `requirements/app.lock`. A CUDA
 benchmark is valid only when the requested model remains on `cuda` and the run
 records a non-zero measured VRAM peak; there is no CPU fallback.
-CPU execution instead records VRAM as null/inapplicable, never a zero-byte
-GPU measurement. Missing required CUDA telemetry is null/unavailable and fails
-qualification; it is not interchangeable with CPU inapplicability.
+Report CPU versus missing-CUDA observations under the
+[shared availability rules](../benchmarks/metrics.md#shared-availability-rules).
+Missing required CUDA telemetry still blocks hardware qualification.
 
 The Windows Python 3.12 benchmark lock installs PaddlePaddle GPU 3.3.1 from
 [Paddle's official CUDA 11.8 distribution](https://www.paddlepaddle.org.cn/packages/stable/cu118/paddlepaddle-gpu/).

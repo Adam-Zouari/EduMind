@@ -196,10 +196,9 @@ Qualification repetitions, telemetry interval, polling interval, and timeout
 are read from the benchmark protocol.
 
 Before a CUDA comparison, close other GPU workloads and record the assigned
-GPU's identity, idle memory use, and total/free capacity. Monitor raw NVML
-device `memory.used` from before model loading through the final inference;
-record `nvml-device-total` and keep all samples. Do not subtract the idle baseline
-or infer process bytes from it. Extraction reports the peak without an artificial
+GPU's identity, idle memory use, and total/free capacity under the
+[shared Peak Device VRAM contract](metrics.md#peak-device-vram).
+Extraction reports the peak without an artificial
 cap in every phase, including preflight and frozen video ASR. Its workers still
 retain OOM, timeout, telemetry, and placement failure evidence. Capped RAG paths
 stop workers at their protocol's `3,584 MiB` limit. Offload inspection remains a
@@ -291,10 +290,9 @@ attempt per fixture; preflight has no warmup and does not measure repeatability.
   missed expected objects in those outputs. Failed first attempts have unavailable
   quality; report them and contributing counts beside every aggregate. No reference
   tables/formulas means no reconstruction task; verified-negative detection applies.
-- Confidence intervals are calculated after execution by resampling saved
-  independent document results 10,000 times with seed `42`. Quality intervals
-  use first-attempt scores; repeatability/failure intervals use each document's
-  three-attempt values. Resampling does not run additional inference.
+- Apply the [shared CI procedure](metrics.md#confidence-intervals) to independent
+  documents. Quality uses first-attempt scores; repeatability/failure intervals
+  use each document's three-attempt values.
 
 Inspect `samples.parquet` for first-attempt quality and each metric's status,
 reason, eligibility, and coverage. Inspect `timings.parquet` and retained outputs
@@ -437,8 +435,9 @@ locked result is reporting-only.
 - Prepare/review canonical sources and evidence separately. The standalone
   chunking–embedding validator and sealed-report reuse are implemented. Each
   profile verifies its matching report before candidate loading or measurement.
-- Execute only answerable questions. Keep the same searchable corpus for all
-  pairs; shared-manifest unanswerable queries are not embedded, timed, or scored.
+- Execute only answerable questions. Pairs share canonical source documents and
+  questions, but each builds its own chunk corpus. Shared-manifest unanswerable
+  queries are not embedded, timed, or scored.
 - Build the corpus once after loading, including semantic boundary work and
   matrix validation in Corpus-Build Time. Run one query warmup after the matrix
   exists, then one measured request per query in smoke or three in authoritative
@@ -461,9 +460,9 @@ locked result is reporting-only.
   peaks. `measurement.resource_scope=partial` labels interrupted windows on the
   existing child; missing CUDA telemetry is unavailable and CPU VRAM inapplicable.
   An unfinished matrix has no final matrix-byte value or partial-bytes metric.
-- Bootstrap whole source documents offline 10,000 times with seed 42, retaining
-  dependent queries/attempts. Insufficient support gives null CI bounds with a
-  reason; sufficiently supported degenerate bounds are retained and flagged.
+- Apply the [shared CI procedure](metrics.md#confidence-intervals) to whole source
+  documents with their dependent queries/attempts; review the suite's
+  [CI applicability](rag/chunking_embedding/metrics.md#which-values-receive-an-interval).
 
 See [metric definitions](rag/chunking_embedding/metrics.md) and the
 [artifact/MLflow contract](rag/chunking_embedding/methodology.md#mlflow-result-structure)

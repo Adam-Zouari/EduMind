@@ -44,7 +44,9 @@ Final RAG evaluates one already-selected complete system. Each benchmark has
 its own methodology and metric reference under `benchmarks/extraction/`,
 `benchmarks/rag/`, or `benchmarks/vectordb/`, matching the implementation layout.
 The shared methodology explains the lifecycle and decision files; shared metric
-conventions define cross-benchmark measurement and reporting rules. The runbook
+conventions own identical cross-benchmark measurement and reporting rules.
+Individual metric pages link those rules and retain their local denominators,
+eligibility, examples, and exceptions. The runbook
 records commands and current implementation limitations.
 
 | Question | Document |

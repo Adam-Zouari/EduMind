@@ -286,10 +286,11 @@ these equal-document-weight results.
 
 This all-seed quality policy is generation-specific. It does not change the
 first-measured-output policy of extraction or chunking/embedding. An observed
-failed candidate attempt receives this suite's failed-quality treatment; an
-unexecuted request or unresolved judge failure is unavailable/incomplete,
-not an invented answer with zero claims. Earlier completed labels, observed
-TTFT, cold load, and partial resource records survive later failure. Keep
+failed candidate attempt receives this suite's failed-quality treatment. For
+unexecuted requests or unresolved judge failures, apply the
+[shared availability rules](../../metrics.md#shared-availability-rules);
+do not invent an answer with zero claims. Their retention rules apply to completed
+labels, observed TTFT, cold load, and partial resource records. Keep
 outcome, schema validity, behavioral validity, and evaluator availability as
 separate fields so none is inferred from a missing scalar.
 

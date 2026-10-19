@@ -118,8 +118,8 @@ NumPy computes exact top neighbours
 All servers receive the same normalized vectors, metadata, exact-oracle IDs,
 query order, and conditions. Search-quality scores use the designated first
 request; do not average later rankings or choose a later successful output.
-A failed first quality request is unavailable, not a fabricated empty response
-or zero-recall observation. A valid empty response against nonempty exact
+Apply the [shared availability rules](../metrics.md#shared-availability-rules)
+to failed first quality requests. A valid empty response against nonempty exact
 neighbours really does score zero. Required filter and conformance checks keep
 their separate failure rules.
 
@@ -136,9 +136,8 @@ Report each workload/dimension/K/filter/concurrency cell with actual coverage,
 not only a pooled server mean. Warm successful-request latency excludes build,
 warmup, and oracle scoring; batch wall time includes failed requests and
 dispatch/queue overhead. Time to failure is not successful-response latency.
-Keep earlier valid observations if a later phase fails, label partial diagnostic
-scope, and mark missing scheduled execution incomplete. The current driver's
-partial-retention gaps must not be mistaken for an intentional discard policy.
+Use shared retention and incomplete-reporting rules across phases. The current
+driver's partial-retention gaps must not be mistaken for an intentional discard policy.
 
 ### C. Real retrieval
 
@@ -160,6 +159,9 @@ reranking, evidence annotations, and score cutoffs while varying only the server
 and its recorded index profile. It uses three measured rankings per question;
 the first supplies quality, later rankings supply agreement/timing. Questions
 must remain grouped by source document for document-macro quality and uncertainty.
+Its nDCG, Evidence-unit Recall, and Evidence-token Precision at `@3`/`@5` adopt
+the [shared retrieval evidence rules](../metrics.md#retrieval-evidence-quality)
+on that server-backed path; they are separate from synthetic exact-neighbour recall.
 This is evidence retrieval, not generated-answer evaluation, and uses no LLM
 judge. Current scoring and aggregation limitations are explicit in the metric
 reference.
@@ -184,9 +186,9 @@ Implemented entry points are dense ANN `smoke`, `development`, and `validation`,
 plus the separate complete-retrieval `validation` entry point. Pinned image
 verification, real network adapters, NumPy exact search, controlled conformance
 probes, tuning-trial values, load measurements, server memory/storage collection,
-and MLflow artifacts exist. The server-only workload is CPU-based; GPU-backed
-embedding/reranking preparation in real retrieval is a separate model workload.
-CPU VRAM is null/inapplicable, not zero.
+and MLflow artifacts exist. The server-only workload is CPU-based and follows the
+[shared CPU-VRAM rule](../metrics.md#peak-device-vram); GPU-backed embedding/reranking
+preparation in real retrieval is a separate model workload.
 
 The following are not yet implemented as the complete contract:
 

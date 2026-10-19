@@ -17,8 +17,8 @@ Visual extraction and frozen ASR execute sequentially in separate workers on
 the isolated GPU. Neither has an artificial VRAM cap in any phase, including
 preflight. GPU-backed model weights cannot offload or silently fall back to CPU.
 Peak VRAM is still measured; actual OOM, placement violations, and unavailable
-required telemetry remain failures. CPU smoke reports Peak VRAM as null and
-inapplicable.
+required telemetry remain failures. CPU smoke and CUDA telemetry statuses follow
+[shared Peak Device VRAM](../../metrics.md#peak-device-vram).
 
 RapidOCR visual parsing uses the document backend's verified CPU shape-only
 exception. Shape bookkeeping does not qualify CPU model computation or weight
@@ -173,7 +173,8 @@ work, then ends before scoring. Docling's explicit
 `initialize_pipeline(InputFormat.IMAGE)` and Paddle's equivalent constructor
 readiness define cold visual initialization.
 
-Repeatability compares canonical selected-frame times and structured visual
+Repeatability applies the [shared pair rule](../../metrics.md#pairwise-repeatability)
+to canonical selected-frame times and structured visual
 outputs across the three scheduled pairs. Numeric precision, normalization,
 ordering, and stable ID mapping are frozen. Every attempt executes extraction,
 not a cached previous result.
@@ -345,12 +346,11 @@ Do not create a separate child run for each video, window, metric, or repetition
 
 Applicable sample-based aggregates use the
 [shared metric suffix convention](../../methodology.md#shared-mlflow-metric-convention).
-Bootstrap complete source groups 10,000 times with seed 42; windows and repeated
-visual attempts are not extra independent samples. Supported defined visual
-quality/reliability and frozen-ASR aggregates receive intervals. p50/p95 support
-is checked separately; insufficient support retains descriptive values and null
-bounds. Cold load and observed resource peaks do not receive intervals.
-All nulls remain in JSON/Parquet even when MLflow scalar keys are absent.
+Use [shared confidence intervals](../../metrics.md#confidence-intervals)
+with the [video-specific eligibility and source-group rules](metrics.md#video-confidence-intervals).
+ASR windows and repeated visual attempts remain dependent parts of source videos,
+not extra independent samples. Artifact nulls and MLflow scalar omission follow
+the [shared availability rules](../../metrics.md#shared-availability-rules).
 
 Every decoding/selection step records the FFmpeg version and exact argument
 vector. Raw source videos are not duplicated into candidate artifacts.

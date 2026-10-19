@@ -133,12 +133,10 @@ Atomic annotation does not guarantee that every strategy preserves every unit:
 a candidate boundary can still split it. Such fragmentation is a quality
 outcome, not a reason to repair the reference or resize chunks for that pair.
 
-For the rank-aware and unit-recall metrics, chunk `j` covers evidence unit `i`
-only when that single chunk contains every required source interval for the
-unit. Partial overlap does not turn a fragment into complete evidence. This
-rule makes boundary fragmentation visible and avoids candidate-specific fuzzy
-matching. The metric roles, counting behavior, and edge cases are summarized in
-[chunking and embedding metrics](metrics.md).
+Use the [shared complete-unit coverage rule](../../metrics.md#retrieval-evidence-quality)
+to map evidence to generated chunks. It keeps boundary fragmentation visible
+without candidate-specific fuzzy matching. Metric roles, examples, and edge
+cases are in [chunking and embedding metrics](metrics.md).
 
 Evidence-token Precision uses the frozen evaluation tokenizer
 `tiktoken:cl100k_base` for every candidate. It never uses each embedding model's
@@ -267,9 +265,8 @@ Keep scheduled, eligible, scored, failed, and unavailable counts per metric/slic
 successful-latency counts are separate because a later request may succeed when
 first-ranking quality is unavailable.
 
-An optional evidence slice with no eligible questions is inapplicable. A slice
-with eligible questions but no usable scores is unavailable. Missing scheduled
-outcomes or required records make execution incomplete. None is imputed as zero.
+Result statuses and slice availability use the
+[shared availability rules](../../metrics.md#shared-availability-rules).
 
 Partial quality aggregates remain labelled diagnostics in artifacts, not normal
 `quality.*` aggregates, complete-result leaderboard entries, or paired selection
@@ -327,24 +324,14 @@ qualification and selection evidence rather than reuse of an older decision.
 | Operational | Corpus-build time and source-token throughput, p50/p95 warm query latency, peak process-tree RAM, peak device VRAM | Measures the observed preparation, query, and hardware cost of the complete pair. |
 | Workload and storage | Corpus counts, source and indexed-token counts, chunk count and lengths, embedding dimension and dtype, matrix bytes | Explains how much work and storage each pair creates without treating those values as quality. |
 
-The three bold metric families are primary and are reviewed separately at both
-cutoffs. nDCG uses each chunk's complete evidence-unit count directly as its
-linear gain, without discounting evidence already supplied by another chunk.
-Its exact ideal sorts all chunk gains in the pair's complete corpus, not only
-the retrieved top 20. This evaluates relevance ranking; Evidence-unit Recall
-separately measures distinct coverage.
-
-Alpha-nDCG is diagnostic with fixed `alpha=0.5`. Its denominator uses a
-deterministic greedy approximation over the same complete corpus, choosing the
-unused chunk with the greatest remaining alpha gain at each rank and resolving
-ties by frozen corpus order. Scores are capped at one; per-question artifacts
-retain a raw ratio above one and its greedy-baseline-exceeded flag. It describes novelty,
-not a relevance failure or demonstrated harm from repeated evidence. The
+The three bold metric families are primary and reviewed separately at both
+cutoffs. Apply the [shared retrieval-quality definitions](../../metrics.md#retrieval-evidence-quality)
+to each pair's complete corpus. nDCG measures relevance ranking; Recall measures
+distinct recovery, and token Precision measures context concentration.
+Alpha-nDCG diagnoses novelty rather than a relevance failure or demonstrated
+harm from repeated evidence. The
 [data-review checklist](../../pending-data-review.md) tracks whether exact
 normalization is practical; any change is frozen before held-out evaluation.
-All four retrieval-quality metrics use every answerable question with at least
-one gold evidence unit, including single-unit questions. No weighted overall
-score is created.
 First-hit metrics and chunk-level precision/recall are omitted because they add
 little coverage information or use denominators changed by the chunker. Exact
 definitions, examples, directions, and confidence-interval rules are in

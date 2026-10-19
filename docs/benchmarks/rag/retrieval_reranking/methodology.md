@@ -193,13 +193,10 @@ pool. Its required storage is the unique sum of those dependencies, while its
 component sizes remain separately inspectable. There is no incremental
 fusion-index-size metric.
 
-The exact ideal used to normalize linear nDCG sorts each chunk's complete
-evidence-unit count over the complete frozen corpus for each question, never
-over a candidate's retrieved pool. Alpha-nDCG uses a deterministic greedy
-approximation from the same corpus and evidence-unit coverage, with the same
-gain calculation, tie rule, and score cap as in chunking/embedding. Every
-executed candidate therefore shares the same denominator for each metric on
-a given question; the alpha-nDCG denominator is not a guaranteed maximum.
+Apply the [shared retrieval-quality normalization](../../metrics.md#retrieval-evidence-quality)
+to the complete frozen corpus. Every stack therefore shares the same
+normalization baseline for each metric on a given question, independent of
+its retrieved pool.
 
 ## Execution profiles and selection
 
@@ -280,15 +277,12 @@ as the full elapsed readiness wait including corpus construction.
 
 Quality uses the designated first measured ranking at both cutoffs. Later
 measured attempts supply timing and diagnostic Ranking Repeatability, not
-additional quality scores. A failed first ranking is unavailable; later success
-does not replace it. A later failure does not erase valid first-ranking quality,
-but still affects run-level validity. Required partial quality remains a labelled
-diagnostic rather than a complete comparison result.
+additional quality scores. The [shared availability rules](../../metrics.md#shared-availability-rules)
+govern failed attempts and partial required evidence.
 
 Failures and truncation are validity conditions rather than quality metrics.
-Ranking Repeatability compares all three attempt pairs over the complete
-ordered result, normally 20 IDs. Only identical valid rankings agree; executed
-failures never agree. Valid differences are diagnostic, not an automatic
+Ranking Repeatability applies the [shared pair rule](../../metrics.md#pairwise-repeatability)
+to complete ordered results, normally 20 IDs. Valid differences are diagnostic, not an automatic
 disqualification. Corpus inventory and pool-size checks stay in parameters and
 artifacts rather than mandatory workload scalars. Optional Candidate-Pool
 Tokens@20 is a per-query pool-artifact field; it does not duplicate final-context
@@ -545,9 +539,9 @@ Ranking Repeatability remains diagnostic; its observed pair outcomes do not
 replace integrity checks or quality comparisons.
 Validity counters are gates, not winner metrics, and receive no comparison rows.
 
-Quality differences use 10,000 paired bootstrap resamples of aligned source
-documents with seed 42. One-off cold-load and peak-resource observations receive
-point differences but no invented confidence interval. The engineer selects up
+Quality differences apply the [shared paired-bootstrap procedure](../../metrics.md#confidence-intervals)
+to aligned source documents. Point-only observations retain point-only
+differences under the metric's CI contract. The engineer selects up
 to three complete finalists for validation after jointly reviewing primary
 quality, uncertainty, evidence slices, diagnostics, and operational feasibility,
 then records exactly one validation winner. That stack receives its own locked

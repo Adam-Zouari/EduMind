@@ -19,6 +19,11 @@ The chunking/embedding experiment evaluates one complete
 families answer different selection questions; alpha-nDCG is retained as a
 novelty diagnostic. None is combined into a weighted score.
 
+The four quality families adopt the
+[shared retrieval-evidence definitions](../../metrics.md#retrieval-evidence-quality).
+The applications below use each candidate pair's complete generated corpus,
+not another pair's corpus or the retrieved top-20 pool.
+
 ## Metric summary
 
 ### Retrieval quality
@@ -66,35 +71,32 @@ Invalid or missing required evidence is a
 [data-validation failure](../../data-validation.md#chunking-and-embedding-inputs),
 not a zero or null observation from a candidate that never ran.
 
-Quality uses the designated first measured ranking. A failed first request is
-not an empty retrieval result; later success cannot replace it. Conversely, a
-later failed repetition does not erase a valid first ranking's quality. Each
-attempt keeps its own outcome and timing record.
+Quality uses the designated first measured ranking under the
+[shared availability rules](../../metrics.md#shared-availability-rules).
 
-| Result | Value and treatment |
-|---|---|
-| Valid first ranking | Score all four quality families once at both cutoffs. Missing evidence in valid retrieved chunks receives the normal poor numeric score. |
-| Failed first request or invalid first ranking | Applicable quality is null/unavailable, with the error and planned support retained. |
-| Optional evidence slice with no eligible questions | Aggregate is null/inapplicable; no retrieval task exists in that slice. |
-| Eligible questions exist, but none has a usable first ranking | Aggregate is null/unavailable, not zero. |
-| Scheduled requests or required records are missing | Execution is incomplete; retain known observations without inventing failed or successful requests. |
+Score all four quality families once at both cutoffs from a valid first ranking.
+Missing evidence in valid retrieved chunks receives the normal poor numeric
+score. Failures and missing records follow the
+[shared availability rules](../../metrics.md#shared-availability-rules);
+slice eligibility and partial results follow
+[aggregation and comparison completeness](#aggregation-and-comparison-completeness).
 
 Generated chunks, vectors, and rankings have separate integrity checks. Exact
 search on a valid nonempty index returns `min(20, chunk_count)` unique corpus
 chunk IDs with finite scores. An unexpected empty or short ranking, token-free
 chunk, invalid ID, or corrupted vector is an execution/integrity failure, not
-a scored empty prediction. A legitimate corpus containing fewer than three or
-five chunks uses the available chunks at the unchanged cutoff.
+a scored empty prediction. In particular, no valid returned source tokens makes
+applicable quality null/unavailable, not a scored zero-token comparison. A
+legitimate corpus containing fewer than three or five chunks uses the available
+chunks at the unchanged cutoff.
 
 Scoring checks require finite, in-range reported quality values. A substantive
 nDCG above one indicates an integrity/calculation error, not a normal quality
 case; numerical tolerances are code invariants. Alpha-nDCG's retained raw ratio
 is explicitly different because its greedy baseline can be exceeded.
 
-Retain null values with `inapplicable`, `unavailable`, or `incomplete` status and
-a reason in artifacts. MLflow omits their scalar keys rather than recording
-zero. Report scheduled, eligible, scored, failed, and unavailable support.
-The [methodology](methodology.md#result-completeness-and-advancement) defines
+Shared status/support meanings apply to each result. The
+[methodology](methodology.md#result-completeness-and-advancement) defines
 which completed results can enter selection comparisons.
 
 ## Retrieval quality
@@ -104,19 +106,10 @@ which completed results can enter selection comparisons.
 **Question:** How early do evidence-rich chunks appear when repeated evidence
 keeps its relevance credit?
 
-nDCG uses linear evidence-count gains: a chunk receives one point for each
-distinct required evidence unit it completely covers. A chunk containing no
-complete unit receives `0`; one containing three receives `3`. Each unit counts
-once within a chunk, but its presence in an earlier chunk does not reduce the
-credit of a later chunk. Distinct chunks containing the same evidence or text
-can therefore both receive full relevance credit.
-
-The count is used directly, not converted into an exponential gain. Earlier
-ranks receive more weight through the usual logarithmic rank discount. For each
-question and pair, the ideal ranking sorts the gains of every chunk in that
-pair's complete corpus from highest to lowest and applies the same discount and
-cutoff. The reported score compares the retrieved ranking with this exact
-ideal; the ideal is never restricted to the retrieved top-20 list.
+Apply the [shared linear-gain nDCG rule](../../metrics.md#retrieval-evidence-quality)
+to each question and candidate pair. The exact ideal comes from that pair's
+complete generated corpus; distinct relevant chunks keep full evidence credit
+even when their text or evidence repeats.
 
 In plain words:
 
@@ -142,10 +135,17 @@ diversity-aware selection. Evidence-unit Recall separately measures distinct
 coverage; alpha-nDCG diagnoses novelty without treating repeated relevant
 evidence as a relevance-ranking error.
 
-**Range and direction:** `[0, 1]`; higher is better. A question for which no
-chunk in the complete candidate corpus contains any complete required evidence
-unit receives zero, even though its ideal gain is zero. This convention keeps
-boundary fragmentation in the quality result instead of excluding a poor pair.
+**Range and direction:** `[0, 1]`; higher is better.
+
+**Edge cases and availability:**
+
+| Edge case | Example | Value/status | Explanation |
+|---|---|---|---|
+| Zero ideal gain over the complete candidate corpus | Every chunk splits the question's required units, so no chunk covers a complete unit. | `0` (`scored`) | The explicit zero-denominator convention keeps boundary fragmentation in the quality result rather than excluding the pair. |
+
+[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+Evidence-slice and aggregate status follow
+[this suite's completeness rules](#aggregation-and-comparison-completeness).
 
 ### Evidence-unit Recall@3/@5
 
@@ -154,7 +154,10 @@ three or first five chunks, regardless of their order?
 
 Each required evidence unit counts once when at least one chunk inside the
 cutoff contains it completely. Repeated copies do not add credit, and partial
-fragments do not count as recovered units.
+fragments do not count as recovered units. Every eligible question has at least
+one reviewed gold unit, so the denominator is positive; missing required units
+are an [input-validation issue](../../data-validation.md#chunking-and-embedding-inputs),
+not an empty-reference scoring convention.
 
 ```text
 Evidence-unit Recall@K = distinct required units completely covered by top K
@@ -166,12 +169,16 @@ the next two recover another, Recall@3 is approximately `0.33` and Recall@5 is
 approximately `0.67`.
 
 This primary metric catches rankings that look good near the top but still miss
-part of the evidence needed for a complete answer.
+part of the evidence needed for a complete answer. Recovering no complete units
+gives zero under the ordinary calculation.
 
 **Range and direction:** `[0, 1]`; higher is better.
-Every eligible question has at least one gold unit, so its denominator is
-positive. Recovering no complete units gives zero normally; an answerable
-question lacking gold units must be repaired before execution.
+
+**Edge cases and availability:**
+
+[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+Evidence-slice and aggregate status follow
+[this suite's completeness rules](#aggregation-and-comparison-completeness).
 
 ### Evidence-token Precision@3/@5
 
@@ -184,6 +191,8 @@ interval in the same document. Count it once even if several gold intervals
 overlap it. All returned source-token occurrences form the denominator; text
 repeated in different chunks counts each time in both numerator and denominator.
 Native model prefixes and special inference tokens are not source content.
+The valid nonempty ranking and token-bearing chunks make the denominator
+positive; see the [output-integrity prerequisites](#eligibility-and-result-status).
 
 ```text
 Evidence-token Precision@K = evidence-bearing returned token occurrences
@@ -196,11 +205,16 @@ as relevant evidence by the reference annotations.
 
 This primary metric does not impose a context budget or penalize a chunk merely
 for being large. It reports how concentrated the returned context is around the
-verified evidence.
+verified evidence. Valid returned text with no evidence-bearing tokens receives
+zero under the ordinary calculation.
 
-**Range and direction:** `[0, 1]`; higher is better. Valid returned text with no
-evidence-bearing tokens receives zero. No valid returned tokens violates this
-benchmark's output contract and gives null/unavailable, not a scored zero.
+**Range and direction:** `[0, 1]`; higher is better.
+
+**Edge cases and availability:**
+
+[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+Evidence-slice and aggregate status follow
+[this suite's completeness rules](#aggregation-and-comparison-completeness).
 
 ### Alpha-nDCG@3/@5
 
@@ -210,6 +224,18 @@ receives less credit?
 Alpha-nDCG rewards useful evidence more when it appears near the top and reduces
 the credit for later chunks that repeat the same evidence. With the frozen
 `alpha=0.5` setting, each repetition receives half the remaining novelty credit.
+
+In plain words:
+
+```text
+novelty gain of a chunk = sum, over its complete gold units, of
+                         0.5 raised to the number of earlier chunks covering that unit
+alpha-DCG@K = sum of novelty gains / log2(rank + 1) through rank K
+alpha-nDCG@K = min(1, observed alpha-DCG@K / greedy-baseline alpha-DCG@K)
+```
+
+Here, repetition is not decided by text similarity. It means that a chunk
+covers an evidence-unit ID already covered by a higher-ranked chunk.
 
 **Example:** If the first two chunks contain the same evidence and the third
 contains different evidence, the second chunk is discounted. Moving the
@@ -222,19 +248,6 @@ and `C={G2}`. Order `A,B,C` has novelty gains `1,0.5,1`; greedy order
 `1 + 1 × 0.631 + 0.5 × 0.5 = 1.881`. The reported ratio is about
 `0.965`, rather than `1`, even though both orders cover both units.
 
-In plain words:
-
-```text
-novelty gain of a chunk = sum, over its complete gold units, of
-                         0.5 raised to the number of earlier chunks covering that unit
-alpha-DCG@K = sum of novelty gains / log2(rank + 1) through rank K
-alpha-nDCG@K = min(1, observed alpha-DCG@K / greedy-baseline alpha-DCG@K)
-```
-
-Here, repetition is not decided by text similarity. It means that a chunk
-covers an evidence-unit ID already covered by a higher-ranked chunk. Exact
-duplicate chunk IDs are forbidden separately by the retrieval contract.
-
 This is diagnostic rather than primary because novelty is a separate objective
 from relevance ranking. Repeated relevant evidence is not automatically a
 retrieval failure, and a low novelty score does not establish that the chunks
@@ -245,23 +258,25 @@ primary retrieval metrics. With one unit, its first occurrence receives full
 credit and later occurrences receive discounted credit; the same rule is used
 in the greedy normalization.
 
-Normalization uses a deterministic greedy approximation over the pair's
-complete chunk corpus. At each rank, it chooses the unused chunk with the
-largest remaining alpha gain, including discounted credit for previously seen
-units; ties follow the frozen corpus order. This is an approximation, not a
-guaranteed maximum. Scores are capped at `1`, so a perfect score means the
-ranking meets or exceeds this greedy baseline, not necessarily the exact ideal.
-Retain the uncapped ratio and a greedy-baseline-exceeded flag in the per-question
-artifact whenever capping occurs; they are diagnostic details, not another
-primary metric. A raw ratio above one is not itself a failed evaluation.
+Apply the [shared greedy normalization and score-cap rules](../../metrics.md#retrieval-evidence-quality)
+to this pair's complete corpus. A score of one means the ranking meets or
+exceeds that greedy baseline, not necessarily an exact ideal.
 The [data-review checklist](../../pending-data-review.md) records the development-only
 comparison with exact normalization before the method is frozen for held-out
-evaluation. The [original alpha-nDCG paper](https://plg.uwaterloo.ca/~gvcormac/novelty.pdf)
-describes this practical greedy approximation.
+evaluation.
 
-**Range and direction:** `[0, 1]`; higher is better. An eligible question for
-which no corpus chunk covers any complete gold unit receives zero when the
-greedy denominator is zero. Failed execution or scoring remains unavailable.
+**Range and direction:** `[0, 1]`; higher is better.
+
+**Edge cases and availability:**
+
+| Edge case | Example | Value/status | Explanation |
+|---|---|---|---|
+| Zero greedy-baseline gain over the complete candidate corpus | No chunk covers any complete gold unit for an eligible question. | `0` (`scored`) | Keep fragmentation in the quality result using the explicit zero-denominator convention. |
+| Observed gain exceeds the greedy normalization baseline | The uncapped ratio is `1.02`. | Report `1` (`scored`); retain raw `1.02` and the greedy-baseline-exceeded flag. | The deterministic greedy baseline is approximate. Exceeding it is not itself a failed evaluation; the raw ratio and flag are per-question diagnostics, not another primary metric. |
+
+[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+Evidence-slice and aggregate status follow
+[this suite's completeness rules](#aggregation-and-comparison-completeness).
 
 ## Why the metrics are not interchangeable
 
@@ -307,6 +322,16 @@ repetition harms answers. The same interpretation is performed separately at
 The phase calls preparation of the searchable embedding matrix **corpus build**.
 It is not the later vector-server indexing experiment.
 
+Operational availability follows the
+[shared rules](../../metrics.md#shared-availability-rules). Corpus-build values
+require a complete searchable matrix; query latency uses each query's median
+successful-attempt duration. Apply the shared
+[percentile](../../metrics.md#latency-percentiles) and
+[resource](../../metrics.md#resource-measurements) definitions with the lifecycle
+windows below. Partial-resource scope is recorded as specified by the
+[run structure](methodology.md#mlflow-result-structure); CI applicability remains
+in this page's [interval table](#which-values-receive-an-interval).
+
 ### Corpus-Build Time
 
 **Question:** How long does preparation of the complete searchable corpus take?
@@ -321,12 +346,15 @@ boundary embedding, native-input checks on generated inference inputs, and
 first-use work performed during corpus build belong to this timer. Build the
 corpus once; query repetitions do not rebuild it.
 
-**Example:** A completed build taking 80 seconds reports `80`, even if a later
-query fails. If the build itself fails after 30 seconds, completed build time is
-null/unavailable; retain the 30-second elapsed-to-failure observation separately.
+**Example:** A completed build taking 80 seconds reports `80`: that is the
+elapsed preparation cost of the searchable corpus, not just document embedding.
 
 **Range and direction:** Non-negative seconds; lower is better at equal quality.
-A failed build or missing/non-finite timer has no completed build-time value.
+
+**Edge cases and availability:**
+
+[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+See this page's [operational completion rules](#operational-performance-1).
 
 ### Corpus-Build Throughput
 
@@ -336,15 +364,26 @@ Corpus-build throughput divides the number of original source tokens in the
 frozen corpus by corpus-build wall-clock seconds. Original source tokens use the
 fixed evaluation tokenizer. Indexed-token occurrences are not used because
 overlap would otherwise reward a candidate for duplicating text.
+Use the unrounded completed duration.
+The required nonempty corpus is checked during
+[data validation](../../data-validation.md#chunking-and-embedding-inputs).
 
 **Example:** Preparing 100,000 source tokens in 80 seconds gives 1,250 source
 tokens/second, regardless of how many overlapping chunk-token occurrences were
 embedded.
 
 **Range and direction:** Non-negative source tokens/second; higher is better at
-equal quality. No completed build or a zero/invalid completed duration gives
-null/unavailable. Use the unrounded duration; do not substitute a tiny constant
-or report infinity. An empty required corpus fails data validation.
+equal quality.
+
+**Edge cases and availability:**
+
+| Edge case | Example | Value/status | Explanation |
+|---|---|---|---|
+| Completed build has zero measured duration | The retained, unrounded completed duration is `0` seconds. | `null` (`unavailable`) | The throughput denominator is zero. Do not substitute a tiny constant or report infinity. |
+
+[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+Incomplete builds and invalid timers follow the
+[operational completion rules](#operational-performance-1).
 
 ### p50 Warm Query Latency
 
@@ -359,13 +398,18 @@ full data validation and validated-input verification, and offline quality
 scoring are outside it.
 
 **Example:** Successful attempts of 20 and 24 milliseconds give a query
-observation of 22 milliseconds even if its third attempt fails. That failure's
-elapsed time remains a failure record, not a completed retrieval latency.
+observation of 22 milliseconds. Query observations of 10, 20, 30, 40, and 50
+milliseconds give p50 of 30 milliseconds: the typical successful query time,
+not an arithmetic mean of all measured attempts.
 
 **Range and direction:** Non-negative milliseconds; lower is better at equal
-quality. A query with no successful timed attempt has no completed latency.
-With no contributing query observations, p50 is null/unavailable. With one,
-p50 equals that observation. Missing required timing records are incomplete.
+quality.
+
+**Edge cases and availability:**
+
+[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+See the [successful-observation and percentile rules](#operational-performance-1)
+and [CI support requirements](#chunking-and-embedding-confidence-intervals).
 
 ### p95 Warm Query Latency
 
@@ -375,55 +419,58 @@ Use the same per-query successful-attempt medians as p50 and calculate their
 linearly interpolated 95th percentile. Do not pool repetitions as independent
 queries or include elapsed times from failed requests.
 
-**Example:** Query observations of 10, 20, 30, 40, and 50 milliseconds give p50
-of 30 and descriptive p95 of 48 milliseconds. With so few observations, the tail
-estimate is fragile; interval eligibility still follows the frozen independent-
-document support requirement, not the number of bootstrap draws.
+**Example:** Query observations of 10, 20, 30, 40, and 50 milliseconds have
+zero-based percentile position `(5 - 1) × 0.95 = 3.8`, giving
+`40 + 0.8 × (50 - 40) = 48` milliseconds. This describes the slow tail rather
+than the typical query; p50 is not a mean and does not replace p95.
 
 p99 is not reported in this phase. The vector-server load benchmark measures
 it under controlled concurrency; it is not part of this pair's metric contract.
 
 **Range and direction:** Non-negative milliseconds per query; lower is better at
-equal quality. With no observations, p95 is null/unavailable; with one, it equals
-that observation. Small samples retain descriptive percentiles, with null
-confidence bounds when independent support is insufficient. p50 is not a mean
-and does not replace p95.
+equal quality.
+
+**Edge cases and availability:**
+
+[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+See the [successful-observation and percentile rules](#operational-performance-1)
+and [CI support requirements](#chunking-and-embedding-confidence-intervals).
 
 ### Peak Process-Tree RAM
 
 **Question:** How much peak host memory does candidate execution require?
 
-Take the maximum simultaneous sampled resident-memory sum across the worker and
-its child processes. Do not add each process's independent peak. Monitoring
-starts before model loading, includes corpus build, warmup, and measured query
-execution, and stops before offline scoring and bootstrap analysis.
+Use [Peak Process-Tree RAM](../../metrics.md#peak-process-tree-ram). This suite's
+window starts before model loading, includes corpus build, warmup, and measured
+queries, and ends before offline scoring/bootstrap analysis.
 
 **Example:** A highest simultaneous process-tree sample of 2,800 MiB reports
-2,800 MiB. If execution stops early, retain the observed value with partial
-measurement scope rather than claiming completion of the whole workload.
+2,800 MiB, not the sum of separately observed process peaks.
 
 **Range and direction:** Non-negative MiB; lower is better at equal quality.
-No usable samples gives null/unavailable. Partial-window peaks retain their
-window, method, and failure reason in artifacts and the scope tag described in
-the [run structure](methodology.md#mlflow-result-structure).
+
+**Edge cases and availability:**
+
+[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+See the [resource-sampling and scope rules](#operational-performance-1).
 
 ### Peak Device VRAM
 
 **Question:** How much of the assigned GPU's memory is occupied at the peak?
 
-Use the shared raw NVML `memory.used` device-total contract over the same
-execution window. Record method, GPU identity, idle baseline, and samples;
-neither subtract the baseline nor infer model placement from this value.
+Use [Peak Device VRAM](../../metrics.md#peak-device-vram) over the same lifecycle
+window as this pair's RAM measurement.
 
-**Example:** An observed 2,900 MiB peak before an OOM remains 2,900 MiB with
-partial scope. It is the highest sampled value, not a promise that no higher
-allocation occurred between samples or that the remaining workload would fit.
+**Example:** An observed 2,900 MiB peak reports 2,900 MiB without subtracting
+the idle baseline. It is the highest sampled value, not a promise that no higher
+allocation occurred between samples.
 
 **Range and direction:** Non-negative MiB; lower is better at equal quality.
-CPU-only execution records null/inapplicable; missing required CUDA telemetry
-records null/unavailable, never zero. Preserve valid partial-window observations
-on failed children. A hardware-limit breach does not clamp or erase measured
-peaks; resource eligibility remains a separate gate.
+
+**Edge cases and availability:**
+
+[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+See the [resource-sampling and scope rules](#operational-performance-1).
 
 ## Workload and storage descriptors
 
@@ -437,21 +484,76 @@ label any observed inventory counts/summaries as partial in artifacts rather
 than presenting them as full-corpus totals. A missing inventory is unavailable,
 not an observed zero; a completed generation that produces no chunks records
 Chunk Count = 0 and an invalid empty-index outcome.
+Verified input counts remain known even if candidate execution later fails.
+An incomplete matrix's final payload size is null/unavailable: retain known
+progress in existing artifacts without introducing a partial-matrix-bytes metric.
+Missing measurements and records otherwise follow the
+[shared availability rules](../../metrics.md#shared-availability-rules).
 
 ### Corpus Counts
-
-**Question:** How many documents and questions does the frozen workload contain?
 
 Record document, answerable-question, and unanswerable-question counts
 separately. Only answerable questions enter this benchmark's retrieval-quality
 and query-latency evaluation; unanswerable questions retained in a shared input
 manifest are a workload count, not measured retrieval requests.
 
-**Example:** A manifest with 40 documents, 120 answerable questions, and 30
-unanswerable questions supplies 120 evaluated queries, not 150.
+#### Document Count
 
-**Range and direction:** Non-negative integer counts; descriptive. Verified
-input counts remain known even if candidate execution later fails.
+**Question:** How many documents does the frozen searchable corpus contain?
+
+Count the document records in the verified corpus once each. Documents remain
+searchable even when their questions are unanswerable; this is an input count,
+not the count of documents successfully processed by the candidate.
+
+**Example:** A corpus of 40 documents reports `40`, regardless of how many
+questions each document supplies. The count describes the searchable workload,
+not independent query or attempt support.
+
+**Range and direction:** Non-negative integer count; descriptive.
+
+**Edge cases and availability:**
+
+[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+See the [verified-workload and inventory rules](#workload-and-storage-descriptors-1).
+
+#### Answerable-Question Count
+
+**Question:** How many questions are scheduled for retrieval evaluation?
+
+Count the verified manifest's answerable questions once each, not once per
+measured repetition. These questions supply retrieval-quality and query-latency
+tasks; the count does not depend on how many requests later succeed.
+
+**Example:** A manifest with 120 answerable questions supplies `120` evaluated
+queries. Three measured attempts per query do not change this input count to
+360; attempts are separate execution records.
+
+**Range and direction:** Non-negative integer count; descriptive.
+
+**Edge cases and availability:**
+
+[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+See the [verified-workload and inventory rules](#workload-and-storage-descriptors-1).
+
+#### Unanswerable-Question Count
+
+**Question:** How many questions are retained for later stages but not executed
+in this phase?
+
+Count the verified manifest's unanswerable questions once each. This descriptor
+does not add retrieval requests or empty-reference quality comparisons.
+
+**Example:** A manifest with 120 answerable questions and 30 unanswerable
+questions reports an unanswerable count of `30` but supplies 120 evaluated
+queries, not 150. The descriptor explains the difference between the shared
+question inventory and this phase's workload.
+
+**Range and direction:** Non-negative integer count; descriptive.
+
+**Edge cases and availability:**
+
+[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+See the [verified-workload and inventory rules](#workload-and-storage-descriptors-1).
 
 ### Source Tokens
 
@@ -465,6 +567,11 @@ and is the numerator of Corpus-Build Throughput.
 tokens when a chunker repeats some text through overlap.
 
 **Range and direction:** Non-negative integer count; descriptive.
+
+**Edge cases and availability:**
+
+[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+See the [verified-workload and inventory rules](#workload-and-storage-descriptors-1).
 
 ### Indexed-Token Occurrences
 
@@ -481,6 +588,11 @@ work without inflating source-token throughput.
 
 **Range and direction:** Non-negative integer count; descriptive.
 
+**Edge cases and availability:**
+
+[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+See the [generated-inventory rules](#workload-and-storage-descriptors-1).
+
 ### Chunk Count
 
 **Question:** How many searchable passages does the strategy create?
@@ -491,9 +603,14 @@ the count therefore explains matrix size and exact-search work.
 **Example:** A strategy producing 800 chunks requires 800 chunk-vector rows in
 its complete matrix.
 
-**Range and direction:** Non-negative integer count; descriptive. Zero generated
-chunks is an observed count, not a successful empty index for the required
-nonempty workload.
+**Range and direction:** Non-negative integer count; descriptive.
+
+**Edge cases and availability:**
+
+[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+The [generated-inventory rules](#workload-and-storage-descriptors-1) distinguish
+a missing inventory from an observed zero count and preserve partial scope;
+an empty index is not an integrity-valid build.
 
 ### Mean Chunk Tokens
 
@@ -507,9 +624,16 @@ an arithmetic mean over chunks, not a document-macro score or configured target.
 `(100 + 200 + 300 + 400 + 500) / 5 = 300 tokens/chunk`.
 The mean summarizes average size but can hide long chunks.
 
-**Range and direction:** Non-negative token counts; descriptive. With no
-generated chunks, the mean is null/unavailable rather than zero; retain
-Chunk Count = 0 and the execution failure separately.
+**Range and direction:** Non-negative tokens/chunk; descriptive.
+
+**Edge cases and availability:**
+
+| Edge case | Example | Value/status | Explanation |
+|---|---|---|---|
+| No chunks to average | The completed generated inventory has Chunk Count = `0`. | `null` (`unavailable`) | The mean's denominator is zero; this is not an observed mean of zero tokens. |
+
+[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+See the [generated-inventory and partial-scope rules](#workload-and-storage-descriptors-1).
 
 ### p95 Chunk Tokens
 
@@ -524,10 +648,19 @@ way from `400` to `500`: `400 + 0.8 × 100 = 480 tokens`. The mean is `300`,
 so a mean alone would conceal the longer passages. An interpolated size need
 not be an integer even though each observed chunk length is an integer.
 
-**Range and direction:** Non-negative tokens; descriptive. No chunks means
-null/unavailable; one chunk makes p95 equal its length. Partial inventories
-remain labelled partial, not full-corpus summaries. Neither chunk-size summary
-receives a confidence interval.
+**Range and direction:** Non-negative tokens; descriptive.
+
+**Edge cases and availability:**
+
+| Edge case | Example | Value/status | Explanation |
+|---|---|---|---|
+| No chunk-length observations | The completed generated inventory has Chunk Count = `0`. | `null` (`unavailable`) | There is no size distribution from which to calculate p95, not a measured zero-token percentile. |
+
+[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+The [shared percentile convention](../../metrics.md#latency-percentiles)
+makes a single chunk's p95 equal its length. See the
+[generated-inventory and partial-scope rules](#workload-and-storage-descriptors-1)
+and [descriptor CI rules](#which-values-receive-an-interval).
 
 ### Embedding Dimension and Dtype
 
@@ -543,6 +676,10 @@ the resulting vectors are stored as FP32.
 
 **Range and direction:** Dimension is a positive integer; dtype is a parameter.
 Both are descriptive, not higher-is-better quality measures.
+
+**Edge cases and availability:**
+
+[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
 
 ### Embedding-Matrix Bytes
 
@@ -565,10 +702,13 @@ Matrix storage inconsistent with its declared shape, dtype, and storage format
 is an integrity failure. Raw payload checks must not be applied as exact
 file-size checks to a serialized or compressed artifact.
 
-**Range and direction:** Non-negative integer bytes; descriptive. If no complete
-matrix exists, its final payload size is null/unavailable. Record the build
-failure and known progress in existing artifacts; no partial-matrix-bytes metric
-is introduced.
+**Range and direction:** Non-negative integer bytes; descriptive.
+
+**Edge cases and availability:**
+
+[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+Only a complete matrix has a final payload-size observation; see the
+[storage-availability rules](#workload-and-storage-descriptors-1).
 
 ## Aggregation and comparison completeness
 
@@ -612,34 +752,18 @@ children enter normal comparisons and engineer advancement decisions.
 
 ### Calculation
 
-Development, validation, and locked use 10,000 bootstrap resamples with seed 42
-and the 2.5th and 97.5th percentiles as 95% bounds. These are calculations on
-saved records, not new inference. Resample complete source documents eligible
-for the metric/slice, retaining their question, first-ranking, timing, and
-failure records. Do not prefilter failed questions or treat repetitions as
-independent papers.
+Apply the [shared CI procedure](../../metrics.md#confidence-intervals) to complete
+source documents eligible for the metric/slice, carrying their question,
+first-ranking, timing, and failure records. Each quality draw recalculates the
+question-then-document macro statistic. Latency draws collect the sampled
+documents' per-query successful-attempt medians and recalculate p50/p95, not a
+macro-average of document latencies.
 
-Each draw recalculates the same question-then-document macro quality statistic.
-If a document is drawn twice, its result contributes twice; do not collapse
-drawn copies by source ID. Independent support counts refer to the original
-contributing documents, not the repeated copies or number of bootstrap draws.
-For latency, collect the sampled documents' per-query successful-attempt medians
-and recalculate p50/p95; do not substitute a macro-average of document latencies.
-Record defined and undefined draw counts per metric. Undefined draws are omitted
-only from that metric's bounds, not from saved records or other defined results.
-
-If the frozen minimum independent support is not met, keep any defined point
-estimate with null bounds and an insufficient-support reason. A single document
-cannot establish an interval by resampling it repeatedly. Slice/support
-thresholds are reviewed and frozen before held-out evaluation; the
+The shared support, undefined-draw, duplicate-draw, and degenerate-bound rules,
+including the [support-freeze deadline](../../metrics.md#confidence-intervals),
+apply. The
 [data-review checklist](../../pending-data-review.md#chunking-embedding-retrieval-and-generation)
 tracks those decisions.
-
-With sufficient support, identical bootstrap estimates retain their calculated
-bounds, such as `[0, 0]`, with a degeneracy flag. This means the observed
-resamples show no variation, not that future-document performance is certain.
-Null estimates or bounds remain null with their reason in artifacts; MLflow
-omits the corresponding scalar keys.
 
 ### Interpretation
 

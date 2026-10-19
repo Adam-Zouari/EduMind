@@ -39,9 +39,9 @@ the current source name and path.
 
 Production may request an optional cleanup profile. Extraction benchmarks request
 `normalization=none`, preserve candidate output, and use only the fixed prose
-scoring projection shared symmetrically by the reference and prediction:
-Unicode NFC, case-folding, punctuation-to-space replacement, and whitespace
-collapse. This projection compares text but does not clean stored output. Structured
+scoring [projection](../benchmarks/metrics.md#prose-scoring-projection) shared
+symmetrically by the reference and prediction. It compares text but does not
+clean stored output. Structured
 output canonicalization is a separate operation used only to make equivalent
 serialized objects stable for comparison, hashing, and caching.
 

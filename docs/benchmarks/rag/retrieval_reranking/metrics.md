@@ -105,7 +105,10 @@ automatically better and cannot compensate for worse quality.
 Only answerable questions with reviewed gold evidence are executed and scored.
 Unanswerable questions in a shared manifest are inventory for later stages,
 not empty-reference retrieval comparisons. Missing required evidence or invalid
-source intervals fail data validation before inference.
+source intervals fail [data validation](../../data-validation.md#chunking-and-embedding-inputs)
+before inference. The required canonical corpus and answerable-question
+allocation must be nonempty; missing required inputs fail preparation rather
+than supplying an empty retrieval comparison.
 
 A chunk covers a gold unit only when that single chunk contains all required
 half-open source intervals in the same canonical document. Token precision
@@ -113,25 +116,16 @@ instead counts source-token overlap: a fragment can contribute relevant tokens
 without recovering a complete unit.
 
 The four @3/@5 families use the
-[chunking/embedding definitions](../chunking_embedding/metrics.md#retrieval-quality-1).
+[shared retrieval-evidence definitions](../../metrics.md#retrieval-evidence-quality).
 Chunking/embedding candidates can create different corpora; here every stack
 shares the same complete frozen corpus and per-question normalization baselines.
 
 ### Attempts, failures, and integrity
 
-Quality uses the designated first measured ranking after warmup. Later attempts
-supply timing and ranking-consistency evidence, not extra quality scores.
-Later success never replaces a failed first ranking; later failure does not
-erase valid first-ranking quality.
-
-| Result | Value and treatment |
-|---|---|
-| Valid first ranking with no recovered evidence | Normal poor numeric quality scores. |
-| Failed first request or invalid first ranking | Applicable quality is null/unavailable; retain the error and planned support. |
-| Valid ranking but one metric cannot be evaluated | That metric is unavailable; preserve independently valid scores and the ranking for rescoring. |
-| Optional evidence slice has no eligible questions | Null/inapplicable aggregate. |
-| Eligible questions exist but none is scorable | Null/unavailable aggregate. |
-| Required execution or records are missing | Incomplete execution, not invented observations. |
+Quality uses the designated first measured ranking after warmup, with later
+attempts supplying timing and Ranking Repeatability. Apply the
+[shared availability/status rules](../../metrics.md#shared-availability-rules)
+to failed outputs, missing records, and task-free slices.
 
 Each reranker must receive the correct checksummed query pool and return exactly
 its chunk IDs once each, possibly in a different order. It cannot add, remove,
@@ -140,22 +134,16 @@ validated complete ranking, not an arbitrary subset. Nonfinite scores, silent
 truncation, invalid IDs, and unexpectedly empty/short rankings are integrity failures, not valid
 zero-quality outputs. Distinct IDs containing identical text remain legitimate;
 matching text does not make their source identities interchangeable.
+A ranking with no valid returned source tokens is likewise an output-integrity
+failure: token precision is null/unavailable, not a scored empty prediction.
+An upstream index required to be nonempty but producing zero chunks is invalid;
+retain the observed zero without calling it successful indexing.
 
 The expected pool length is min(20, frozen chunk count). A legitimately smaller
 corpus uses every available chunk without padding or renaming @3/@5. The smoke
 fixture has 30 chunks and therefore requires 20 results. Returning 12 when 100
 chunks exist is an integrity failure; returning all 12 when only 12 exist is not.
 
-| Status | Meaning |
-|---|---|
-| scored | Defined numeric result under the metric's contract. |
-| inapplicable | No task exists, such as learned-reranker latency without a reranker. |
-| unavailable | The task exists but an output, evaluation, or measurement is unavailable. |
-| incomplete | Required execution or records are absent. |
-| invalid_reference | Inputs violate the contract; repair before candidate execution. |
-
-Report scheduled, eligible, scored, failed, unavailable, and independent-source
-support. Nulls/reasons remain in JSON/Parquet; MLflow omits null scalar keys.
 A failed child may retain valid measurements but is not a complete selection
 result. Failure counts are validity evidence, not fabricated irrelevant chunks.
 
@@ -168,6 +156,15 @@ attempt's downstream work; shared invalid inputs also stop dependent work.
 Preserve independent completed measurements and safe independent execution,
 but do not accept the affected evaluation as complete authoritative evidence.
 
+See [what belongs in a metric's edge-case block](../../metrics.md#what-belongs-in-a-metrics-edge-case-block)
+for the separation between valid metric exceptions, rejected inputs, and
+runtime integrity failures.
+
+Build time and final index size require a verified complete index; incomplete
+preparation retains progress separately. Partial resource scope is stored in
+`resources.parquet`/`candidate.json` under the
+[shared resource rules](../../metrics.md#resource-measurements).
+
 ## Retrieval quality
 
 ### nDCG@3/@5
@@ -175,19 +172,15 @@ but do not accept the affected evaluation as complete authoritative evidence.
 **Question:** How early does the stack place chunks containing more required
 evidence?
 
-A chunk receives one point per distinct gold unit it completely contains. Use
-that count directly, not an exponential gain. Divide each gain by the base-two
-logarithm of its rank plus one, then sum inside the cutoff.
+Apply the [shared linear-gain nDCG rule](../../metrics.md#retrieval-evidence-quality)
+to the frozen chunk corpus. Its exact ideal is identical for every compared
+stack on that question, regardless of which top-20 pool was retrieved.
 
 In plain language:
 
     discounted evidence gain of the returned ranking
     ------------------------------------------------
      discounted evidence gain of the ideal ranking
-
-The exact ideal sorts gains over every chunk in the complete frozen corpus,
-using the same cutoff/discount. It is never derived from a retrieved pool.
-Repeated evidence retains its relevance credit in each distinct chunk.
 
 **Example:** The only evidence-bearing chunks have gains 3 and 1. At @3,
 ideal gains [3, 1, 0] give discounted gain about 3.631. Order [1, 3, 0]
@@ -197,14 +190,19 @@ If ranks 4 and 5 add zero gain and the ideal also has no further positive gain,
 the same example gives approximately 0.80 at @5.
 
 This is primary because the benchmark compares relevance ordering. Repeated
-relevant chunks are not automatically ranking errors.
+relevant chunks are not automatically ranking errors. A valid ranking with no
+complete evidence scores zero when the ideal gain is positive. A substantive
+nDCG above one is a scoring-integrity error, not a value to clamp.
 
-**Range and direction:** [0, 1]; higher is better. Valid rankings containing
-no complete evidence get zero. If no valid corpus chunk contains any complete
-required unit, follow the chunking/embedding zero-ideal convention: zero with
-the shared upstream-fragmentation limitation recorded. Corrupt annotations and
-evaluator errors are not zero-ideal cases. Failed first rankings are unavailable.
-A substantive nDCG above one is a scoring-integrity error, not a value to clamp.
+**Range and direction:** [0, 1]; higher is better.
+
+**Edge cases and availability:**
+
+| Edge case | Example | Value/status | Explanation |
+|---|---|---|---|
+| Zero ideal gain in a valid frozen corpus | Gold evidence exists, but every chunk fragments it and contains no complete unit. | `0` (`scored`), with the shared upstream-fragmentation limitation recorded. | Apply the [shared zero-ideal convention](../../metrics.md#retrieval-evidence-quality). |
+
+[Shared availability rules](../../metrics.md#shared-availability-rules) apply.
 
 ### Evidence-unit Recall@3/@5
 
@@ -212,7 +210,8 @@ A substantive nDCG above one is a scoring-integrity error, not a value to clamp.
 cutoff?
 
 Count a unit once when at least one selected chunk completely contains it.
-Position within the cutoff and repeated copies add no credit.
+Position within the cutoff and repeated copies add no credit. Eligible
+questions always have reviewed gold units, so the denominator is positive.
 
 In plain language:
 
@@ -224,22 +223,24 @@ In plain language:
 If ranks 4 and 5 add a second, Recall@5 is about 0.67.
 
 This is primary because a convincing early ranking can still omit evidence
-needed for a complete answer.
+needed for a complete answer. No recovered units gives zero normally.
 
-**Range and direction:** [0, 1]; higher is better. No recovered units gives
-zero normally. Eligible questions always have gold units; missing annotations
-fail data validation. Failed first rankings are unavailable.
+**Range and direction:** [0, 1]; higher is better.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[retrieval eligibility and integrity](#scoring-inputs-and-result-status).
 
 ### Evidence-token Precision@3/@5
 
 **Question:** What share of returned source-token occurrences is verified
 evidence?
 
-Measure canonical chunk text using tiktoken:cl100k_base. A token occurrence is
-relevant when its source span has positive overlap with a gold evidence interval
-in the same document. Count it once despite overlapping gold intervals. Text
-returned through different chunks counts again in numerator and denominator.
-Native model prefixes and special inference tokens are not source content.
+Apply the [shared evidence-token counting rule](../../metrics.md#retrieval-evidence-quality)
+to canonical text in the final @3/@5 prefixes. This counts returned source-token
+occurrences, not native reranker inputs or distinct evidence units.
 
 In plain language:
 
@@ -254,12 +255,17 @@ The remaining 60% is additional context not labelled as
 evidence, not necessarily false text.
 
 This is primary because high nDCG and recall do not establish concentrated
-context.
+context. Valid returned text with no relevant tokens gives zero; an invalid
+returned-token denominator follows the page-wide
+[output-integrity rules](#attempts-failures-and-integrity).
 
-**Range and direction:** [0, 1]; higher is better. Valid returned text with
-no relevant tokens gives zero. No valid returned tokens is an output-integrity
-failure and gives null/unavailable, not a scored empty prediction. Failed first
-rankings are unavailable.
+**Range and direction:** [0, 1]; higher is better.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[retrieval eligibility and integrity](#scoring-inputs-and-result-status).
 
 ### alpha-nDCG@3/@5
 
@@ -276,9 +282,8 @@ In plain language:
     ------------------------------------------------
     discounted novelty gain of the greedy baseline
 
-The baseline uses the complete frozen corpus. At each rank choose the unused
-chunk with the largest remaining novelty gain; ties follow frozen corpus order.
-This deterministic greedy baseline is not guaranteed to be the exact maximum.
+The [shared greedy baseline](../../metrics.md#retrieval-evidence-quality) uses
+the complete frozen corpus and is the same for every stack on the question.
 
 **Example:** Chunks cover E1, E1, and E2. At @3, order E1, E1, E2 gives gain
 about 1.815; greedy order E1, E2, E1 gives about 1.881. Their ratio is
@@ -290,14 +295,21 @@ and baseline; @3 and @5 are calculated separately.
 
 This diagnostic adds a novelty preference. It does not establish that repeated
 evidence is irrelevant or harms answers. Single-unit questions remain eligible.
-
-**Range and direction:** [0, 1]; higher is better. No complete unit anywhere
-in the valid corpus gives zero under the zero-baseline convention. Otherwise cap
-the reported ratio at one and retain the uncapped ratio and greedy-baseline-
-exceeded flag when capping occurs, as in chunking/embedding. Exceeding a greedy
-baseline is not itself evaluation failure. Failed first rankings or evaluator
-errors are unavailable. The development-only exact-normalization review is in
+The development-only exact-normalization review is in
 [pending-data-review](../../pending-data-review.md).
+
+**Range and direction:** [0, 1]; higher is better.
+
+**Edge cases and availability:**
+
+| Edge case | Example | Value/status | Explanation |
+|---|---|---|---|
+| Zero greedy-baseline gain in a valid corpus | No corpus chunk contains any complete required unit. | `0` (`scored`), under the zero-baseline convention. | Follow the shared upstream-fragmentation convention rather than dividing by zero. |
+| A valid ranking exceeds the greedy baseline | The uncapped novelty-gain ratio is `1.02`. | Report `1` (`scored`); retain `1.02` and the greedy-baseline-exceeded flag. | The deterministic greedy denominator is not a guaranteed maximum; exceeding it is not itself evaluation failure. |
+
+These conventions match [chunking/embedding](../chunking_embedding/metrics.md#retrieval-quality-1).
+[Shared availability rules](../../metrics.md#shared-availability-rules) apply
+to failed rankings or evaluations.
 
 ### Candidate-pool Evidence-unit Recall@20
 
@@ -322,11 +334,17 @@ children reference that pool collection instead of copying its diagnostic.
 When no owner child is evaluated, retain the prepared pool observation without
 inventing a baseline run.
 
+Eligible questions have a positive gold-unit denominator. A valid pool with
+no recovered evidence scores zero. A legitimate corpus smaller than 20 uses
+its complete available pool; record requested depth and actual size separately.
+
 **Range and direction:** [0, 1]; higher is better as a diagnostic ceiling.
-Valid pools with no recovered evidence get zero. Missing, invalid, or unverified
-pools are unavailable. Downstream reranker failure does not erase a valid
-pool-owner measurement. A legitimate corpus smaller than 20 uses its complete
-available pool, with the requested depth and actual size recorded separately.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[pool verification and result status](#attempts-failures-and-integrity).
 
 ## Ranking consistency
 
@@ -335,10 +353,9 @@ available pool, with the requested depth and actual size recorded separately.
 **Question:** How often do identical requests reproduce the complete valid
 chunk ordering?
 
-Compare every unordered pair of measured attempts: (1,2), (1,3), and (2,3)
-for three attempts. Compare the complete ordered result, normally 20 IDs or all
-available IDs for a legitimately smaller corpus. A pair agrees only when both
-attempts are valid and all IDs have the same positions. Floating-point scores
+Apply [pairwise repeatability](../../metrics.md#pairwise-repeatability) to the
+complete ordered result, normally 20 IDs or all available IDs for a legitimately
+smaller corpus. All IDs must have the same positions; floating-point scores
 need not be bit-identical.
 
 In plain language:
@@ -366,9 +383,16 @@ Unlike chunking/embedding's top-five check, this examines the reranker's full
 input/output ordering and can expose changes hidden below rank five.
 
 **Range and direction:** [0, 1]; higher is more repeatable, not necessarily more
-relevant. One-attempt smoke is
-null/inapplicable. Missing/unexecuted required outcomes are incomplete, not
-invented disagreements or a favorable surviving-only rate.
+relevant.
+
+**Edge cases and availability:**
+
+| Edge case | Example | Value/status | Explanation |
+|---|---|---|---|
+| One-attempt smoke | One measured ranking, hence no scheduled pair. | `null` (`inapplicable`). | A single attempt cannot measure pairwise ranking repeatability. |
+
+Availability follows the shared
+[pairwise-repeatability contract](../../metrics.md#pairwise-repeatability).
 
 ## Why the quality metrics are not interchangeable
 
@@ -395,13 +419,11 @@ warmup, and offline quality/CI calculations are outside warm query timing.
 
 For every latency family, take each query's median successful completed
 component/request duration, then calculate percentiles across query observations
-with linear interpolation. Failed elapsed times remain artifacts, not completed
-latency. Keep support per component: retrieval can complete before its reranker
-fails.
-
-For n sorted query observations, the zero-based percentile position is
-(n - 1) × p, where p is 0.50 or 0.95. Interpolate adjacent observations when
-the position is fractional; do not round the position to a measured request.
+using the [shared percentile calculation](../../metrics.md#latency-percentiles).
+Keep support per component: retrieval can complete before its reranker fails.
+Interval applicability is listed under
+[aggregation and confidence intervals](#aggregation-and-confidence-intervals);
+p99 belongs to the separate vector-server load experiment.
 
 ### Full-Stack Warm Latency p50
 
@@ -421,8 +443,13 @@ third attempt fails.
 This is deployable warm-request cost, not the cost of replaying a quality pool.
 
 **Range and direction:** Non-negative milliseconds; lower is better at equal
-quality. No completed timed queries gives null/unavailable. One observation
-gives that observation as p50. Missing/nonfinite timers are unavailable.
+quality.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[warm-latency observation rules](#operational-performance-1).
 
 ### Full-Stack Warm Latency p95
 
@@ -434,9 +461,13 @@ Use the same query observations as p50 and calculate their 95th percentile.
 at position 3.8: 40 + 0.8 × (50 - 40) = 48 ms, not the maximum or an average.
 
 **Range and direction:** Non-negative milliseconds; lower is better at equal
-quality. No observations is unavailable; one gives that observation. Small
-samples retain descriptive points without unsupported CI bounds. p95 is not a
-95% confidence bound. p99 belongs to the vector-server load experiment.
+quality.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[warm-latency observation rules](#operational-performance-1).
 
 ### Retrieval Warm Latency p50
 
@@ -453,10 +484,16 @@ In plain language:
 
 **Example:** Retrieval observations 4, 6, and 8 ms give p50 6 ms.
 Retrieval completed in 8 ms remains known if its downstream reranker fails.
+Component support does not establish full-stack success.
 
 **Range and direction:** Non-negative milliseconds; lower is better at equal
-quality. No completed retrieval timing is unavailable. Component support does
-not establish full-stack success.
+quality.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[warm-latency observation rules](#operational-performance-1).
 
 ### Retrieval Warm Latency p95
 
@@ -465,11 +502,17 @@ not establish full-stack success.
 Calculate p95 from the same per-query retrieval observations used for its p50.
 
 **Example:** Observations 4, 6, and 8 ms give position 1.9:
-6 + 0.9 × (8 - 6) = 7.8 ms.
+6 + 0.9 × (8 - 6) = 7.8 ms. This summarizes the slow tail of retrieval,
+not the difference between full-stack and reranker percentiles.
 
 **Range and direction:** Non-negative milliseconds; lower is better at equal
-quality. The same unavailable/support rules apply as full-stack latency.
-Do not derive it by subtracting reranker p95 from full-stack p95.
+quality.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[warm-latency observation rules](#operational-performance-1).
 
 ### Reranker Warm Latency p50
 
@@ -483,11 +526,21 @@ In plain language:
     p50 of per-query median successful reranking durations
 
 **Example:** Observations 20, 30, and 40 ms give p50 30 ms.
+This is the learned component's complete warm cost, not just its model-forward
+pass or full-stack latency minus retrieval's median.
 
 **Range and direction:** Non-negative milliseconds; lower is better at equal
-quality. No-reranker stacks are null/inapplicable and omit the scalar.
-Failed/never-started reranking has unavailable completed latency, not zero.
-No completed observations makes the aggregate unavailable.
+quality.
+
+**Edge cases and availability:**
+
+| Edge case | Example | Value/status | Explanation |
+|---|---|---|---|
+| No learned reranker | `dense\|none`. | `null` (`inapplicable`); omit the scalar. | The stack has no learned-reranking task; its cost is not a measured zero. |
+
+[Shared availability rules](../../metrics.md#shared-availability-rules) and
+[warm-latency observation rules](#operational-performance-1) apply when a
+reranker exists but completed timings are unavailable.
 
 ### Reranker Warm Latency p95
 
@@ -496,12 +549,21 @@ No completed observations makes the aggregate unavailable.
 Calculate p95 over the same query observations as its p50.
 
 **Example:** Observations 20, 30, and 40 ms give position 1.9:
-30 + 0.9 × (40 - 30) = 39 ms.
+30 + 0.9 × (40 - 30) = 39 ms. This describes the reranker's slow tail,
+not a bound on the complete stack's tail.
 
 **Range and direction:** Non-negative milliseconds; lower is better at equal
-quality. No reranker is inapplicable; no completed observations is unavailable.
-Keep component support and failed elapsed times. Component percentiles need not
-sum to the full-stack percentile.
+quality.
+
+**Edge cases and availability:**
+
+| Edge case | Example | Value/status | Explanation |
+|---|---|---|---|
+| No learned reranker | `bm25\|none`. | `null` (`inapplicable`); omit the scalar. | There is no learned-reranking latency distribution to summarize. |
+
+[Shared availability rules](../../metrics.md#shared-availability-rules) and
+[warm-latency observation rules](#operational-performance-1) apply when a
+reranker exists but completed timings are unavailable.
 
 ### Cold Initialization Time
 
@@ -529,43 +591,57 @@ Initialization elapsed is 17.2 seconds; Cold Initialization Time is
 Do not describe the five-second scalar as the full 17.2-second first readiness
 wait, or count offline build again as part of cold loading.
 
-**Range and direction:** Non-negative seconds; lower is better. Failure
-before readiness is unavailable, with elapsed-to-setup-failure retained.
-Successful readiness survives later inference failure. One observation has no CI.
+BM25 without a learned model still has runtime initialization; model absence
+does not imply zero initialization time.
 Negative or nonfinite derived time is an unavailable instrumentation error,
-not a value to clamp to zero. BM25 without a learned model still has runtime
-initialization; model absence does not imply zero initialization time.
+not a value to clamp to zero.
+
+**Range and direction:** Non-negative seconds; lower is better.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[completed-measurement status rules](#attempts-failures-and-integrity).
 
 ### Peak Process-Tree RAM
 
 **Question:** What peak host memory does the complete stack occupy?
 
-At each sample sum resident memory of the worker and living child processes.
-Take the largest simultaneous total, not the sum of independent process peaks.
-Monitor loading, index preparation, warmup, and measured queries, excluding
-offline scoring/bootstrap calculations.
+Use [Peak Process-Tree RAM](../../metrics.md#peak-process-tree-ram). This stack's
+window includes loading, index preparation, warmup, and measured queries,
+excluding offline scoring/bootstrap calculations.
 
 **Example:** Totals 1,200, 2,800, and 2,100 MiB give peak 2,800 MiB.
 
 **Range and direction:** Non-negative MiB; lower is better at equal quality.
-No samples is unavailable. Preserve observed peaks after failure with partial
-lifecycle scope in resources.parquet/candidate.json; they do not establish
-that the remaining workload would fit.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[resource-window status rules](#attempts-failures-and-integrity).
 
 ### Peak Device VRAM
 
 **Question:** What peak total GPU memory is occupied during candidate execution?
 
-Take the largest raw NVML memory.used sample on the assigned GPU. Record
-method, GPU identity, idle baseline, and samples; do not subtract the baseline
-or infer model placement from this value.
+Use [Peak Device VRAM](../../metrics.md#peak-device-vram) over the same candidate
+lifecycle as this stack's RAM measurement.
 
 **Example:** Samples 700, 2,100, and 1,900 MiB give peak 2,100 MiB.
 
 **Range and direction:** Non-negative MiB; lower is better at equal quality.
-CPU execution is null/inapplicable; missing required CUDA telemetry is
-null/unavailable, never zero. Preserve peaks after OOM/hardware-gate failure
-with partial scope, without clamping to the protocol cap. One peak has no CI.
+
+**Edge cases and availability:**
+
+| Edge case | Example | Value/status | Explanation |
+|---|---|---|---|
+| CPU-only execution | CPU smoke without an assigned GPU. | `null` (`inapplicable`). | No GPU-memory task exists; this differs from a missing CUDA measurement. |
+
+[Shared availability rules](../../metrics.md#shared-availability-rules) govern
+missing required CUDA telemetry (`null/unavailable`) and
+[partial resource windows](#attempts-failures-and-integrity).
 
 ### Index Build Time — Dense
 
@@ -584,9 +660,13 @@ the Dense owner, normally dense|none. Reranked children reference the same
 observation. If no baseline child is evaluated, the preparation input artifact
 owns the observation; no baseline run is invented.
 
-**Range and direction:** Non-negative seconds; lower is better. Failed builds
-have unavailable completed time, with elapsed-to-failure retained. Completed
-builds survive later failures. One build has no CI.
+**Range and direction:** Non-negative seconds; lower is better.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[completed-build status rules](#attempts-failures-and-integrity).
 
 ### Index Build Time — BM25
 
@@ -608,13 +688,34 @@ Both independent owners use the same `operational.index_build_seconds` key.
 RRF's `index_build.json` references their separate observations; it does not
 copy component build scalars or invent a combined third build time.
 
-**Range and direction:** Non-negative seconds; lower is better. Failed builds
-are unavailable; completed builds survive later failure. One build has no CI.
+**Range and direction:** Non-negative seconds; lower is better.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[completed-build status rules](#attempts-failures-and-integrity).
 
 ## Workload descriptors
 
 Verified input counts remain known after failure. Actual generated or measured
 quantities keep their own availability and complete/partial scope.
+
+Incomplete pool collections retain observed diagnostics and planned/observed
+query support, not a complete collection result. Keep missing/unexecuted
+queries separate from actually emitted empty pools and from observed
+short-pool counts. An emitted empty pool has observed size zero but is invalid
+output; preserve its row and duplicate-ID errors rather than confusing it with
+a missing pool.
+
+Selected-context counts require valid first rankings and successful token
+counting. A failed count is unavailable; a partial set is a labelled workload
+diagnostic. Complete counts survive later offline quality-evaluator failure.
+For native reranker-input counts, only a fully tokenized pool supplies a
+complete query total. Prepared totals survive later inference failure without
+implying that all pairs completed inference. Retain known native lengths when
+rejecting oversized inputs; never truncate to make a complete pool fit. Keep
+prepared-input counts and completed-pair outcomes distinguishable in artifacts.
 
 ### Inventory and pool diagnostics
 
@@ -633,8 +734,13 @@ not returned chunks.
 **Example:** A corpus of 100 papers reports 100 even if execution later fails
 before its first query.
 
-**Range and direction:** Non-negative integer; descriptive. Missing required
-inputs fail preparation rather than supplying a valid empty corpus.
+**Range and direction:** Non-negative integer; descriptive.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[verified-inventory status rules](#workload-descriptors-1).
 
 #### Answerable Query Count
 
@@ -645,10 +751,16 @@ Unanswerable shared-manifest questions are not timed or scored here.
 
 **Example:** 120 questions with three attempts mean 120 queries and 360
 scheduled attempts, not necessarily 360 successful requests.
+Preserve processed/successful/failed/unexecuted counts separately; an absent
+required allocation is rejected under [input prerequisites](#evidence-and-cutoffs).
 
-**Range and direction:** Non-negative integer; descriptive. Preserve
-processed/successful/failed/unexecuted counts separately. Missing required
-answerable allocation is invalid input, not perfect empty-reference quality.
+**Range and direction:** Non-negative integer; descriptive.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[verified-inventory status rules](#workload-descriptors-1).
 
 #### Chunk Count
 
@@ -659,9 +771,13 @@ queries. Distinct IDs can legitimately contain identical text.
 
 **Example:** 800 chunks remain 800 when 100 queries each produce 20 results.
 
-**Range and direction:** Non-negative integer; descriptive. A required
-nonempty index producing zero chunks is invalid; retain observed zero without
-calling it successful indexing.
+**Range and direction:** Non-negative integer; descriptive.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[index-integrity prerequisites](#attempts-failures-and-integrity).
 
 #### Requested Pool Size
 
@@ -673,6 +789,12 @@ Record the protocol depth, currently 20, separately from actual production.
 retain the observed short pool and failure separately.
 
 **Range and direction:** Positive integer; descriptive execution control.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[verified-inventory status rules](#workload-descriptors-1).
 
 #### Mean Actual Pool Size
 
@@ -689,11 +811,13 @@ In plain language:
 With at least 20 searchable chunks, the last pool violates the output contract.
 If the entire corpus has 12 chunks, every valid pool instead has size 12.
 
-**Range and direction:** Non-negative chunks/query; descriptive. No produced
-pool is unavailable, not zero. Incomplete collections retain a partial
-diagnostic and planned/observed query support, not a complete collection result.
-An actually emitted empty pool has observed size zero but is invalid output;
-keep its row/duplicate-ID errors rather than confusing it with a missing pool.
+**Range and direction:** Non-negative chunks/query; descriptive.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[pool-diagnostic status rules](#workload-descriptors-1).
 
 #### Minimum Actual Pool Size
 
@@ -704,8 +828,13 @@ Take the minimum of the same per-query counts.
 **Example:** Sizes 20, 20, and 12 give minimum 12, exposing a short pool
 that an average alone can obscure.
 
-**Range and direction:** Non-negative integer; descriptive. No produced pools
-is unavailable. Incomplete collections retain partial scope.
+**Range and direction:** Non-negative integer; descriptive.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[pool-diagnostic status rules](#workload-descriptors-1).
 
 #### Short-Pool Query Count
 
@@ -718,10 +847,15 @@ zero-sized observations; retain missing/unexecuted queries separately.
 With 100 corpus chunks that is an integrity failure, not weak relevance.
 With only 12 corpus chunks, pools of 12 are short relative to the requested
 depth but complete relative to the available corpus; retain that distinction.
+A complete collection without short pools gives zero.
 
-**Range and direction:** Non-negative integer; descriptive. A complete
-collection without short pools gives zero. Partial collections retain their
-observed count and missing-query accounting rather than a complete total.
+**Range and direction:** Non-negative integer; descriptive.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[pool-diagnostic status rules](#workload-descriptors-1).
 
 ### Mean Retrieved Context Tokens@3/@5
 
@@ -743,26 +877,33 @@ and 1,200: mean (600 + 900 + 1,200) / 3 = 900 tokens/query.
 Each cutoff describes its own selected context. This imposes no token budget
 and is not inherently better when smaller.
 
-**Range and direction:** Non-negative tokens/query; descriptive. Failed first
-rankings have unavailable counts. No contributing ranking is unavailable;
-a partial set is a labelled workload diagnostic.
-Counting failure makes the affected count unavailable. A complete count remains
-known if a later offline quality evaluator fails.
+**Range and direction:** Non-negative tokens/query; descriptive.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[token-count status rules](#workload-descriptors-1).
 
 ### p95 Retrieved Context Tokens@3/@5
 
 **Question:** How large is the long tail of selected context sizes?
 
 Calculate the interpolated p95 of the same per-query totals.
+Use the [shared percentile calculation](../../metrics.md#latency-percentiles).
 
 **Example:** The @3 totals 400, 600, and 800 give position 1.9 and
 600 + 0.9 × (800 - 600) = 780 tokens. The @5 totals 600, 900, and 1,200
 give 900 + 0.9 × (1,200 - 900) = 1,170 tokens. These are context-size
 statistics rather than latency or correctness.
 
-**Range and direction:** Non-negative tokens/query; descriptive. No complete
-observations is unavailable; one gives that observation. Fixed-workload
-descriptors receive no invented CI.
+**Range and direction:** Non-negative tokens/query; descriptive.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[token-count status rules](#workload-descriptors-1).
 
 ### Candidate-Pool Tokens@20
 
@@ -779,11 +920,18 @@ exact permutation still totals 6,000; selecting the final five might total
 context. Native reranker templates and the repeated query belong to Reranker
 Input Tokens, not this source-text count.
 
-**Range and direction:** Non-negative tokens/query; descriptive. A valid smaller
-corpus counts its actual pool. No complete verified pool gives an unavailable
-complete count; retain partial progress separately. A complete pool count
-survives later reranker failure. Aggregate from saved fields when needed rather
-than duplicating it as a separate Mean Retrieved Tokens@20 metric.
+A valid smaller corpus counts its actual pool. Aggregate from saved fields when
+needed rather than duplicating it as a separate Mean Retrieved Tokens@20 metric.
+Only a complete verified pool supplies a complete count; partial progress
+remains an artifact diagnostic.
+
+**Range and direction:** Non-negative tokens/query; descriptive.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[pool-verification rules](#attempts-failures-and-integrity).
 
 ### Mean Reranker Input Tokens
 
@@ -805,25 +953,40 @@ question and hides total request workload.
 This is not the fixed source tokenizer used by Evidence-token Precision.
 The same passage can have different native lengths for different rerankers.
 
-**Range and direction:** Non-negative tokens/query; descriptive. No learned
-reranker is inapplicable. Partially tokenized pools have no complete total.
-Fully prepared totals can survive later inference failure, but do not imply
-that all pairs completed inference.
-Retain known native lengths when rejecting oversized inputs; do not truncate
-to make a complete pool fit. A partial pool total is not a complete query total.
+**Range and direction:** Non-negative tokens/query; descriptive.
+
+**Edge cases and availability:**
+
+| Edge case | Example | Value/status | Explanation |
+|---|---|---|---|
+| No learned reranker | `rrf\|none`. | `null` (`inapplicable`); omit the scalar. | No native reranker template or tokenizer workload is prepared. |
+
+[Shared availability rules](../../metrics.md#shared-availability-rules) and
+[prepared-input status rules](#workload-descriptors-1) apply when a reranker
+exists but complete token totals are unavailable.
 
 ### p95 Reranker Input Tokens
 
 **Question:** How large is the native-input workload for expensive queries?
 
 Calculate p95 over complete per-query sums, not all pairs pooled globally.
+Use the [shared percentile calculation](../../metrics.md#latency-percentiles).
 
 **Example:** Totals 2,000, 2,400, and 4,000 give position 1.9 and
-2,400 + 0.9 × (4,000 - 2,400) = 3,840 tokens/query.
+2,400 + 0.9 × (4,000 - 2,400) = 3,840 tokens/query. This describes the
+tail of prepared per-query workload, not the largest individual pair length.
 
-**Range and direction:** Non-negative tokens/query; descriptive. No reranker
-is inapplicable; no complete totals is unavailable. Prepared-input counts and
-completed-pair outcomes remain distinguishable in artifacts.
+**Range and direction:** Non-negative tokens/query; descriptive.
+
+**Edge cases and availability:**
+
+| Edge case | Example | Value/status | Explanation |
+|---|---|---|---|
+| No learned reranker | `dense\|none`. | `null` (`inapplicable`); omit the scalar. | No native reranker-input distribution exists to summarize. |
+
+[Shared availability rules](../../metrics.md#shared-availability-rules) and
+[prepared-input status rules](#workload-descriptors-1) apply when a reranker
+exists but complete token totals are unavailable.
 
 ## Storage descriptors
 
@@ -849,11 +1012,15 @@ For raw matrices, bytes must agree with shape and dtype. For serialized state,
 validate the declared format and included components as well: a `.npy` header
 is not a payload-integrity error. A contradictory shape, dtype, or storage
 manifest is an integrity failure, not a valid unusually small index.
+Rerankers reference the owner rather than claiming separately built copies.
 
-**Range and direction:** Non-negative bytes; descriptive. Incomplete/unverified
-state has unavailable final size, with progress retained in artifacts. A
-verified index's size survives later query failure. Rerankers reference the
-owner rather than claiming separately built copies.
+**Range and direction:** Non-negative bytes; descriptive.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[verified-index status rules](#attempts-failures-and-integrity).
 
 ### Index Size — BM25
 
@@ -867,11 +1034,24 @@ and 100,000 bytes of another totals 500,000 bytes. Report 500,000 on the BM25
 owner; do not copy the Dense owner's 3,200,000 bytes or add it to pure BM25.
 
 This separates the disk/search-state cost of lexical and semantic retrieval.
-**Range and direction:** Non-negative bytes; descriptive. Unfinished/unverified
-state is unavailable as a completed index; verified size survives later failure.
 RRF references this state alongside Dense rather than creating a third copy.
 
+**Range and direction:** Non-negative bytes; descriptive.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[verified-index status rules](#attempts-failures-and-integrity).
+
 ### Index Size — RRF and component sizes
+
+RRF's storage values describe dependencies, not a third index. RRF creates no
+additional persistent search index, so no constant-zero incremental-index
+metric is reported. Query-time buffers belong to execution memory; saved pools
+are artifacts rather than search indexes.
+
+#### Index Size — RRF
 
 **Question:** How much index storage must exist for RRF to operate?
 
@@ -886,13 +1066,58 @@ RRF reports Index Size 15,000,000, Dense Index Size 12,000,000, and BM25
 Index Size 3,000,000 bytes. The breakdown references the same verified source
 observations rather than independently remeasuring or counting them twice.
 
-**Range and direction:** Non-negative bytes; descriptive. A missing required
-dependency makes the complete total unavailable, not the remaining index's size.
-Preserve the known component size separately.
-This is dependency storage, not a third index.
-RRF creates no additional persistent search index, so no constant-zero
-incremental-index metric is reported. Query-time buffers belong to execution
-memory; saved pools are artifacts rather than search indexes.
+Both verified component-size measurements are required for the complete total.
+If either is missing, the total is unavailable, not the remaining index's size;
+preserve the known component size separately.
+
+**Range and direction:** Non-negative bytes; descriptive.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[verified-index status rules](#attempts-failures-and-integrity).
+
+#### Dense Index Size — RRF
+
+**Question:** How much of RRF's required index storage belongs to Dense?
+
+Reference the verified Dense owner's complete searchable-state byte count,
+using the same declared representation and measurement boundary. Do not count
+it again as an independently built RRF index.
+
+**Example:** Dense state of 12,000,000 bytes gives Dense Index Size
+12,000,000 bytes on RRF, even when its BM25 dependency adds 3,000,000 bytes
+to the total. This identifies the semantic dependency's share, not RRF's
+incremental storage.
+
+**Range and direction:** Non-negative bytes; descriptive.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[verified-index status rules](#attempts-failures-and-integrity).
+
+#### BM25 Index Size — RRF
+
+**Question:** How much of RRF's required index storage belongs to BM25?
+
+Reference the verified BM25 owner's complete searchable-state byte count,
+using its declared lexical representation. Do not substitute Dense bytes or
+remeasure a supposed third index.
+
+**Example:** BM25 state of 3,000,000 bytes gives BM25 Index Size
+3,000,000 bytes on RRF, separately from the 12,000,000-byte Dense dependency.
+This identifies lexical storage without counting the same state twice.
+
+**Range and direction:** Non-negative bytes; descriptive.
+
+**Edge cases and availability:**
+
+Shared availability rules apply. See the
+[shared rules](../../metrics.md#shared-availability-rules) and
+[verified-index status rules](#attempts-failures-and-integrity).
 
 Model snapshot size is preparation metadata (`snapshot_size_bytes`) in the model
 lock, not a per-candidate benchmark metric. See the
@@ -954,22 +1179,15 @@ later failed attempt while the candidate still fails run-level validity.
 
 ### Calculation
 
-Development, validation, and locked use 10,000 source-document bootstrap draws
-with replacement, seed 42. Recalculate each metric's own statistic; the 2.5th
-and 97.5th percentiles give 95% bounds. Draw from the reference-eligible source
-inventory with failure/unavailable records, not only successful questions.
-If a document is drawn twice, its observations contribute twice. Repetitions
-are not independent documents.
-
-Record defined/undefined draws per metric. Exclude an undefined draw only from
-that metric's bounds, not saved records or other defined metrics. Below frozen
-independent support, retain defined points with null bounds and reasons.
-Supported equal bounds such as [0, 0] remain with degeneracy flags, not claims
-of certainty about future documents.
+Apply the [shared CI procedure](../../metrics.md#confidence-intervals) to the
+reference-eligible source-document inventory and its complete query/failure
+records. Recalculate document-macro quality and pool recall; latency draws use
+the sampled documents' query-level successful-attempt medians before calculating
+each component's percentile. The shared support, undefined-draw, paired-draw,
+and degenerate-bound rules apply.
 
 **Example:** nDCG@5 0.84 with CI [0.79, 0.88] describes the observed macro
 score and source-sampling uncertainty, not individual-question score ranges.
-Ten thousand draws perform saved-record arithmetic, not new inference.
 
 Paired comparisons use the same source draws for both complete valid candidates.
 Their schemas and CSV/Parquet artifacts belong in the

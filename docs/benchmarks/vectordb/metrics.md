@@ -26,24 +26,17 @@ measured results or server-selection evidence.
 
 ## Reading the results
 
-Reference eligibility is fixed before execution. Distinguish defined numeric
-observations (`scored`), absent reference tasks (`inapplicable`), unobtainable
-measurements (`unavailable`), and missing scheduled execution (`incomplete`).
-Inapplicable and unavailable fields retain null and a reason; missing requests
-are not fabricated observed failures. Invalid vectors, predicates, or references
-must be repaired before authoritative execution, not scored as poor quality.
+Reference eligibility is fixed before execution. Apply the
+[shared availability and artifact-reporting rules](../metrics.md#shared-availability-rules)
+to scored, inapplicable, unavailable, and incomplete results. Invalid vectors,
+predicates, or references must be repaired before authoritative execution,
+not scored as poor quality.
 
-A failed designated quality request is not a valid empty response: its
-output-dependent quality is null/unavailable. Its executed failure still enters
-the appropriate failure/gate observation. Do not substitute a later successful
-or best output. Valid earlier quality, latency, and resource observations survive
-a later failure with their actual lifecycle scope; they do not certify completion
-of the rest of the run.
-
-Retain scheduled, submitted, successful, failed, not-executed, reference-eligible,
-scored, and unavailable counts as applicable. Omit unavailable MLflow numeric
-scalars but keep their statuses/reasons in artifacts. A quality mean over
-available outputs describes completed-output quality, not the whole workload.
+An executed request failure still enters the appropriate failure/gate
+observation, whose zero rule is separate from unavailable recall. Within each
+workload cell, retain scheduled, submitted, successful, failed, not-executed,
+reference-eligible, scored, and unavailable counts as applicable. A quality mean
+over available outputs describes completed-output quality, not the whole workload.
 
 ## Search and filter quality
 
@@ -155,6 +148,13 @@ questions, evidence annotations, and frozen retrieval strategy. Databases never
 create embeddings. These are evidence-retrieval scores, not generated-answer
 scores or exact-neighbour recall. No context-token budget is applied.
 
+The three real-retrieval metrics below adopt the
+[shared retrieval evidence definitions](../metrics.md#retrieval-evidence-quality)
+at `@3` and `@5`. Retain each tested server's returned-ID provenance through the
+frozen retrieval/reranking path and score that path's ordered chunk-ID prefixes,
+not an oracle-substituted ranking. The complete frozen chunk corpus shared by
+finalists supplies normalization, not replacement result IDs.
+
 Quality uses only the designated first measured ranking. Later attempts measure
 timing and ranking agreement; they do not average quality or replace a failed
 first ranking. Each metric below is calculated for answerable questions with
@@ -171,11 +171,9 @@ the [retrieval metric reference](../rag/retrieval_reranking/metrics.md).
 
 **Question:** Are chunks containing more required evidence ranked earlier?
 
-A chunk's linear gain is the number of distinct required units it completely
-covers. Divide each gain by `log2(rank + 1)`, add through K, then divide by
-the ideal discounted sum at K. The ideal sorts gains from the complete frozen
-corpus, not the returned pool. Repeated coverage in distinct chunks retains
-ordinary nDCG gain.
+Apply the [shared nDCG calculation](../metrics.md#retrieval-evidence-quality)
+to the real-retrieval prefix at each cutoff. Its ideal comes from the complete
+frozen corpus shared by finalists, not the tested server's returned pool.
 
 **Example:** Corpus gains are `2,1,0,0,0`; returned gains are `1,2,0,0,0`.
 At @3, the returned sum is `1 + 2 / log2(3) ≈ 2.262`; the ideal is
@@ -184,38 +182,35 @@ add zero, so nDCG@5 is also `0.860`. Moving the two-unit chunk first gives
 one at both cutoffs.
 
 **Range and direction:** `[0,1]`; higher is better. A valid ranking with no
-complete evidence units scores zero. A zero ideal under the reference scorer
-returns zero rather than dividing by zero; retain that corpus-coverage
-limitation. Failed rankings are unavailable. Use document-level support and
-CIs, not synthetic-query intervals.
+complete evidence units uses the shared zero-score/zero-ideal conventions;
+retain any corpus-coverage limitation. Failed rankings follow shared availability.
+Use document-level support and CIs, not synthetic-query intervals.
 
 ### Real-retrieval Evidence-unit Recall@3/@5
 
 **Question:** How much distinct required evidence appears anywhere in the prefix?
 
-Divide required evidence-unit IDs completely covered by at least one returned
-chunk through K by all required unit IDs. Each unit counts once regardless
-of repetition or position inside the prefix.
+Apply the [shared unit-recall calculation](../metrics.md#retrieval-evidence-quality)
+at each cutoff. The denominator is the question's complete required-unit
+inventory, not its exact top-K neighbours or only units returned by the server.
 
 **Example:** A question needs `A,B,C`. Top three chunks cover only `A`:
 Recall@3 is `1 / 3 ≈ 0.33`. Ranks 4 and 5 add `B`: Recall@5 is
 `2 / 3 ≈ 0.67`. Another copy of `A` adds no recall. High recall establishes
 availability, not early placement or concise context.
 
-**Range and direction:** `[0,1]`; higher is better. Partial unit fragments do
-not earn full-unit credit. A valid complete ranking with no recovered unit
-earns zero; failed or invalid retrieval is unavailable. Missing required-unit
-annotations are not an empty task to score perfectly. Use document-macro support
-and CIs.
+**Range and direction:** `[0,1]`; higher is better. Apply the shared coverage
+and availability rules within the frozen top-20 output contract above.
+Use document-macro support and CIs.
 
 ### Real-retrieval Evidence-token Precision@3/@5
 
 **Question:** What share of returned text is annotated evidence?
 
-Using `tiktoken:cl100k_base` on canonical source text, divide returned token
-occurrences inside verified evidence intervals by all returned token occurrences
-through K. Overlapping chunks count a source token each time it consumes context;
-overlapping evidence annotations do not multiply credit within one occurrence.
+Apply the [shared evidence-token calculation](../metrics.md#retrieval-evidence-quality)
+to the canonical text identified by the returned prefix at each cutoff. Its
+denominator is that prefix's `tiktoken:cl100k_base` token occurrences, not
+corpus-wide tokens, vector counts, or generated-answer tokens.
 
 **Example:** At @3, 120 of 300 token occurrences are evidence:
 `120 / 300 = 0.40`. Ranks 4 and 5 add 180 evidence tokens in 200 total tokens;
@@ -223,9 +218,8 @@ Precision@5 is `(120 + 180) / (300 + 200) = 0.60`.
 Additional chunks can raise or lower concentration; extra text is not necessarily
 false text.
 
-**Range and direction:** `[0,1]`; higher is better. A valid complete ranking
-with no evidence-bearing tokens scores zero. An unexpectedly empty/invalid
-ranking is unavailable, not perfect precision or an invented empty result.
+**Range and direction:** `[0,1]`; higher is better. Apply shared zero-evidence
+and availability rules to the valid returned prefix, not an invented empty result.
 Use document-macro support and CIs; token occurrences are not independent samples.
 
 ## Conformance validity gates
@@ -337,10 +331,11 @@ queue waiting before the timer begins is not per-request latency, but remains
 inside batch wall time. Embedding, reranking, exact-oracle computation, and
 scoring are excluded; label full-stack real-retrieval timing separately.
 
-Only successful completions enter latency percentiles. Retain failures and
-coverage separately. The examples use NumPy linear quantiles: sort n values,
-locate position `(n - 1) × percentile`, then interpolate adjacent values.
-A percentile is not an exact percentage of a tiny observed sample.
+Apply the [shared latency-percentile calculation](../metrics.md#latency-percentiles)
+to successful completions within each declared cell, retaining failure coverage.
+Resource availability and partial-window reporting follow the
+[shared resource rules](../metrics.md#resource-measurements); the server/Docker
+and persistent-storage methods below remain distinct from worker RSS.
 
 ### Unfiltered / Filtered Latency p50
 
@@ -492,9 +487,9 @@ bytes, not a direct process-tree RSS sum. Record method and lifecycle scope.
 **Example:** samples `600,900,750 MiB` give `900 MiB`, or
 `943,718,400 bytes`. Sparse samples can miss a shorter spike.
 **Range and direction:** non-negative bytes; lower at equal correctness/quality.
-Missing monitoring is unavailable, not zero. Pre-failure peaks survive only as
-partial-scope diagnostics. One peak has no CI. CPU server execution has no
-applicable GPU-memory metric; CPU VRAM is null/inapplicable.
+Apply the shared resource availability and single-peak uncertainty rules using
+the recorded Docker scope. CPU server execution has no applicable GPU-memory
+metric under the shared CPU-VRAM rule.
 
 ### Persistent Storage
 
@@ -523,28 +518,23 @@ documents, then documents equally. Counts, settings, revisions, and binary
 phase states are descriptors, not sampled quality estimates.
 
 For eligible development, validation, and planned locked sample-based results,
-use 10,000 bootstrap resamples with seed 42. Resample complete query IDs for
-synthetic ANN, preserving compared servers, filter conditions, and dependent
-repeats together. Real retrieval resamples independent source documents with
-all their questions. Recalculate each aggregate; the 2.5th/97.5th percentiles
-are the estimated 95% bounds. These are arithmetic resamples of saved results,
-not extra inference or search requests.
+apply the [shared bootstrap and confidence-interval rules](../metrics.md#confidence-intervals).
+The synthetic-ANN independent unit is the complete query ID within its workload
+cell, preserving compared servers, filter conditions, and dependent repeats
+together. Real retrieval instead uses independent source documents with all
+their questions. These are arithmetic resamples of saved results, not extra
+inference or search requests.
 
 Latency CIs recompute the declared percentile from successful observations in
-each query-cluster draw. Repetitions do not increase independent support.
-Full-stack real retrieval retains source-document clusters. Paired comparisons
-use aligned values and the same sampled IDs, with their common scored cohort
-and exclusions reported; success-only differences do not represent failures.
+each query-cluster draw. Full-stack real retrieval retains source-document
+clusters. Paired server comparisons report their common scored cohort and
+exclusions; success-only differences do not represent failures.
 
-Draw from the reference-fixed eligible cohort, retaining unavailable records
-rather than first filtering to successes. Aggregate defined values in each draw;
-retain contributing counts and undefined-draw reasons. No eligible observations
-gives no estimate or interval. Below a frozen independent support minimum, keep
-a descriptive point estimate and null bounds with the reason. Do not invent a
-threshold or a zero-width CI. Adequately supported identical observations can
-produce coincident calculated bounds; flag a degenerate interval, not future
-certainty. Missing required values remain incomplete evidence even if some
-conditional bounds can be calculated.
+Apply shared support, undefined-draw, and degeneracy reporting within each
+workload/filter cell or real-retrieval source cohort. The independent-support
+threshold remains to be frozen after data review; do not invent it. Missing
+required values remain incomplete evidence even if some conditional bounds
+can be calculated.
 
 For example, recall `0.94` with 95% bounds `[0.92,0.96]` describes uncertainty
 in the aggregate, not a guarantee that 95% of individual queries score in that

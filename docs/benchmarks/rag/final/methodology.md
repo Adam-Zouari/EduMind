@@ -90,9 +90,9 @@ query Dense through the approved server, BM25, or both for RRF
 For `top_k=3`, retrieval quality is reported at 3. For `top_k=5`, it is reported
 at 3 and 5.
 
-Final RAG reports the same linear-gain nDCG, Evidence-unit Recall, and
-Evidence-token Precision at the available cutoff, plus alpha-nDCG
-with the frozen greedy normalization as a diagnostic. It also reports the
+Final RAG applies the [shared retrieval evidence definitions](../../metrics.md#retrieval-evidence-quality)
+to nDCG, Evidence-unit Recall, and Evidence-token Precision at the available
+cutoff; alpha-nDCG remains a diagnostic. It also reports the
 primary generation-quality metrics, behavioral validity, reliability, and
 repeatability diagnostics from the
 [Generation benchmark](../generation/metrics.md), plus retrieval, generation,
@@ -196,7 +196,8 @@ required claims, verification material, and reference-fixed eligibility remain
 the same in both branches. Required-unit and required-fact inventories do not
 shrink when extraction loses content. Output-dependent denominators, such as
 returned tokens and generated claims, can differ; each branch also computes
-rank normalization from its own complete chunk corpus. A unit lost or corrupted by extraction remains a missed
+[shared rank normalization](../../metrics.md#retrieval-evidence-quality) from its
+own complete chunk corpus. A unit lost or corrupted by extraction remains a missed
 required unit; it is not removed from the extracted branch's reference.
 Record unrecoverable units explicitly rather than inventing empty or unrelated
 source spans. Review and freeze the variant-specific mappings before scoring
@@ -256,9 +257,8 @@ ratings are separate review artifacts linked to the same locked answers;
 confirmation keeps both branch records and paired analysis on its own manifest.
 Neither human review nor confirmation creates an extra candidate/winner child.
 
-Unavailable values retain null/status/reason in artifacts and have no MLflow
-numeric scalar. Missing required evaluation or attempt records make reporting
-incomplete; do not promote surviving observations into a complete locked report.
-Genuinely completed stage measurements and outputs survive later failure.
+Apply the [shared availability and artifact-reporting rules](../../metrics.md#shared-availability-rules)
+to component evaluation, attempt records, and completed stage measurements.
+Missing required component evidence prevents a complete locked report.
 Independent support, bootstrap units, and single-observation exceptions follow
 [Final RAG uncertainty rules](metrics.md#support-and-confidence-intervals).

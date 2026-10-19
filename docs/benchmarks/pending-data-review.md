@@ -127,7 +127,8 @@ the authoritative dataset manifests and methodology, then remove the item.
   those shared-manifest queries are not retrieval/timing requests in this phase.
   Review atomic units and token/source spans so complete-unit coverage and token
   overlap describe the intended evidence without candidate-specific repairs.
-  Freeze quality/slice and p50/p95 CI support requirements before held-out runs;
+  Freeze quality/slice and p50/p95 CI support requirements under the
+  [shared support policy](metrics.md#confidence-intervals) before authoritative comparisons;
   insufficient support retains defined point estimates with null bounds/reasons.
 - Build and review the structured supplement independently for development,
   validation, and locked test. Confirm at least ten answerable questions with

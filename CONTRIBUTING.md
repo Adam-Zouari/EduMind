@@ -51,12 +51,20 @@ python -m pytest tests/test_benchmark_metrics.py tests/test_benchmark_datasets.p
 - Put shared measurement conventions in the
   [shared metric reference](docs/benchmarks/metrics.md). Keep individual metric
   definitions, calculations, examples, and edge cases in the linked benchmark
-  metric pages.
+  metric pages. Define genuinely identical cross-benchmark rules once in the
+  shared reference, then link local applications to them. Preserve differences
+  in denominator, eligibility, aggregation, and lifecycle windows; equal names
+  alone do not justify merging definitions.
 - Use the [document metric reference](docs/benchmarks/extraction/document/metrics.md)
   and [methodology](docs/benchmarks/extraction/document/methodology.md) as the
   explanation standard: each numeric metric needs its question, plain-language
   calculation, accurate worked example, interpretation, range/direction, and
-  relevant eligibility, failure, support, and interval rules. Keep setup and
+  a directly following **Edge cases and availability** block. Use
+  `Edge case | Example | Value/status | Explanation` only for genuine
+  metric-specific exceptions. Link shared failure/support rules rather than
+  copying them into every table; do not disguise invalid references, runtime
+  integrity violations, or ordinary poor scores as metric edge cases. Put
+  interval calculations in the page's aggregation section. Keep setup and
   architecture pages concise rather than giving them metric templates.
 - Distinguish implemented behavior, intended contracts, and pending execution
   paths. A documentation clarification must not silently change attempt counts,

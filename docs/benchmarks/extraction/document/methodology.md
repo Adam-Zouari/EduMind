@@ -26,8 +26,8 @@ cap in any profile, including preflight. GPU-backed parser components must
 remain on the requested GPU without framework offloading or silent CPU fallback;
 native DOCX and Tesseract retain their explicit CPU routes. Peak VRAM remains
 measured; actual OOM, placement violations, and missing required telemetry remain
-failures. CPU execution reports Peak VRAM as null/inapplicable, not zero;
-missing required CUDA telemetry is null/unavailable.
+failures. CPU applicability and CUDA measurement status follow
+[shared Peak Device VRAM](../../metrics.md#peak-device-vram).
 
 RapidOCR's CUDA placement check inspects the optimized ONNX Runtime graph at
 initialization. CPU shape bookkeeping is permitted only when dimension-derived
@@ -310,11 +310,10 @@ Every applicable execution is converted to the same canonical document
 representation containing text, pages, ordered elements, types, hierarchy,
 bounding boxes, tables, formulas, provenance, warnings, and timing. The
 benchmark scores that representation without an EduMind cleanup profile. Raw
-outputs remain unchanged. For prose comparison only, the evaluator applies the
-same symmetric projection to reference and prediction: Unicode NFC,
-case-folding, punctuation-to-space replacement, and whitespace collapse. It
-does not dehyphenate words, correct spelling, rewrite numbers, remove headers,
-or alter formulas, code, layout trees, or table trees.
+outputs remain unchanged. Prose comparison uses the
+[shared symmetric projection and its exclusions](../../metrics.md#prose-scoring-projection),
+not a parser-specific repair step; formulas, code, layout trees, and table trees
+retain their own scoring representations.
 
 Every authoritative reference declares a `reference_capabilities` list drawn
 from `text`, `pages`, `reading_order`, `layout_boxes`, `element_types`,
@@ -369,8 +368,10 @@ The exact formulas, eligibility rules, ranges, and directions are defined in
 the candidate's recovered matches or supported features. Missing expected
 elements contribute zero to attribute/reconstruction scores, while a genuinely
 absent reference task is inapplicable. Valid empty comparisons use explicit
-best/worst conventions; a crash is not a valid empty result. Defined quality scores, inapplicable tasks, unavailable evaluations, incomplete
-execution, and invalid references have distinct statuses and reasons. Evaluator failures
+best/worst conventions under the
+[shared empty-comparison rules](../../metrics.md#content-and-detection-empty-comparisons).
+Status and failure treatment follow the
+[shared availability rules](../../metrics.md#shared-availability-rules). Evaluator failures
 are repaired or rescored from saved predictions rather than labelled poor
 extractions. Quality failures do not automatically select or disqualify candidates.
 
@@ -446,22 +447,18 @@ normal runtime OOM, placement, and telemetry gates still apply to every profile.
 | 1 | The sole quality output, timing, validity/failure state, and canonical output for repeatability. |
 | 2 and 3 | Output validation, timing, validity/failure state, and canonical outputs for repeatability; no additional quality scoring. |
 
-All attempts use the same settings and inference seed. Never replace the
-predesignated first output with a later success or best result. A later failure
-does not erase a valid first output. All applicable output-dependent quality
-metrics are null/unavailable after a failed first attempt; quality aggregates
-explicitly report completed-output coverage and failures. Attempt all remaining requests after
-recoverable failures. A fatal interruption that prevents required requests is
-incomplete, not a set of fabricated observed failures. Loading/warmup failures
-are setup failures, not failed observations for every unexecuted document.
+All attempts use the same settings and inference seed. First-output quality,
+completed-output coverage, recoverable failures, and incomplete execution follow
+the [shared availability rules](../../metrics.md#shared-availability-rules),
+with [document-specific execution accounting](metrics.md#empty-comparisons-eligibility-and-result-status).
 
-Repeatability Success Rate compares the three scheduled pairs for each document,
-counting only pairs of valid identical outputs. Attempt Failure Rate records
+Repeatability Success Rate applies
+[shared pairwise repeatability](../../metrics.md#pairwise-repeatability) to each
+document's three scheduled pairs and its
+[canonical structured output](metrics.md#repeatability-success-rate). Attempt Failure Rate records
 the fraction of failed measured attempts. For `A, A, failure`, both rates are
 `1/3` and quality comes from the first `A`. For `failure, A, A`, the rates are
-unchanged but quality is null/unavailable. Matching error
-messages never earn agreement credit. Identical incorrect outputs can repeat
-successfully; their quality scores remain incorrect. No cached previous
+unchanged but quality is null/unavailable. No cached previous
 extraction may substitute for a measured request. All output and canonicalization
 settings, including normalized-box precision and stable parent-ID mapping, are
 frozen and recorded.
@@ -474,16 +471,14 @@ scoring are outside warm latency and batch throughput. Loading and warmup are
 inside resource monitoring; offline scoring is outside extraction resource
 measurements, which stop after the final measured request.
 
-Confidence intervals are computed afterward from saved document-level results.
-Quality intervals use first-attempt scores; repeatability intervals use each
-document's three-attempt pair score; failure intervals use its attempt-failure
-fraction. Bootstrap complete independent source documents 10,000 times with
-seed `42`, retaining pages, objects, capture variants, and attempts together.
-The 2.5th/97.5th percentiles form the estimated 95% bounds. These are arithmetic
-resamples, not extra inference runs; 100 documents with three attempts remain
-100 independent units if their source families are independent. Paired
-comparisons use the same sampled source IDs for both candidates. Support,
-unavailable-value, and degenerate-interval rules are defined in [document metrics](metrics.md).
+Apply [shared confidence intervals](../../metrics.md#confidence-intervals)
+using complete independent source documents, with pages, objects, capture
+variants, and attempts kept together. Quality uses first-attempt scores;
+repeatability uses each document's three-attempt pair score; failure uses its
+attempt-failure fraction. For example, 100 documents with three attempts remain
+100 independent units if their source families are independent. The
+[document CI applications](metrics.md#document-extraction-confidence-intervals)
+specify conditional cohorts, support, and operational eligibility.
 
 Development determines both the Standard settings and the parser-architecture
 finalists. Validation confirms only those finalists; it is not the first local
@@ -740,22 +735,10 @@ shared suffix convention. This applies equally to a total such as
 example, a table result is based on fewer annotated documents than a text
 result.
 
-Confidence intervals are not attached indiscriminately:
-
-- text, page, layout, table, formula, and reliability aggregates receive 95%
-  intervals when they are calculated from enough independent samples;
-- p50 and p95 latency receive intervals when enough independent source documents
-  support the estimate; pages and repeated attempts do not increase that count;
-- smoke intervals, if emitted for debugging, are not authoritative;
-- `sample_count`, run status, completion status, revisions, checksums, and other
-  fixed values do not receive intervals; and
-- one first-item measurement, one throughput batch, and one observed peak RAM,
-  VRAM, or temporary-disk value do not receive intervals. Repeated independent
-  measurements may support an interval, but the repetitions and aggregation
-  unit must be recorded.
-
-This rule avoids presenting statistical precision that the measurements do not
-contain.
+Interval eligibility follows the
+[document CI applicability table](metrics.md#which-values-receive-an-interval),
+using the [shared procedure](../../metrics.md#confidence-intervals).
+Pages and repeated attempts do not increase independent-source support.
 
 MLflow records evidence but does not choose a winner. After reviewing complete
 parent and child runs, the engineer records finalists or a final extraction

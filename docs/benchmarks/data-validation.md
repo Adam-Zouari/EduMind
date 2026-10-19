@@ -364,6 +364,19 @@ normal metric edge cases.
 
 ## Data validity and metric applicability
 
+Keep input rejection, runtime verification, and metric availability separate:
+
+| Where the condition belongs | Example | Treatment |
+|---|---|---|
+| Input validation, before candidates execute | A required transcript is absent, an evidence interval is outside its source, or a claimed table has no valid reference structure. | Reject the affected inputs; no measured candidate observation exists. |
+| Runtime integrity, when generated output or artifacts exist | A chunk has invalid offsets, a vector is nonfinite, or a reranker adds an ID not in its verified pool. | Reject the affected output or artifact and retain the violation; dependent quality is unavailable. Follow the benchmark's failure/completeness contract. |
+| Metric-specific edge case on otherwise valid evidence | A verified table-free source has no TEDS task, or valid empty strings require an explicit WER convention. | Use the metric's documented numeric convention or `inapplicable` status. |
+
+These are separate responsibilities, not interchangeable rows in a metric's
+edge-case table. Runtime checks cannot move into offline data validation when
+the candidate output does not yet exist. Conversely, a bad required reference
+must not be treated as a difficult candidate prediction or assigned a score.
+
 Validation makes the inputs valid, not every metric applicable to every sample.
 A formula-free document has no formula reconstruction task; a nonspeech clip has
 no required spoken boundary to measure. Such rows retain an `inapplicable` status
@@ -372,12 +385,9 @@ Rejection produces a validation-error report, not measured candidate failures
 or quality scores. It must not contribute a zero or null observation to a
 benchmark aggregate that never ran.
 
-`null` is a storage value, not a reason. Metric artifacts distinguish
-`inapplicable` (no reference task), `unavailable` (a value could not be measured),
-`incomplete` (required records missing), and `invalid_reference` (inputs rejected
-before execution). Valid empty comparisons and observed attempt failures follow
-each metric's explicit scoring convention. Data checks must not replace those
-rules with a universal empty/null policy.
+Metric artifacts use the [shared status definitions](metrics.md#shared-availability-rules)
+and each metric's adopted scoring conventions. Data checks must not replace
+those rules with a universal empty/null policy.
 
 Dataset checks validate only the input contract. They do not reject a dataset
 because its planned CI support is too small: valid small diagnostic slices can

@@ -121,24 +121,23 @@ PCM before model-native feature extraction, with no
 candidate-specific denoising, volume repair, prompting, or vocabulary hints.
 Model-native feature extraction and the documented deterministic decoder remain
 part of the ASR profile and are recorded. Candidate output receives only the
-fixed evaluator normalization used by WER and CER; the evaluator does not repair
-misspellings, remove repetitions, or rewrite transcripts.
+[shared prose projection](../../metrics.md#prose-scoring-projection) used by WER
+and CER; it does not repair the transcript.
 
 All timestamp outputs are converted to ordered benchmark segments containing
-text, start time, and end time. For each reference segment, the evaluator
-considers contiguous predicted spans whose normalized token Content F1 is at
-least `0.5`. Dynamic programming chooses ordered, non-overlapping one-to-one
-matches by maximum total similarity, then match count, then earliest span.
-Predicted timestamp units cannot be reused by another reference segment. This
-supports word timestamps and broader segment timestamps without truncating
-unequal arrays. Boundary MAE uses the matched span's minimum start and maximum
-end; Alignment Coverage records how much of the timed reference aligned.
+text, start time, and end time. The
+[shared timestamp-span contract](../../metrics.md#spoken-timestamp-alignment)
+supports word and broader segment timestamps without truncating unequal arrays. Boundary MAE
+measures the fixed matched spans; Alignment Coverage records how much of the
+timed reference aligned.
 
 An empty transcript with no timestamp segments is a valid completed output.
 Against required speech, all reference words/characters are deletions, coverage
 is zero, Boundary MAE is unavailable, and Unexpected Empty Transcript Rate
 records an event. Against a legitimately empty projected reference, WER/CER and
-the three error rates are zero. Timestamp metrics are inapplicable when no
+the three error rates are zero under the
+[shared recognition convention](../../metrics.md#recognition-error-rates-and-empty-references).
+Timestamp metrics are inapplicable when no
 reference boundaries are required; this is not a failed alignment. Nonempty
 lexical text without required timestamps,
 empty text with lexical timestamp segments, or invalid required boundaries/schema
@@ -174,8 +173,9 @@ The quality result for a clip comes from its designated first measured output.
 Repeated executions preserve timing and outcome records but are not averaged
 into additional quality samples. The first attempt is selected by index, not
 success; never replace a failed first output with a successful later one.
-Transcript Repeatability Success Rate scores all three scheduled pairs: both
-attempts must return valid identical projected transcripts for pair credit.
+Transcript Repeatability Success Rate applies
+[shared pairwise repeatability](../../metrics.md#pairwise-repeatability) to all
+three scheduled pairs using projected transcript identity.
 Attempt Failure Rate accounts for all scheduled measured speech/control requests.
 Three attempts provide three comparison pairs and distinguish full agreement,
 partial agreement, and no agreement; they do not establish statistical precision.
@@ -338,15 +338,11 @@ documentation categories, but they are not repeated as MLflow prefixes.
 Applicable development, validation, and locked uncertainty bounds use the shared MLflow suffix
 [metric convention](../../methodology.md#shared-mlflow-metric-convention).
 
-Eligible defined recognition, timestamp, reliability, RTF, and sufficiently
-supported warm-latency values receive 10,000 independent-source bootstrap
-resamples with seed 42 and percentile 95% bounds. Each draw preserves clips and
-all their attempts, then recalculates the same pooled/conditional statistic;
-controls are resampled separately. Confidence intervals describe source-sample
-uncertainty, not variation across the three attempts. Loading and observed
-resource peaks have no fabricated intervals. Undefined conditional draws retain
-defined/undefined counts; insufficient support keeps null bounds with a reason.
-The complete procedure is in [audio metrics](metrics.md#audio-confidence-intervals).
+Apply [shared confidence intervals](../../metrics.md#confidence-intervals)
+with the [audio-specific eligibility and resampling units](metrics.md#audio-confidence-intervals).
+Clip/source groups keep all their attempts; controls are resampled separately,
+and each draw recalculates the same pooled/conditional statistic. The three
+attempts do not become independent source observations.
 
 Each candidate retains these artifacts, including observed records when execution
 cannot finish:
@@ -381,10 +377,9 @@ artifacts retain nulls, reasons, scheduled/contributing/failure counts, and
 planned/contributing reference lengths. A result is interpreted under its
 recorded metric definitions and protocol version; changing definitions requires
 new matching evidence.
-A CPU profile records VRAM as null/inapplicable. Missing CUDA instrumentation
-records null/unavailable, not zero.
-CUDA children record `vram_measurement_method="nvml-device-total"` and the
-assigned device's raw peak memory use under the shared hardware contract.
+GPU measurement, CPU applicability, and missing CUDA telemetry follow
+[shared Peak Device VRAM](../../metrics.md#peak-device-vram).
+CUDA children record `vram_measurement_method="nvml-device-total"`.
 Per-process byte availability on Windows WDDM is not required. Device placement
 is verified independently; a missing device-memory measurement fails the CUDA
 child rather than producing a fabricated zero.

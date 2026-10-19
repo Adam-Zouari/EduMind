@@ -18,17 +18,21 @@ identifies runner/review gaps. Examples are illustrative, not measured results.
 ## Automated metric map
 
 Reuse the component definitions, examples, and edge rules, rather than
-implementing a second version of the same metrics:
+implementing a second version of the same metrics.
 
-- [nDCG@3/@5](../chunking_embedding/metrics.md#ndcg35): linear complete-unit
-  gains and an exact ideal from the complete corpus, not the retrieved pool.
+Retrieval adopts the [shared evidence-quality rules](../../metrics.md#retrieval-evidence-quality).
+Its normalization source is the selected system's complete frozen chunk corpus,
+not the retrieved pool. Component links below provide applications and examples.
+
+- [nDCG@3/@5](../chunking_embedding/metrics.md#ndcg35): earlier placement of
+  chunks covering more required evidence.
 - [Evidence-unit Recall@3/@5](../chunking_embedding/metrics.md#evidence-unit-recall35):
-  distinct required units completely covered inside the cutoff / all required units.
+  coverage against the full required-unit inventory, not only retrieved units.
 - [Evidence-token Precision@3/@5](../chunking_embedding/metrics.md#evidence-token-precision35):
-  evidence-bearing returned token occurrences / all returned occurrences,
-  using `tiktoken:cl100k_base` and source-span overlap.
+  evidence concentration in returned `tiktoken:cl100k_base` token occurrences,
+  not model-native generation tokens.
 - [Alpha-nDCG@3/@5](../chunking_embedding/metrics.md#alpha-ndcg35): diagnostic
-  novelty with `alpha=0.5`, greedy normalization, capped score, and retained raw ratio.
+  novelty with `alpha=0.5` under the shared normalization and capping rules.
 - [Semantic quality](../generation/metrics.md#semantic-quality-and-judge-responsibilities):
   Faithfulness, Factual Correctness Precision/Recall/F1, and Answer Relevancy.
 - [Citation quality](../generation/metrics.md#citation-quality): Citation
@@ -62,20 +66,19 @@ Do not reduce citation-recall denominators to the units actually retrieved.
 Retrieval quality uses the designated first measured ranking. Generation
 quality averages all three scheduled seeds `42`, `43`, and `44` under its own
 contract. Later rankings do not replace or average into first-ranking quality.
+Apply the [shared availability rules](../../metrics.md#shared-availability-rules)
+with generation's explicit failed-quality exception below.
 
 | Case | Required reporting |
 |---|---|
 | Valid first ranking misses all complete units | Normal numeric retrieval scores, including zero unit recall; partial token evidence can still give nonzero token precision. |
-| Failed/invalid first ranking | Null/unavailable retrieval quality, not an invented empty ranking. |
 | Observed generator error, timeout, context termination, malformed output, or refusal on an answerable question | Apply generation's failed-quality rule; preserve actual outcome and any partial output, not an invented empty answer. |
-| No questions in a reference-fixed eligibility slice | Null/inapplicable, with zero eligible support. |
-| Missing required request, evaluator label, review rating, or instrumentation | Unavailable/incomplete, not an observed candidate zero or a complete surviving-output report. |
 
 A retrieval failure can prevent generation from executing. An unexecuted
 generation is not an observed generator crash or refusal. Valid earlier answers,
 completed build/load times, observed TTFT, and scoped resource samples survive
-later failure. Artifacts retain nulls, reasons, scheduled/eligible/scored support,
-and failed/unexecuted records. MLflow omits undefined scalar keys, not their rows.
+later failure under the shared retention rules. Required semantic labels, review
+ratings, and integrated instrumentation are not optional reporting fields.
 
 ## Complete-system operations
 
@@ -85,7 +88,8 @@ are separate costs, not hidden warm latency. An additional source-ingestion-to-a
 timer must identify its different boundary explicitly.
 
 For each latency family, take each question's median successful measured stage
-duration, then p50 and linearly interpolated p95 across contributing questions.
+duration, then p50 and p95 across contributing questions using the
+[shared percentile calculation](../../metrics.md#latency-percentiles).
 Keep stage support: a completed stage duration can survive a later stage's
 failure, while complete-system latency requires complete-system success.
 Component p95 values must not be added to obtain system p95.
@@ -94,6 +98,8 @@ Resource monitoring starts before selected-component loading and includes
 initialization, warmup, and measured requests, ending before offline judging
 and bootstrap work. Record all participating processes and complete/partial
 lifecycle scope, including preparation work executed inside that window.
+Resource availability and partial-window reporting follow the
+[shared resource rules](../../metrics.md#resource-measurements).
 
 ### Server-Call Latency p50/p95
 
@@ -168,35 +174,32 @@ report successful coverage alongside reliability.
 
 **Question:** What peak host memory is observed for integrated execution?
 
-Take the maximum simultaneous resident-memory sum for the worker and its child
-processes. Identify separately managed vector-server processes and their memory
-scope rather than silently excluding them or double-counting them as children.
+Use the [shared process-tree RSS peak](../../metrics.md#peak-process-tree-ram)
+for the worker and its children. Identify separately managed vector-server
+processes and their memory scope rather than silently excluding them or
+double-counting them as children.
 
 **Example:** Simultaneous process-tree totals `2,000,3,500,3,000 MiB` report
 `3,500 MiB`. Adding a separately managed server's independent peak would not
 measure a simultaneous system peak.
 
 **Range and direction:** Non-negative MiB; lower is better at equal quality.
-No samples is null/unavailable. Retain partial-window samples after failure
-without claiming the unexecuted workload's peak.
+Apply the shared resource rules to the integrated monitoring window above.
 
 ### Peak Device VRAM
 
 **Question:** How much total assigned-GPU memory is occupied at the integrated peak?
 
-Take the largest raw NVML `memory.used` sample across the recorded lifecycle,
-including desktop/driver allocations and resident selected components. Do not
-sum isolated component peaks or subtract the idle baseline. Placement is checked
-separately.
+Use the [shared NVML device-total peak](../../metrics.md#peak-device-vram) across
+the recorded integrated lifecycle with resident selected components. Do not sum
+isolated component peaks. Placement is checked separately.
 
 **Example:** Samples `700,3,200,2,900 MiB` report `3,200 MiB`. Independent
 component qualification does not prove that concurrent residency fits.
 
 **Range and direction:** Non-negative MiB; lower is better at equal quality.
-CPU-only VRAM is null/inapplicable; missing required CUDA telemetry is
-null/unavailable. Preserve observed peaks with complete/partial scope. Applicable
-runtime gates still apply; this creates neither Final RAG preflight nor an
-extraction VRAM cap. Single RAM/VRAM peaks have no confidence interval.
+Applicable runtime gates still apply; this creates neither Final RAG preflight
+nor an extraction VRAM cap. Single-peak uncertainty follows the shared resource rules.
 
 ## Human review metrics
 
@@ -363,20 +366,20 @@ claims into an alternative overall quality percentage.
 
 Eligible locked automated quality/rate/repeatability aggregates receive 95%
 intervals with sufficient independent support. Warm p50/p95 intervals are
-conditional on source support. Use 10,000 bootstrap draws with seed `42`,
-resampling source documents with all questions, seeds, failures, and pair records.
-Recalculate each metric's own statistic and take its 2.5th/97.5th percentiles.
-Do not prefilter to successful sources or hide incomplete required evaluation.
+conditional on source support. Apply the
+[shared bootstrap and confidence-interval rules](../../metrics.md#confidence-intervals)
+with source documents as the independent units, retaining all questions, seeds,
+failures, and pair records. Quality/rates retain their document-macro statistic;
+latency uses the per-question stage observations defined above, not
+document-average times.
 
 Confirmation resamples identical source IDs for both branches and recalculates
 the extracted-minus-reference statistic per draw. Do not subtract independent
 CI endpoints. A recall difference `-0.10` with paired bounds `[-0.15,-0.04]`
 describes uncertainty in that difference, not individual-question loss ranges.
 
-Below the minimum frozen after data review, keep any defined descriptive point
-estimate with null bounds and a reason. Seeds and bootstrap draws add no
-independent documents. Record defined/undefined draw counts and flag calculated
-degenerate bounds such as `[1,1]` without claiming certainty. No eligible slice
-means no estimate/interval. A cold load, resource peak, workload count, fixed
-setting, or descriptive human rating does not acquire automatic bounds. Artifacts
-retain nulls/statuses; MLflow omits their scalar keys.
+The shared support and degeneracy rules apply to source-document support;
+calculated bounds such as `[1,1]` do not establish certainty. Cold load, resource
+peaks, workload counts, and fixed settings use the shared interval exclusions.
+Human ratings remain descriptive under the [review rules](#review-completeness-and-edge-rules),
+not automatically interval-eligible automated scores.

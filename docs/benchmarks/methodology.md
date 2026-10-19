@@ -502,13 +502,9 @@ have already been qualified separately; its ordinary runtime resource gates
 still apply. Vector Database is CPU-only and has neither CUDA smoke nor
 preflight.
 
-CUDA memory is sampled as raw NVML `memory.used` for the assigned GPU, using
-`nvml-device-total`. Monitoring starts before loading and includes cold load,
-warmup, and measured inference; preflight instead includes loading and its
-retained first stress inference. Report the largest observed device total, not
-per-process bytes or an increase above baseline. Record GPU identity, idle
-memory, total/free memory, and timestamped samples. The idle baseline is not
-subtracted: driver and desktop allocations consume the same physical budget.
+Use the [shared Peak Device VRAM definition](metrics.md#peak-device-vram).
+Measured-profile monitoring includes cold load, warmup, and measured inference;
+preflight instead includes loading and its retained first stress inference.
 For capped RAG families, the 3,584 MiB device-total limit leaves a nominal 512 MiB
 margin on a 4,096 MiB GPU at the observed samples, not a separate 3,584 MiB
 allowance for model weights.
@@ -549,24 +545,13 @@ resampling procedure, with the independent unit appropriate to its benchmark:
 | Chunking–embedding, retrieval–reranking, generation, Final RAG, and real vector-server retrieval quality | Source document with all eligible questions, repeated outputs, and pair results. |
 | Vector-database ANN workloads | Query with its aligned requests, within one declared workload cell. |
 
-Resample complete units with replacement 10,000 times using bootstrap seed `42`,
-recalculate the metric's existing aggregate on every draw, and take the 2.5th
-and 97.5th percentiles. Preserve each benchmark's defined statistic: document
-extraction uses document-macro quality, ASR uses corpus WER/CER, and other
-benchmarks retain their own quality and latency definitions. Paired comparisons
-resample aligned units together and recalculate both candidates on each draw.
-Repeated attempts are retained inside their unit, not treated as additional
-independent evidence. These resamples perform arithmetic on saved measurements,
-not extra model inference. More resamples stabilize the numerical calculation;
-only additional representative independent inputs add new source evidence.
-
-The minimum independent support for each conditional or slice interval is
-frozen after manifest review and before authoritative evaluation. An undefined
-draw is excluded only from that metric's bounds, with defined/undefined draw
-counts recorded. If support is insufficient, retain the point estimate and null
-bounds with a reason in artifacts; omit only the MLflow scalar bounds. Smoke,
-configuration counts, one cold-load observation, and observed resource peaks
-do not receive authoritative intervals.
+The [shared metric reference](metrics.md#confidence-intervals) owns the bootstrap
+algorithm, parameters, paired-draw rules, support requirements, and reporting of
+undefined or degenerate intervals. This table identifies the independent unit;
+each benchmark's metric page specifies its own aggregate and CI applicability.
+For example, document extraction recalculates document-macro quality while ASR
+recalculates corpus WER/CER. Freeze their slice/support requirements after data
+review and before authoritative evaluation.
 
 ## Shared MLflow metric convention
 
@@ -600,12 +585,9 @@ one independent source. Document additionally records
 source support in the applicable metric artifacts. Source-document macro
 metrics count their contributing document values rather than raw questions.
 Always identify both contributing observations and independent sources; the
-latter determines bootstrap/CI support. The CI keys exist only when the metric qualifies for a 95% confidence
-interval under [metrics.md](metrics.md). Their absence means that no interval
-was calculated; it never means zero. A numerically degenerate calculated
-interval is flagged in the artifact rather than interpreted as certainty.
-Statuses, configuration values, checksums, and one-off measurements such as a
-cold load or observed resource peak do not receive these suffixes.
+latter determines bootstrap/CI support. CI scalar presence and artifact status
+follow [the shared interval rules](metrics.md#confidence-intervals); these
+suffixes apply only to metrics eligible for intervals, not every logged value.
 
 Every automated benchmark value has one of six roles. **Primary** metrics answer
 the experiment's central question. **Secondary** metrics explain or qualify a
