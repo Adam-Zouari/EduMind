@@ -7,6 +7,7 @@ On this page:
 - [Implementation boundary](#implementation-boundary)
 - [Models and modes](#models-and-modes)
 - [Data](#data)
+- [Observation and aggregation](#observation-and-aggregation)
 - [Frozen decoding and output contract](#frozen-decoding-and-output-contract)
 - [Response schema](#response-schema)
 - [Semantic judge contract](#semantic-judge-contract)
@@ -78,6 +79,32 @@ and source isolation before execution; its standalone/report interface is
 planned. Judge calibration and output-schema validation remain separate gates.
 Preparation checks do not enter generation latency or model resource windows.
 
+Check frozen prompts for each model-mode's actual native input compatibility
+before measured generation, following the
+[reference/input-compatibility contract](../../data-validation.md#generation-references-and-model-input-compatibility).
+This gate does not shorten evidence, change the context capacity, or omit
+questions for an individual candidate. Its report and MLflow status are
+separate from data-validation reports, hardware qualification, and quality.
+
+## Observation and aggregation
+
+Development, validation, and locked execution use three sequential sampled
+responses per question, with aligned seeds `42`, `43`, and `44`. Score each
+evaluable output, average within its question, then within its source document,
+then macro-average documents. All three responses contribute quality evidence;
+none is selected as the best response or used to replace a failed observation.
+The repeated draws reduce dependence on a single sampled response, while
+repeatability separately measures agreement of status, citations, and meaning.
+
+Generation uses this all-seed quality policy because the frozen decoder samples
+responses. It does not change the designated-first-quality policy of extraction,
+chunking–embedding, or retrieval–reranking. The shared
+[partial-evidence](../../metrics.md#dependent-metrics-and-partial-observations)
+and [confidence-interval](../../metrics.md#confidence-intervals) rules apply to
+the observation set declared here. The independent unit is the source document,
+not a generation seed. Detailed denominators, conditional observations, and CI
+applicability belong to the [metric reference](metrics.md#eligibility-aggregation-and-confidence-intervals).
+
 ## Frozen decoding and output contract
 
 Every generator uses its exact pinned local snapshot, official chat template,
@@ -117,7 +144,7 @@ Every visible model response contains exactly three fields:
 |---|---|
 | `status` | A string: either `answered` or `insufficient_evidence`. |
 | `answer` | A string containing the visible answer or the frozen refusal sentence. |
-| `citations` | An ordered array of string IDs from the supplied evidence blocks. |
+| `citations` | An ordered array of string evidence-block IDs; supplied-ID resolution is checked separately. |
 
 An answerable response uses `status="answered"`, contains a non-empty substantive
 answer, and cites the supplied evidence blocks used by that answer. Only IDs
@@ -144,12 +171,12 @@ An unanswerable response uses the frozen refusal representation:
 ```
 
 Reasoning text is captured separately when the runtime exposes it and is never
-placed inside `answer`. Unknown citation identifiers, missing or additional
-top-level fields, an unsupported status, mixed refusal and substantive-answer
-content, and unparsable output are malformed. Repeated citation IDs are
-deduplicated before citation scoring. Runtime failures, timeouts, and
-context-boundary termination are recorded by the runner as attempt outcomes
-rather than invented model statuses.
+placed inside `answer`. Structural validation checks JSON parsing, the exact
+field set, field types, and the two allowed statuses. Missing/additional fields,
+wrong types, unsupported statuses, and unparsable output are malformed. Normally
+completed empty text also fails that schema. Runtime errors, timeouts, and output
+context exhaustion are attempt outcomes rather than invented model statuses;
+their partial text does not become a completed response merely because it parses.
 
 Schema validity and required behavior are different. An otherwise well-formed
 `answered` object with `citations: []` fails Response Validity and citation
@@ -157,8 +184,14 @@ quality but is not malformed solely for having no citations. A correctly formed
 refusal on an answerable question is likewise a behavioral/quality failure,
 not a parsing error. A citation such as `E9` is legal only if `E9` was supplied;
 legal but irrelevant evidence lowers citation quality, while an unknown ID
-makes the output malformed. Accepted answers and evaluator-only verification
-material never become extra model-visible evidence blocks.
+fails ID validity and Response Validity without changing structural validity.
+Unknown IDs remain in the citation-precision denominator and earn no recall
+credit; they do not automatically invalidate the visible answer's semantic
+scores. Repeated IDs are deduplicated for citation scoring, with the original
+list retained. A limitation statement alongside a partial answer is assessed
+for behavior and meaning, not classified as malformed by wording. Accepted
+answers and evaluator-only verification material never become extra model-visible
+evidence blocks.
 
 ## Semantic judge contract
 
@@ -178,6 +211,9 @@ The claim and evidence rules are frozen before calibration:
 - Score only the visible answer, not hidden reasoning. Extract independently
   checkable atomic claims, splitting compound statements while preserving
   negation, quantities, units, dates, scope, and uncertainty.
+- Interpret factual assertions in question context, so a short answer such as
+  "500" can express a claim. The exact frozen refusal is a behavioral response,
+  not an asserted answer fact; its answer-claim inventory is empty.
 - Semantically deduplicate generated claims within a response before calculating
   claim ratios; retain their original spans for audit. Repeating a correct fact
   cannot inflate precision, faithfulness, or recall.
@@ -256,16 +292,22 @@ locked report can reopen selection.
 
 ## Per-candidate execution
 
+Development, validation, and locked profiles follow the sequence below. Smoke
+uses one measured seed per device, and preflight uses the shared qualification
+lifecycle with no warmup; neither reports three-seed comparison evidence.
+
 ```text
-unload previous generator
+verify the dataset report and frozen model-mode prompt compatibility
+-> unload previous generator
 -> start a fresh worker and measure process-cold model load
 -> run one representative warmup with seed 0
 -> give every candidate the same question and numbered evidence
 -> generate sequentially with aligned seeds 42, 43, and 44
 -> separate reasoning from the visible answer where supported
--> validate schema, answer/refusal behavior, citations, and finish reason
+-> record termination, validate structural schema and supplied citation IDs
 -> end generator resource monitoring after the last measured request
 -> apply the frozen semantic judge after generator timing is complete
+-> derive answer/refusal validity from recorded checks and required claim labels
 -> aggregate quality, validity, repeatability, workload, and operational results
 ```
 
@@ -276,23 +318,19 @@ Token and total warm latency. The three fixed measured seeds sample the frozen
 decoder reproducibly and support semantic, status, and citation repeatability
 diagnostics.
 
-Every scheduled seed remains in the quality, validity, and reliability
-denominators. Generation computes each question's mean first, then averages
-eligible questions within each source document and macro-averages documents.
-Repeatability retains all three scheduled response pairs, assigns zero to pairs
-containing schema-invalid, failed, or interrupted attempts, and follows the same document-macro
-aggregation. Raw event counts remain in artifacts and are not substituted for
-these equal-document-weight results.
+All scheduled outcomes remain recorded. Runtime/timeout/context-interrupted
+responses and required structural-schema failures have unavailable dependent
+quality, not artificial zero-quality answers. Normally completed responses with
+wrong behavior use the metric's own scoring or known-empty convention. Missing
+judging affects required labels, not independently completed ID checks or
+operational measurements. Apply the [shared availability rules](../../metrics.md#shared-availability-rules).
 
-This all-seed quality policy is generation-specific. It does not change the
-first-measured-output policy of extraction or chunking/embedding. An observed
-failed candidate attempt receives this suite's failed-quality treatment. For
-unexecuted requests or unresolved judge failures, apply the
-[shared availability rules](../../metrics.md#shared-availability-rules);
-do not invent an answer with zero claims. Their retention rules apply to completed
-labels, observed TTFT, cold load, and partial resource records. Keep
-outcome, schema validity, behavioral validity, and evaluator availability as
-separate fields so none is inferred from a missing scalar.
+Repeatability adopts the shared scheduled-pair rule with local status, Jaccard
+citation, and semantic comparison functions. Operational observations keep
+their own cohorts: latency uses its declared per-question observations, decode
+throughput pools completed-stream work/time, and memory records the largest
+valid lifecycle sample even if it came from a failed attempt. Raw counts and
+monitoring coverage remain in artifacts; they do not change quality weighting.
 
 ## Metrics and why they are used
 
@@ -301,17 +339,19 @@ separate fields so none is inferred from a missing scalar.
 | Primary quality | **Faithfulness**, **Factual Correctness F1**, **Answer Relevancy**, **Citation F1** | Separates support by supplied context, correctness and completeness against required facts, relevance to the question, and explicit evidence selection. |
 | Quality diagnostic | Factual Correctness Precision/Recall, Citation Precision/Recall | Explains whether an F1 loss comes from incorrect/unverified claims, omitted required facts, or incorrect/missing citations. |
 | Behavioral validity | **Response Validity Rate**, **Refusal Validity Rate**, **Malformed Output Rate** | Measures valid answer behavior on answerable questions, the exact refusal contract on unanswerable questions, and general schema integrity. |
-| Reliability | Generation Failure Rate, Timeout Rate, Context-Limit-Reached Rate | Distinguishes runtime failure from bounded but incomplete generation. |
+| Reliability | Runtime Error Rate, Timeout Rate, Context-Limit-Reached Rate | Distinguishes measured inference errors, deadline stops, and output-context exhaustion. |
 | Repeatability diagnostic | Repeat Status Agreement, Repeat Citation Agreement, Repeat Semantic Agreement | Measures stability of answer/refusal decisions, selected evidence, and meaning across seeds without requiring identical wording. |
 | Operational | Cold Model-Load Time, Time to First Token p50/p95, End-to-End Latency p50/p95, Decode Throughput, peak process-tree RAM, peak device VRAM | Separates startup, initial responsiveness, complete warm-request latency, decoding rate, and memory. |
-| Workload descriptor | Prompt, context, reasoning, visible-answer, and total output tokens; citation and generated-claim counts; finish-reason distribution | Records how much work produced the observed quality and latency. |
+| Workload descriptor | Prompt, context, reasoning, visible-answer, and total output tokens | Records how much native-tokenizer work produced the observed quality and latency. |
 
 Malformed Output Rate is minimized; Response and Refusal Validity Rates are
-maximized. A malformed answerable response receives failed-quality treatment and
-cannot disappear from quality denominators. Citation metrics are deterministic:
-a correct citation is a supplied evidence-block ID covering required gold
-evidence. The judge supplies semantic claim labels, while code calculates every
-ratio, F1, aggregate, and confidence interval.
+maximized. Malformed Output Rate is conditional on normally completed outputs;
+the behavior and reliability rates retain their own scheduled denominators.
+Citation metrics are deterministic: a correct citation is a supplied
+evidence-block ID covering required gold evidence. The judge supplies semantic
+claim labels, while code calculates ratios, F1, aggregates, and intervals.
+Citation/claim counts and a compact finish-reason inventory remain per-response
+or run artifacts, not extra MLflow summary metrics.
 
 The engineer selects validation finalists, then one validation winner, after
 inspecting the primary metrics, validity and reliability metrics, repeatability, latency,
@@ -347,7 +387,9 @@ operational measurements, primary-metric contract, judge rubric checksums, and
 per-question outputs and labels. The judge does not receive a nested candidate
 run and its resource use is never attributed to the generator.
 
-Generation child metrics use metric-family namespaces:
+Generation quality, validity, reliability, repeatability, and operational base
+keys use these metric-family namespaces. Token descriptors retain the
+per-attempt counts and descriptive-summary contract in the metric reference:
 
 ```text
 quality.faithfulness
@@ -361,7 +403,7 @@ quality.citation_recall
 validity.response_validity_rate
 validity.refusal_validity_rate
 validity.malformed_output_rate
-reliability.generation_failure_rate
+reliability.runtime_error_rate
 reliability.timeout_rate
 reliability.context_limit_reached_rate
 repeatability.status_agreement
@@ -380,3 +422,20 @@ operational.peak_vram_mib
 The parent and every child also store the four primary metric names and their
 directions in the metric contract so the main selection evidence is visible and
 validated consistently.
+
+Input compatibility is visible on the same candidate child. For example, a
+frozen prompt of 8,300 native tokens with context capacity 8,192 records
+`input_compatibility=failed`, `result_status=incomplete`, and the detailed
+`input_compatibility.json` report. No generation occurred, so no zero quality,
+Runtime Error Rate, or Context-Limit-Reached Rate is emitted. A passed gate
+records `input_compatibility=passed`; subsequent output-context terminations
+contribute to the existing context-limit metric and per-attempt outcomes.
+There is no separate Input Context Overflow Rate.
+
+Artifacts retain each question/seed's raw stream and visible response, native
+token counts, citation/claim counts and labels, structural and ID checks,
+behavioral checks, outcome/finish reason, and timing. A finish-reason count/share
+table is a diagnostic artifact, not another scalar family. Keep monitoring
+coverage and request outcomes alongside RAM/VRAM samples and their observed
+peaks. Undefined scalar keys are omitted according to the shared rules, while
+the records, reasons, and partial/incomplete status remain visible.

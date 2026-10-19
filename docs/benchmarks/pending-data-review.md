@@ -170,18 +170,17 @@ the authoritative dataset manifests and methodology, then remove the item.
   claim extraction, context support, source-verified correctness, gold-claim
   matching, answer relevancy, and pairwise semantic equivalence. Include repeated
   and compound claims, qualifiers, correct extra facts, unverified additions,
-  and missed required facts. Freeze the exact judge version, decoding, prompts,
+  missed required facts, and genuinely claim-free responses. Freeze the exact judge version, decoding, prompts,
   rubric/schema, finite retry policy, and calibration checksum only after it
   passes recorded criteria for each responsibility; do not use validation or
   locked-test questions. Do not fabricate acceptance thresholds before review.
 - Inspect the resulting question and document counts by evidence type before
   deciding which slice confidence intervals are sufficiently supported.
-- Freeze the run-level Decode Throughput estimator and contributing stream
-  cohort before generation comparisons. Request-level token-event counts and
-  first/last-token intervals are defined; averaging request rates and dividing
-  pooled tokens by pooled intervals are different summaries. Record the chosen
-  weighting, partial-stream treatment, and any applicable uncertainty rule in
-  the generation contract before publishing a comparable aggregate.
+- Review generation token-event instrumentation and independent-source support
+  for [Decode Throughput](rag/generation/metrics.md#decode-throughput). Its
+  completed-stream work/time estimator and interrupted-stream exclusion are
+  frozen; data review determines support for the conditional interval, not a
+  choice between averaging rates and pooling work/time.
 - Publish one complete authoritative RAG document row and answerable,
   unanswerable, table, formula, and mixed question examples after the real
   manifests and checksums exist.

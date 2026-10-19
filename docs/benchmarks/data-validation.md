@@ -362,6 +362,50 @@ report for each model and never silently truncate or repair generated input. Sco
 checks are evaluation integrity safeguards, not additional data annotations or
 normal metric edge cases.
 
+### Generation references and model-input compatibility
+
+For every answerable generation question, review at least one accepted answer,
+one non-duplicate atomic required gold claim, and one required gold evidence
+unit. Standalone generation supplies verified evidence sufficient to answer;
+the frozen verification material and required facts are evaluator-only inputs.
+Unanswerable labels and their non-answering supplied context are reviewed
+explicitly. Missing required facts/evidence are invalid references, not an empty
+precision/recall case. Human review establishes truth and atomicity; automatic
+checks establish structure, provenance, and consistency.
+
+Passing dataset validation does not certify every native model input. After
+applying the actual tokenizer, template, prefixes, special tokens, and mode,
+check compatibility before the model call. This same separation applies to
+embedding/reranker inputs: generated chunks or live retrieved contexts may only
+exist at runtime, so their native-length checks cannot be replaced by a sealed
+dataset report. Keep each suite's rejection/completion policy and never silently
+truncate inputs or remove required questions for only one candidate.
+
+For standalone generation, check all frozen question/model-mode prompts before
+measured inference. The total rendered prompt must leave positive output room
+inside the frozen model context. An input that leaves no output capacity is
+`input_context_overflow`; it can be valid reference data yet incompatible with
+that rendered model input. Record the question/model-mode, prompt tokens,
+context capacity, and gate status in `input_compatibility.json`. An affected
+candidate cannot claim complete execution of its required question set. A
+blocked gate is not a measured Runtime Error or output-context termination, and
+does not fabricate per-seed quality, latency, or reliability observations.
+
+Final RAG applies the same native-input check when its actual retrieved context
+has been packed. That check belongs to the live request; it cannot be replaced
+by checking standalone gold contexts. Keep an input-rejected request distinct
+from unexecuted downstream generation, following the stage-specific reporting
+contract. Reference validation/report verification remains outside measured
+windows; live prompt preparation and checks retain their declared timing scope.
+
+In MLflow, retain `input_compatibility=passed|failed` and the detailed input
+report, not another Input Context Overflow Rate. If the gate blocks all measured
+generation, mark the candidate's execution evidence incomplete; do not emit a
+zero Runtime Error or Context-Limit-Reached Rate. Generator schema checks,
+citation-ID checks, and judge calibration happen separately from reference and
+input compatibility validation. These generation interfaces remain planned
+until the runner implements the approved contract.
+
 ## Data validity and metric applicability
 
 Keep input rejection, runtime verification, and metric availability separate:

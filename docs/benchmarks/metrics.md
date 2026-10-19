@@ -36,7 +36,7 @@ availability rules. A word formula names its actual denominator: reference
 objects, generated claims, returned tokens, completed requests, and scheduled
 attempts are not interchangeable.
 
-The Document, ASR, Video, Chunking–Embedding, and Retrieval–Reranking references
+The Document, ASR, Video, Chunking–Embedding, Retrieval–Reranking, and Generation references
 use the following order for each individual metric:
 
 1. **Question:** what the metric answers.
@@ -61,6 +61,8 @@ equal aggregation or eligibility.
 Shared definitions on this page:
 
 - [Availability and result status](#shared-availability-rules)
+- [Dependent metrics and partial observations](#dependent-metrics-and-partial-observations)
+- [Reporting slices](#reporting-slices)
 - [Prose scoring projection](#prose-scoring-projection)
 - [Recognition error rates and empty references](#recognition-error-rates-and-empty-references)
 - [Spoken timestamp alignment](#spoken-timestamp-alignment)
@@ -68,6 +70,7 @@ Shared definitions on this page:
 - [Pairwise repeatability](#pairwise-repeatability)
 - [Retrieval evidence quality](#retrieval-evidence-quality)
 - [Latency percentiles](#latency-percentiles)
+- [Ratio-of-totals throughput](#ratio-of-totals-throughput)
 - [Resource measurements](#resource-measurements)
 - [Confidence intervals](#confidence-intervals)
 
@@ -117,10 +120,11 @@ failure under every metric:
 
 | Condition | Value/status and treatment |
 |---|---|
-| The designated first request fails or violates the benchmark's required output-integrity contract | Applicable output-dependent quality is `null/unavailable`. Do not score a fabricated empty output or substitute a later success. |
+| A measured request fails or violates its required output-integrity contract | Dependent quality is `null/unavailable`; retain the actual outcome and any raw output. Do not score a fabricated empty prediction. |
+| A designated-first-quality suite has a failed first request | Do not replace it with a later successful output; the request-failure rule above applies. |
 | A later attempt fails | Preserve independently valid first-attempt quality and completed measurements. Record the failed outcome for the suite's reliability/consistency rules. |
 | Required execution or records are missing | Mark affected evidence `incomplete`; never assume missing attempts succeeded or failed. |
-| No applicable task exists | Record `null/inapplicable` with zero eligible support. A missing required annotation is invalid input, not this case. |
+| No applicable task exists | Record `null/inapplicable` with zero applicable task-unit support, retaining the source inventory. A missing required annotation is invalid input, not this case. |
 | A required measurement or evaluation cannot be obtained | Record `null/unavailable` and its reason; do not report zero or infinity. A nonfinite or impossible measured value is a measurement-integrity problem. |
 | An independent operation completed before another failed | Preserve its defined observation. Mark interrupted resource windows as partial; partial peaks or progress do not establish a completed workload. |
 | There are no contributing values for an applicable aggregate | Record `null/unavailable`, retaining eligible and failed/unavailable support. |
@@ -161,6 +165,42 @@ metric convention, not the execution-failure rule.
 Likewise, a valid output may contain an incorrect or unreconstructed object:
 apply the metric's object-level penalty rather than treating every wrong table
 or formula as a failed whole request.
+
+### Dependent metrics and partial observations
+
+A derived value requires valid inputs from the same declared observation and
+scope. Do not combine precision from one response with recall from another,
+or complete-workload output with an interrupted operation's duration. If a
+required component is unavailable, the dependent value is unavailable unless
+the metric explicitly defines that known situation without the component.
+A documented valid-empty convention is not permission to replace unknown
+measurements with zero.
+
+Calculate nonlinear scores, such as F1, at their declared observation level
+before applying the benchmark's aggregation. F1 from averaged precision and
+recall is not the average of individual F1 scores. A metric explicitly defined
+from pooled counts retains that different estimator.
+
+An observed partial quantity remains real evidence, with its scope. A derived
+calculation using it cannot establish a complete-workload result. Preserve
+independently complete operations, such as a finished cold load before a later
+request fails. Missing required evaluations instead leave surviving quality
+aggregates partial/diagnostic; do not promote their points or confidence bounds
+to complete comparison evidence.
+
+Conditional eligibility is not missing execution. Successful-completion latency
+deliberately uses successful requests, while still retaining every outcome and
+its support. Similarly, a fully evaluated zero-denominator case follows the
+metric's own convention and reason. It is not an unresolved evaluator error.
+
+### Reporting slices
+
+A slice is a reviewed subset of the same evaluation records, for example a
+source type, text/table/formula/mixed evidence, or answerable/unanswerable
+questions. It is not another inference run. Apply each metric's existing
+eligibility, observation, and aggregation rules inside the subset, and report
+eligible and contributing sample/source counts. No eligible task gives
+`null/inapplicable`; insufficient CI support does not erase a defined point.
 
 ### Latency and warm latency
 
@@ -309,7 +349,7 @@ Document and visual-video Repeatability Success Rate, ASR Transcript
 Repeatability Success Rate, and retrieval Ranking Repeatability share one
 pair-counting rule. Each benchmark freezes its own output representation and
 role; this rule does not replace chunking–embedding's ranking-consistency gate
-or generation's semantic/citation agreement definitions.
+or generation's semantic/citation comparison functions.
 
 Compare every unordered pair of scheduled measured attempts. A pair succeeds
 only when both outputs are valid and identical in the benchmark's chosen
@@ -324,6 +364,13 @@ One deliberately scheduled attempt has no pair task: `null/inapplicable`,
 make the evidence incomplete, not a favorable surviving-pair statistic or
 invented disagreement. Representation, aggregation, CI eligibility, and metric
 role stay in the benchmark reference.
+
+Generation's status, citation, and semantic agreements adopt the same scheduled
+pair denominator and zero contribution from pairs containing executed failures,
+interrupted outputs, or structurally invalid outputs. Their local comparison
+functions assign binary or fractional scores to otherwise evaluable pairs;
+sum those scores over scheduled pairs. An evaluator error is unavailable
+evaluation, not an executed candidate disagreement.
 
 ### Retrieval evidence quality
 
@@ -384,6 +431,22 @@ samples retain descriptive points without establishing reliable tail inference.
 Component percentiles cannot be added or subtracted to derive an end-to-end
 percentile; that path must be measured and summarized separately.
 
+### Ratio-of-totals throughput
+
+For a metric defined as total work divided by total time, sum its declared work
+units and corresponding timed intervals before division. Do not substitute the
+arithmetic mean of individual work-per-time rates. Two operations completing
+60 units in one and three seconds yield `120 / 4 = 30 units/second`, not the
+equal-operation mean `(60 + 20) / 2 = 40`. The former measures pooled work per
+second; the latter answers a different question about request-level rates.
+
+Each benchmark owns the contributing cohort, work units, timing boundary, and
+treatment of failures. Decode-only intervals, elapsed request time, and an
+entire batch window are not interchangeable. A throughput CI resamples the
+declared independent units, carries their work/time contributions, and
+recalculates the ratio on each draw. No positive contributing interval gives
+an unavailable aggregate, not zero or infinity.
+
 ### Resource measurements
 
 Each resource metric declares its monitored process/device and lifecycle window.
@@ -397,6 +460,15 @@ an observed zero. Retain timestamped samples, method, scope, and failure reason.
 Valid peaks measured before interruption remain observed partial-window peaks,
 not proof of a completed lifecycle or of future hardware fit. A hardware gate
 does not clamp or erase real observations. One lifecycle peak has no inferred CI.
+
+The reported observed peak is the maximum across all usable samples in the
+declared window, including loading, warmup, and failed/interrupted attempts
+when those phases belong to it. Do not select only successful attempts or
+average their separate peaks. Completed/partial attempt peaks of 2,400, 3,400,
+and 2,600 MiB therefore report an observed 3,400 MiB, retaining the interrupted
+attempt's outcome. A request failure does not itself make monitoring incomplete
+if usable monitoring continued through the complete scheduled lifecycle.
+Execution outcomes and monitoring coverage are separate recorded facts.
 
 #### Peak Process-Tree RAM
 
@@ -442,6 +514,13 @@ repeated requests or resampled copies. More draws stabilize arithmetic but add
 no independent evidence or inference. A CI describes source-sampling uncertainty,
 not the range of individual scores, a latency percentile, or certainty on future
 inputs. One source repeatedly resampled cannot establish new support.
+
+Repeated attempts remain grouped within the source on every draw. Recalculate
+the estimator from those records, not by averaging separately calculated
+attempt-specific confidence bounds. Bootstrap arithmetic uses saved outputs,
+labels, and timing records; it launches no new model inference or judging.
+Intervals describe the declared estimator under the frozen execution protocol,
+not all possible future generation seeds or configurations.
 
 Freeze minimum CI support by metric/slice after data review and before an
 authoritative comparison, including development. Earlier exploratory runs can

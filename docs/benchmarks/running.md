@@ -585,6 +585,22 @@ generator. After reviewing validation, record exactly one successful model-mode
 configuration in `generation-locked.json`. Generation reports that choice on
 its own locked frozen-evidence test. Final RAG uses the same generator unchanged.
 
+When reading a generation child, inspect `input_compatibility` and its
+`input_compatibility.json` artifact first. A failed gate is visible incomplete
+execution, not a row of fabricated zero metrics. The detailed
+[input contract](data-validation.md#generation-references-and-model-input-compatibility)
+explains native prompt checks and how live Final RAG inputs differ.
+
+The [generation metric reference](rag/generation/metrics.md) defines the three
+seed outputs' quality aggregation, completed-output Malformed Output Rate,
+`reliability.runtime_error_rate`, and completed-stream Decode Throughput.
+Check eligible/contributing support and evaluator status before treating a
+quality value as complete. Inspect partial execution and monitoring coverage
+alongside observed memory peaks; failed-attempt peaks are not discarded.
+Citation/claim counts and finish-reason inventories are artifacts, not extra
+summary metrics. Shared null, dependency, and CI interpretation belongs to the
+[general metric guide](metrics.md#dependent-metrics-and-partial-observations).
+
 Freeze one complete system in `final-rag-locked.json`, referencing the selected
 component decisions and the chosen top-K, prompt, and context settings. Finish
 non-locked integration and extraction-confirmation checks before locked

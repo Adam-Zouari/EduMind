@@ -39,14 +39,15 @@ not the retrieved pool. Component links below provide applications and examples.
   Precision/Recall/F1. ID/unit coverage is not claim-level citation entailment.
 - [Behavioral validity](../generation/metrics.md#response-refusal-and-output-validity):
   Response Validity, Refusal Validity, and Malformed Output Rates.
-- [Reliability](../generation/metrics.md#generation-reliability): Generation
-  Failure, Timeout, and Context-Limit-Reached Rates.
+- [Reliability](../generation/metrics.md#generation-reliability): Runtime Error,
+  Timeout, and Context-Limit-Reached Rates.
 - [Repeatability](../generation/metrics.md#repeatability-1): Repeat Status,
   Citation, and Semantic Agreement over three scheduled generation pairs.
 - [Generation operations](../generation/metrics.md#operational-measurement)
   and [workload descriptors](../generation/metrics.md#workload-descriptors):
-  cold load, TTFT, decode throughput, token/claim/citation counts, and finish reasons.
-  Additional integrated latency boundaries are defined below.
+  cold load, TTFT, decode throughput, and native token descriptors. Per-response
+  claim/citation counts and finish-reason inventories remain diagnostic artifacts,
+  not extra MLflow scalar families. Integrated latency boundaries are defined below.
 
 Retrieval reports `@3` for frozen `top_k=3`, and `@3` and `@5` for frozen
 `top_k=5`. These are cutoffs of one ranking, not separate systems or selection
@@ -67,12 +68,19 @@ Retrieval quality uses the designated first measured ranking. Generation
 quality averages all three scheduled seeds `42`, `43`, and `44` under its own
 contract. Later rankings do not replace or average into first-ranking quality.
 Apply the [shared availability rules](../../metrics.md#shared-availability-rules)
-with generation's explicit failed-quality exception below.
+to each stage and measured seed, retaining the component metric's own known-empty
+conventions and eligible/contributing support.
 
 | Case | Required reporting |
 |---|---|
 | Valid first ranking misses all complete units | Normal numeric retrieval scores, including zero unit recall; partial token evidence can still give nonzero token precision. |
-| Observed generator error, timeout, context termination, malformed output, or refusal on an answerable question | Apply generation's failed-quality rule; preserve actual outcome and any partial output, not an invented empty answer. |
+| Generator error, timeout, output-context termination, or structural schema failure | Dependent generation quality is unavailable. Preserve actual outcome, partial output, and independently completed measurements. |
+| Valid refusal on an answerable question | Apply generation's evaluated claim-free and missed-fact/citation rules, not runtime-failure treatment. |
+
+Unknown citation IDs remain reference-validity failures, not malformed output;
+inherit the generator's deterministic ID scoring and behavioral checks. Native
+prompt compatibility is checked on the actual packed retrieved context under
+the [shared input contract](../../data-validation.md#generation-references-and-model-input-compatibility).
 
 A retrieval failure can prevent generation from executing. An unexecuted
 generation is not an observed generator crash or refusal. Valid earlier answers,
@@ -350,9 +358,9 @@ Both branches retain the same required evidence IDs/claims and seeds. A lost
 unit remains required, with an explicit unrecoverable source mapping, not an
 invented empty span. A completed branch missing a unit can score zero recovery;
 a failed/invalid retrieval ranking has unavailable retrieval quality, not an
-observed zero. Generation's explicitly defined failed-quality values and any
-independently completed stage measurements keep their own contracts; a branch
-failure does not erase them. Only an unavailable branch value makes that
+observed zero. Generation's explicit known-empty conventions and independently
+completed stage measurements keep their own contracts; a branch failure does
+not erase them. An unavailable or inapplicable branch value makes that
 metric's difference null/unavailable. Keep exclusions/common support
 and label partial differences diagnostic rather than complete confirmation.
 
@@ -372,6 +380,10 @@ with source documents as the independent units, retaining all questions, seeds,
 failures, and pair records. Quality/rates retain their document-macro statistic;
 latency uses the per-question stage observations defined above, not
 document-average times.
+
+Generation Decode Throughput inherits its pooled work/time estimator and
+conditional interval eligibility. Recalculate that ratio on each aligned source
+draw rather than applying quality's document-macro averaging to stream rates.
 
 Confirmation resamples identical source IDs for both branches and recalculates
 the extracted-minus-reference statistic per draw. Do not subtract independent

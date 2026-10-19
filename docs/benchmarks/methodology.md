@@ -232,6 +232,12 @@ seed outputs instead all belong to its declared quality evaluation. These
 are different output-sampling contracts; equal repetition counts do not make
 the contracts identical.
 
+The [shared availability and dependency rules](metrics.md#dependent-metrics-and-partial-observations)
+govern which observations can contribute. A failed measured request is not a
+zero-quality prediction; a partial peak is still an observed resource quantity.
+Each suite owns its outcome/metric eligibility rather than treating every null
+as the same event or assigning every metric the same denominator.
+
 Chunking–embedding first measures one complete corpus build after model/tokenizer
 loading, because the searchable matrix is needed before a representative query
 can run. First-use work during that build remains in its build-time measurement.
