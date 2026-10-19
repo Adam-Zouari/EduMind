@@ -196,6 +196,67 @@ def test_embedding_and_reranker_preparation_excludes_unused_exports() -> None:
     assert snapshot_ignore_patterns("generator") == ()
 
 
+def test_snapshot_size_counts_nested_files_without_temporary_caches(tmp_path) -> None:
+    from experiments.benchmarks.preparation.models import _snapshot_size_bytes
+
+    (tmp_path / "weights.bin").write_bytes(b"weights")
+    (tmp_path / "tokenizer").mkdir()
+    (tmp_path / "tokenizer/vocab.json").write_bytes(b"vocab")
+    for cache in (tmp_path / ".cache/huggingface", tmp_path / "__pycache__"):
+        cache.mkdir(parents=True)
+        (cache / "temporary").write_bytes(b"excluded")
+    assert _snapshot_size_bytes(tmp_path) == 12
+
+
+@pytest.mark.parametrize("directory_state", ["missing", "empty", "cache_only"])
+def test_snapshot_size_rejects_missing_or_empty_snapshots(
+    tmp_path, directory_state
+) -> None:
+    from experiments.benchmarks.preparation.models import _snapshot_size_bytes
+
+    root = tmp_path / "model"
+    if directory_state != "missing":
+        root.mkdir()
+    if directory_state == "cache_only":
+        (root / ".cache").mkdir()
+        (root / ".cache/download.lock").write_bytes(b"not a snapshot")
+    with pytest.raises(RuntimeError, match="missing|empty"):
+        _snapshot_size_bytes(root)
+
+
+@pytest.mark.parametrize("candidate", [PRODUCTION_EMBEDDING_MODEL, "docling-standard"])
+def test_model_lock_writes_measured_size_and_preserves_existing_entries(
+    tmp_path, candidate
+) -> None:
+    from experiments.benchmarks.preparation.models import _merge_model_lock
+
+    root = tmp_path / "snapshot"
+    root.mkdir()
+    (root / "weights.bin").write_bytes(b"pinned")
+    path = tmp_path / "selected.json"
+    previous = {"revision": "previous", "model_path": "unavailable-but-unrequested"}
+    path.write_text(
+        json.dumps({"models": {"openai/whisper-small.en": previous}}),
+        encoding="utf-8",
+    )
+    entry = {
+        "revision": "unchanged",
+        "model_path": str(root),
+        "model_cache_manifest_sha256": "unchanged-cache-checksum",
+        "snapshot_size_bytes": 999,
+    }
+    _merge_model_lock(path, {candidate: entry})
+    models = json.loads(path.read_text(encoding="utf-8"))["models"]
+    assert models[candidate] == {**entry, "snapshot_size_bytes": 6}
+    assert models["openai/whisper-small.en"] == previous
+    assert entry["snapshot_size_bytes"] == 999  # Do not mutate the caller's input.
+
+    (root / "weights.bin").write_bytes(b"updated")
+    _merge_model_lock(path, {candidate: entry})
+    models = json.loads(path.read_text(encoding="utf-8"))["models"]
+    assert models[candidate]["snapshot_size_bytes"] == 7
+
+
 def test_stage_model_lock_ignores_unrequested_missing_models(tmp_path) -> None:
     entries = {entry.candidate: entry for entry in selection_entries()}
     requested = entries["openai/whisper-small.en"]

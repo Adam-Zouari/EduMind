@@ -334,7 +334,7 @@ def snapshot_specs(entry: SelectionEntry) -> tuple[tuple[str, str, str], ...]:
     return ((entry.candidate, revision, "primary"),)
 
 
-def _merge_model_lock(path: Path, updates: Mapping[str, object]) -> None:
+def _merge_model_lock(path: Path, updates: Mapping[str, Mapping[str, object]]) -> None:
     existing: dict[str, object] = {}
     allowed = {entry.candidate for entry in selection_entries()} | {DOCLING_STANDARD}
     if path.is_file():
@@ -345,7 +345,17 @@ def _merge_model_lock(path: Path, updates: Mapping[str, object]) -> None:
         existing.update(
             {str(name): value for name, value in models.items() if str(name) in allowed}
         )
-    existing.update(updates)
+    existing.update(
+        {
+            candidate: {
+                **entry,
+                "snapshot_size_bytes": _snapshot_size_bytes(
+                    Path(str(entry["model_path"]))
+                ),
+            }
+            for candidate, entry in updates.items()
+        }
+    )
     atomic_write_json(
         path,
         {
@@ -499,6 +509,21 @@ def _prepare_tiktoken(cache_directory: Path) -> None:
     os.environ["TIKTOKEN_CACHE_DIR"] = str(cache_directory)
     tiktoken.get_encoding("cl100k_base").encode("EduMind preparation check")
     atomic_write_text(cache_directory / "cl100k_base.ready", "cl100k_base\n")
+
+
+def _snapshot_size_bytes(directory: Path) -> int:
+    """Count logical snapshot-file bytes, excluding download and Python caches."""
+    if not directory.is_dir():
+        raise RuntimeError(f"Prepared model directory is missing: {directory}")
+    sizes = [
+        path.stat().st_size
+        for path in directory.rglob("*")
+        if not {".cache", "__pycache__"}.intersection(path.relative_to(directory).parts)
+        and path.is_file()
+    ]
+    if not sizes:
+        raise RuntimeError(f"Prepared model snapshot is empty: {directory}")
+    return sum(sizes)
 
 
 def _directory_manifest_hash(directory: Path) -> str:

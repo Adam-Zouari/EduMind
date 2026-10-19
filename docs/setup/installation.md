@@ -150,6 +150,45 @@ data/benchmarks/models/selected.json
 
 That file records the exact repository, revision, local path, composite submodels, and Docling artifacts used by runs. A benchmark refuses missing paths, excluded candidates, and revisions that disagree with `selection_evidence.csv`. Do not edit `selected.json` manually.
 
+### Snapshot size metadata
+
+Preparation also measures `snapshot_size_bytes` for each entry it writes. This
+integer is the sum of logical file lengths under that entry's `model_path`,
+excluding `.cache` download metadata and `__pycache__` trees. It includes local
+weights, configuration, tokenizer files, and other retained snapshot files; it
+is not just parameter count multiplied by weight precision. Display tools may
+convert bytes to GB (1,000,000,000 bytes) or GiB (1,073,741,824 bytes), but the
+stored value stays in bytes.
+
+For `docling-standard`, the path is a prepared component bundle, so its size
+includes files inside that bundle. Separately located Paddle auxiliary caches,
+composite submodel directories, Tesseract executables/language data, Python
+packages, and model-serving memory are not added to a primary snapshot's size.
+This is local snapshot inventory, not total pipeline deployment size or VRAM.
+
+A prepared GTE entry, for example, includes these fields alongside its existing
+revision and cache checksum:
+
+```json
+{
+  "model": "Alibaba-NLP/gte-modernbert-base",
+  "revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
+  "model_path": "data/benchmarks/downloads/models/Alibaba-NLP--gte-modernbert-base",
+  "snapshot_size_bytes": 599710360
+}
+```
+
+This is an excerpt, not a replacement lock file. Sizes describe the files
+actually retained locally and can differ across preparation exclusion policies.
+Old locks without this optional metadata remain readable. Repreparing an entry
+automatically measures its current size; no separate size file or download
+command is needed. Adding size metadata does not change model-file checksums,
+but it changes the lock file's own checksum. Existing run artifacts remain
+unchanged and retain their original provenance. Snapshot size is not required
+as a per-run benchmark metric.
+
+### Preparation commands
+
 Inspect the complete download plan without network access:
 
 ```powershell
@@ -186,7 +225,7 @@ The application's provisional CPU Qwen3-1.7B snapshot is separate from the
 generation benchmark: it is neither the reasoning control nor one of its three
 challengers. The declared generator roster has four model identities; direct
 and reasoning modes produce separate applicable configurations.
-Embedding preparation excludes alternate ONNX, OpenVINO, GGUF, TensorFlow,
+Embedding and reranker preparation exclude alternate ONNX, OpenVINO, GGUF, TensorFlow,
 Flax, and TFLite exports because these benchmarks load the native Transformers
 checkpoint. The exact exclusions and resulting directory checksum are recorded
 in the model lock.
@@ -198,6 +237,7 @@ model lock. Protocols define executable behavior and candidate rosters where
 needed. Preparation uses included entries in `selection_evidence.csv` and writes
 immutable revisions, local snapshot paths, and checksums to
 `data/benchmarks/models/selected.json`.
+Each successfully written entry also receives its measured `snapshot_size_bytes`.
 
 ### RAG models
 

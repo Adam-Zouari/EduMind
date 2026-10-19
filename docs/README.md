@@ -80,7 +80,7 @@ inputs:
   and report verification;
   the remaining suites retain inline checks pending that migration.
 - `data/benchmarks/models/selected.json` records model revisions, prepared local
-  snapshot paths, and checksums.
+  snapshot paths, checksums, and preparation-time `snapshot_size_bytes` metadata.
 - Engineer-reviewed files under `data/benchmarks/decisions/` record selections
   and the completed runs that support them.
 - MLflow and run artifacts record what an experiment actually executed.

@@ -92,7 +92,7 @@ The candidate-selection package has a different role:
 - each benchmark's `protocol.yaml` owns behavior-changing settings and any
   configurable candidate roster, while code defines supported adapters;
 - `data/benchmarks/models/selected.json` owns prepared revisions, local paths,
-  and checksums.
+  checksums, and local snapshot-size metadata in bytes.
 
 ## Why Chroma and an in-process application are provisional
 
