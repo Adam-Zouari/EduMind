@@ -27,6 +27,16 @@ from experiments.benchmarks.rag.generation.protocol import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.mark.parametrize(
+    "key", ["peak_vram_mb", "peak_visual_vram_mb", "peak_vram_mib"]
+)
+def test_supervisor_recognizes_each_suite_vram_field(key):
+    assert (
+        benchmark_process._reported_peak_vram_mb({"operational": {key: 3600.0}})
+        == 3600.0
+    )
+
+
 @pytest.mark.parametrize("domain", ("audio", "document"))
 def test_worker_launcher_uses_repository_module(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, domain: str
@@ -323,6 +333,32 @@ def test_different_sample_sets_make_comparison_incomplete(tmp_path: Path) -> Non
     )
 
 
+def test_generic_runner_does_not_publish_surviving_partial_quality(tmp_path):
+    result = _run(
+        tmp_path,
+        _plan("partial"),
+        lambda _: (
+            [
+                SampleResult("scored", {"quality": 1.0}, 0.01),
+                SampleResult("unavailable", {"quality": None}, None),
+            ],
+            {"p95_latency_seconds": 0.01},
+        ),
+    )
+    assert not result.complete
+    child = result.candidates[0]
+    assert "quality" not in child.metrics
+    assert len(child.samples) == 2
+    partial = json.loads(
+        (
+            result.artifact_directory / "candidates/partial/partial_quality.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert partial["quality"]["estimate"] == 1.0
+    assert partial["quality"]["contributing"] == 1
+    assert partial["quality"]["scheduled"] == 2
+
+
 def test_input_limit_failure_is_audited_and_fails_parent(
     tmp_path: Path,
 ) -> None:
@@ -368,6 +404,85 @@ def test_failed_candidate_preserves_empty_audit_table(tmp_path: Path) -> None:
     assert (
         result.artifact_directory / "candidates" / "failed" / "query_metrics.parquet"
     ).is_file()
+
+
+def test_incomplete_execution_report_is_not_relabelled_as_runner_rejection(tmp_path):
+    def evaluator(_candidate):
+        raise CandidateExecutionError(
+            "required attempts were not executed",
+            artifacts={
+                "validation_report": {
+                    "status": "incomplete",
+                    "reason_code": "execution_coverage_incomplete",
+                    "errors": [],
+                }
+            },
+        )
+
+    result = _run(tmp_path, _plan("interrupted"), evaluator)
+    report = json.loads(
+        (
+            result.artifact_directory / "candidates/interrupted/validation_report.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert not result.complete
+    assert report["status"] == "incomplete"
+    assert report["reason_code"] == "execution_coverage_incomplete"
+    assert report["errors"] == []
+
+
+def test_mlflow_keeps_child_identity_null_evidence_and_failed_siblings(
+    tmp_path, monkeypatch, request
+):
+    mlflow = pytest.importorskip("mlflow")
+    previous_uri = mlflow.get_tracking_uri()
+    request.addfinalizer(lambda: mlflow.set_tracking_uri(previous_uri))
+    uri = "sqlite:///" + (tmp_path / "tracking.db").as_posix()
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
+    client = mlflow.tracking.MlflowClient(tracking_uri=uri)
+    experiment = client.create_experiment(
+        "EduMind / tracking-check", artifact_location=(tmp_path / "mlruns").as_uri()
+    )
+
+    def evaluator(candidate):
+        if candidate == "failed":
+            raise CandidateExecutionError("recorded test error")
+        return (
+            [SampleResult("same", {"quality": 1.0}, 0.01)],
+            {},
+            {"quality": 1.0, "optional": None},
+            {},
+            {},
+            {"availability": {"optional": {"value": None, "status": "inapplicable"}}},
+        )
+
+    result = run_benchmark(
+        replace(
+            _plan("passed", "failed"), suite="tracking-check", stage="tracking-check"
+        ),
+        evaluator,
+        dataset_checksum="synthetic-tracking-test",
+        directions={"quality": "max", "optional": "descriptive"},
+        primary_metric="quality",
+        nullable_metrics=("optional",),
+        monitor_resources=False,
+        artifact_root=tmp_path / "artifacts",
+    )
+    assert not result.complete
+    runs = client.search_runs([experiment])
+    parents = [run for run in runs if "mlflow.parentRunId" not in run.data.tags]
+    assert len(parents) == 1 and parents[0].info.status == "FAILED"
+    for child in result.candidates:
+        saved = client.get_run(child.mlflow_run_id)
+        assert saved.data.tags["mlflow.parentRunId"] == parents[0].info.run_id
+        assert saved.info.status == (
+            "FINISHED" if child.status == "success" else "FAILED"
+        )
+        assert "optional" not in saved.data.metrics
+    assert any(
+        path.name == "availability.json"
+        for path in (result.artifact_directory / "candidates/passed").iterdir()
+    )
 
 
 def test_runner_rejection_updates_validation_report_and_preserves_evidence(tmp_path):
@@ -649,7 +764,8 @@ def test_protocol_identity_and_resolved_settings_are_recorded_for_parent_and_chi
     )
     recorded = candidate_artifact["parameters"]["protocols"]["generation"]
     assert recorded["version"] == protocol.meta.version
-    assert recorded["resolved"]["generation"]["maximum_answer_tokens"] == 256
+    assert recorded["resolved"]["generation"]["context_tokens"] == 8192
+    assert recorded["resolved"]["generation"]["measured_seeds"] == [42, 43, 44]
     assert any(
         values.get("protocol.generation.checksum") == protocol.meta.checksum
         for _run_name, values in tracking.parameter_calls

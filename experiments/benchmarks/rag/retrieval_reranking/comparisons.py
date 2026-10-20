@@ -27,8 +27,8 @@ RERANKER_OPERATIONAL = frozenset(
     }
 )
 RETRIEVER_OPERATIONAL = RERANKER_OPERATIONAL | {
-    "operational.first_stage_latency_ms_p50",
-    "operational.first_stage_latency_ms_p95",
+    "operational.retrieval_latency_ms_p50",
+    "operational.retrieval_latency_ms_p95",
     "operational.index_build_seconds",
 }
 INTEGER_COLUMNS = frozenset(
@@ -36,6 +36,7 @@ INTEGER_COLUMNS = frozenset(
         "cutoff",
         "eligible_questions",
         "eligible_documents",
+        "eligible_sources",
         "bootstrap_resamples",
         "seed",
     }
@@ -72,6 +73,7 @@ COMMON_COLUMNS = (
     "ci_status",
     "eligible_questions",
     "eligible_documents",
+    "eligible_sources",
     "bootstrap_resamples",
     "seed",
 )
@@ -158,6 +160,14 @@ def parent_artifact_builder(
                             if key in record
                         },
                         "row_count": len(record.get("rows", [])),
+                        "preparation_mode": record.get("preparation_mode"),
+                        "prepared_for_manifest_fingerprint": record.get(
+                            "prepared_for_manifest_fingerprint"
+                        ),
+                        "index_build": record.get("index_build"),
+                        "input_pool_rows": record.get("rows")
+                        if record.get("owner_child_run_id") is None
+                        else None,
                     }
                     for owner, record in sorted(pool_collections.items())
                 ],
@@ -250,7 +260,7 @@ def _retriever_rows(
             RETRIEVER_OPERATIONAL
             | {
                 protocol.pool_recall_metric,
-                "storage.required_index_bytes",
+                "storage.index_size_bytes",
             },
         ),
         directions,
@@ -351,22 +361,31 @@ def _comparison_row(
     interval = None
     eligible_questions = None
     eligible_documents = None
+    eligible_sources = None
     ci_status = "not_supported"
-    if _is_question_level_quality(metric):
-        interval, eligible_questions, eligible_documents = paired_document_interval(
-            baseline.samples,
-            candidate.samples,
-            metric,
-            resamples=plan.bootstrap_resamples,
-            seed=plan.seed,
-            confidence=protocol.confidence_level,
+    latency = metric.startswith("operational.") and "_latency_ms_p" in metric
+    if _is_question_level_quality(metric) or latency:
+        minimum = (
+            protocol.minimum_latency_ci_documents
+            if latency
+            else protocol.minimum_quality_ci_documents
         )
-        if plan.profile == "smoke":
-            ci_status = "smoke"
-        elif interval is None:
-            ci_status = "insufficient_documents"
-        else:
-            ci_status = "available"
+        bounds, eligible_questions, eligible_documents, eligible_sources = (
+            paired_document_interval(
+                baseline.samples,
+                candidate.samples,
+                metric,
+                resamples=plan.bootstrap_resamples,
+                seed=plan.seed,
+                confidence=protocol.confidence_level,
+                minimum_documents=minimum,
+            )
+        )
+        ci_status = (
+            "smoke" if plan.profile == "smoke" else bounds["reason"] or "available"
+        )
+        if ci_status == "available":
+            interval = bounds
     favors = None
     if direction == "max":
         favors = difference > 0
@@ -398,6 +417,7 @@ def _comparison_row(
         "ci_status": ci_status,
         "eligible_questions": eligible_questions,
         "eligible_documents": eligible_documents,
+        "eligible_sources": eligible_sources,
         "bootstrap_resamples": (
             plan.bootstrap_resamples if interval is not None else None
         ),
@@ -415,10 +435,9 @@ def _values(result: CandidateResult) -> dict[str, float]:
         **{
             f"operational.{name}": float(value)
             for name, value in result.operational.items()
+            if value is not None
         },
     }
-    if "storage.required_index_bytes" not in values and "storage.index_bytes" in values:
-        values["storage.required_index_bytes"] = values["storage.index_bytes"]
     return values
 
 
@@ -444,7 +463,7 @@ def _is_question_level_quality(metric: str) -> bool:
 
 
 def _is_retrieved_workload(metric: str) -> bool:
-    return metric.startswith("workload.retrieved_tokens_at_")
+    return metric.startswith("workload.retrieved_context_tokens_at_")
 
 
 def _write_mirrors(

@@ -480,9 +480,10 @@ def load_frozen_asr_artifact(
             )
         elif not row.get("error"):
             raise ValueError("Failed frozen ASR video must retain a failure reason")
-        if row.get("segments") != stitched or row.get("transcript") != " ".join(
-            segment["text"] for segment in stitched
-        ):
+        produced = any(window["success"] for window in windows)
+        if row.get("segments") != (stitched if produced else None) or row.get(
+            "transcript"
+        ) != (" ".join(segment["text"] for segment in stitched) if produced else None):
             raise ValueError(
                 "Frozen ASR transcript/segments differ from deterministic window stitching"
             )

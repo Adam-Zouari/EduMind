@@ -1,0 +1,58 @@
+{
+  "name": "edumind-generation-smoke",
+  "version": "1",
+  "task": "rag",
+  "split": "smoke",
+  "source": "committed synthetic wiring fixture",
+  "license": "CC0-1.0",
+  "revision": "1",
+  "preprocessing_version": "generation-source-verified-v1",
+  "split_seed": 42,
+  "checksum": "192f2691a9153bf77d087ffebf85bc75c72f28141b7aa38485f2425b53556947",
+  "samples": [
+    {
+      "id": "generation-paper",
+      "kind": "document",
+      "source": "generation-paper.txt",
+      "text": "Photosynthesis converts light energy into chemical energy in plant cells."
+    },
+    {
+      "id": "generation-answerable",
+      "kind": "question",
+      "document_id": "generation-paper",
+      "question": "What does photosynthesis convert light energy into?",
+      "answerable": true,
+      "answer": "chemical energy",
+      "accepted_answers": ["chemical energy"],
+      "evidence_type": "text",
+      "evidence": [
+        {"id": "photosynthesis-energy", "document_id": "generation-paper", "start": 0, "end": 73, "evidence_type": "text"}
+      ],
+      "required_gold_claims": [
+        {"id": "energy-conversion", "text": "Photosynthesis converts light energy into chemical energy."}
+      ],
+      "verification_material": [
+        {"id": "source-1", "text": "Photosynthesis converts light energy into chemical energy in plant cells.", "sha256": "8606f8449ed01bcbd2fad644ccca2e45d5703e5984aca90251603bc8b9c3595e"}
+      ],
+      "supplied_evidence": [
+        {"id": "E1", "text": "Photosynthesis converts light energy into chemical energy in plant cells.", "intervals": [{"document_id": "generation-paper", "start": 0, "end": 73}]}
+      ]
+    },
+    {
+      "id": "generation-unanswerable",
+      "kind": "question",
+      "document_id": "generation-paper",
+      "question": "What temperature maximizes photosynthesis in this document?",
+      "answerable": false,
+      "answer": "",
+      "accepted_answers": [],
+      "evidence_type": "text",
+      "evidence": [],
+      "required_gold_claims": [],
+      "verification_material": [],
+      "supplied_evidence": [
+        {"id": "E1", "text": "Photosynthesis converts light energy into chemical energy in plant cells.", "intervals": [{"document_id": "generation-paper", "start": 0, "end": 73}]}
+      ]
+    }
+  ]
+}

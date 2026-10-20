@@ -250,6 +250,35 @@ def validate_input_envelope(items, validation, qualification):
 
 
 def _run_frozen_asr_probe(candidate, stress, audio_lock, protocol, audio_protocol):
+    from uuid import uuid4
+
+    from experiments.benchmarks.common.process import WorkerExecutionError
+    from experiments.benchmarks.extraction.evidence import (
+        public_asr_evidence,
+        retain_prediction,
+    )
+
+    path = (
+        PROJECT_ROOT
+        / "artifacts/benchmarks/video-asr-preflight"
+        / f"{uuid4().hex}.json"
+    )
+    try:
+        result = _frozen_asr_probe(
+            candidate, stress, audio_lock, protocol, audio_protocol
+        )
+    except WorkerExecutionError as exc:
+        reference = retain_prediction(path, exc.resource_evidence)
+        exc.resource_evidence = public_asr_evidence(exc.resource_evidence)
+        exc.resource_evidence["prediction_evidence"] = reference
+        exc.artifacts = public_asr_evidence(exc.artifacts)
+        exc.parameters["prediction_evidence"] = reference
+        raise
+    reference = retain_prediction(path, result)
+    return {**public_asr_evidence(result), "prediction_evidence": reference}
+
+
+def _frozen_asr_probe(candidate, stress, audio_lock, protocol, audio_protocol):
     return run_json_worker(
         Path(__file__).with_name("frozen_asr_worker.py"),
         {

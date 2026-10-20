@@ -144,7 +144,7 @@ def execute(payload):
     commands = []
     outputs = {
         str(item["id"]): [
-            {"predictions": None, "fingerprint": None}
+            {"predictions": None, "fingerprint": None, "frame_evidence": None}
             for _ in range(execution.repetitions)
         ]
         for item in items
@@ -226,6 +226,7 @@ def execute(payload):
                         seed_deterministically(protocol.meta.seed)
                         started = time.perf_counter()
                         predictions = fingerprint = error = count = command = None
+                        frame_evidence = {}
                         try:
                             predictions, command, count, fingerprint = _process_video(
                                 extractor,
@@ -236,6 +237,7 @@ def execute(payload):
                                 image_revision,
                                 device,
                                 image_options,
+                                frame_evidence,
                             )
                             synchronize(device, image_engine)
                         except Exception as exc:  # noqa: BLE001 - continue accounted request failures
@@ -255,6 +257,7 @@ def execute(payload):
                         outputs[str(item["id"])][repetition - 1] = {
                             "predictions": predictions,
                             "fingerprint": fingerprint,
+                            "frame_evidence": frame_evidence,
                         }
                         if command is not None:
                             commands.append(
@@ -317,7 +320,12 @@ def execute(payload):
         "cold_visual_pipeline_load_seconds": cold,
         "execution_error": execution_error,
         "timings": timings,
-        "outputs": {"attempts": outputs},
+        "outputs": {
+            "attempts": outputs,
+            "inputs": items,
+            "protocol": payload["protocol"],
+            "document_protocol": payload["document_protocol"],
+        },
         "ffmpeg_commands": commands,
         "resource_samples": monitor.samples(),
         "gpu_identity": monitor.gpu_identity,
@@ -601,9 +609,15 @@ def _process_video(
     image_revision,
     device,
     image_options,
+    evidence=None,
 ):
     frames, command = _extract_frames(
         candidate, Path(str(item["source_path"])), directory
+    )
+    if evidence is None:
+        evidence = {}
+    evidence.update(
+        selected_frame_timestamps=[timestamp for _, timestamp in frames], frames=[]
     )
     if any(
         not np.isfinite(timestamp)
@@ -615,13 +629,19 @@ def _process_video(
         )
     predictions, signatures = [], []
     try:
-        for frame, timestamp in frames:
+        for index, (frame, timestamp) in enumerate(frames):
             request = _image_request(
                 frame, image_engine, image_revision, device, image_options
             )
-            document = validate_document_payload(
-                extractor.extract(request, SourceKind.IMAGE).to_dict()
-            )
+            record = {
+                "frame_index": index,
+                "timestamp": timestamp,
+                "input_sha256": request.checksum,
+                "document": None,
+            }
+            evidence["frames"].append(record)
+            record["document"] = extractor.extract(request, SourceKind.IMAGE).to_dict()
+            document = validate_document_payload(record["document"])
             if any(not warning.recoverable for warning in document.warnings):
                 raise ValueError(
                     "Visual parser reported a nonrecoverable extraction failure"

@@ -1,564 +1,853 @@
-"""Measured direct Hugging Face generation over frozen or retrieved contexts."""
+"""Generation execution and offline evaluation; no retrieval or live judge API.
 
-from __future__ import annotations
+The old evaluate_candidate keyword interface is retained. Retrieved-context
+integration must migrate explicitly and fails closed instead of using lexical
+or HHEM scores. Raw generation finishes before any semantic judging begins.
+"""
 
-import re
-from collections import Counter
-from collections.abc import Mapping, Sequence
+import json
+import math
+import time
+from contextlib import nullcontext
+from dataclasses import asdict
+from pathlib import Path
+from uuid import uuid4
 
-import numpy as np
-
-from edumind.rag.tokenizers import TiktokenOffsetTokenizer
-from edumind.rag.types import RetrievalHit
-from experiments.benchmarks.common.contracts import DatasetManifest, SampleResult
-from experiments.benchmarks.common.datasets import evidence_units
-from experiments.benchmarks.common.metrics import (
-    balanced_accuracy,
-    balanced_accuracy_interval,
-    citation_scores,
-    exact_match,
-    precision_recall_f1,
-    rouge_l,
-    token_f1,
+from edumind.common.artifacts import atomic_write_json, sha256_file
+from edumind.common.paths import PROJECT_ROOT
+from experiments.benchmarks.common.contracts import (
+    BenchmarkPlan,
+    CandidateExecutionError,
+    SampleResult,
 )
-from experiments.benchmarks.rag.evaluation import (
-    ExactIndex,
-    rank,
-    reranker_for,
-    retrieval_metrics,
+from experiments.benchmarks.common.process import (
+    benchmark_objects_from_payload,
+    run_json_worker,
 )
-from experiments.benchmarks.rag.generation.models import generator_for
-from experiments.benchmarks.rag.generation.protocol import GenerationProtocol
-from experiments.benchmarks.rag.retrieval_reranking.protocol import RetrievalProtocol
+from experiments.benchmarks.common.resources import ResourceMonitor
 
-GENERATION_DIRECTIONS = {
-    "exact_match": "max",
-    "token_f1": "max",
-    "rouge_l": "max",
-    "citation_precision": "max",
-    "citation_recall": "max",
-    "citation_f1": "max",
-    "answerability_correct": "max",
-    "answerability_balanced_accuracy": "max",
-    "hhem_faithfulness": "max",
-    "refusal_precision": "max",
-    "refusal_recall": "max",
-    "refusal_f1": "max",
-    "unsupported_answer_rate": "min",
-    "malformed_output_rate": "min",
-    "determinism": "max",
-    "human_review_required": "max",
-    "operational.p50_latency_seconds": "min",
-    "operational.p95_latency_seconds": "min",
-    "operational.p50_retrieval_seconds": "min",
-    "operational.p95_retrieval_seconds": "min",
-    "operational.p50_generation_seconds": "min",
-    "operational.p95_generation_seconds": "min",
-    "operational.p50_time_to_first_token_seconds": "min",
-    "operational.p95_time_to_first_token_seconds": "min",
-    "operational.mean_prompt_evaluation_seconds": "min",
-    "operational.mean_model_generation_seconds": "min",
-    "operational.mean_prompt_tokens": "min",
-    "operational.tokens_per_second": "max",
-    "operational.answers_per_minute": "max",
-    "operational.mean_answer_tokens": "min",
-    "operational.mean_reasoning_tokens": "min",
-    "operational.mean_generated_tokens": "min",
-    "operational.cold_load_seconds": "min",
-    "operational.peak_process_tree_ram_mb": "min",
-}
+from .judge import load_judge_contract
+from .metrics import (
+    BASE_KEYS,
+    GENERATION_DIRECTIONS,
+    OPERATIONAL_KEYS,
+    aggregate,
+    finish_inventory,
+    parse_response,
+    score_attempt,
+    score_pairs,
+)
+from .models import generator_for
+from .protocol import load_protocol
+from .validation import questions_from_manifest
+
+__all__ = ["GENERATION_DIRECTIONS", "evaluate_candidate"]
 
 
-class LocalFaithfulness:
-    def __init__(self, model_path: str, *, trust_remote_code: bool) -> None:
-        self.model_path = model_path
-        self.trust_remote_code = trust_remote_code
-        self.model = None
+class GenerationPlacementError(RuntimeError):
+    """Typed placement evidence must survive generic worker error handling."""
 
-    def score(self, context: str, answer: str) -> float:
-        if not answer.strip() or _is_refusal(answer):
-            return 1.0
-        if self.model is None:
-            from transformers import AutoModelForSequenceClassification
-
-            self.model = AutoModelForSequenceClassification.from_pretrained(
-                self.model_path,
-                local_files_only=True,
-                trust_remote_code=self.trust_remote_code,
-            )
-        score = self.model.predict([(context, _clean_answer(answer))])
-        return float(score[0])
+    def __init__(self, report):
+        self.report = report
+        self.reason_code = report.get("status", "placement_unverifiable")
+        super().__init__(self.reason_code)
 
 
-def evaluate_candidate(
-    candidate: str,
-    manifest: DatasetManifest,
-    model_lock: Mapping[str, Mapping[str, object]],
-    *,
-    protocol: GenerationProtocol,
-    final_index: ExactIndex | None,
-    retrieval_method: str,
-    top_k: int | None,
-    repetitions: int,
-    device: str,
-    dtype: str,
-    bootstrap_resamples: int,
-    bootstrap_seed: int,
-    retrieval_protocol: RetrievalProtocol | None,
-    warmups: int,
-    question_scope: str,
-):
-    if question_scope not in {"development-screen", "all"}:
-        raise ValueError(f"Unknown generation question scope: {question_scope}")
-    questions = _questions(
-        manifest,
-        protocol.question_count if question_scope == "development-screen" else None,
-        protocol.meta.seed,
-    )
-    documents = {
-        str(row["id"]): str(row["text"])
-        for row in manifest.samples
-        if row.get("kind") == "document"
+def _empty_attempt(seed, reason="not_started"):
+    return {
+        "seed": seed,
+        "outcome": "not_executed",
+        "finish_reason": None,
+        "error": reason,
+        "raw_text": None,
+        "visible_text": "",
+        "timing": {},
+        "workload": {},
     }
-    generator = generator_for(candidate, model_lock, device, dtype, protocol)
-    tokenizer = TiktokenOffsetTokenizer(
-        protocol.context_tokenizer.removeprefix("tiktoken:")
-    )
-    faithfulness = LocalFaithfulness(
-        str(model_lock[protocol.faithfulness_model]["model_path"]),
-        trust_remote_code=protocol.faithfulness_trust_remote_code,
-    )
-    if final_index is not None and retrieval_protocol is None:
-        raise ValueError("Retrieved generation requires an explicit retrieval protocol")
-    if final_index is not None and top_k is None:
-        raise ValueError("Retrieved generation requires an explicit top-k cutoff")
-    retrieval_reranker = (
-        reranker_for(
-            retrieval_method,
-            model_lock,
-            device=device,
-            dtype=dtype,
-            retrieval_protocol=retrieval_protocol,
-        )
-        if final_index is not None
-        else None
-    )
-    context_cache: dict[str, tuple[list[RetrievalHit], str, float]] = {}
-    context_questions = questions[:1] if final_index is not None else questions
-    for question in context_questions:
-        context_cache[str(question["id"])] = (
-            _retrieved_hits(
-                question,
-                final_index,
-                retrieval_method,
-                int(top_k),
-                retrieval_reranker,
-            )
-            if final_index is not None
-            else _frozen_hits(
-                question,
-                documents,
-                tokenizer,
-                protocol.context_packing_tokens,
-            )
-        )
-
-    first_hits, _, _ = context_cache[str(questions[0]["id"])]
-    generator.unload()
-    cold = generator.generate_measured_with_results(
-        str(questions[0]["question"]), first_hits
-    )
-    for _ in range(warmups):
-        generator.generate_measured_with_results(
-            str(questions[0]["question"]), first_hits
-        )
-
-    samples: list[SampleResult] = []
-    measurements = []
-    total_latencies: list[float] = []
-    retrieval_latencies: list[float] = []
-    predictions: list[bool] = []
-    labels: list[bool] = []
-    for question in questions:
-        repeated = []
-        repeated_inputs = []
-        for _ in range(repetitions):
-            hits, context, retrieval_seconds = (
-                _retrieved_hits(
-                    question,
-                    final_index,
-                    retrieval_method,
-                    int(top_k),
-                    retrieval_reranker,
-                )
-                if final_index is not None
-                else context_cache[str(question["id"])]
-            )
-            repeated_inputs.append((hits, context, retrieval_seconds))
-            repeated.append(
-                generator.generate_measured_with_results(
-                    str(question["question"]), hits
-                )
-            )
-            retrieval_latencies.append(retrieval_seconds)
-        hits, context, _ = repeated_inputs[0]
-        measurements.extend(repeated)
-        total_latencies.extend(
-            measurement.total_seconds + inputs[2]
-            for measurement, inputs in zip(repeated, repeated_inputs, strict=True)
-        )
-        answer = repeated[0].answer
-        answerable = bool(question.get("answerable"))
-        repeat_predictions = [
-            not _is_refusal(measurement.answer) for measurement in repeated
-        ]
-        predicted_answerable = Counter(repeat_predictions).most_common(1)[0][0]
-        predictions.append(predicted_answerable)
-        labels.append(answerable)
-        raw_references = question.get("accepted_answers", [])
-        references = (
-            [str(value) for value in raw_references if str(value).strip()]
-            if isinstance(raw_references, Sequence)
-            and not isinstance(raw_references, str)
-            else []
-        )
-        if not references:
-            references = [str(question.get("answer", ""))]
-        repeated_metrics = []
-        for measurement, repeat_prediction in zip(
-            repeated, repeat_predictions, strict=True
-        ):
-            repeat_answer = measurement.answer
-            clean = _clean_answer(repeat_answer)
-            repeated_metrics.append(
-                {
-                    "exact_match": max(
-                        exact_match(clean, value) for value in references
-                    )
-                    if answerable
-                    else float(not repeat_prediction),
-                    "token_f1": max(token_f1(clean, value) for value in references)
-                    if answerable
-                    else float(not repeat_prediction),
-                    "rouge_l": max(rouge_l(clean, value) for value in references)
-                    if answerable
-                    else float(not repeat_prediction),
-                    **citation_scores(
-                        repeat_answer, _supported_contexts(question, hits)
-                    ),
-                    "answerability_correct": float(repeat_prediction == answerable),
-                    "hhem_faithfulness": faithfulness.score(context, repeat_answer),
-                    "unsupported_answer_rate": float(
-                        not answerable and repeat_prediction
-                    ),
-                    "malformed_output_rate": float(
-                        _malformed(repeat_answer, len(hits))
-                    ),
-                }
-            )
-        metric_names = repeated_metrics[0]
-        averaged_metrics = {
-            name: float(np.mean([row[name] for row in repeated_metrics]))
-            for name in metric_names
-        }
-        averaged_metrics["determinism"] = float(
-            all(measurement.answer == answer for measurement in repeated)
-        )
-        evidence_type = str(question.get("evidence_type", "text"))
-        if final_index is not None:
-            by_id = {chunk.identifier: chunk for chunk in final_index.chunks}
-            selected = [by_id[hit.id] for hit in hits if hit.id in by_id]
-            retrieval_quality, retrieved_tokens = retrieval_metrics(
-                question,
-                selected,
-                final_index.chunks,
-                final_index.tokenizer,
-                cutoffs=retrieval_protocol.quality_cutoffs,
-            )
-            averaged_metrics.update(retrieval_quality)
-        else:
-            retrieved_tokens = sum(hit.token_count for hit in hits)
-        averaged_metrics.update(
-            {
-                f"stratum.{evidence_type}.{name}": value
-                for name, value in averaged_metrics.items()
-                if name
-                in {
-                    "citation_f1",
-                    "hhem_faithfulness",
-                    "token_f1",
-                    "answerability_correct",
-                    "ndcg_at_3",
-                    "ndcg_at_5",
-                    "context_recall_at_3",
-                    "context_recall_at_5",
-                }
-            }
-        )
-        sample_latency = float(
-            np.median(
-                [
-                    measurement.total_seconds + inputs[2]
-                    for measurement, inputs in zip(
-                        repeated, repeated_inputs, strict=True
-                    )
-                ]
-            )
-        )
-        samples.append(
-            SampleResult(
-                str(question["id"]),
-                averaged_metrics,
-                sample_latency,
-                {
-                    "answerable": answerable,
-                    "predicted_answerable": predicted_answerable,
-                    "question": question["question"],
-                    "reference_answer": " | ".join(references),
-                    "generated_answer": answer,
-                    "frozen_context": context,
-                    "retrieval": retrieval_method,
-                    "top_k": top_k,
-                    "measured_repetitions": repetitions,
-                    "retrieved_tokens": retrieved_tokens,
-                    "evidence_type": evidence_type,
-                },
-            )
-        )
-    runtime_memory = generator.runtime_memory()
-    generator.unload()
-    refusal = _refusal_scores(labels, predictions)
-    answerability = balanced_accuracy(labels, predictions)
-    answerability_intervals = {}
-    if bootstrap_resamples:
-        interval = balanced_accuracy_interval(
-            labels,
-            predictions,
-            resamples=bootstrap_resamples,
-            seed=bootstrap_seed,
-            confidence=protocol.confidence_level,
-        )
-        answerability_intervals["answerability_balanced_accuracy"] = {
-            "estimate": interval.estimate,
-            "lower": interval.lower,
-            "upper": interval.upper,
-            "confidence": interval.confidence,
-        }
-    return (
-        samples,
-        {
-            "p50_latency_seconds": float(np.median(total_latencies)),
-            "p95_latency_seconds": float(np.quantile(total_latencies, 0.95)),
-            "p50_retrieval_seconds": float(np.median(retrieval_latencies)),
-            "p95_retrieval_seconds": float(np.quantile(retrieval_latencies, 0.95)),
-            "p50_generation_seconds": float(
-                np.median([row.total_seconds for row in measurements])
-            ),
-            "p95_generation_seconds": float(
-                np.quantile([row.total_seconds for row in measurements], 0.95)
-            ),
-            "p50_time_to_first_token_seconds": float(
-                np.median([row.time_to_first_token_seconds for row in measurements])
-            ),
-            "p95_time_to_first_token_seconds": float(
-                np.quantile(
-                    [row.time_to_first_token_seconds for row in measurements], 0.95
-                )
-            ),
-            "mean_prompt_evaluation_seconds": float(
-                np.mean([row.prompt_evaluation_seconds for row in measurements])
-            ),
-            "mean_model_generation_seconds": float(
-                np.mean([row.generation_seconds for row in measurements])
-            ),
-            "mean_prompt_tokens": float(
-                np.mean([row.prompt_tokens for row in measurements])
-            ),
-            "tokens_per_second": float(
-                np.mean([row.tokens_per_second for row in measurements])
-            ),
-            "answers_per_minute": 60.0 / max(float(np.mean(total_latencies)), 1e-9),
-            "mean_answer_tokens": float(
-                np.mean([row.answer_tokens for row in measurements])
-            ),
-            "mean_reasoning_tokens": float(
-                np.mean([row.reasoning_tokens for row in measurements])
-            ),
-            "mean_generated_tokens": float(
-                np.mean([row.generated_tokens for row in measurements])
-            ),
-            "cold_load_seconds": cold.load_seconds,
-            **runtime_memory,
-        },
-        {
-            "answerability_balanced_accuracy": answerability,
-            **refusal,
-            "human_review_required": 1.0,
-        },
-        {},
-        answerability_intervals,
-    )
 
 
-def _frozen_hits(
-    question, documents, tokenizer, maximum_tokens: int
-) -> tuple[list[RetrievalHit], str, float]:
-    document = documents[str(question["document_id"])]
-    texts = [
-        "\n".join(
-            document[interval.start : interval.end] for interval in unit.intervals
-        ).strip()
-        for unit in evidence_units(question)
-    ]
-    if not texts:
-        texts = [tokenizer.truncate(document, maximum_tokens)]
-    packed_texts = []
-    used = 0
-    for text in texts:
-        available = maximum_tokens - used
-        if available <= 0:
-            break
-        packed = tokenizer.truncate(text, available)
-        if packed.strip():
-            packed_texts.append(packed)
-            used += tokenizer.count(packed)
-    hits = [
-        RetrievalHit(
-            f"frozen-{index}",
-            text,
-            {
-                "source": question["document_id"],
-                "document_id": question["document_id"],
-                "page": "N/A",
-            },
-            1.0,
-            index,
-            "frozen-oracle-context",
-            tokenizer.count(text),
+def _instrumentation_issues(raw):
+    issues = []
+
+    def number(value):
+        return (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+            and value >= 0
         )
-        for index, text in enumerate(packed_texts, 1)
-    ]
-    return hits, "\n\n".join(hit.document for hit in hits), 0.0
 
-
-def _retrieved_hits(
-    question, index, method, top_k, reranker
-) -> tuple[list[RetrievalHit], str, float]:
-    import time
-
-    started = time.perf_counter()
-    positions = rank(index, str(question["question"]), method, reranker)
-    hits = []
-    for position in positions[:top_k]:
-        chunk = index.chunks[position]
-        hits.append(
-            RetrievalHit(
-                chunk.identifier,
-                chunk.text,
-                {
-                    "source": chunk.document_id,
-                    "document_id": chunk.document_id,
-                    "start": chunk.start,
-                    "end": chunk.end,
-                },
-                1.0,
-                len(hits) + 1,
-                method,
-                chunk.tokens,
+    for record in raw["records"]:
+        for attempt in record["attempts"]:
+            if attempt["outcome"] != "completed":
+                continue  # Known failed requests have conditional timing cohorts.
+            label = f"{record['question']['id']}/{attempt['seed']}"
+            timing, workload = attempt.get("timing", {}), attempt.get("workload", {})
+            for field in ("latency_seconds", "generation_seconds"):
+                if not number(timing.get(field)):
+                    issues.append(label + ": missing/invalid " + field)
+            for field in ("prompt_tokens", "context_tokens", "total_output_tokens"):
+                value = workload.get(field)
+                if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                    issues.append(label + ": missing/invalid " + field)
+            events, count = (
+                attempt.get("token_event_seconds"),
+                workload.get("total_output_tokens"),
             )
-        )
-    return (
-        hits,
-        "\n\n".join(hit.document for hit in hits),
-        time.perf_counter() - started,
-    )
-
-
-def _supported_contexts(question, hits) -> set[int]:
-    result = set()
-    for rank_number, hit in enumerate(hits, 1):
-        for unit in evidence_units(question):
-            if any(
-                hit.metadata.get("document_id") == interval.document_id
-                and (
-                    "start" not in hit.metadata
-                    or max(
-                        0,
-                        min(int(hit.metadata["end"]), interval.end)
-                        - max(int(hit.metadata["start"]), interval.start),
-                    )
-                    > 0
-                )
-                for interval in unit.intervals
+            if (
+                not isinstance(events, list)
+                or any(not number(v) for v in events)
+                or events != sorted(events)
+                or len(events) != count
             ):
-                result.add(rank_number)
-                break
+                issues.append(label + ": missing/invalid token event inventory")
+                continue
+            if events:
+                for field, expected in (
+                    (
+                        "ttft_seconds",
+                        events[0] - timing.get("generation_call_offset_seconds", 0),
+                    ),
+                    ("first_token_seconds", events[0]),
+                    ("last_token_seconds", events[-1]),
+                ):
+                    if not number(timing.get(field)) or not math.isclose(
+                        timing[field], expected
+                    ):
+                        issues.append(label + ": missing/inconsistent " + field)
+            response, _ = parse_response(attempt.get("visible_text", ""))
+            if response is not None:
+                value = workload.get("visible_answer_tokens")
+                if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                    issues.append(label + ": missing/invalid visible_answer_tokens")
+    return issues
+
+
+def _merge_supervision(raw):
+    """Keep real device-total peaks from either observer, never subtract baseline."""
+    supervision = raw.get("_worker_supervision", {})
+    operational = dict(raw.get("operational", {}))
+    values = [operational.get("peak_vram_mib"), supervision.get("peak_vram_mb")]
+    values = [
+        v
+        for v in values
+        if isinstance(v, (int, float))
+        and not isinstance(v, bool)
+        and math.isfinite(v)
+        and v >= 0
+    ]
+    operational["peak_vram_mib"] = (
+        max(values) if values and raw.get("device") != "cpu" else None
+    )
+    # Supervisor RAM includes this parent and is not the worker process tree.
+    return {
+        **raw,
+        "operational": operational,
+        "supervisor_resource_samples": supervision.get("resource_samples", []),
+        "supervisor_resource_evidence": supervision,
+    }
+
+
+def _plan_settings(plan, protocol, preflight):
+    if preflight:
+        expected = protocol.preflight
+    else:
+        expected = protocol.profile(plan.profile)
+    if (plan.seed, plan.warmups, plan.repetitions, plan.bootstrap_resamples) != (
+        protocol.meta.seed,
+        expected.warmups,
+        expected.repetitions,
+        expected.bootstrap_resamples,
+    ):
+        raise ValueError("Generation plan does not match its resolved protocol")
+    device, dtype = plan.settings["device"], plan.settings["dtype"]
+    profile = protocol.profile("development" if preflight else plan.profile)
+    if device not in (
+        ("cpu", "cuda") if plan.profile == "smoke" else (profile.device,)
+    ) or dtype != profile.dtype_for(device):
+        raise ValueError(
+            "Generation device/dtype override violates the resolved protocol"
+        )
+
+
+def execute_generation(
+    candidate,
+    manifest,
+    model_lock,
+    plan,
+    protocol,
+    *,
+    backend_factory=generator_for,
+    monitor_factory=ResourceMonitor,
+    preflight=False,
+    evidence_directory=None,
+):
+    """Run one fresh backend lifecycle; injectable factories require no GPU/model."""
+    _plan_settings(plan, protocol, preflight)
+    questions = questions_from_manifest(manifest)
+    seeds = protocol.measured_seeds[: plan.repetitions]
+    result = {
+        "candidate": candidate,
+        "mode": protocol.mode(candidate),
+        "model_id": protocol.model_id(candidate),
+        "device": plan.settings["device"],
+        "dtype": plan.settings["dtype"],
+        "phase": "input_compatibility",
+        "error": None,
+        "cold_model_load_seconds": None,
+        "input_compatibility": {"status": "failed", "questions": []},
+        "records": [
+            {"question": q, "attempts": [_empty_attempt(seed) for seed in seeds]}
+            for q in questions
+        ],
+        "resource_samples": [],
+        "resource_status": "unavailable",
+        "monitoring_complete": False,
+        "placement_before": None,
+        "placement_after": None,
+        "operational": {},
+    }
+    backend = monitor = None
+
+    def checkpoint():
+        if evidence_directory is not None:
+            atomic_write_json(
+                Path(evidence_directory) / "generation_progress.json", result
+            )
+
+    try:
+        backend = backend_factory(
+            candidate,
+            model_lock,
+            plan.settings["device"],
+            plan.settings["dtype"],
+            protocol,
+        )
+        prepared = [backend.prepare(q) for q in questions]
+        checks = [
+            {
+                "question_id": q["id"],
+                "candidate": candidate,
+                "prompt_tokens": p["prompt_tokens"],
+                "context_capacity": protocol.context_tokens,
+                "output_capacity": protocol.context_tokens - p["prompt_tokens"],
+                "status": "passed"
+                if 0 < p["prompt_tokens"] < protocol.context_tokens
+                else "failed",
+            }
+            for q, p in zip(questions, prepared, strict=True)
+        ]
+        result["input_compatibility"] = {
+            "status": "passed"
+            if all(c["status"] == "passed" for c in checks)
+            else "failed",
+            "questions": checks,
+        }
+        result["prompts"] = [
+            {"question_id": q["id"], **p}
+            for q, p in zip(questions, prepared, strict=True)
+        ]
+        checkpoint()
+        if result["input_compatibility"]["status"] != "passed":
+            raise ValueError(
+                "input_context_overflow: complete native prompt leaves no output capacity"
+            )
+        if not preflight and plan.profile != "smoke":
+            envelope = plan.settings.get("qualified_input_envelopes", {}).get(candidate)
+            limit = (
+                envelope.get("maximum_prompt_tokens")
+                if isinstance(envelope, dict)
+                else None
+            )
+            if (
+                not isinstance(limit, int)
+                or isinstance(limit, bool)
+                or not 0 < limit < protocol.context_tokens
+                or envelope.get("context_tokens") != protocol.context_tokens
+            ):
+                raise ValueError("preflight_input_envelope_unverified: rerun preflight")
+            result["qualified_input_envelope"] = dict(envelope)
+            if any(check["prompt_tokens"] > limit for check in checks):
+                raise ValueError(
+                    "preflight_input_envelope_exceeded: select a longer reviewed development stress input and requalify"
+                )
+        monitor = (
+            monitor_factory(
+                interval_seconds=protocol.preflight.telemetry_interval_seconds,
+                require_vram=plan.settings["device"] == "cuda",
+                device=plan.settings["device"],
+            )
+            if monitor_factory
+            else None
+        )
+        with monitor if monitor is not None else nullcontext():
+            result["phase"] = "loading"
+            checkpoint()
+            started = time.perf_counter()
+            backend.load()
+            backend.synchronize()
+            result["cold_model_load_seconds"] = time.perf_counter() - started
+            result["resolved_decoder"] = dict(backend.resolved_decoder)
+            result["inherited_generation_config"] = getattr(
+                backend, "inherited_generation_config", {}
+            )
+            result["decoder_source"] = getattr(backend, "decoder_source", None)
+            result["placement_before"] = backend.placement()
+            if result["placement_before"].get("status") != "qualified":
+                raise GenerationPlacementError(result["placement_before"])
+            if preflight:
+                stress_ids = {
+                    row["id"]
+                    for row in manifest.samples
+                    if row.get("kind") == "question"
+                    and row.get("preflight_stress") is True
+                }
+                choices = [
+                    (q, p)
+                    for q, p in zip(questions, prepared, strict=True)
+                    if q["id"] in stress_ids
+                ]
+                if not choices:
+                    raise ValueError(
+                        "missing_stress_input: mark reviewed development/stress question(s) preflight_stress=true"
+                    )
+                q, p = max(
+                    choices, key=lambda pair: (pair[1]["prompt_tokens"], pair[0]["id"])
+                )
+                result["phase"] = "stress_inference"
+                result["stress_question_id"] = q["id"]
+                result["tested_input_envelope"] = {
+                    "maximum_prompt_tokens": p["prompt_tokens"],
+                    "context_tokens": protocol.context_tokens,
+                    "stress_question_id": q["id"],
+                }
+                result["stress_output"] = backend.infer(p, protocol.measured_seeds[0])
+                backend.synchronize()
+                if result["stress_output"]["outcome"] != "completed":
+                    raise RuntimeError(
+                        "stress_inference_incomplete: "
+                        + result["stress_output"]["outcome"]
+                    )
+            else:
+                result["phase"] = "warmup"
+                checkpoint()
+                result["warmup"] = backend.infer(
+                    backend.prepare(questions[0]), protocol.warmup_seed
+                )
+                backend.synchronize()
+                warmup_response, _ = parse_response(
+                    result["warmup"].get("visible_text", "")
+                )
+                valid_ids = {b["id"] for b in questions[0]["blocks"]}
+                if (
+                    result["warmup"]["outcome"] != "completed"
+                    or warmup_response is None
+                    or not set(warmup_response["citations"]) <= valid_ids
+                ):
+                    raise ValueError(
+                        "Warmup did not complete with a valid structural/ID envelope"
+                    )
+                result["phase"] = "measured"
+                for record in result["records"]:
+                    q = record["question"]
+                    for index, seed in enumerate(seeds):
+                        result["in_flight"] = {"question_id": q["id"], "seed": seed}
+                        checkpoint()
+                        started = time.perf_counter()
+                        try:
+                            request = backend.prepare(q)
+                            if request["prompt_tokens"] != next(
+                                c["prompt_tokens"]
+                                for c in checks
+                                if c["question_id"] == q["id"]
+                            ):
+                                raise ValueError(
+                                    "Native prompt changed after compatibility verification"
+                                )
+                            preparation_seconds = time.perf_counter() - started
+                            attempt = backend.infer(request, seed)
+                            # Events use request-relative time; model TTFT stays
+                            # relative to generation, not prompt preparation.
+                            timing = dict(attempt.get("timing", {}))
+                            for field in (
+                                "first_token_seconds",
+                                "last_token_seconds",
+                            ):
+                                if timing.get(field) is not None:
+                                    timing[field] += preparation_seconds
+                            timing["generation_call_offset_seconds"] = (
+                                timing.get("generation_call_offset_seconds", 0)
+                                + preparation_seconds
+                            )
+                            attempt["timing"] = timing
+                            if isinstance(attempt.get("token_event_seconds"), list):
+                                attempt["token_event_seconds"] = [
+                                    value + preparation_seconds
+                                    for value in attempt["token_event_seconds"]
+                                ]
+                            backend.synchronize()
+                            response, _ = (
+                                parse_response(attempt.get("visible_text", ""))
+                                if attempt["outcome"] == "completed"
+                                else (None, None)
+                            )
+                            # Include complete output parsing and supplied-ID checks.
+                            if response is not None:
+                                set(response["citations"]) - {
+                                    b["id"] for b in q["blocks"]
+                                }
+                        except Exception as exc:  # noqa: BLE001 - retain arbitrary backend failures
+                            attempt = {
+                                **_empty_attempt(seed),
+                                "outcome": "runtime_error",
+                                "error": f"{type(exc).__name__}: {exc}",
+                                "finish_reason": "backend_exception",
+                            }
+                        elapsed = time.perf_counter() - started
+                        attempt = {
+                            **attempt,
+                            "seed": seed,
+                            "elapsed_seconds": elapsed,
+                            "timing": {
+                                **attempt.get("timing", {}),
+                                "latency_seconds": elapsed,
+                            },
+                        }
+                        record["attempts"][index] = attempt
+                        result.pop("in_flight", None)
+                        checkpoint()
+            result["placement_after"] = backend.placement()
+            if result["placement_after"].get("status") != "qualified":
+                raise GenerationPlacementError(result["placement_after"])
+            backend.synchronize()
+        result["monitoring_complete"] = True
+        result["phase"] = "finished"
+    except Exception as exc:  # noqa: BLE001 - preserve lifecycle and placement evidence
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        if isinstance(exc, GenerationPlacementError):
+            result.update(failure_class=exc.reason_code, placement=exc.report)
+    finally:
+        # Stop the generator monitor and release weights BEFORE offline judging.
+        if monitor is not None:
+            result["resource_samples"] = monitor.samples()
+            result["vram_measurement_method"] = monitor.vram_measurement_method
+            result["gpu_identity"] = dict(getattr(monitor, "gpu_identity", {}))
+            try:
+                resource = monitor.metrics()
+                result["resource_status"] = "observed"
+            except RuntimeError as exc:
+                resource = getattr(exc, "resource_evidence", {})
+                result["resource_error"] = str(exc)
+            result["operational"] = {
+                "peak_ram_mib": resource.get("peak_process_tree_ram_mb"),
+                "peak_vram_mib": resource.get("peak_vram_mb")
+                if plan.settings["device"] == "cuda"
+                else None,
+            }
+            if plan.settings["device"] == "cpu":
+                result["vram_measurement_method"] = "not-applicable"
+        if backend is not None:
+            backend.close()
+        checkpoint()
     return result
 
 
-def _questions(manifest, count, seed):
-    import random
-
-    rows = [
-        row
-        for row in manifest.samples
-        if row.get("kind") == "question"
-        and (not row.get("answerable") or bool(row.get("evidence")))
-    ]
-    groups = {}
-    for row in rows:
-        answer_type = str(
-            row.get("answer_type")
-            or ("answerable" if row.get("answerable") else "unanswerable")
+def score_execution(raw, protocol, profile, *, judge=None):
+    """Offline rescoring of retained generator evidence; injectable/replay judge."""
+    records = []
+    for record in raw["records"]:
+        q, attempts = record["question"], []
+        for attempt in record["attempts"]:
+            response, _ = (
+                parse_response(attempt.get("visible_text", ""))
+                if attempt["outcome"] == "completed"
+                else (None, None)
+            )
+            judgment = None
+            if response is not None and q["answerable"] and judge is not None:
+                try:
+                    judgment = judge.response(q, response)
+                except Exception as exc:  # noqa: BLE001 - evaluator failures are not model failures
+                    judgment = {
+                        "status": "unavailable",
+                        "reason": f"{type(exc).__name__}: {exc}",
+                    }
+            attempts.append(score_attempt(q, attempt, judgment))
+        records.append(
+            {
+                "question": q,
+                "attempts": attempts,
+                "pairs": score_pairs(q, attempts, judge),
+            }
         )
-        key = f"{row.get('evidence_type', 'text')}|{answer_type}"
-        groups.setdefault(key, []).append(row)
-    for key, group in groups.items():
-        random.Random(seed + sum(ord(character) for character in key)).shuffle(group)
-    selected = []
-    target = len(rows) if count is None else min(count, len(rows))
-    while len(selected) < target and any(groups.values()):
-        for key in sorted(groups):
-            if groups[key] and len(selected) < target:
-                selected.append(groups[key].pop())
-    return selected
-
-
-def _clean_answer(answer: str) -> str:
-    return re.sub(r"\[\d+\]", "", answer).strip()
-
-
-def _is_refusal(answer: str) -> bool:
-    normalized = answer.casefold().replace("\u2019", "'")
-    return bool(
-        re.search(
-            r"(?:don't|do not) have enough evidence|insufficient evidence|"
-            r"cannot answer (?:from|based on) (?:the )?(?:given )?evidence",
-            normalized,
-        )
+    execution = protocol.profile(profile)
+    summary = aggregate(
+        records,
+        profile=profile,
+        resamples=execution.bootstrap_resamples,
+        seed=protocol.meta.seed,
+        confidence=protocol.confidence_level,
+        minimum_ci_sources=protocol.minimum_ci_sources,
     )
-
-
-def _malformed(answer: str, context_count: int) -> bool:
-    if not answer.strip():
-        return True
-    if _is_refusal(answer):
-        return False
-    citations = [int(value) for value in re.findall(r"\[(\d+)\]", answer)]
-    return not citations or any(
-        value < 1 or value > context_count for value in citations
-    )
-
-
-def _refusal_scores(answerable, predicted_answerable):
-    truth = [not value for value in answerable]
-    predicted = [not value for value in predicted_answerable]
-    tp = sum(left and right for left, right in zip(truth, predicted))
-    fp = sum(not left and right for left, right in zip(truth, predicted))
-    fn = sum(left and not right for left, right in zip(truth, predicted))
-    precision, recall, f1 = precision_recall_f1(tp, fp, fn)
-    return {
-        "refusal_precision": precision,
-        "refusal_recall": recall,
-        "refusal_f1": f1,
+    # Input rejection or loading/warmup failure does not fabricate reliability events.
+    operational = {
+        **raw.get("operational", {}),
+        "cold_model_load_seconds": raw.get("cold_model_load_seconds"),
     }
+    for key in OPERATIONAL_KEYS:
+        operational[key.removeprefix("operational.")] = summary[key]["value"]
+    lifecycle_complete = raw.get("phase") == "finished" and raw.get("error") is None
+    quality_complete = all(
+        row["evidence_complete"] for key, row in summary.items() if key in BASE_KEYS
+    )
+    problems = []
+    if not lifecycle_complete:
+        problems.append(raw.get("error") or "Generator lifecycle incomplete")
+    if raw.get("resource_status") != "observed":
+        problems.append("Required lifecycle resource telemetry unavailable")
+    for field in (
+        "peak_ram_mib",
+        *(("peak_vram_mib",) if raw.get("device") == "cuda" else ()),
+    ):
+        value = operational.get(field)
+        if (
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not math.isfinite(value)
+            or value < 0
+        ):
+            problems.append(f"Required {field} telemetry unavailable")
+    instrumentation_issues = _instrumentation_issues(raw)
+    if instrumentation_issues:
+        problems.append("Required timing/token instrumentation incomplete")
+    if profile != "smoke":
+        if not quality_complete:
+            problems.append("Required output/semantic evaluation incomplete")
+        if judge is None:
+            problems.append("judge_calibration_pending")
+        if any(
+            row["interval"]["reason"] == "ci_support_not_frozen"
+            for key, row in summary.items()
+            if not key.startswith("workload.") and row["eligible_questions"]
+        ):
+            problems.append("ci_support_policy_pending")
+    samples = []
+    for record in records:
+        q = record["question"]
+        single = aggregate([record], profile="smoke", resamples=0)
+        samples.append(
+            SampleResult(
+                q["id"],
+                {key: single[key]["value"] for key in BASE_KEYS},
+                single["operational.latency_p50_seconds"]["value"],
+                {
+                    "document_id": q["document_id"],
+                    "source_id": q["source_id"],
+                    "answerable": q["answerable"],
+                    "evidence_type": q["evidence_type"],
+                },
+            )
+        )
+    metrics = {
+        key: None
+        if (key.startswith("quality.") or ".quality." in key)
+        and not value["evidence_complete"]
+        else value["value"]
+        for key, value in summary.items()
+        if not key.startswith("operational.")
+    }
+    intervals = {
+        key: value["interval"]
+        for key, value in summary.items()
+        if not key.startswith("workload.")
+    }
+    parameters = {
+        "input_compatibility": raw["input_compatibility"]["status"],
+        "result_scope": "wiring_only"
+        if profile == "smoke"
+        else "authoritative_contract",
+        "result_status": "incomplete" if problems else "complete",
+        "quality_complete": quality_complete,
+        "mode": raw["mode"],
+        "model_id": raw["model_id"],
+        "measured_seeds": list(protocol.measured_seeds[: execution.repetitions]),
+        "resolved_decoder": raw.get("resolved_decoder"),
+        "inherited_generation_config": raw.get("inherited_generation_config"),
+        "measurement.resource_scope": "complete"
+        if raw.get("monitoring_complete")
+        else "partial",
+        "vram_measurement_method": raw.get("vram_measurement_method", "unavailable"),
+        "semantic_judge": judge.contract
+        if judge is not None
+        else {"status": "not_configured"},
+    }
+    artifacts = {
+        "generation_evidence": {**raw, "records": records},
+        "metric_support": summary,
+        "instrumentation_issues": instrumentation_issues,
+        "input_compatibility": raw["input_compatibility"],
+        "finish_reasons": finish_inventory(records),
+        "timings": [
+            {
+                "question_id": r["question"]["id"],
+                "seed": a["seed"],
+                "outcome": a["outcome"],
+                "finish_reason": a.get("finish_reason"),
+                "elapsed_seconds": a.get("elapsed_seconds"),
+                **a.get("timing", {}),
+                **a.get("workload", {}),
+            }
+            for r in records
+            for a in r["attempts"]
+        ],
+    }
+    if problems:
+        raise CandidateExecutionError(
+            "; ".join(problems),
+            samples=tuple(samples),
+            metrics=metrics,
+            operational=operational,
+            intervals=intervals,
+            parameters=parameters,
+            artifacts=artifacts,
+        )
+    return samples, operational, metrics, parameters, intervals, artifacts
+
+
+def execute_payload(payload):
+    candidate, manifest, model_lock, plan = benchmark_objects_from_payload(payload)
+    protocol = load_protocol(Path(payload["protocol_path"]))
+    protocol.meta.validate_worker_payload(payload["protocol"])
+    return execute_generation(
+        candidate,
+        manifest,
+        model_lock,
+        plan,
+        protocol,
+        preflight=bool(payload.get("preflight")),
+        evidence_directory=payload.get("evidence_directory"),
+    )
+
+
+def run_in_fresh_process(
+    candidate,
+    manifest,
+    model_lock,
+    plan,
+    protocol,
+    *,
+    judge=None,
+    preflight=False,
+    evidence_directory=None,
+):
+    evidence_directory = (
+        Path(evidence_directory)
+        if evidence_directory is not None
+        else (
+            PROJECT_ROOT
+            / "artifacts/benchmarks/rag/generation/worker-evidence"
+            / uuid4().hex
+        )
+    )
+    payload = {
+        "candidate": candidate,
+        "manifest": asdict(manifest),
+        "model_lock": model_lock,
+        "plan": asdict(plan),
+        "protocol_path": str(protocol.meta.source_path),
+        "protocol": protocol.meta.worker_payload(),
+        "preflight": preflight,
+        "evidence_directory": str(evidence_directory.resolve()),
+    }
+    device = plan.settings["device"]
+    try:
+        raw = run_json_worker(
+            Path(__file__).with_name("worker.py"),
+            payload,
+            device=device,
+            prefix="edumind-generation-",
+            error_label="Generation worker",
+            vram_limit_mb=protocol.authoritative_peak_vram_mb
+            if device == "cuda"
+            else None,
+            require_vram_measurement=device == "cuda",
+            telemetry_interval_seconds=protocol.preflight.telemetry_interval_seconds,
+            poll_interval_seconds=protocol.preflight.poll_interval_seconds,
+            timeout_seconds=protocol.preflight.worker_timeout_seconds,
+        )
+    except CandidateExecutionError as exc:
+        checkpoint = evidence_directory / "generation_progress.json"
+        if checkpoint.is_file():
+            try:
+                raw = json.loads(checkpoint.read_text(encoding="utf-8"))
+                if (
+                    not isinstance(raw, dict)
+                    or raw.get("candidate") != candidate
+                    or not isinstance(raw.get("records"), list)
+                ):
+                    raise ValueError(
+                        "Checkpoint has no matching candidate/record inventory"
+                    )
+            except (ValueError, OSError):
+                exc.artifacts["prediction_evidence"] = {
+                    "path": str(checkpoint),
+                    "status": "unreadable",
+                }
+            else:
+                raw.update(
+                    phase="interrupted", error=str(exc), monitoring_complete=False
+                )
+                in_flight = raw.get("in_flight")
+                if in_flight:
+                    for record in raw["records"]:
+                        for attempt in record["attempts"]:
+                            if (
+                                record["question"]["id"] == in_flight["question_id"]
+                                and attempt["seed"] == in_flight["seed"]
+                            ):
+                                attempt.update(
+                                    outcome="runtime_error",
+                                    error=str(exc),
+                                    finish_reason="worker_terminated",
+                                )
+                raw["_worker_supervision"] = getattr(exc, "resource_evidence", {})
+                raw = _merge_supervision(raw)
+                exc.artifacts["generation_evidence"] = raw
+                exc.parameters["prediction_evidence"] = {
+                    "path": str(checkpoint.resolve()),
+                    "sha256": sha256_file(checkpoint),
+                }
+                if not preflight:
+                    try:
+                        score_execution(raw, protocol, plan.profile, judge=judge)
+                    except CandidateExecutionError as scored:
+                        exc.samples, exc.metrics, exc.intervals = (
+                            scored.samples,
+                            scored.metrics,
+                            scored.intervals,
+                        )
+                        exc.artifacts.update(scored.artifacts)
+                        exc.parameters.update(scored.parameters)
+                        exc.operational = scored.operational
+                else:
+                    exc.resource_evidence = {
+                        **getattr(exc, "resource_evidence", {}),
+                        "prediction_evidence": exc.parameters["prediction_evidence"],
+                        "worker_result": raw,
+                    }
+        raise
+    raw = _merge_supervision(raw)
+    checkpoint = evidence_directory / "generation_progress.json"
+    if checkpoint.is_file():
+        raw["prediction_evidence"] = {
+            "path": str(checkpoint.resolve()),
+            "sha256": sha256_file(checkpoint),
+        }
+    if preflight:
+        if raw.get("error") and raw.get("failure_class") not in {
+            "offload_detected",
+            "placement_unverifiable",
+            "wrong_device",
+        }:
+            error = RuntimeError(raw["error"])
+            error.resource_evidence = raw
+            raise error
+        return {
+            "placement": raw.get("placement") or raw["placement_after"],
+            "placement_before": raw["placement_before"],
+            "placement_after": raw["placement_after"],
+            "vram_measurement_method": raw.get("vram_measurement_method"),
+            "peak_vram_mb": raw.get("operational", {}).get("peak_vram_mib"),
+            "resource_samples": raw.get("resource_samples", []),
+            "input_validation": raw["input_compatibility"],
+            "supervisor_resource_samples": raw.get("supervisor_resource_samples", []),
+            "stress_question_id": raw.get("stress_question_id"),
+            "tested_input_envelope": raw.get("tested_input_envelope"),
+            "stress_output": raw.get("stress_output"),
+            "resolved_decoder": raw.get("resolved_decoder"),
+            "prediction_evidence": raw.get("prediction_evidence"),
+        }
+    return score_execution(raw, protocol, plan.profile, judge=judge)
+
+
+def evaluate_candidate(
+    candidate,
+    manifest,
+    model_lock,
+    *,
+    protocol,
+    final_index=None,
+    retrieval_method="frozen",
+    top_k=None,
+    repetitions=None,
+    device=None,
+    dtype=None,
+    bootstrap_resamples=None,
+    bootstrap_seed=None,
+    retrieval_protocol=None,
+    warmups=None,
+    question_scope="all",
+    backend_factory=None,
+    judge=None,
+    profile="smoke",
+    qualified_input_envelope=None,
+):
+    """Protocol-driven Python entrypoint; live retrieved-context composition is deferred."""
+    if final_index is not None or retrieval_method != "frozen" or top_k is not None:
+        raise ValueError(
+            "Retrieved generation integration is deferred: migrate prompt schema, live input gate, timing and calibrated judge explicitly; no legacy semantic fallback"
+        )
+    if question_scope != "all":
+        raise ValueError(
+            "Generation evaluates the complete frozen question set; development screening is retired"
+        )
+    execution = protocol.profile(profile)
+    overrides = (repetitions, bootstrap_resamples, bootstrap_seed, warmups)
+    resolved = (
+        execution.repetitions,
+        execution.bootstrap_resamples,
+        protocol.meta.seed,
+        execution.warmups,
+    )
+    if any(
+        value is not None and value != frozen
+        for value, frozen in zip(overrides, resolved, strict=True)
+    ):
+        raise ValueError(
+            "Generation execution overrides must match the resolved protocol"
+        )
+    if profile != "smoke":
+        if judge is None:
+            raise ValueError(
+                "judge_calibration_pending: inject a calibrated semantic judge"
+            )
+        load_judge_contract(judge.contract["contract_path"])
+    plan = BenchmarkPlan(
+        "rag",
+        "generation",
+        profile,
+        manifest.name,
+        (candidate,),
+        protocol.meta.seed,
+        execution.repetitions,
+        execution.bootstrap_resamples,
+        execution.warmups,
+        {
+            "device": device or execution.device,
+            "dtype": dtype or execution.dtype_for(device or execution.device),
+            "qualified_input_envelopes": {candidate: qualified_input_envelope},
+        },
+    )
+    if backend_factory is not None:
+        raw = execute_generation(
+            candidate,
+            manifest,
+            model_lock,
+            plan,
+            protocol,
+            backend_factory=backend_factory,
+        )
+        return score_execution(raw, protocol, profile, judge=judge)
+    return run_in_fresh_process(
+        candidate, manifest, model_lock, plan, protocol, judge=judge
+    )

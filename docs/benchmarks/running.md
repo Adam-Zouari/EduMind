@@ -13,30 +13,27 @@ for dependencies, model snapshots, data preparation, evaluator images, and
 vector-server images. A benchmark does not download missing models while it is
 running.
 
-The separate Generation and Vector Database locked stages and the locked-only
-Final RAG workflow below define the approved target interface. Runner alignment
-for those stages, the revised generation scoring/timing rules and full-development
-workload, and frozen vector-index finalist selection remains pending.
-Chunking–embedding implements linear evidence-count nDCG, single-unit alpha-nDCG,
-first-ranking/failure rules, successful-attempt latency, one query warmup, and
-execution-only resource monitoring. Its standalone validator and sealed-report
-verification are available. Quality-CI support remains unset until data review;
-such results retain descriptive scores and null confidence bounds.
-The approved separate load/build/query-component counters, retrieved-context
-descriptors, diagnostic top-five pair score/intervals, and revised acceptance
-accounting still require runner alignment; see its
+The Vector Database locked stage, frozen vector-index finalist selection, and
+locked-only Final RAG workflow below retain their implementation boundaries.
+Chunking–embedding implements its separate load/build/query-component timings,
+retrieved-context descriptors, diagnostic top-five pair score, and execution,
+quality, and integrity accounting. CI support requirements remain subject to data
+review; unfrozen support gives descriptive points and null bounds, not
+authoritative advancement evidence. See its
 [implementation boundary](rag/chunking_embedding/methodology.md#implementation-boundary).
-Retrieval–reranking's expanded reporting contract also needs alignment,
-including one authoritative warmup and alpha-nDCG eligibility for single-unit
-questions. Its methodology marks those limitations explicitly.
+Retrieval–reranking implements the corresponding complete-ranking diagnostic,
+one authoritative warmup, single-unit alpha-nDCG eligibility, index ownership,
+and reporting contract. Generation implements the seven model-mode runtime and
+scoring interface; a frozen calibrated judge, reviewed source support, and
+prepared model snapshots are required before authoritative comparison.
 Document, ASR, and Video provide their extraction metric, failure, repeatability,
 resource, and display-name paths. Their standalone data validators and
 automatic sealed-report verification are available. Video uses grouped parents
 with separate shared-audio preparation and visual children.
 Verify the [required retained prediction evidence](metrics.md#prediction-evidence-and-rescoring)
 before claiming independent rescoring from a run; summary counts/fingerprints
-alone are insufficient. This documentation update does not certify new artifact
-writers or migrate historical outputs.
+alone are insufficient. Historical outputs are not migrated to the current
+protocol or made rescorable by adding a summary reference.
 
 Start MLflow in a separate terminal:
 
@@ -75,8 +72,9 @@ First prepare and review the inputs. The approved workflow has two steps:
 Both steps are outside latency and candidate resource measurement. See the
 [data-validation guide](data-validation.md#preparation-and-execution) for the
 exact checks, example, and module layout. Full validation is available for the
-three extraction benchmarks and chunking–embedding; other suites retain their current input checks
-until their approved validators are implemented. Human annotation review remains
+three extraction benchmarks, chunking–embedding, retrieval–reranking, and
+generation; the deferred suites retain their current input checks.
+Human annotation review remains
 necessary.
 
 Available preparation commands:
@@ -87,6 +85,8 @@ python -m experiments.benchmarks.validate audio --profile all
 python -m experiments.benchmarks.validate document --profile all
 python -m experiments.benchmarks.validate video --profile all
 python -m experiments.benchmarks.validate chunking-embedding --profile all
+python -m experiments.benchmarks.validate retrieval-reranking --profile all
+python -m experiments.benchmarks.validate generation --profile all
 python -m experiments.benchmarks.validate all --profile all
 ```
 
@@ -585,17 +585,17 @@ choice without further server or index selection.
 
 ## 10. Generation and Final RAG
 
-Generation uses frozen evidence contexts. The commands below describe the
-approved model-mode/seed/judge contract; the
+Generation uses frozen evidence contexts. Its implemented model-mode/seed/judge
+contract and external readiness requirements are described in the
 [generation implementation boundary](rag/generation/methodology.md#implementation-boundary)
-identifies alignment still required before authoritative execution.
+and apply before authoritative execution.
 
 ```powershell
 python -m experiments.benchmarks.rag.generation.run --profile smoke
 python -m experiments.benchmarks.rag.generation.run --profile preflight
-python -m experiments.benchmarks.rag.generation.run --profile development
-python -m experiments.benchmarks.rag.generation.run --profile validation
-python -m experiments.benchmarks.rag.generation.run --profile locked
+python -m experiments.benchmarks.rag.generation.run --profile development --judge-records path/to/development-judge-replies.json
+python -m experiments.benchmarks.rag.generation.run --profile validation --judge-records path/to/validation-judge-replies.json
+python -m experiments.benchmarks.rag.generation.run --profile locked --judge-records path/to/locked-judge-replies.json
 ```
 
 Its smoke command runs every model-mode configuration independently on CPU and
@@ -615,6 +615,14 @@ Repeat Semantic Agreement. Its latency and resources are not attributed to the
 generator. After reviewing validation, record exactly one successful model-mode
 configuration in `generation-locked.json`. Generation reports that choice on
 its own locked frozen-evidence test. Final RAG uses the same generator unchanged.
+
+Set `judge.contract_path` in the generation protocol to the reviewed contract.
+`--judge-records` replays replies already obtained under it; it does not call a
+provider. A live integration supplies a transport through the Python judge
+interface after judge selection. Replay misses or exhausted judge retries leave
+evaluation incomplete, never a candidate-quality zero. Generation's tiny
+committed fixture is `data/benchmarks/rag/generation-smoke.json`; it is separate
+from retrieval's corpus fixture and supplies no selection evidence.
 
 When reading a generation child, inspect `input_compatibility` and its
 `input_compatibility.json` artifact first. A failed gate is visible incomplete

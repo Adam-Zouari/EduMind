@@ -117,6 +117,7 @@ class BaseRuntime:
         self._runtime: Any | None = None
         self.model_lock_entry: Mapping[str, object] = {}
         self.dtype = protocol.dtype(profile.candidate, device)
+        self.raw_prediction = None
 
     def load(self) -> None:
         raise NotImplementedError
@@ -202,6 +203,7 @@ class WhisperRuntime(BaseRuntime):
                 "num_beams": 1,
             },
         )
+        self.raw_prediction = result
         if not isinstance(result, Mapping):
             raise ValueError("Whisper output must be an object")
         text = _text(result.get("text"))
@@ -319,6 +321,12 @@ class NemoRuntime(BaseRuntime):
                 "NeMo must return exactly one hypothesis for batch size one"
             )
         output = outputs[0]
+        self.raw_prediction = {
+            "text": output
+            if isinstance(output, str)
+            else getattr(output, "text", None),
+            "timestamps": getattr(output, "timestamp", None),
+        }
         text = _text(
             output if isinstance(output, str) else getattr(output, "text", None)
         )
@@ -327,6 +335,7 @@ class NemoRuntime(BaseRuntime):
             if not isinstance(token_ids, list):
                 token_ids = token_ids.tolist()
             raw_text = _text(self._runtime.decoding.decode_ids_to_str(token_ids))
+            self.raw_prediction["decoded_text"] = raw_text
             # NeMo leaves a lone timestamp token in hyp.text when silence produces
             # no complete timestamp pair. It is metadata, not lexical speech.
             text = re.sub(r"<\|[0-9]+\|>", " ", text).strip()
@@ -441,6 +450,7 @@ class MossRuntime(BaseRuntime):
             dtype=dtype,
             attention_report=attention_report,
         )
+        self.raw_prediction = result
         if not isinstance(result, Mapping):
             raise ValueError("MOSS generation output must be an object")
         return _moss_transcript(_text(result.get("text")))

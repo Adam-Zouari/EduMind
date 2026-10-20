@@ -18,29 +18,17 @@ worth its latency and resource cost?
 
 ## Implementation boundary
 
-This page and the metric reference define the approved reporting contract.
-Retrieval–reranking implementation is being updated separately. Current
-runner/protocol outputs still differ from this contract:
+The runner implements the reporting contract below: one warmup, designated-first
+quality, all-pairs complete-order Ranking Repeatability, separate live retrieval
+and reranker timings, owned index measurements, and retained per-attempt evidence.
+Standalone validation and sealed-report verification run before candidate loading.
+Pool/index provenance, permutation, input, placement, and numerical integrity
+remain separate from diagnostic ranking changes and measured failure counts.
 
-- Authoritative profiles specify two warmups rather than one, and alpha-nDCG
-  eligibility filters out single-unit questions.
-- The first-anchor Ranking Agreement validity gate must become the all-pairs
-  diagnostic Ranking Repeatability. Pool integrity remains enforced, but its
-  redundant `validity.pool_collection_match` scalar is not required reporting.
-- Existing latency/storage/token keys and mandatory workload counters need the
-  reporting layout below. Snapshot size belongs to preparation metadata, not
-  the existing per-run reranker-snapshot-size metric.
-- RRF may expose a combined dependency-build time and constant-zero incremental
-  index bytes. Neither is a third index measurement; retain independent Dense
-  and BM25 build observations and report their storage dependency breakdown.
-- Expanded metric-specific status/support rules and small-corpus behavior need
-  verification. The standalone validator/report-reuse interface remains planned.
-- Repeatability intervals, durable per-attempt ranking evidence, and separation
-  of recorded failures from missing execution/quality need verification. A
-  legacy zero-failed-query gate does not implement the approved accounting rule.
-
-These are implementation limitations, not alternative metric definitions or
-permission to silently relabel old results.
+Reviewed independent-source CI support requirements remain data-dependent.
+Unfrozen requirements cannot establish authoritative uncertainty or advancement;
+descriptive points retain their support and unavailable-bound reasons. Historical
+artifacts retain their own protocol definitions rather than being relabelled.
 
 ## Candidate matrix
 
@@ -80,7 +68,7 @@ Within one profile, all compared stacks share its frozen corpus and annotations.
 
 The [shared data-validation workflow](../../data-validation.md) checks those
 prepared inputs and source isolation before execution; its standalone/report
-interface is planned. Generated pool-collection, chunk-content, and index
+interface is implemented. Generated pool-collection, chunk-content, and index
 checksums are separate runtime integrity gates, not additional data annotations.
 
 The retrieval/reranking smoke fixture contains 30 frozen canonical chunks. This
@@ -159,7 +147,7 @@ Truncation is forbidden.
 The target-hardware profile uses CUDA `float16`. The protocol fixes both
 embedding and reranker inference to batch size `1`; learned rerankers therefore
 score each actual query pool's `min(20, chunk_count)` pairs sequentially. Qualification includes
-both components under the planned lifecycle and requires NVML-measured peak
+both components under the frozen lifecycle and requires NVML-measured peak
 device-total VRAM at or below 3,584 MiB under the shared hardware contract.
 Per-candidate quantization, offload, fallback, or batch reduction is not an
 allowed way to pass the gate.
@@ -225,8 +213,7 @@ Smoke uses one measured attempt; development, validation, and locked use three
 measured attempts with seed 42. Preflight has no warmup and supplies hardware
 qualification, not quality evidence. Loading, warmup, and measured attempts
 follow the [shared lifecycle](../../methodology.md#preflight-and-measured-run-lifecycles).
-This is the approved execution contract; the boundary above identifies the
-current protocol's pending warmup migration.
+The protocol records those execution settings and the worker verifies them.
 
 A complete stack decision includes the frozen chunker, embedding, first-stage
 retriever, and reranker. When a selected reranker needs its no-reranker owner's
@@ -515,7 +502,7 @@ baseline_candidate, candidate, baseline_run_id, candidate_run_id,
 shared_pool_collection_checksum, metric_name, evidence_slice, cutoff, direction,
 baseline_value, candidate_value, candidate_minus_baseline, favors_candidate,
 ci_lower, ci_upper, confidence_level, ci_status, eligible_questions,
-eligible_documents, bootstrap_resamples, seed
+eligible_documents, eligible_sources, bootstrap_resamples, seed
 ```
 
 The retriever-comparison schema replaces `retriever` and
@@ -554,8 +541,14 @@ Outcome counts and validity counters receive no winner-comparison rows.
 Required integrity checks remain gates; an observed failure count alone is not
 an automatic zero-error gate.
 
-Quality differences apply the [shared paired-bootstrap procedure](../../metrics.md#confidence-intervals)
-to aligned source documents. Point-only observations retain point-only
+Quality and supported warm-latency differences apply the
+[shared paired-bootstrap procedure](../../metrics.md#confidence-intervals)
+to aligned source groups. Quality keeps document-macro weights even when an
+independent group contains several documents. Latency differences recalculate
+each candidate's percentile from its contributing query observations on the
+same source draws; they are not the mean of per-query latency differences.
+Retain query, document, and independent-source support separately.
+Point-only observations retain point-only
 differences under the metric's CI contract. The engineer selects up
 to three complete finalists for validation after jointly reviewing primary
 quality, uncertainty, evidence slices, diagnostics, and operational feasibility,

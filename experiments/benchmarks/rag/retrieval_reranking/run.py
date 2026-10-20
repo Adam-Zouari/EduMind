@@ -60,6 +60,7 @@ from experiments.benchmarks.rag.retrieval_reranking.protocol import (
     DEFAULT_PROTOCOL_PATH,
     load_protocol,
 )
+from experiments.benchmarks.rag.retrieval_reranking.validation import verify_inputs
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -108,6 +109,9 @@ def main(argv: list[str] | None = None) -> int:
         "development" if arguments.profile == "preflight" else arguments.profile
     )
     require_manifest_split(manifest, manifest_profile, _split(manifest_profile))
+    verify_inputs(
+        manifest_path, manifest_profile, protocol, chunking_protocol=chunking_protocol
+    )
     declared = owner_first(development_candidates())
     for candidate in declared:
         parse_candidate(candidate)
@@ -121,9 +125,7 @@ def main(argv: list[str] | None = None) -> int:
     selected_pair, embedding_decision = _selected_embedding(
         arguments.profile, embedding_selection, chunking_protocol
     )
-    candidates = _selected_candidates(
-        arguments.profile, shortlist, declared, protocol.maximum_finalists
-    )
+    candidates = declared
     _, embedding_name = split_candidate(selected_pair)
     lock_models = (
         (embedding_name, *required_reranker_models(declared))
@@ -150,6 +152,18 @@ def main(argv: list[str] | None = None) -> int:
             qualification_manifest,
             qualification_stress,
         )
+
+    candidates = _selected_candidates(
+        arguments.profile,
+        shortlist,
+        declared,
+        protocol.maximum_finalists,
+        protocols={
+            "retrieval": protocol.meta.checksum,
+            "chunking_embedding": chunking_protocol.meta.checksum,
+        },
+        qualification=fingerprint or None,
+    )
 
     if arguments.profile == "preflight":
         ignored = []
@@ -305,6 +319,13 @@ def _run_evaluation(
         device,
         dtype,
     )
+    if compare_finalists:
+        plan = BenchmarkPlan(
+            **{
+                **vars(plan),
+                "settings": {**plan.settings, "requested_finalists": list(candidates)},
+            }
+        )
     if qualification is not None:
         plan = BenchmarkPlan(
             **{
@@ -321,6 +342,7 @@ def _run_evaluation(
         )
     directions, required_metrics = directions_for(manifest, protocol)
     pool_collections: dict[str, dict[str, object]] = {}
+    index_dependencies: dict[str, dict[str, object]] = {}
 
     def store_pool_collection(
         owner: str, evaluated, owner_child_run_id: str | None
@@ -351,7 +373,21 @@ def _run_evaluation(
             "pool_collection_checksum": checksum,
             **index_identity,
             "rows": rows,
+            "index_build": dict(index_build),
+            "preparation_mode": "owner-child"
+            if owner_child_run_id is not None
+            else "input-artifact",
+            "prepared_for_manifest_fingerprint": manifest.fingerprint,
         }
+        for name, observation in index_build.get("dependencies", {}).items():
+            index_dependencies.setdefault(
+                name,
+                {
+                    **observation,
+                    "owner_child_run_id": owner_child_run_id,
+                    "observation_owner": owner,
+                },
+            )
 
     def evaluate(candidate_name: str, context: Mapping[str, object]):
         parsed = parse_candidate(candidate_name)
@@ -368,6 +404,8 @@ def _run_evaluation(
                 dtype=dtype,
                 frozen_pool_collection=None,
                 child_run_id=None,
+                preparation_only=True,
+                index_dependencies=index_dependencies,
             )
             store_pool_collection(
                 parsed.owner_identifier,
@@ -383,6 +421,7 @@ def _run_evaluation(
             dtype=dtype,
             frozen_pool_collection=pool_collections.get(parsed.owner_identifier),
             child_run_id=str(context["mlflow_run_id"]),
+            index_dependencies=index_dependencies,
         )
         if parsed.reranker == "none":
             store_pool_collection(
@@ -407,11 +446,15 @@ def _run_evaluation(
             metric for metric in primary_metrics(protocol) if metric in directions
         ),
         required_metrics=required_metrics,
+        nullable_metrics=("operational.peak_vram_mb",),
         paired_metrics=(),
         revisions=model_revisions(model_lock),
         decision_files=decision_files or None,
         input_artifacts={
             "manifest": manifest_path,
+            "data_validation_report": verify_inputs(
+                manifest_path, profile, protocol, chunking_protocol=chunking_protocol
+            )[0],
             "model_lock": model_lock_path,
             **(
                 {"preflight_report": qualification_path}
@@ -434,11 +477,8 @@ def _run_evaluation(
             "device": device if parse_candidate(candidate).model_backed else "cpu",
         },
         monitor_temporary_disk=False,
-        run_name_prefix=(
-            f"rag-retrieval-reranking-smoke-{device}"
-            if profile == "smoke"
-            else f"rag-retrieval-reranking-{profile}"
-        ),
+        monitor_resources=False,
+        run_name_prefix=(f"smoke-{device}" if profile == "smoke" else profile),
         shuffle_candidates=False,
         evaluator_receives_context=True,
         parent_artifact_builder=parent_artifact_builder(
@@ -500,6 +540,15 @@ def _plan(
             ),
             "device": device,
             "dtype": dtype,
+            "input_inventory": {
+                "corpus_document_count": sum(
+                    row.get("kind") == "document" for row in manifest.samples
+                ),
+                "answerable_query_count": sum(
+                    row.get("kind") == "question" and bool(row.get("answerable"))
+                    for row in manifest.samples
+                ),
+            },
         },
     )
 
@@ -513,6 +562,7 @@ def _selected_embedding(profile, path, chunking_protocol):
         path,
         exact=1,
         expected_source=("rag", "chunking-embedding", "validation"),
+        expected_protocols={"chunking_embedding": chunking_protocol.meta.checksum},
     )
     selected = decision.selected_candidates[0]
     if selected not in chunking_protocol.development_candidates:
@@ -520,7 +570,9 @@ def _selected_embedding(profile, path, chunking_protocol):
     return selected, decision
 
 
-def _selected_candidates(profile, path, declared, maximum_finalists):
+def _selected_candidates(
+    profile, path, declared, maximum_finalists, *, protocols, qualification
+):
     if profile == "smoke":
         if path is not None:
             raise ValueError("Smoke retrieval/reranking does not accept a shortlist")
@@ -538,6 +590,8 @@ def _selected_candidates(profile, path, declared, maximum_finalists):
             "retrieval-reranking",
             "validation" if profile == "locked" else "development",
         ),
+        expected_protocols=protocols,
+        expected_qualification=qualification,
     )
     unknown = sorted(set(decision.selected_candidates) - set(declared))
     if unknown:

@@ -141,6 +141,8 @@ def evaluate_candidate(
                 "reliability.attempt_failure_rate",
                 "reliability.repeatability_success_rate",
             ):
+                if name.endswith("repeatability_success_rate") and len(rows) == 1:
+                    continue  # no scheduled pair task, even if smoke did not execute
                 evaluation.metrics[name] = None
                 evaluation.statuses[name] = incomplete
             if not rows[0]["executed"]:
@@ -319,7 +321,11 @@ def evaluate_candidate(
             for sample in samples
         ],
         "timings": [
-            {name: value for name, value in row.items() if name != "document"}
+            {
+                name: value
+                for name, value in row.items()
+                if name not in {"document", "produced_document"}
+            }
             for row in attempts
         ],
         "outputs": {"attempts": attempts},

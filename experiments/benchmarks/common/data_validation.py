@@ -11,10 +11,13 @@ from experiments.benchmarks.common.datasets import load_manifest, require_manife
 
 REPORT_ROOT = PROJECT_ROOT / "artifacts/benchmarks/data-validation"
 PROFILES = ("smoke", "development", "validation", "locked")
+RAG_BENCHMARKS = frozenset({"chunking-embedding", "retrieval-reranking", "generation"})
 
 
 def manifest_path(benchmark, profile):
-    if benchmark == "chunking-embedding":
+    if benchmark == "generation" and profile == "smoke":
+        return PROJECT_ROOT / "data/benchmarks/rag/generation-smoke.json"
+    if benchmark in RAG_BENCHMARKS:
         name = {
             "smoke": "smoke",
             "development": "rag-selection-dev",
@@ -80,7 +83,7 @@ def input_identity(
     dependencies = [
         Path(__file__).with_name("datasets.py"),
     ]
-    if benchmark == "chunking-embedding":
+    if benchmark in RAG_BENCHMARKS:
         dependencies.append(PROJECT_ROOT / "src/edumind/rag/tokenizers.py")
     else:
         dependencies.append(Path(__file__).with_name("metrics.py"))
@@ -145,7 +148,7 @@ def validate_inventory(benchmark, profile, path, inventory):
     splits = set()
     for source in inventory:
         frozen = load_manifest(source)
-        if benchmark == "chunking-embedding":
+        if benchmark in RAG_BENCHMARKS:
             split = "development" if frozen.split == "dev" else frozen.split
             if split not in {"development", "validation", "locked-test"}:
                 raise ValueError("Authoritative RAG inventory has an invalid split")

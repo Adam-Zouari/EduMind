@@ -1271,7 +1271,7 @@ def test_official_host_preserves_cdm_infrastructure_failure_as_unavailable(
 )
 @pytest.mark.parametrize("failed_attempt", [1, 3])
 def test_workers_preserve_designated_quality_and_all_measured_attempts(
-    suite, latency_support, failed_attempt, monkeypatch
+    suite, latency_support, failed_attempt, monkeypatch, tmp_path
 ):
     import importlib
     import time
@@ -1348,7 +1348,13 @@ def test_workers_preserve_designated_quality_and_all_measured_attempts(
     }
     if suite == "audio":
         monkeypatch.setattr(worker, "build_runtime", lambda *_args: runtime)
-        payload.update(candidate="mock", model_lock={}, speech=[item], reliability=[])
+        payload.update(
+            candidate="mock",
+            model_lock={},
+            speech=[item],
+            reliability=[],
+            prediction_directory=str(tmp_path / "predictions"),
+        )
     else:
         monkeypatch.setattr(
             worker,

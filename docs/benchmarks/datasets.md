@@ -15,9 +15,9 @@ licenses, references, and source-family-isolated splits.
 
 After preparation, follow the [shared data-validation guide](data-validation.md)
 for per-profile checks, cross-split isolation, generated reports, and their
-verification before runs. Document, ASR, video, and chunking–embedding implement these standalone
-commands and report verification; other suites retain inline checks pending
-their migration.
+verification before runs. Document, ASR, video, chunking–embedding,
+retrieval–reranking, and generation implement these standalone commands and
+report verification; Final RAG and vector-database migration remain separate.
 Dataset annotation rules live here; prediction scoring lives in each metric
 reference, not in the validator.
 
@@ -922,8 +922,11 @@ that were not public during candidate development. If only public sources are
 available, the run remains useful but must be described as public-corpus
 confirmation rather than proof of unseen real-world generalization.
 
-The tiny committed extraction assets and RAG fixture remain the only benchmark
-data stored in Git. Smoke verifies code paths only and does not replace any
+The tiny committed extraction assets and RAG smoke fixtures remain the only
+benchmark data stored in Git. Generation uses its own
+`data/benchmarks/rag/generation-smoke.json`, including explicit claim references
+and answerability labels; chunking–embedding and retrieval–reranking retain
+`data/benchmarks/rag/smoke.json`. Smoke verifies code paths only and does not replace any
 public or manually verified dataset above. Use the
 [benchmark runbook](running.md) for all execution commands.
 

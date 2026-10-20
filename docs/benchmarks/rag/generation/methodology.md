@@ -21,19 +21,20 @@ every model receives exactly the same verified evidence?
 
 ## Implementation boundary
 
-This page specifies the approved generation design. The current runner and
-`protocol.yaml` have not yet been aligned with all of it: they retain a
-reasoning-only roster, greedy decoding with a separate answer-length cap,
-a development screen, two warmups, and lexical/local-classifier evaluation.
-Those paths do not establish the seven model-mode, full-question-set,
-one-warmup, calibrated-semantic-judge comparison described below. The
-standalone validation/report-reuse interface also remains planned.
+The protocol and runner implement the seven model-mode roster, complete
+question-set execution, one warmup, three measured seeds, structured response
+scoring, separate lifecycle measurements, and sealed data-report verification.
+Semantic labels come through the calibrated-judge interface; lexical overlap
+and a local classifier are not substitutes for that interface.
 
 Judge identity is pending calibration, not selected by this document. No
 authoritative claim-level score or complete comparison is established until
-the implementation, resolved settings, reference data, and calibration artifact
-meet this contract. The existing local faithfulness classifier is not a
-calibrated replacement for all semantic responsibilities.
+the resolved settings, reference data, snapshots, and calibration artifact meet
+this contract. The CLI can replay previously obtained replies bound to that
+judge contract; the Python interface accepts a judge transport. No live provider
+or calibration result is selected automatically. CPU/CUDA smoke without a judge
+checks runtime and deterministic scoring only, retaining unavailable semantic
+values rather than fabricating labels.
 
 ## Models and modes
 
@@ -75,8 +76,8 @@ retriever.
 
 The [shared data-validation workflow](../../data-validation.md) checks accepted
 answers, required facts, supplied evidence, answerability, context provenance,
-and source isolation before execution; its standalone/report interface is
-planned. Judge calibration and output-schema validation remain separate gates.
+and source isolation before execution. Its standalone validator and sealed-report
+verification are implemented. Judge calibration and output-schema validation remain separate gates.
 Preparation checks do not enter generation latency or model resource windows.
 
 Check frozen prompts for each model-mode's actual native input compatibility
@@ -280,7 +281,16 @@ the one selected generator runs on frozen evidence in its own benchmark
 ```
 
 Smoke supplies wiring evidence only. Preflight supplies hardware eligibility
-only and has zero warmups. Development is the stage for introducing candidate
+only and has zero warmups. Each candidate records the maximum native prompt
+length actually tested on its reviewed stress input. Before model loading,
+development, validation, and locked execution verify that every rendered prompt
+fits that candidate's tested envelope as well as its model context. A longer
+prompt requires requalification with a suitable reviewed development/stress
+input, not examination of locked answers or a relaxed bound. Runtime memory
+monitoring remains active: qualification is not a guarantee that every possible
+generated sequence will fit.
+
+Development is the stage for introducing candidate
 configurations and tuning their settings. Validation compares only the frozen
 finalists named in the reviewed development decision on unseen data; it does not
 introduce configurations or retune their settings. The resulting
@@ -289,6 +299,12 @@ selected from validation. Its
 own locked run measures generation on verified evidence; Final RAG uses the
 same selection but measures answers on the complete retrieval path. Neither
 locked report can reopen selection.
+
+Validation and locked decisions also bind the source run's judge-contract file
+checksum. Replacing the judge, rubric, or calibration under an unchanged path
+does not make earlier selection evidence comparable. Rescore retained outputs
+under a new versioned run and author a new decision when intentionally changing
+the evaluator; do not rewrite the source run.
 
 ## Per-candidate execution
 

@@ -138,6 +138,12 @@ def test_lifecycle_failure_retains_unexecuted_rows_without_failure_rate(
     )
     assert failure.value.operational["batch_pages_per_minute"] is None
     assert failure.value.artifacts["validation_report"]["unexecuted_attempt_count"] == 1
+    assert (
+        sample.metadata["metric_statuses"]["reliability.repeatability_success_rate"][
+            "status"
+        ]
+        == "inapplicable"
+    )
 
 
 def test_post_inference_failure_keeps_completed_first_quality(
@@ -149,6 +155,23 @@ def test_post_inference_failure_keeps_completed_first_quality(
     assert failure.value.samples[0].metrics["text.content_f1"] == 1
     assert failure.value.samples[0].metrics["reliability.attempt_failure_rate"] == 0
     assert failure.value.parameters["measurement.resource_scope"] == "partial"
+
+
+def test_document_prediction_is_saved_outside_worker_temporary_files(
+    monkeypatch, worker_result, tmp_path
+):
+    from experiments.benchmarks.common.runner import _write_candidate_artifact
+
+    artifacts = evaluate(monkeypatch, worker_result)[-1]
+    path = _write_candidate_artifact(
+        tmp_path, "parser", "outputs", artifacts["outputs"]
+    )
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["attempts"][0]["document"]["text"] == "alpha"
+    assert (
+        saved["attempts"][0]["output_fingerprint"]
+        == worker_result["attempts"][0]["output_fingerprint"]
+    )
 
 
 def test_supervisor_telemetry_failure_retains_completed_worker_output(

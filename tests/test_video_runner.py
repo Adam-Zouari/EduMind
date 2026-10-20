@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from edumind.common.artifacts import sha256_file
 from experiments.benchmarks.common import preflight as common_preflight
 from experiments.benchmarks.common import runner as common_runner
 from experiments.benchmarks.common.contracts import (
@@ -414,3 +415,43 @@ def test_failed_candidate_logs_independently_valid_retained_intervals(
         values.get("score.ci_lower") == 0.4 and values.get("score.ci_upper") == 0.6
         for values in recorded
     )
+
+
+def test_frozen_failure_uploads_only_references_not_nested_raw_outputs(
+    monkeypatch, tmp_path
+):
+    def failed(*_args, **_kwargs):
+        raise WorkerExecutionError(
+            "offline failure",
+            {
+                "worker_result": {
+                    "resource_evidence": {
+                        "videos": [
+                            {
+                                "transcript": "private prediction",
+                                "segments": [
+                                    {"text": "private prediction", "start": 0, "end": 1}
+                                ],
+                                "windows": [
+                                    {
+                                        "transcript": "private prediction",
+                                        "raw_prediction": {"text": "private native"},
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            },
+        )
+
+    monkeypatch.setattr(runner, "create_frozen_asr_artifact", failed)
+    with pytest.raises(WorkerExecutionError) as caught:
+        runner._preserve_worker_failure(failed, tmp_path / "frozen.json")
+    reference = caught.value.parameters["prediction_evidence"]
+    from pathlib import Path
+
+    path = Path(reference["path"])
+    assert reference["uploaded"] is False and reference["sha256"] == sha256_file(path)
+    assert "private prediction" in path.read_text(encoding="utf-8")
+    assert "private" not in json.dumps(caught.value.artifacts)

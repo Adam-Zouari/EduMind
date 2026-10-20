@@ -12,12 +12,13 @@ from pathlib import Path
 
 import numpy as np
 
+from edumind.rag.errors import RAGConfigurationError
 from experiments.benchmarks.common.contracts import (
     BenchmarkPlan,
     CandidateExecutionError,
     SampleResult,
 )
-from experiments.benchmarks.common.datasets import answerable_questions
+from experiments.benchmarks.common.datasets import answerable_questions, evidence_units
 from experiments.benchmarks.common.process import (
     WorkerExecutionError,
     benchmark_objects_from_payload,
@@ -40,22 +41,34 @@ from experiments.benchmarks.rag.evaluation import (
 
 from .metrics import (
     aggregate_quality,
+    aggregate_repeatability,
     eligible_counts,
     latency_intervals,
     prefixed_quality,
+    ranking_repeatability,
     score_question,
+    source_groups,
 )
 from .profiles import embedding_spec, split_candidate
 from .protocol import ChunkingEmbeddingProtocol, protocol_from_settings
 
 OPERATIONAL_DIRECTIONS = {
+    "operational.cold_model_load_seconds": "min",
+    "operational.chunking_seconds": "min",
+    "operational.chunk_embedding_seconds": "min",
     "operational.corpus_build_seconds": "min",
     "operational.corpus_build_source_tokens_per_second": "max",
     "operational.query_latency_ms_p50": "min",
     "operational.query_latency_ms_p95": "min",
+    "operational.query_embedding_latency_ms_p50": "min",
+    "operational.query_embedding_latency_ms_p95": "min",
+    "operational.vector_search_latency_ms_p50": "min",
+    "operational.vector_search_latency_ms_p95": "min",
     "operational.peak_process_tree_ram_mb": "min",
     "operational.peak_vram_mb": "min",
 }
+BUILD_PHASES = ("cold_model_load", "chunking", "chunk_embedding", "corpus_build")
+QUERY_COMPONENTS = ("query_embedding_latency_ms", "vector_search_latency_ms")
 WORKER = Path(__file__).with_name("worker.py")
 
 
@@ -71,6 +84,12 @@ def directions_for(manifest, protocol):
             for metric in protocol.quality_metrics
         },
         **OPERATIONAL_DIRECTIONS,
+        "diagnostic.ranking_repeatability": "max",
+        **{
+            f"workload.retrieved_context_tokens_at_{cutoff}_{statistic}": "descriptive"
+            for cutoff in protocol.quality_cutoffs
+            for statistic in ("mean", "p95")
+        },
     }
     return directions, tuple(directions)
 
@@ -78,6 +97,7 @@ def directions_for(manifest, protocol):
 def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
     """Stop measurement before scoring; preserve every scheduled first observation."""
     protocol = protocol_from_settings(plan.settings)
+    manifest_fingerprint = manifest.fingerprint
     validate_execution(
         protocol.meta,
         plan.profile,
@@ -98,6 +118,9 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
     if not questions:
         raise ValueError("Chunking/embedding requires answerable questions")
     random.Random(plan.seed).shuffle(questions)
+    document_records = {
+        str(row["id"]): row for row in manifest.samples if row.get("kind") == "document"
+    }
     attempts = [
         {
             "phase": "query",
@@ -105,14 +128,23 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
             "repetition": rep,
             "status": "unexecuted",
             "latency_ms": None,
+            "elapsed_to_failure_ms": None,
+            "query_embedding_latency_ms": None,
+            "vector_search_latency_ms": None,
+            "query_embedding_status": "unexecuted",
+            "vector_search_status": "unexecuted",
+            "query_embedding_elapsed_to_failure_ms": None,
+            "vector_search_elapsed_to_failure_ms": None,
             "error": "execution_stopped",
             "ranking": None,
+            "ranking_ids": None,
         }
         for q in questions
         for rep in range(1, plan.repetitions + 1)
     ]
-    progress, errors = {}, []
+    progress, errors, request_errors = {}, [], []
     index = None
+    window_complete = False
     monitor = ResourceMonitor(device=device, require_vram=device == "cuda")
     try:
         with monitor:
@@ -143,34 +175,100 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
             for row in attempts:
                 seed_deterministically(plan.seed)
                 started = time.perf_counter()
+                timings = {}
+                ranking = None
                 try:
                     ranking = dense_rank_with_scores(
                         index,
                         str(by_id[row["question_id"]]["question"]),
                         protocol.audit_depth,
+                        timings=timings,
                     )
-                    validate_ranking(index, ranking, protocol.audit_depth)
-                    row.update(status="success", error=None, ranking=ranking)
+                    row.update(status="success", error=None)
                 except Exception as exc:  # noqa: BLE001 - retain every measured outcome
                     row.update(status="failed", error=f"{type(exc).__name__}: {exc}")
-                    errors.append(str(row["error"]))
+                    request_errors.append(str(row["error"]))
                     if isinstance(exc, InputCompatibilityError):
                         progress["input_validation"] = exc.report
-                row["latency_ms"] = 1000 * (time.perf_counter() - started)
-                if not math.isfinite(row["latency_ms"]) or row["latency_ms"] < 0:
-                    row["latency_ms"] = None
-                    row["timing_error"] = "latency_measurement_unavailable"
-                    errors.append(row["timing_error"])
+                        errors.append(str(row["error"]))
+                    elif (
+                        isinstance(exc, RAGConfigurationError)
+                        or getattr(exc, "reason_code", None)
+                        == "output_integrity_failed"
+                        or type(exc).__name__
+                        in {
+                            "OutOfMemoryError",
+                            "CudaOutOfMemoryError",
+                        }
+                    ):
+                        errors.append(str(row["error"]))
+                elapsed = 1000 * (time.perf_counter() - started)
+                # The shared search validates/synchronizes inside its component timer.
+                # Recheck returned envelopes to catch malformed adapters, not ordering changes.
+                if ranking is not None:
+                    row["ranking"] = ranking
+                    try:
+                        validate_ranking(index, ranking, protocol.audit_depth)
+                        row["ranking_ids"] = [
+                            index.chunks[position].identifier for position, _ in ranking
+                        ]
+                    except (ValueError, RuntimeError, TypeError) as exc:
+                        timings.pop("vector_search_latency_ms", None)
+                        row.update(
+                            status="failed", error=f"output_integrity_failed: {exc}"
+                        )
+                        errors.append(str(row["error"]))
+                for name in QUERY_COMPONENTS:
+                    value = timings.get(name)
+                    if value is not None and (
+                        isinstance(value, bool)
+                        or not isinstance(value, (int, float))
+                        or not math.isfinite(value)
+                        or value < 0
+                    ):
+                        errors.append(f"Invalid completed component timer: {name}")
+                        value = None
+                    row[name] = value
+                    if value is None and row["status"] == "success":
+                        errors.append(f"Missing completed component timer: {name}")
+                embedding_done = row["query_embedding_latency_ms"] is not None
+                search_done = row["vector_search_latency_ms"] is not None
+                row["query_embedding_status"] = (
+                    "success"
+                    if embedding_done
+                    else "unavailable"
+                    if row["status"] == "success"
+                    else "failed"
+                )
+                row["vector_search_status"] = (
+                    "success"
+                    if search_done
+                    else "unavailable"
+                    if row["status"] == "success"
+                    else "failed"
+                    if embedding_done
+                    else "unexecuted"
+                )
+                if not math.isfinite(elapsed) or elapsed < 0:
+                    errors.append("latency_measurement_unavailable")
+                elif row["status"] == "success":
+                    row["latency_ms"] = elapsed
+                else:
+                    row["elapsed_to_failure_ms"] = elapsed
+                    failed_phase = (
+                        "vector_search" if embedding_done else "query_embedding"
+                    )
+                    if not search_done:
+                        row[f"{failed_phase}_elapsed_to_failure_ms"] = timings.get(
+                            f"{failed_phase}_elapsed_to_failure_ms"
+                        )
             if device == "cuda":
                 placement = index.embedder.placement_report(device)
                 progress["placement_after"] = placement
                 if placement.get("status") != "qualified":
                     raise RuntimeError(f"Embedding GPU placement changed: {placement}")
+            window_complete = True
     except Exception as exc:  # noqa: BLE001 - build/warmup/measurement failure
-        if "build_started" in progress and index is None:
-            progress["build_elapsed_to_failure"] = (
-                time.perf_counter() - progress["build_started"]
-            )
         errors.append(f"{type(exc).__name__}: {exc}")
         if isinstance(exc, InputCompatibilityError):
             progress["input_validation"] = exc.report
@@ -187,11 +285,31 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
         }
     build_seconds = index.corpus_build_seconds if index is not None else None
     if build_seconds is not None and (
-        not math.isfinite(build_seconds) or build_seconds < 0
+        isinstance(build_seconds, bool)
+        or not isinstance(build_seconds, (int, float))
+        or not math.isfinite(build_seconds)
+        or build_seconds < 0
     ):
         errors.append("Invalid completed corpus-build timer")
         build_seconds = None
     build_elapsed = progress.get("build_elapsed_to_failure")
+    phase_seconds = dict(progress.get("phase_seconds", {}))
+    if index is not None:
+        phase_seconds.update(index.phase_seconds)
+    phase_seconds["corpus_build_seconds"] = build_seconds
+    for phase in BUILD_PHASES:
+        name = f"{phase}_seconds"
+        value = phase_seconds.get(name)
+        if value is None and index is not None:
+            errors.append(f"Missing completed phase timer: {name}")
+        if value is not None and (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value < 0
+        ):
+            errors.append(f"Invalid completed phase timer: {name}")
+            phase_seconds[name] = None
     chunks = index.chunks if index is not None else progress.get("chunks", [])
     generation_complete = index is not None or progress.get(
         "generation_complete", False
@@ -246,8 +364,13 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
         else None,
     }
     samples, retrievals, matches, query_rows = [], [], [], []
-    determinism_failures = 0
     for question in questions:
+        document = document_records[str(question["document_id"])]
+        source_id = str(
+            document.get("independent_source_id")
+            or document.get("source_group_id")
+            or question["document_id"]
+        )
         rows = [row for row in attempts if row["question_id"] == str(question["id"])]
         first = rows[0]
         successful = [row for row in rows if row["status"] == "success"]
@@ -257,19 +380,38 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
             if timed
             else None
         )
-        rankings = [
-            tuple(i for i, _ in row["ranking"][: max(protocol.quality_cutoffs)])
-            for row in successful
-        ]
-        if rankings and any(ranking != rankings[0] for ranking in rankings[1:]):
-            determinism_failures += 1
-            errors.append(f"Repeated ranking changed for {question['id']}")
+        repeatability = ranking_repeatability(rows, depth=protocol.repeatability_depth)
+        component_medians = {}
+        component_support = {}
+        for name in QUERY_COMPONENTS:
+            completed = [row[name] for row in rows if row[name] is not None]
+            component_medians[name] = float(np.median(completed)) if completed else None
+            component_support[f"{name}.completed_attempt_count"] = len(completed)
+        context = {
+            f"retrieved_context_tokens_at_{k}": None for k in protocol.quality_cutoffs
+        }
         values = {name: None for name in protocol.quality_metrics}
         diagnostics = {}
         reason = first["error"]
-        status = "unavailable" if first["status"] != "success" else "complete"
+        status = (
+            "incomplete"
+            if first["status"] == "unexecuted"
+            else "unavailable"
+            if first["status"] != "success"
+            else "scored"
+        )
         if first["status"] == "success":
             selected = [chunks[position] for position, _ in first["ranking"]]
+            for k in protocol.quality_cutoffs:
+                try:
+                    counts = [tokenizer.count(chunk.text) for chunk in selected[:k]]
+                    if not counts or any(count <= 0 for count in counts):
+                        raise ValueError(
+                            "Retrieved context contains a token-free chunk"
+                        )
+                    context[f"retrieved_context_tokens_at_{k}"] = sum(counts)
+                except (ValueError, RuntimeError) as exc:
+                    errors.append(f"context_count_integrity_failed: {exc}")
             try:
                 scored = score_question(
                     question,
@@ -292,28 +434,63 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
             except (ValueError, RuntimeError) as exc:
                 status, reason = "unavailable", f"scoring_integrity_failed: {exc}"
                 errors.append(reason)
+        for row in rows:
+            identity = {
+                "question_id": str(question["id"]),
+                "source_document_id": str(question["document_id"]),
+                "independent_source_id": source_id,
+                "repetition": row["repetition"],
+                "status": row["status"],
+                "error": row["error"],
+                "manifest_checksum": manifest.checksum,
+                "manifest_fingerprint": manifest_fingerprint,
+                "designated_first": row["repetition"] == 1,
+            }
+            if row["ranking_ids"] is None:
+                retrievals.append(
+                    {
+                        **identity,
+                        "rank": None,
+                        "chunk_id": None,
+                        "cosine_score": None,
+                        "raw_ranking": json.dumps(row["ranking"], default=str),
+                    }
+                )
+                continue
             retrievals.extend(
                 {
-                    "question_id": str(question["id"]),
+                    **identity,
                     "rank": rank,
                     "chunk_id": chunks[position].identifier,
                     "document_id": chunks[position].document_id,
                     "start": chunks[position].start,
                     "end": chunks[position].end,
                     "cosine_score": score,
-                    "scored": rank <= max(protocol.quality_cutoffs),
+                    "scored": row["repetition"] == 1
+                    and rank <= max(protocol.quality_cutoffs),
                 }
-                for rank, (position, score) in enumerate(first["ranking"], 1)
+                for rank, (position, score) in enumerate(row["ranking"], 1)
             )
         metadata = {
             "document_id": str(question["document_id"]),
+            "independent_source_id": source_id,
+            "source_group_id": document.get("source_group_id"),
             "evidence_type": str(question["evidence_type"]),
             "first_attempt_status": first["status"],
             "quality_status": status,
             "quality_reason": reason,
+            "evidence_unit_count": len(evidence_units(question)),
             "successful_attempts": len(successful),
             "timed_successful_attempts": len(timed),
             "scheduled_attempts": len(rows),
+            "repeatability_status": repeatability["status"],
+            "repeatability_reason": repeatability["reason"],
+            "scheduled_pair_count": repeatability["scheduled_pair_count"],
+            "successful_pair_count": repeatability["successful_pair_count"],
+            "repeatability_pairs": json.dumps(repeatability["pairs"]),
+            **component_medians,
+            **component_support,
+            **context,
             "native_query_tokens": index.preflight.get("query_token_counts", {}).get(
                 str(question["question"])
             )
@@ -323,7 +500,10 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
         samples.append(
             SampleResult(
                 str(question["id"]),
-                prefixed_quality(values, str(question["evidence_type"])),
+                {
+                    **prefixed_quality(values, str(question["evidence_type"])),
+                    "diagnostic.ranking_repeatability": repeatability["value"],
+                },
                 latency,
                 metadata,
             )
@@ -334,6 +514,7 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
                 **metadata,
                 **values,
                 **diagnostics,
+                "ranking_repeatability": repeatability["value"],
                 "latency_ms": latency * 1000 if latency is not None else None,
             }
         )
@@ -352,31 +533,98 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
             for name in protocol.quality_metrics
         ],
     )
-    intervals.update(
-        latency_intervals(
-            samples,
-            resamples=resamples,
-            seed=plan.seed,
-            confidence=protocol.confidence_level,
-            minimum_documents=protocol.minimum_latency_ci_documents,
-        )
+    repeated, repeated_intervals, repeatability_support = aggregate_repeatability(
+        samples,
+        resamples=resamples,
+        seed=plan.seed,
+        confidence=protocol.confidence_level,
+        minimum_documents=protocol.minimum_repeatability_ci_documents,
     )
-    medians = [
-        sample.latency_seconds * 1000
-        for sample in samples
-        if sample.latency_seconds is not None
-    ]
+    aggregate.update(repeated)
+    intervals.update(repeated_intervals)
+    latency_support = {}
+    for name in ("query_latency_ms", *QUERY_COMPONENTS):
+        intervals.update(
+            latency_intervals(
+                samples,
+                resamples=resamples,
+                seed=plan.seed,
+                confidence=protocol.confidence_level,
+                minimum_documents=protocol.minimum_latency_ci_documents,
+                metric=name,
+            )
+        )
+        observations = [
+            (
+                sample,
+                sample.latency_seconds * 1000
+                if name == "query_latency_ms" and sample.latency_seconds is not None
+                else sample.metadata.get(name),
+            )
+            for sample in samples
+        ]
+        contributing = [
+            (sample, value) for sample, value in observations if value is not None
+        ]
+        latency_support[name] = {
+            "sample_unit": "per_query_completed_attempt_median",
+            "eligible_question_count": len(samples),
+            "contributing_question_count": len(contributing),
+            "unavailable_question_count": len(samples) - len(contributing),
+            "eligible_document_count": len(
+                {s.metadata["document_id"] for s in samples}
+            ),
+            "independent_source_count": len(source_groups(samples)),
+            "contributing_source_count": len(
+                source_groups([s for s, _ in contributing])
+            ),
+            "contributing_document_count": len(
+                {s.metadata["document_id"] for s, _ in contributing}
+            ),
+        }
+        for percentile, label in ((50, "p50"), (95, "p95")):
+            operational[f"{name}_{label}"] = (
+                float(np.percentile([v for _, v in contributing], percentile))
+                if contributing
+                else None
+            )
+            aggregate[f"operational.{name}_{label}.sample_count"] = float(
+                len(contributing)
+            )
+    workload_support = {}
+    for k in protocol.quality_cutoffs:
+        name = f"retrieved_context_tokens_at_{k}"
+        totals = [
+            sample.metadata[name]
+            for sample in samples
+            if sample.metadata[name] is not None
+        ]
+        complete = len(totals) == len(samples)
+        details = {
+            "status": "complete"
+            if complete
+            else "partial"
+            if totals
+            else "unavailable",
+            "scheduled_question_count": len(samples),
+            "contributing_question_count": len(totals),
+            "unavailable_question_count": len(samples) - len(totals),
+            "mean": float(np.mean(totals)) if totals else None,
+            "p95": float(np.percentile(totals, 95)) if totals else None,
+        }
+        workload_support[name] = details
+        for statistic in ("mean", "p95"):
+            workload[f"workload.{name}_{statistic}"] = (
+                details[statistic] if complete else None
+            )
     operational.update(
         {
-            "corpus_build_seconds": build_seconds,
+            **{
+                f"{phase}_seconds": phase_seconds.get(f"{phase}_seconds")
+                for phase in BUILD_PHASES
+            },
             "corpus_build_source_tokens_per_second": source_tokens / build_seconds
             if build_seconds and math.isfinite(build_seconds)
-            else None,
-            "query_latency_ms_p50": float(np.percentile(medians, 50))
-            if medians
-            else None,
-            "query_latency_ms_p95": float(np.percentile(medians, 95))
-            if medians
             else None,
         }
     )
@@ -401,8 +649,13 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
             )
             for status in ("success", "failed", "unexecuted")
         },
-        "validity.determinism_failed_queries": float(determinism_failures),
-        "validity.truncated_inputs": 0.0,
+        "validity.missing_attempt_record_count": 0.0,
+        "validity.truncated_inputs": float(
+            progress.get("input_validation", {}).get(
+                "truncated_inputs",
+                index.preflight.get("truncated_inputs", 0) if index is not None else 0,
+            )
+        ),
         **eligible_counts(samples),
         **{
             f"validity.{name}.{count}": float(value)
@@ -413,16 +666,35 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
     }
     aggregate.update(workload)
     aggregate.update(validity)
-    for name in ("query_latency_ms_p50", "query_latency_ms_p95"):
-        aggregate[f"operational.{name}.sample_count"] = float(
-            len(
-                {
-                    s.metadata["document_id"]
-                    for s in samples
-                    if s.latency_seconds is not None
-                }
-            )
-        )
+    execution_complete = all(row["status"] in {"success", "failed"} for row in attempts)
+    quality_complete = all(
+        details["status"] in {"complete", "inapplicable"}
+        for details in support.values()
+    )
+    integrity_passed = not errors
+    if validity["validity.truncated_inputs"]:
+        errors.append("Prohibited truncated inputs")
+        integrity_passed = False
+    peak_vram = operational.get("peak_vram_mb")
+    if (
+        device == "cuda"
+        and plan.profile != "smoke"
+        and peak_vram is not None
+        and peak_vram > protocol.authoritative_peak_vram_mb
+    ):
+        errors.append("vram_limit_exceeded")
+        integrity_passed = False
+    if not execution_complete:
+        errors.append("Required execution is incomplete")
+    if not quality_complete:
+        errors.append("Required first-ranking quality is incomplete")
+    completeness = {
+        "outcome_ledger_complete": len(attempts) == len(questions) * plan.repetitions,
+        "execution_complete": execution_complete,
+        "quality_complete": quality_complete,
+        "integrity_passed": integrity_passed,
+        "accepted": not errors,
+    }
     input_validation = {
         "chunking_contract": index.chunking_contract
         if index is not None
@@ -442,20 +714,39 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
         dtype,
         manifest.split,
         manifest.checksum,
-        manifest.fingerprint,
+        manifest_fingerprint,
         spec=spec,
         preflight=input_validation,
         protocol=protocol,
     )
     parameters.update(
         {
-            "measurement.resource_scope": "partial"
-            if any(row["status"] == "unexecuted" for row in attempts)
-            else "complete",
+            "measurement.resource_scope": "complete" if window_complete else "partial",
             "resource_window": "model-load-through-measured-queries",
             "vram_measurement_method": monitor.vram_measurement_method,
             "gpu_identity": resource_evidence.get("gpu_identity", {}),
             "quality_support": support,
+            "repeatability_support": repeatability_support,
+            "latency_support": latency_support,
+            "workload_support": workload_support,
+            "completeness": completeness,
+            "reporting_readiness": {
+                "authoritative_ready": plan.profile != "smoke"
+                and not protocol.unfrozen_ci_policies
+                and not errors,
+                "ci_support_policy_frozen": not protocol.unfrozen_ci_policies,
+                "unfrozen_ci_policies": protocol.unfrozen_ci_policies,
+                "interpretation": "wiring_only"
+                if plan.profile == "smoke"
+                else "exploratory"
+                if protocol.unfrozen_ci_policies
+                else "authoritative"
+                if not errors
+                else "incomplete_or_invalid",
+                "acceptance_scope": "execution_and_required_quality",
+            },
+            "benchmark.valid": not errors,
+            "validation.status": "failed" if errors else "passed",
             "chunk_inventory_scope": "complete"
             if generation_complete
             else "partial"
@@ -482,6 +773,24 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
                     }
                     for name, row in support.items()
                 },
+                "diagnostic.ranking_repeatability": {
+                    "status": repeatability_support["status"],
+                    "reason": "repeatability_not_measured"
+                    if plan.repetitions == 1
+                    else "missing_required_execution"
+                    if repeatability_support["status"] != "complete"
+                    else None,
+                },
+                **{
+                    f"workload.{name}_{statistic}": {
+                        "status": details["status"],
+                        "reason": None
+                        if details["status"] == "complete"
+                        else "missing_required_first_context_totals",
+                    }
+                    for name, details in workload_support.items()
+                    for statistic in ("mean", "p95")
+                },
                 "operational.peak_vram_mb": {
                     "status": "inapplicable"
                     if device == "cpu"
@@ -497,11 +806,41 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
             },
         }
     )
+    phase_rows = []
+    for phase in BUILD_PHASES:
+        name = f"{phase}_seconds"
+        completed = phase_seconds.get(name) is not None
+        entered = (
+            "build_started" in progress
+            if phase == "corpus_build"
+            else name in progress.get("phase_elapsed_to_failure_seconds", {})
+        )
+        phase_rows.append(
+            {
+                "phase": phase,
+                "status": "success"
+                if completed
+                else "unavailable"
+                if index is not None
+                else "failed"
+                if entered
+                else "unexecuted",
+                "duration_seconds": phase_seconds.get(name),
+                "elapsed_to_failure_seconds": build_elapsed
+                if phase == "corpus_build"
+                else progress.get("phase_elapsed_to_failure_seconds", {}).get(name),
+            }
+        )
     artifacts = {
         "chunk_manifest": [
             {
                 "chunk_id": c.identifier,
                 "document_id": c.document_id,
+                "independent_source_id": str(
+                    document_records[c.document_id].get("independent_source_id")
+                    or document_records[c.document_id].get("source_group_id")
+                    or c.document_id
+                ),
                 "start": c.start,
                 "end": c.end,
                 "evaluation_tokens": c.tokens,
@@ -515,14 +854,13 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
         "retrievals": retrievals,
         "evidence_matches": matches,
         "timings": [
-            {
-                "phase": "corpus_build",
-                "status": "success" if build_seconds is not None else "failed",
-                "duration_seconds": build_seconds,
-                "elapsed_to_failure_seconds": build_elapsed,
-            },
+            *phase_rows,
             *[
-                {key: value for key, value in row.items() if key != "ranking"}
+                {
+                    key: value
+                    for key, value in row.items()
+                    if key not in {"ranking", "ranking_ids"}
+                }
                 for row in attempts
             ],
         ],
@@ -545,10 +883,12 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
             "candidate": candidate,
             "status": "failed" if errors else "passed",
             "manifest_checksum": manifest.checksum,
-            "manifest_fingerprint": manifest.fingerprint,
+            "manifest_fingerprint": manifest_fingerprint,
             "reason_code": input_validation.get("reason_code"),
             "preflight": dict(input_validation),
             "errors": errors,
+            "request_errors": request_errors,
+            "completeness": completeness,
             "warnings": [],
             **validity,
         },
@@ -596,8 +936,39 @@ def run_in_fresh_process(candidate, manifest, model_lock, plan, *, device, dtype
             ) from exc
     except WorkerExecutionError as exc:
         # A lost worker result does not reveal which requests actually executed.
-        scheduled = len(answerable_questions(manifest)) * plan.repetitions
+        questions = answerable_questions(manifest)
+        scheduled = len(questions) * plan.repetitions
         exc.parameters["measurement.resource_scope"] = "partial"
+        exc.parameters["completeness"] = {
+            "outcome_ledger_complete": False,
+            "execution_complete": False,
+            "quality_complete": False,
+            "integrity_passed": None,
+            "accepted": False,
+        }
+        exc.artifacts["query_metrics"] = [
+            {
+                "question_id": str(q["id"]),
+                "document_id": str(q["document_id"]),
+                "quality_status": "incomplete",
+                "quality_reason": "missing_worker_result",
+                **{name: None for name in protocol.quality_metrics},
+            }
+            for q in questions
+        ]
+        exc.artifacts["timings"] = [
+            {
+                "phase": "query",
+                "question_id": str(q["id"]),
+                "repetition": rep,
+                "status": "missing",
+                "error": "missing_worker_result",
+                "latency_ms": None,
+                **{name: None for name in QUERY_COMPONENTS},
+            }
+            for q in questions
+            for rep in range(1, plan.repetitions + 1)
+        ]
         exc.artifacts["validation_report"] = {
             "candidate": candidate,
             "status": "failed",
@@ -606,6 +977,7 @@ def run_in_fresh_process(candidate, manifest, model_lock, plan, *, device, dtype
             "scheduled_attempt_count": scheduled,
             "missing_attempt_record_count": scheduled,
             "errors": [str(exc)],
+            "completeness": exc.parameters["completeness"],
         }
         raise
 
@@ -762,6 +1134,7 @@ def _parameters(
         "quality_cutoffs": protocol.quality_cutoffs,
         "maximum_scored_rank": max(protocol.quality_cutoffs),
         "artifact_top_k": protocol.audit_depth,
+        "repeatability_depth": protocol.repeatability_depth,
         "alpha": protocol.alpha_ndcg_alpha,
         "seed": plan.seed,
         "warmups": plan.warmups,

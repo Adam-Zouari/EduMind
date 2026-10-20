@@ -16,16 +16,13 @@ from edumind.extraction import (
     SourceKind,
 )
 from edumind.extraction.structured import build_structured_document
+from experiments.benchmarks.common.contracts import SampleResult
 from experiments.benchmarks.common.data_validation import manifest_path
 from experiments.benchmarks.common.metrics import (
     average_precision_at_k,
-    balanced_accuracy,
-    balanced_accuracy_interval,
     character_error_rate,
-    citation_scores,
     context_precision_at_k,
     context_recall,
-    exact_match,
     hit_rate_at_k,
     interval_overlap,
     merge_intervals,
@@ -36,10 +33,9 @@ from experiments.benchmarks.common.metrics import (
     recall_at_k,
     reciprocal_rank,
     relevance_grades,
-    rouge_l,
-    token_f1,
     word_error_rate,
 )
+from experiments.benchmarks.common.statistics import aggregate_samples
 from experiments.benchmarks.extraction.document import benchmark as document_benchmark
 from experiments.benchmarks.extraction.document.adapters import _paddle_blocks
 from experiments.benchmarks.extraction.document.benchmark import comparison_candidates
@@ -108,10 +104,9 @@ def test_rank_metrics_have_known_values() -> None:
     assert ndcg_at_k([0.5], 1, [1.0, 0.5]) < 1.0
 
 
-def test_error_and_answer_metrics() -> None:
+def test_error_metrics_and_prose_projection() -> None:
     assert character_error_rate("cat", "cut") == pytest.approx(1 / 3)
     assert word_error_rate("the cat", "the dog") == pytest.approx(0.5)
-    assert token_f1("red blue", "red green") == pytest.approx(0.5)
     assert normalize_prose("  CAFÉ—Test!\n") == "café test"
     assert normalize_prose("algo-\nrithm") == "algo rithm"
 
@@ -130,21 +125,6 @@ def test_metric_edge_cases_and_directions() -> None:
     assert recall_at_k([1.0], 0, 1) == 0.0
     assert hit_rate_at_k([0.0, 1.0], 2) == 1.0
     assert reciprocal_rank([0.0, 1.0]) == 0.5
-    assert exact_match("The Answer!", "the answer") == 1.0
-    assert rouge_l("a b c", "a c") > 0.0
-    assert citation_scores("No citations", set())["citation_recall"] == 1.0
-    assert balanced_accuracy([False, True], [False, True]) == 1.0
-    with pytest.raises(ValueError, match="equal length"):
-        balanced_accuracy([True], [])
-    assert balanced_accuracy([], []) == 0.0
-    balanced = balanced_accuracy_interval(
-        [True, True, True, False],
-        [True, True, True, True],
-        resamples=500,
-        seed=42,
-    )
-    assert balanced.estimate == 0.5
-    assert balanced.lower == balanced.upper == 0.5
     paired = paired_bootstrap_interval([2, 4], [1, 1], resamples=100)
     assert paired.estimate == 2.0
     with pytest.raises(ValueError, match="non-empty"):
@@ -875,6 +855,25 @@ def test_canonical_document_preserves_exact_offsets_and_structure() -> None:
         (9, 13),
     ]
     assert document.segments[1].parent_id == "h"
+
+
+def test_generic_aggregation_retains_null_observations_without_dividing_by_zero():
+    samples = [
+        SampleResult("first", {"measured": 0.0, "unavailable": None}, None),
+        SampleResult("second", {"measured": None, "unavailable": None}, None),
+    ]
+    values, intervals = aggregate_samples(samples, resamples=10)
+    assert values == {"measured": 0.0, "unavailable": None}
+    assert intervals["measured"]["sample_count"] == 1
+    assert intervals["unavailable"]["sample_count"] == 0
+    assert intervals["measured"]["lower"] is None
+    assert len(samples) == 2
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), True])
+def test_generic_aggregation_rejects_invalid_numeric_values(value):
+    with pytest.raises(ValueError, match="non-finite"):
+        aggregate_samples([SampleResult("first", {"metric": value}, None)])
 
 
 def _document(

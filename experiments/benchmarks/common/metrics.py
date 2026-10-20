@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import re
 import unicodedata
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -178,73 +177,6 @@ def precision_recall_f1(
     return float(precision), float(recall), float(f1)
 
 
-def exact_match(answer: str, reference: str) -> float:
-    return float(normalized_tokens(answer) == normalized_tokens(reference))
-
-
-def token_f1(answer: str, reference: str) -> float:
-    from collections import Counter
-
-    answer_tokens = Counter(normalized_tokens(answer))
-    reference_tokens = Counter(normalized_tokens(reference))
-    overlap = sum((answer_tokens & reference_tokens).values())
-    if not answer_tokens or not reference_tokens or not overlap:
-        return 0.0
-    precision = overlap / sum(answer_tokens.values())
-    recall = overlap / sum(reference_tokens.values())
-    return 2 * precision * recall / (precision + recall)
-
-
-def rouge_l(answer: str, reference: str) -> float:
-    left, right = normalized_tokens(answer), normalized_tokens(reference)
-    if not left or not right:
-        return 0.0
-    previous = [0] * (len(right) + 1)
-    for token in left:
-        current = [0]
-        for index, other in enumerate(right, start=1):
-            current.append(
-                previous[index - 1] + 1
-                if token == other
-                else max(current[-1], previous[index])
-            )
-        previous = current
-    lcs = previous[-1]
-    precision, recall = lcs / len(left), lcs / len(right)
-    return 2 * precision * recall / (precision + recall) if lcs else 0.0
-
-
-def citation_scores(answer: str, supported_context_ids: set[int]) -> dict[str, float]:
-    citations = [int(value) for value in re.findall(r"\[(\d+)\]", answer)]
-    cited = set(citations)
-    true_positive = len(cited & supported_context_ids)
-    precision = true_positive / len(cited) if cited else 0.0
-    recall = (
-        true_positive / len(supported_context_ids)
-        if supported_context_ids
-        else float(not cited)
-    )
-    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
-    return {
-        "citation_precision": precision,
-        "citation_recall": recall,
-        "citation_f1": f1,
-    }
-
-
-def balanced_accuracy(labels: Sequence[bool], predictions: Sequence[bool]) -> float:
-    if len(labels) != len(predictions):
-        raise ValueError("Labels and predictions must have equal length")
-    recalls = []
-    for label in (False, True):
-        indices = [index for index, value in enumerate(labels) if value is label]
-        if indices:
-            recalls.append(
-                sum(predictions[index] is label for index in indices) / len(indices)
-            )
-    return float(sum(recalls) / len(recalls)) if recalls else 0.0
-
-
 @dataclass(frozen=True)
 class ConfidenceInterval:
     estimate: float
@@ -276,43 +208,5 @@ def paired_bootstrap_interval(
         float(differences.mean()),
         float(np.quantile(samples, alpha)),
         float(np.quantile(samples, 1.0 - alpha)),
-        confidence,
-    )
-
-
-def balanced_accuracy_interval(
-    labels: Sequence[bool],
-    predictions: Sequence[bool],
-    *,
-    resamples: int = 10_000,
-    seed: int = 42,
-    confidence: float = 0.95,
-) -> ConfidenceInterval:
-    """Stratified bootstrap that preserves both answerability classes."""
-    if len(labels) != len(predictions):
-        raise ValueError("Labels and predictions must have equal length")
-    correct_by_class = [
-        np.asarray(
-            [
-                prediction == label
-                for truth, prediction in zip(labels, predictions, strict=True)
-                if truth == label
-            ],
-            dtype=float,
-        )
-        for label in (False, True)
-    ]
-    if any(not len(values) for values in correct_by_class):
-        raise ValueError("Balanced Accuracy requires both answerability classes")
-    random_state = np.random.default_rng(seed)
-    bootstrap = np.zeros(resamples, dtype=float)
-    for values in correct_by_class:
-        indices = random_state.integers(0, len(values), size=(resamples, len(values)))
-        bootstrap += values[indices].mean(axis=1) / 2.0
-    alpha = (1.0 - confidence) / 2.0
-    return ConfidenceInterval(
-        balanced_accuracy(labels, predictions),
-        float(np.quantile(bootstrap, alpha)),
-        float(np.quantile(bootstrap, 1.0 - alpha)),
         confidence,
     )

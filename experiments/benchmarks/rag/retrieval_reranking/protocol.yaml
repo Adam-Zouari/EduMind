@@ -1,5 +1,5 @@
 schema_version: 1
-protocol_version: retrieval-reranking-v4
+protocol_version: retrieval-reranking-v5
 seed: 42
 
 smoke_fixture:
@@ -39,6 +39,8 @@ quality:
   alpha_ndcg_alpha: 0.5
 
 statistics:
+  minimum_quality_ci_documents: null
+  minimum_repeatability_ci_documents: null
   minimum_latency_ci_documents: 20
   confidence_level: 0.95
 
@@ -57,7 +59,7 @@ profiles:
     devices: [cpu, cuda]
     device_dtypes: {cpu: float32, cuda: float16}
   development:
-    warmups: 2
+    warmups: 1
     repetitions: 3
     bootstrap_resamples: 10000
     device: cuda
@@ -65,7 +67,7 @@ profiles:
     batch_size: 1
     hardware_required: true
   validation:
-    warmups: 2
+    warmups: 1
     repetitions: 3
     bootstrap_resamples: 10000
     device: cuda
@@ -73,7 +75,7 @@ profiles:
     batch_size: 1
     hardware_required: true
   locked:
-    warmups: 2
+    warmups: 1
     repetitions: 3
     bootstrap_resamples: 10000
     device: cuda

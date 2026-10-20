@@ -357,7 +357,7 @@ def _reported_peak_vram_mb(result: Mapping[str, object]) -> float | None:
     for container in (result, result.get("operational"), result.get("metrics")):
         if not isinstance(container, Mapping):
             continue
-        for name in ("peak_vram_mb", "peak_visual_vram_mb"):
+        for name in ("peak_vram_mb", "peak_visual_vram_mb", "peak_vram_mib"):
             value = container.get(name)
             if (
                 isinstance(value, (int, float))

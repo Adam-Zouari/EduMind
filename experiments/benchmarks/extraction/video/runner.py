@@ -12,6 +12,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
 
+from edumind.common.artifacts import sha256_file
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.arguments import (
     LIFECYCLE_PROFILES,
@@ -54,6 +55,10 @@ from experiments.benchmarks.extraction.document.protocol import (
 )
 from experiments.benchmarks.extraction.document.runner import (
     validate_prepared_components,
+)
+from experiments.benchmarks.extraction.evidence import (
+    public_asr_evidence,
+    retain_prediction,
 )
 from experiments.benchmarks.extraction.media import ffmpeg_version
 from experiments.benchmarks.extraction.scoring import attempt_rates
@@ -539,12 +544,23 @@ def run_visual_benchmark(
                     **expected_identity,
                     "frozen_asr_run_id": artifact["run_id"],
                     "frozen_asr_checksum": checksum,
+                    "prediction_evidence": {
+                        "path": str(Path(path).resolve()),
+                        "sha256": checksum,
+                        "uploaded": False,
+                    },
                 },
                 artifact["intervals"],
                 {
-                    "outputs": artifact,
+                    "outputs": {
+                        "prediction_evidence": {
+                            "path": str(Path(path).resolve()),
+                            "sha256": checksum,
+                            "uploaded": False,
+                        }
+                    },
                     "samples": _flat_rows(
-                        rows, ("windows", "segments", "nonspeech_units")
+                        rows, ("windows", "segments", "transcript", "nonspeech_units")
                     ),
                     "windows": [
                         {
@@ -552,7 +568,8 @@ def run_visual_benchmark(
                             **{
                                 key: value
                                 for key, value in window.items()
-                                if key != "segments"
+                                if key
+                                not in {"segments", "transcript", "raw_prediction"}
                             },
                         }
                         for row in rows
@@ -698,7 +715,6 @@ def run_visual_benchmark(
                 if data_validation_report
                 else {}
             ),
-            **({"frozen_asr": frozen_asr_path} if frozen_asr_path else {}),
         },
         protocols={
             "video": protocol.meta,
@@ -919,6 +935,24 @@ def _preserve_worker_failure(function, *args, **kwargs):
             exc.operational["cold_visual_pipeline_load_seconds"] = worker[
                 "cold_visual_pipeline_load_seconds"
             ]
+        if function in {create_frozen_asr_artifact, load_frozen_asr_artifact}:
+            # Common persistence uploads every artifact, including worker_error's
+            # nested transport envelope. Keep bodies only in a durable local file.
+            if args:
+                path = Path(args[0])
+                reference = (
+                    {
+                        "path": str(path.resolve()),
+                        "sha256": sha256_file(path),
+                        "uploaded": False,
+                    }
+                    if function is load_frozen_asr_artifact and path.is_file()
+                    else retain_prediction(
+                        path.with_suffix(".failure.json"), exc.resource_evidence
+                    )
+                )
+                exc.parameters["prediction_evidence"] = reference
+            exc.artifacts = public_asr_evidence(exc.artifacts)
         raise
 
 

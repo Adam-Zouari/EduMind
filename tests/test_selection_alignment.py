@@ -54,8 +54,8 @@ def test_selection_history_counts_and_keys_are_preserved() -> None:
     assert len(rows) == 68
     assert len({(row["component"], row["candidate"]) for row in rows}) == 68
     assert Counter(row["decision"] for row in rows) == {
-        "include": 25,
-        "exclude": 43,
+        "include": 24,
+        "exclude": 44,
     }
     gte = next(
         row for row in rows if row["candidate"] == "Alibaba-NLP/gte-modernbert-base"

@@ -9,6 +9,7 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -19,7 +20,7 @@ from experiments.benchmarks.common.contracts import (
     DatasetManifest,
     SampleResult,
 )
-from experiments.benchmarks.common.datasets import answerable_questions
+from experiments.benchmarks.common.datasets import answerable_questions, evidence_units
 from experiments.benchmarks.common.process import (
     benchmark_objects_from_payload,
     candidate_execution_payload,
@@ -31,9 +32,8 @@ from experiments.benchmarks.common.process import (
 )
 from experiments.benchmarks.common.protocol import PreflightSettings
 from experiments.benchmarks.common.provenance import package_versions
+from experiments.benchmarks.common.resources import ResourceMonitor
 from experiments.benchmarks.rag.chunking_embedding.metrics import (
-    aggregate_quality,
-    eligible_counts,
     prefixed_quality,
     score_question,
 )
@@ -46,17 +46,16 @@ from experiments.benchmarks.rag.evaluation import (
     InputCompatibilityError,
     build_index,
     dense_rank_with_scores,
+    synchronize,
 )
 from experiments.benchmarks.rag.methods import (
     Reranker,
     reciprocal_rank_fusion_with_scores,
 )
 
+from . import metrics as m
 from .metrics import (
-    latency_intervals,
-    latency_summary,
     pool_evidence_unit_recall,
-    retrieved_tokens,
 )
 from .profiles import RetrievalCandidate, parse_candidate
 from .protocol import RetrievalProtocol, protocol_from_settings
@@ -65,21 +64,20 @@ WORKER = Path(__file__).with_name("worker.py")
 
 
 def evaluate_candidate(
-    candidate_name: str,
-    manifest: DatasetManifest,
-    model_lock: Mapping[str, Mapping[str, object]],
-    plan: BenchmarkPlan,
+    candidate_name,
+    manifest,
+    model_lock,
+    plan,
     *,
-    device: str,
-    dtype: str,
-    frozen_pool_collection: Mapping[str, object] | None,
-    child_run_id: str | None,
-    worker_started_at: float | None = None,
+    device,
+    dtype,
+    frozen_pool_collection,
+    child_run_id,
+    preparation_only=False,
+    index_dependencies=None,
 ):
-    """Evaluate one complete stack and return auditable rows and aggregates."""
-
     protocol = protocol_from_settings(plan.settings)
-    chunking_protocol = chunking_protocol_from_settings(plan.settings)
+    chunking = chunking_protocol_from_settings(plan.settings)
     protocol.validate_execution(
         plan.profile,
         seed=plan.seed,
@@ -89,424 +87,589 @@ def evaluate_candidate(
         device=device,
         dtype=dtype,
     )
-    seed_deterministically(plan.seed)
     candidate = parse_candidate(candidate_name)
-    chunker_name, embedding_name = split_candidate(
+    chunker, embedding = split_candidate(
         str(plan.settings.get("chunker_embedding", ""))
     )
-    questions = answerable_questions(manifest)
-    random.Random(plan.seed).shuffle(questions)
-    if not questions:
-        raise RuntimeError("Retrieval/reranking requires answerable questions")
-
-    initialization_started = (
-        worker_started_at if worker_started_at is not None else time.perf_counter()
-    )
-    index = build_index(
-        manifest,
-        chunker_name,
-        embedding_name,
-        model_lock,
-        with_dense=candidate.retriever in {"dense", "rrf"},
-        with_bm25=candidate.retriever in {"bm25", "rrf"},
-        device=device,
-        dtype=dtype,
-        chunking_protocol=chunking_protocol,
-        retrieval_protocol=protocol,
-    )
-    if (
-        plan.profile == "smoke"
-        and len(index.chunks) != protocol.smoke_expected_chunk_count
+    questions = [dict(q) for q in answerable_questions(manifest)]
+    if not questions or not any(
+        row.get("kind") == "document" for row in manifest.samples
     ):
-        raise RuntimeError(
-            "Retrieval smoke fixture must produce exactly "
-            f"{protocol.smoke_expected_chunk_count} chunks, got {len(index.chunks)}"
+        raise ValueError(
+            "Retrieval/reranking requires nonempty corpus and answerable questions"
         )
-    reranker = _reranker(candidate, model_lock, protocol, device=device, dtype=dtype)
-    if reranker is not None:
-        reranker.prepare()
-    initialization_elapsed = time.perf_counter() - initialization_started
-    preflight_seconds = float(
-        index.preflight.get("input_preflight_seconds_excluded_from_corpus_build", 0.0)
-    )
-    cold_initialization_seconds = max(
-        0.0,
-        initialization_elapsed - index.corpus_build_seconds - preflight_seconds,
-    )
-    index_identity = _index_identity(index, candidate)
-    index_build = _index_build_artifact(index, candidate, index_identity)
-
-    pool_by_question, pool_collection_metadata = _load_pool_collection(
-        candidate,
-        frozen_pool_collection,
-        questions,
-        index,
-        protocol,
-        index_identity=index_identity,
-    )
-    reranker_input_totals = _reranker_preflight(
-        reranker, questions, pool_by_question, index
-    )
-
-    for warmup in range(plan.warmups):
-        question = questions[warmup % len(questions)]
-        live_pool = _first_stage(
-            index, str(question["question"]), candidate.retriever, protocol
-        )
-        if reranker is not None:
-            frozen = pool_by_question[str(question["id"])]
-            _require_same_pool(live_pool, frozen, str(question["id"]))
-            reranker.rank_with_scores(
-                str(question["question"]),
-                [index.chunks[position].text for position, _ in frozen],
-                validate_inputs=False,
-            )
-
-    samples: list[SampleResult] = []
-    query_rows: list[dict[str, object]] = []
-    ranking_rows: list[dict[str, object]] = []
-    match_rows: list[dict[str, object]] = []
-    timing_rows: list[dict[str, object]] = []
-    pool_collection_rows: list[dict[str, object]] = []
-    failures: list[str] = []
-    failed_query_ids: set[str] = set()
-    nonfinite_score_count = 0
-    permutation_failures = 0
-    query_pool_mismatches = 0
-    expected_agreements = len(questions) * max(0, plan.repetitions - 1)
-    matching_agreements = 0
-    actual_pool_sizes: list[int] = []
-    retrieved_by_cutoff = {cutoff: [] for cutoff in protocol.quality_cutoffs}
-
+    if preparation_only and candidate.reranker != "none":
+        raise ValueError("Input preparation requires a no-reranker pool owner")
+    random.Random(plan.seed).shuffle(questions)
+    documents = {
+        str(row["id"]): row for row in manifest.samples if row.get("kind") == "document"
+    }
     for question in questions:
-        question_id = str(question["id"])
-        repetition_orders: list[list[int] | None] = []
-        successful_latencies: list[float] = []
-        first_stage_latencies: list[float] = []
-        reranker_latencies: list[float] = []
-        first_output: list[tuple[int, float]] | None = None
-        first_pool: list[tuple[int, float]] | None = None
-        for repetition in range(plan.repetitions):
-            full_started = time.perf_counter()
-            first_stage_ms: float | None = None
-            reranker_ms: float | None = None
-            try:
-                first_started = time.perf_counter()
-                live_pool = _first_stage(
-                    index,
-                    str(question["question"]),
-                    candidate.retriever,
-                    protocol,
+        document = documents[str(question["document_id"])]
+        question["independent_source_id"] = m.source_id({**document, **question})
+
+    attempts = (
+        []
+        if preparation_only
+        else [
+            {
+                "question_id": str(q["id"]),
+                "document_id": str(q["document_id"]),
+                "independent_source_id": m.source_id(q),
+                "repetition": rep,
+                "status": "not_executed",
+                "valid": False,
+                "error": "execution_stopped",
+                "ordered_chunk_ids": None,
+                "ranking": None,
+                "retrieval_ranking": None,
+                "local_reranker_output": None,
+                "full_stack_latency_ms": None,
+                "retrieval_latency_ms": None,
+                "reranker_latency_ms": None,
+                "elapsed_to_failure_ms": None,
+            }
+            for q in questions
+            for rep in range(1, plan.repetitions + 1)
+        ]
+    )
+    progress, errors, native = {}, [], {}
+    index = reranker = None
+    pools, pool_metadata, identity, index_build = {}, {}, {}, {}
+    cold = None
+    window_complete = False
+    model_backed = candidate.model_backed or chunker == "semantic"
+    monitor = ResourceMonitor(
+        device=device if model_backed else "cpu",
+        require_vram=device == "cuda" and model_backed,
+    )
+    setup_started = time.perf_counter()
+    try:
+        with monitor:
+            seed_deterministically(plan.seed)
+            initialization_started = time.perf_counter()
+            index = build_index(
+                manifest,
+                chunker,
+                embedding,
+                model_lock,
+                with_dense=candidate.retriever in {"dense", "rrf"},
+                with_bm25=candidate.retriever in {"bm25", "rrf"},
+                device=device,
+                dtype=dtype,
+                chunking_protocol=chunking,
+                retrieval_protocol=protocol,
+                progress=progress,
+            )
+            if not index.chunks:
+                raise ValueError("Required index produced an empty corpus")
+            if (
+                plan.profile == "smoke"
+                and len(index.chunks) != protocol.smoke_expected_chunk_count
+            ):
+                raise ValueError(
+                    f"Retrieval smoke fixture must produce exactly {protocol.smoke_expected_chunk_count} chunks"
                 )
-                first_stage_ms = (time.perf_counter() - first_started) * 1000.0
-                _require_finite_scores(live_pool)
-                quality_pool = live_pool
-                if reranker is not None:
-                    quality_pool = pool_by_question[question_id]
-                    try:
-                        _require_same_pool(live_pool, quality_pool, question_id)
-                    except ValueError:
-                        query_pool_mismatches += 1
-                        raise
-                    rerank_started = time.perf_counter()
-                    local_order = reranker.rank_with_scores(
-                        str(question["question"]),
-                        [index.chunks[position].text for position, _ in quality_pool],
-                        validate_inputs=False,
-                    )
-                    reranker_ms = (time.perf_counter() - rerank_started) * 1000.0
-                    final = [
-                        (quality_pool[position][0], score)
-                        for position, score in local_order
-                    ]
-                    try:
-                        _require_permutation(final, quality_pool, question_id)
-                    except ValueError:
-                        permutation_failures += 1
-                        raise
-                else:
-                    final = quality_pool
-                _require_finite_scores(final)
-                full_seconds = time.perf_counter() - full_started
-                order = [position for position, _ in final]
-                repetition_orders.append(order)
-                successful_latencies.append(full_seconds)
-                first_stage_latencies.append(first_stage_ms)
-                if reranker_ms is not None:
-                    reranker_latencies.append(reranker_ms)
-                if first_output is None:
-                    first_output = list(final)
-                    first_pool = list(quality_pool)
-                timing_rows.append(
-                    {
-                        "question_id": question_id,
-                        "repetition": repetition + 1,
-                        "full_stack_latency_ms": full_seconds * 1000.0,
-                        "first_stage_latency_ms": first_stage_ms,
-                        "reranker_latency_ms": reranker_ms,
-                        "success": True,
-                        "error": None,
-                    }
+            identity = _index_identity(index, candidate)
+            index_build = _index_build_artifact(index, candidate, identity)
+            index_build = _reference_dependencies(index_build, index_dependencies or {})
+            reranker = _reranker(
+                candidate, model_lock, protocol, device=device, dtype=dtype
+            )
+            if reranker is not None:
+                reranker.prepare()
+            synchronize(device if model_backed else "cpu")
+            elapsed = time.perf_counter() - initialization_started
+            preflight = float(
+                index.preflight.get(
+                    "input_preflight_seconds_excluded_from_corpus_build", 0
                 )
-            except Exception as exc:  # noqa: BLE001 - record per-attempt failures
-                full_seconds = time.perf_counter() - full_started
-                if "non-finite" in str(exc).casefold():
-                    nonfinite_score_count += 1
-                repetition_orders.append(None)
-                failed_query_ids.add(question_id)
-                error = f"{type(exc).__name__}: {exc}"
-                failures.append(f"{question_id} repetition {repetition + 1}: {error}")
-                timing_rows.append(
-                    {
-                        "question_id": question_id,
-                        "repetition": repetition + 1,
-                        "full_stack_latency_ms": full_seconds * 1000.0,
-                        "first_stage_latency_ms": first_stage_ms,
-                        "reranker_latency_ms": reranker_ms,
-                        "success": False,
-                        "error": error,
-                    }
+            )
+            # corpus_build_seconds is the disjoint outer offline construction interval,
+            # not the Dense+BM25 phase sum (which omits chunking).
+            cold = elapsed - index.corpus_build_seconds - preflight
+            if not np.isfinite(cold) or cold < 0:
+                cold = None
+                errors.append(
+                    "Cold initialization instrumentation produced negative/nonfinite time"
                 )
 
-        designated = repetition_orders[0] if repetition_orders else None
-        matching_agreements += sum(
-            order is not None and designated is not None and order == designated
-            for order in repetition_orders[1:]
-        )
-        if any(order is None for order in repetition_orders):
-            continue
-        if first_output is None or first_pool is None:
-            continue
-        final_chunks = [index.chunks[position] for position, _ in first_output]
-        pool_chunks = [index.chunks[position] for position, _ in first_pool]
-        score = score_question(
-            question,
-            final_chunks,
-            index.chunks,
-            index.tokenizer,
-            cutoffs=protocol.quality_cutoffs,
-            alpha=protocol.alpha_ndcg_alpha,
-        )
-        evidence_type = str(question["evidence_type"])
-        sample_metrics = prefixed_quality(score.metrics, evidence_type)
-        if reranker is None:
-            pool_recall = pool_evidence_unit_recall(question, pool_chunks)
-            sample_metrics[protocol.pool_recall_metric] = pool_recall
-        median_latency = float(np.median(successful_latencies))
-        median_first_stage = float(np.median(first_stage_latencies))
-        median_reranker = (
-            float(np.median(reranker_latencies)) if reranker_latencies else None
-        )
-        samples.append(
-            SampleResult(
-                question_id,
-                sample_metrics,
-                median_latency,
-                {
-                    "document_id": str(question["document_id"]),
-                    "evidence_type": evidence_type,
-                    "first_stage_latency_ms": median_first_stage,
-                    "reranker_latency_ms": median_reranker,
-                },
+            if preparation_only:
+                for question in questions:
+                    pool = _first_stage(
+                        index, str(question["question"]), candidate.retriever, protocol
+                    )
+                    _require_pool(pool, index, protocol, str(question["id"]))
+                    pools[str(question["id"])] = pool
+            elif candidate.reranker != "none":
+                pools, pool_metadata = _load_pool_collection(
+                    candidate,
+                    frozen_pool_collection,
+                    questions,
+                    index,
+                    protocol,
+                    index_identity=identity,
+                )
+            if device == "cuda" and model_backed:
+                _placement(index, reranker, device)
+            if not preparation_only:
+                for warmup in range(plan.warmups):
+                    q = questions[warmup % len(questions)]
+                    _attempt(
+                        index,
+                        reranker,
+                        candidate,
+                        q,
+                        pools.get(str(q["id"])),
+                        protocol,
+                        device,
+                        {"repetition": 0},
+                    )
+                for row in attempts:
+                    q = next(q for q in questions if str(q["id"]) == row["question_id"])
+                    try:
+                        _attempt(
+                            index,
+                            reranker,
+                            candidate,
+                            q,
+                            pools.get(str(q["id"])),
+                            protocol,
+                            device,
+                            row,
+                        )
+                        if candidate.reranker == "none":
+                            pools.setdefault(str(q["id"]), row["ranking"])
+                    except Exception as exc:  # noqa: BLE001 - durable per-attempt ledger
+                        if _fatal(exc):
+                            errors.append(
+                                f"Hardware execution contract: {type(exc).__name__}: {exc}"
+                            )
+                            break
+                    finally:
+                        if row["repetition"] == 1 and row.get("native_input"):
+                            native[str(q["id"])] = row["native_input"]
+                if device == "cuda" and model_backed:
+                    _placement(index, reranker, device)
+            window_complete = preparation_only or all(
+                row["status"] != "not_executed" for row in attempts
+            )
+    except Exception as exc:  # noqa: BLE001 - retain incomplete setup and independent observations
+        errors.append(f"Preparation/warmup/lifecycle: {type(exc).__name__}: {exc}")
+        if isinstance(exc, InputCompatibilityError):
+            progress["input_validation"] = exc.report
+        progress["elapsed_to_failure_seconds"] = time.perf_counter() - setup_started
+
+    resource_evidence = {
+        "scope": "complete" if window_complete else "partial",
+        "vram_measurement_method": monitor.vram_measurement_method,
+        "gpu_identity": dict(monitor.gpu_identity),
+    }
+    try:
+        operational = monitor.metrics()
+    except Exception as exc:  # noqa: BLE001 - missing telemetry is not zero
+        resource_evidence.update(getattr(exc, "resource_evidence", {}))
+        operational = {
+            name: resource_evidence.get(name)
+            for name in ("peak_process_tree_ram_mb", "peak_vram_mb")
+        }
+        errors.append(f"Resource telemetry unavailable: {exc}")
+    if (
+        operational.get("peak_vram_mb") is not None
+        and operational["peak_vram_mb"] > protocol.authoritative_peak_vram_mb
+    ):
+        errors.append("Peak Device VRAM exceeds the protocol hardware cap")
+    resource_evidence.update(operational)
+
+    # No evaluator, token-workload calculation or bootstrap belongs to measurement.
+    samples, query_rows, matches, rankings = [], [], [], []
+    descriptors = {k: [] for k in protocol.quality_cutoffs}
+    verification = []
+    for q in questions:
+        qid = str(q["id"])
+        rows = [row for row in attempts if row["question_id"] == qid]
+        first = next((row for row in rows if row["repetition"] == 1), None)
+        values = {
+            f"quality.{scope}.{name}": None
+            for scope in ("overall", q["evidence_type"])
+            for name in protocol.quality_metrics
+        }
+        quality_error, score_diagnostics = None, {}
+        if first is not None and first["valid"]:
+            selected = [index.chunks[pos] for pos, _ in first["ranking"]]
+            for k in protocol.quality_cutoffs:
+                try:
+                    descriptors[k].append(
+                        m.retrieved_tokens(selected, k, index.tokenizer)
+                    )
+                except Exception as exc:  # noqa: BLE001 - workload unavailable independently of quality
+                    descriptors[k].append(None)
+                    errors.append(f"{qid}: context tokens unavailable: {exc}")
+            try:
+                score = score_question(
+                    q,
+                    selected,
+                    index.chunks,
+                    index.tokenizer,
+                    cutoffs=protocol.quality_cutoffs,
+                    alpha=protocol.alpha_ndcg_alpha,
+                )
+                values.update(prefixed_quality(score.metrics, str(q["evidence_type"])))
+                score_diagnostics = dict(score.diagnostics)
+                score_diagnostics["upstream_fragmentation"] = not any(
+                    m.covered_unit_ids(chunk, evidence_units(q))
+                    for chunk in index.chunks
+                )
+                matches.extend(
+                    {
+                        "question_id": qid,
+                        **match,
+                        "matching_chunk_ids": json.dumps(match["matching_chunk_ids"]),
+                    }
+                    for match in score.matches
+                )
+            except Exception as exc:  # noqa: BLE001 - offline evaluator failure preserves ranking
+                quality_error = f"{type(exc).__name__}: {exc}"
+        else:
+            for counts in descriptors.values():
+                counts.append(None)
+        if candidate.reranker == "none":
+            values[protocol.pool_recall_metric] = (
+                pool_evidence_unit_recall(
+                    q, [index.chunks[pos] for pos, _ in pools[qid]]
+                )
+                if index is not None and qid in pools
+                else None
+            )
+        repeat = m.repeatability(rows, plan.repetitions)
+        values[m.REPEATABILITY] = repeat["value"]
+
+        def median(key, rows=rows):
+            values = [r[key] for r in rows if r.get(key) is not None]
+            return float(np.median(values)) if values else None
+
+        full, retrieval, learned = (
+            median(key)
+            for key in (
+                "full_stack_latency_ms",
+                "retrieval_latency_ms",
+                "reranker_latency_ms",
             )
         )
-        actual_pool_sizes.append(len(first_pool))
-        for cutoff in protocol.quality_cutoffs:
-            retrieved_by_cutoff[cutoff].append(retrieved_tokens(final_chunks, cutoff))
-        query_rows.append(
-            {
-                "question_id": question_id,
-                "document_id": str(question["document_id"]),
-                "evidence_type": evidence_type,
-                "full_stack_latency_ms": median_latency * 1000.0,
-                "first_stage_latency_ms": median_first_stage,
-                "reranker_latency_ms": median_reranker,
-                **score.metrics,
-                **(
-                    {
-                        protocol.pool_recall_metric.removeprefix("diagnostic."): (
-                            pool_recall
-                        )
-                    }
-                    if reranker is None
-                    else {}
-                ),
-            }
-        )
-        pool_score_by_position = dict(first_pool)
-        for rank, (position, score_value) in enumerate(first_output, start=1):
-            chunk = index.chunks[position]
-            ranking_rows.append(
+        meta = {
+            "document_id": str(q["document_id"]),
+            "independent_source_id": m.source_id(q),
+            "evidence_type": str(q["evidence_type"]),
+            "first_attempt_status": first["status"] if first else "not_executed",
+            "retrieval_latency_ms": retrieval,
+            "reranker_latency_ms": learned,
+            "reranker_applicable": candidate.reranker != "none",
+        }
+        if not preparation_only:
+            samples.append(
+                SampleResult(
+                    qid, values, full / 1000 if full is not None else None, meta
+                )
+            )
+            query_rows.append(
                 {
-                    "question_id": question_id,
-                    "rank": rank,
-                    "chunk_id": chunk.identifier,
-                    "document_id": chunk.document_id,
-                    "start": chunk.start,
-                    "end": chunk.end,
-                    "first_stage_score": pool_score_by_position[position],
-                    "final_score": score_value,
-                    "scored": rank <= max(protocol.quality_cutoffs),
+                    "question_id": qid,
+                    **meta,
+                    **values,
+                    "quality_status": "scored"
+                    if first and first["valid"] and not quality_error
+                    else "unavailable",
+                    "quality_error": quality_error,
+                    "quality_diagnostics": json.dumps(score_diagnostics),
+                    "repeatability": json.dumps(repeat),
+                    "full_stack_latency_ms": full,
+                    "reranker_pair_lengths": json.dumps(
+                        native.get(qid, {}).get("pair_lengths")
+                    ),
+                    "reranker_input_tokens": native.get(qid, {}).get("total"),
                 }
             )
-        match_rows.extend(
-            {
-                **row,
-                "matching_chunk_ids": json.dumps(row["matching_chunk_ids"]),
-            }
-            for row in score.matches
-        )
-        if reranker is None:
-            for rank, (position, score_value) in enumerate(first_pool, start=1):
-                chunk = index.chunks[position]
-                pool_collection_rows.append(
+        for row in rows:
+            verification.append(
+                {
+                    key: value
+                    for key, value in row.items()
+                    if key
+                    not in {"ranking", "retrieval_ranking", "local_reranker_output"}
+                }
+            )
+            rankings.extend(_ranking_rows(row, index))
+
+    pool_rows = []
+    if index is not None and candidate.reranker == "none":
+        for q in questions:
+            qid = str(q["id"])
+            if qid not in pools:
+                continue
+            for rank, (pos, score) in enumerate(pools[qid], 1):
+                pool_rows.append(
                     {
-                        "question_id": question_id,
+                        "question_id": qid,
                         "rank": rank,
-                        "chunk_id": chunk.identifier,
-                        "score": score_value,
+                        "chunk_id": index.chunks[pos].identifier,
+                        "score": score,
                     }
                 )
-
-    resamples = plan.bootstrap_resamples
-    aggregate, intervals = aggregate_quality(
+    checksum = (
+        stable_hash(pool_rows)
+        if candidate.reranker == "none"
+        else pool_metadata.get("pool_collection_checksum")
+    )
+    names = [
+        f"quality.{scope}.{name}"
+        for scope in m.SCOPES
+        for name in protocol.quality_metrics
+    ]
+    if candidate.reranker == "none":
+        names.append(protocol.pool_recall_metric)
+    aggregate, intervals, support = m.aggregate_quality(
         samples,
-        resamples=resamples,
+        names=names,
+        resamples=plan.bootstrap_resamples,
         seed=plan.seed,
         confidence=protocol.confidence_level,
+        minimum_documents=protocol.minimum_quality_ci_documents,
     )
-    intervals.update(
-        latency_intervals(
-            samples,
-            resamples=resamples,
-            seed=plan.seed,
-            minimum_documents=protocol.minimum_latency_ci_documents,
-            confidence=protocol.confidence_level,
+    repeat_values, repeat_intervals, repeat_support = m.aggregate_quality(
+        samples if plan.repetitions > 1 else [],
+        names=[m.REPEATABILITY],
+        resamples=plan.bootstrap_resamples,
+        seed=plan.seed,
+        confidence=protocol.confidence_level,
+        minimum_documents=protocol.minimum_repeatability_ci_documents,
+    )
+    if plan.repetitions == 1:
+        repeat_support[m.REPEATABILITY].update(
+            status="inapplicable", reason="repeatability_not_measured"
         )
+        repeat_intervals[m.REPEATABILITY]["reason"] = "repeatability_not_measured"
+    aggregate.update(repeat_values)
+    intervals.update(repeat_intervals)
+    support.update(repeat_support)
+    latency_bounds = m.latency_intervals(
+        samples,
+        resamples=plan.bootstrap_resamples,
+        seed=plan.seed,
+        minimum_documents=protocol.minimum_latency_ci_documents,
+        confidence=protocol.confidence_level,
     )
-    documents = [row for row in manifest.samples if row.get("kind") == "document"]
-    validity = {
-        "validity.ranking_agreement": (
-            matching_agreements / expected_agreements
-            if expected_agreements
-            else float(not failures)
-        ),
-        "validity.expected_query_count": float(len(questions)),
-        "validity.processed_query_count": float(len(samples)),
-        "validity.failed_query_count": float(len(failed_query_ids)),
-        "validity.truncated_input_count": 0.0,
-        "validity.nonfinite_score_count": float(nonfinite_score_count),
-        "validity.pool_collection_match": float(query_pool_mismatches == 0),
-        "validity.exact_pool_permutation": float(permutation_failures == 0),
-        **eligible_counts(samples),
-    }
-    workload = {
-        "workload.corpus_document_count": float(len(documents)),
-        "workload.answerable_query_count": float(len(questions)),
-        "workload.chunk_count": float(len(index.chunks)),
-        "workload.requested_pool_size": float(protocol.pool_size),
-        "workload.actual_pool_size_mean": _mean(actual_pool_sizes),
-        "workload.actual_pool_size_min": float(min(actual_pool_sizes, default=0)),
-        "workload.short_pool_query_count": float(
-            sum(size < protocol.pool_size for size in actual_pool_sizes)
-        ),
-        **{
-            f"workload.retrieved_tokens_at_{cutoff}_{suffix}": value
-            for cutoff, values in retrieved_by_cutoff.items()
-            for suffix, value in (
-                ("mean", _mean(values)),
-                ("p95", _quantile(values, 0.95)),
+    intervals.update(latency_bounds)
+    operational.update(m.latency_summary(samples))
+    operational["cold_initialization_seconds"] = cold
+    for name, bounds in latency_bounds.items():
+        aggregate[name + ".sample_count"] = float(
+            sum(
+                m._latency(row, name.split(".")[1].split("_latency")[0]) is not None
+                for row in samples
             )
-        },
-    }
-    if reranker_input_totals:
-        workload.update(
-            {
-                "workload.reranker_input_tokens_per_query_mean": _mean(
-                    reranker_input_totals
-                ),
-                "workload.reranker_input_tokens_per_query_p95": _quantile(
-                    reranker_input_totals, 0.95
-                ),
-            }
         )
-    storage = _storage_metrics(index, candidate, reranker)
-    aggregate.update(validity)
-    aggregate.update(workload)
-    aggregate.update(storage)
-    operational = {
-        **(latency_summary(samples) if samples else {}),
-        "cold_initialization_seconds": cold_initialization_seconds,
-    }
-    if reranker is None:
-        operational["index_build_seconds"] = index.corpus_build_seconds
-
-    pool_collection_checksum = (
-        stable_hash(pool_collection_rows)
-        if reranker is None
-        else str(pool_collection_metadata["pool_collection_checksum"])
-    )
-    parameters = _parameters(
-        candidate,
-        chunker_name,
-        embedding_name,
-        model_lock,
-        index,
-        reranker,
-        plan,
-        protocol,
-        device=device,
-        dtype=dtype,
-        manifest=manifest,
-        pool_collection_checksum=pool_collection_checksum,
-        index_identity=index_identity,
-        pool_owner_child_run_id=(
-            child_run_id
-            if reranker is None
-            else pool_collection_metadata["owner_child_run_id"]
+        support[name] = {
+            **bounds,
+            "eligible_question_count": len(questions),
+            "contributing_question_count": int(aggregate[name + ".sample_count"]),
+        }
+    workload_support = {}
+    for k, counts in descriptors.items():
+        details = m.descriptor(counts, len(questions))
+        for suffix in ("mean", "p95"):
+            key = f"workload.retrieved_context_tokens_at_{k}_{suffix}"
+            aggregate[key] = details[suffix] if details["complete"] else None
+            workload_support[key] = details
+    if candidate.reranker != "none":
+        details = m.descriptor(
+            [native.get(str(q["id"]), {}).get("total") for q in questions],
+            len(questions),
+        )
+        for suffix in ("mean", "p95"):
+            key = f"workload.reranker_input_tokens_per_query_{suffix}"
+            aggregate[key] = details[suffix] if details["complete"] else None
+            workload_support[key] = details
+    if index is not None:
+        aggregate.update(_storage_metrics(index, candidate, reranker))
+        if candidate.reranker == "none" and candidate.retriever != "rrf":
+            operational["index_build_seconds"] = (
+                index_build.get("dependencies", {})
+                .get(candidate.retriever, {})
+                .get("build_seconds")
+            )
+    elif candidate.reranker == "none" and candidate.retriever != "rrf":
+        completed = progress.get("phase_seconds", {}).get(
+            f"{candidate.retriever}_index_build_seconds"
+        )
+        if completed is not None:
+            operational["index_build_seconds"] = completed
+    integrity_rows = [r for r in attempts if r.get("integrity_error")]
+    checked = [r for r in attempts if r.get("permutation_checked")]
+    validity = {
+        "validity.expected_query_count": float(len(questions)),
+        "validity.processed_query_count": float(len(query_rows)),
+        "validity.failed_query_count": float(
+            len({r["question_id"] for r in attempts if r["status"] == "failed"})
         ),
-    )
-    validation_errors = list(failures)
-    if validity["validity.ranking_agreement"] != 1.0:
-        validation_errors.append(
-            f"repeated top-{protocol.pool_size} rankings did not agree exactly"
+        "validity.truncated_input_count": float(
+            index.preflight.get("truncated_inputs", 0)
         )
-    if query_pool_mismatches:
-        validation_errors.append(
-            "live first-stage output did not match the frozen pool collection"
+        if index
+        else 0.0,
+        "validity.nonfinite_score_count": float(
+            sum("non-finite" in str(r.get("error", "")).lower() for r in attempts)
+        ),
+        "validity.exact_pool_permutation": 0.0
+        if any(r.get("permutation_checked") is False for r in integrity_rows)
+        else 1.0
+        if checked
+        else None,
+        **m.reference_counts(questions),
+    }
+    aggregate.update(validity)
+    accounting = {
+        "scheduled_attempt_count": len(attempts),
+        "recorded_attempt_count": len(attempts),
+        "executed_attempt_count": sum(r["status"] != "not_executed" for r in attempts),
+        "failed_attempt_count": sum(r["status"] == "failed" for r in attempts),
+        "unexecuted_attempt_count": sum(
+            r["status"] == "not_executed" for r in attempts
+        ),
+        "accounting_complete": True,
+        "execution_complete": all(r["status"] != "not_executed" for r in attempts),
+        "quality_complete": all(
+            support[name]["complete"]
+            for name in names
+            if support[name]["eligible_question_count"]
+        ),
+        "integrity_complete": not integrity_rows and bool(checked) and not errors,
+    }
+    if not preparation_only:
+        if not accounting["execution_complete"]:
+            errors.append("Required execution coverage is incomplete")
+        if not accounting["quality_complete"]:
+            errors.append(
+                "Required designated-first quality is unavailable or incomplete"
+            )
+        if integrity_rows:
+            errors.append("Measured output integrity failed")
+        errors.extend(
+            _candidate_contract_errors(candidate, aggregate, operational, protocol)
         )
-    if permutation_failures:
-        validation_errors.append("reranker output was not an exact pool permutation")
-    validation_errors.extend(
-        _candidate_contract_errors(candidate, aggregate, operational, protocol)
+        if plan.profile != "smoke" and (
+            protocol.minimum_quality_ci_documents is None
+            or protocol.minimum_repeatability_ci_documents is None
+        ):
+            errors.append(
+                "Exploratory only: CI support policy must be frozen before authoritative advancement"
+            )
+    parameters = (
+        {
+            **_parameters(
+                candidate,
+                chunker,
+                embedding,
+                model_lock,
+                index,
+                reranker,
+                plan,
+                protocol,
+                device=device,
+                dtype=dtype,
+                manifest=manifest,
+                pool_collection_checksum=checksum,
+                index_identity=identity,
+                pool_owner_child_run_id=child_run_id
+                if candidate.reranker == "none"
+                else pool_metadata.get("owner_child_run_id"),
+            )
+        }
+        if index is not None
+        else {"candidate": candidate_name, **identity}
     )
-    validation_report = {
-        "candidate": candidate.identifier,
-        "status": "failed" if validation_errors else "passed",
+    parameters.update(
+        {
+            "measurement.resource_scope": resource_evidence["scope"],
+            "vram_measurement_method": monitor.vram_measurement_method,
+            "preparation_only": preparation_only,
+            "execution_accounting": accounting,
+            "prediction_evidence": {
+                "artifact": "rankings.parquet",
+                "retention": "local-and-uploaded",
+                "manifest_fingerprint": manifest.fingerprint,
+            },
+            "input_inventory": {
+                "corpus_document_count": len(documents),
+                "answerable_query_count": len(questions),
+                "chunk_count": len(index.chunks)
+                if index is not None
+                else len(progress.get("chunks", [])),
+            },
+        }
+    )
+    report = {
+        "candidate": candidate_name,
+        "status": "failed" if errors else "passed",
         "manifest_checksum": manifest.checksum,
         "manifest_fingerprint": manifest.fingerprint,
-        "pool_owner": candidate.owner_identifier,
-        "pool_owner_child_run_id": parameters["pool_owner_child_run_id"],
-        "pool_collection_checksum": pool_collection_checksum,
-        **index_identity,
-        "preflight": dict(index.preflight),
-        "validity": validity,
-        "errors": validation_errors,
+        "pool_collection_checksum": checksum,
+        **identity,
+        "execution_accounting": accounting,
+        "attempt_checks": verification,
+        "metric_support": support,
+        "workload_support": workload_support,
+        "resources": resource_evidence,
+        "native_inputs": native,
+        "preflight": dict(index.preflight)
+        if index
+        else progress.get("input_validation", {}),
+        "errors": errors,
+        "request_failures": [r for r in verification if r["status"] == "failed"],
         "warnings": [],
     }
-    artifacts: dict[str, object] = {
+    artifacts = {
         "query_metrics": query_rows,
-        "rankings": ranking_rows,
-        "evidence_matches": match_rows,
-        "timings": timing_rows,
-        "validation_report": validation_report,
+        "rankings": rankings,
+        "evidence_matches": matches,
+        "timings": [
+            {
+                k: json.dumps(v, default=str) if isinstance(v, (dict, list)) else v
+                for k, v in row.items()
+                if k
+                not in {
+                    "ranking",
+                    "retrieval_ranking",
+                    "local_reranker_output",
+                    "ordered_chunk_ids",
+                }
+            }
+            for row in attempts
+        ],
+        "resources": [
+            {**row, "scope": resource_evidence["scope"]} for row in monitor.samples()
+        ],
+        "validation_report": report,
     }
-    if reranker is None:
-        artifacts["pool_collection"] = pool_collection_rows
-        artifacts["index_build"] = index_build
-    if validation_errors:
+    if candidate.reranker == "none":
+        if index_build is None:
+            index_build = _interrupted_index_artifact(progress, candidate)
+            for name, observation in index_build["dependencies"].items():
+                key = (
+                    f"storage.{name}_index_size_bytes"
+                    if candidate.retriever == "rrf"
+                    else "storage.index_size_bytes"
+                )
+                aggregate[key] = float(observation["size_bytes"])
+                if candidate.retriever != "rrf":
+                    operational["index_build_seconds"] = observation["build_seconds"]
+            aggregate.setdefault("storage.index_size_bytes", None)
+        artifacts.update(
+            pool_collection=pool_rows,
+            index_build=index_build,
+        )
+    if errors:
         raise CandidateExecutionError(
-            "; ".join(validation_errors),
+            "; ".join(errors),
             samples=tuple(samples),
             operational=operational,
             metrics=aggregate,
@@ -515,6 +678,208 @@ def evaluate_candidate(
             artifacts=artifacts,
         )
     return samples, operational, aggregate, parameters, intervals, artifacts
+
+
+def _fatal(exc):
+    text = str(exc).lower()
+    return any(
+        word in text
+        for word in ("out of memory", "offload", "placement", "silently fell back")
+    )
+
+
+def _placement(index, reranker, device):
+    for model in (index.embedder, reranker):
+        if model is None:
+            continue
+        report = (
+            model.placement_report(device)
+            if model is index.embedder
+            else model.placement_report()
+        )
+        if report.get("status") != "qualified":
+            raise RuntimeError(f"Placement contract failed: {report}")
+
+
+def _attempt(index, reranker, candidate, q, pool, protocol, device, row):
+    started = phase_started = time.perf_counter()
+    phase = "retrieval"
+    row.update(status="failed", valid=False, error=None)
+    try:
+        component_timings = {}
+        row["component_timings"] = component_timings
+        live = _first_stage(
+            index,
+            str(q["question"]),
+            candidate.retriever,
+            protocol,
+            timings=component_timings,
+        )
+        row["retrieval_ranking"] = live
+        _require_pool(live, index, protocol, str(q["id"]))
+        row["pool_verified"] = True
+        if reranker is not None:
+            _require_same_pool(live, pool, str(q["id"]))
+            row["live_order_verified"] = True
+        synchronize(device if candidate.model_backed else "cpu")
+        row["retrieval_latency_ms"] = (time.perf_counter() - phase_started) * 1000
+        final = live
+        if reranker is not None:
+            phase, phase_started = "reranker", time.perf_counter()
+            texts = [index.chunks[pos].text for pos, _ in pool]
+            counts = reranker.input_token_counts(str(q["question"]), texts)
+            row["native_input"] = {
+                "pair_lengths": list(counts),
+                "total": None,
+                "prepared_pair_count": len(counts),
+                "completed_inference_pair_count": 0,
+            }
+            if len(counts) != len(pool) or any(
+                isinstance(count, bool)
+                or not isinstance(count, (int, np.integer))
+                or count <= 0
+                for count in counts
+            ):
+                raise ValueError("Malformed native reranker token counts")
+            row["native_input"]["total"] = sum(counts)
+            if any(count > reranker.maximum_length for count in counts):
+                raise InputCompatibilityError(
+                    "Reranker input_length_exceeded; truncation is forbidden",
+                    row["native_input"],
+                )
+            local = reranker.rank_with_scores(
+                str(q["question"]), texts, validate_inputs=False
+            )
+            row["local_reranker_output"] = local
+            row["permutation_checked"] = False
+            _require_permutation(
+                local,
+                [(pos, score) for pos, (_, score) in enumerate(pool)],
+                str(q["id"]),
+            )
+            _require_finite_scores(local)
+            final = [(pool[pos][0], score) for pos, score in local]
+            row["native_input"]["completed_inference_pair_count"] = len(local)
+        row["ranking"] = list(final)
+        row["permutation_checked"] = False
+        _require_permutation(
+            final, pool if reranker is not None else live, str(q["id"])
+        )
+        _require_finite_scores(final)
+        row["permutation_checked"] = True
+        row["prefix_verified"] = (
+            True  # cutoffs use this exact ordered prefix, never a subset
+        )
+        synchronize(device if candidate.model_backed else "cpu")
+        if reranker is not None:
+            row["reranker_latency_ms"] = (time.perf_counter() - phase_started) * 1000
+        row.update(
+            status="success",
+            valid=True,
+            error=None,
+            ordered_chunk_ids=[index.chunks[pos].identifier for pos, _ in final],
+            full_stack_latency_ms=(time.perf_counter() - started) * 1000,
+        )
+    except Exception as exc:
+        row.update(
+            error=f"{type(exc).__name__}: {exc}",
+            elapsed_to_failure_ms=(time.perf_counter() - started) * 1000,
+            failed_phase=phase,
+            phase_elapsed_to_failure_ms=(time.perf_counter() - phase_started) * 1000,
+        )
+        row["integrity_error"] = isinstance(
+            exc, (ValueError, IndexError, TypeError)
+        ) or any(
+            word in str(exc).lower()
+            for word in ("non-finite", "malformed", "incomplete ranking", "truncat")
+        )
+        raise
+
+
+def _ranking_rows(row, index):
+    base = {
+        key: row.get(key)
+        for key in (
+            "question_id",
+            "document_id",
+            "independent_source_id",
+            "repetition",
+            "status",
+            "valid",
+            "error",
+        )
+    }
+    result = []
+    for representation, output in (
+        ("final", row.get("ranking")),
+        ("retrieval", row.get("retrieval_ranking")),
+        ("local_reranker", row.get("local_reranker_output")),
+    ):
+        if output is None:
+            continue
+        raw = json.dumps(output, default=str, ensure_ascii=False)
+        emitted = False
+        if isinstance(output, (list, tuple)):
+            for rank, item in enumerate(output, 1):
+                if not isinstance(item, (list, tuple)) or len(item) != 2:
+                    continue
+                pos, score = item
+                valid_pos = (
+                    isinstance(pos, (int, np.integer))
+                    and not isinstance(pos, bool)
+                    and index is not None
+                    and 0 <= pos < len(index.chunks)
+                )
+                chunk = (
+                    index.chunks[pos]
+                    if valid_pos and representation != "local_reranker"
+                    else None
+                )
+                try:
+                    numeric_score = float(score) if np.isfinite(float(score)) else None
+                except (ValueError, TypeError):
+                    numeric_score = None
+                result.append(
+                    {
+                        **base,
+                        "representation": representation,
+                        "rank": rank,
+                        "position": str(pos),
+                        "chunk_id": chunk.identifier if chunk else None,
+                        "chunk_document_id": chunk.document_id if chunk else None,
+                        "start": chunk.start if chunk else None,
+                        "end": chunk.end if chunk else None,
+                        "score": numeric_score,
+                        "raw_output_json": raw if not emitted else None,
+                        "output_status": "complete" if row["valid"] else "fragment",
+                    }
+                )
+                emitted = True
+        if not emitted:
+            result.append(
+                {
+                    **base,
+                    "representation": representation,
+                    "rank": None,
+                    "chunk_id": None,
+                    "score": None,
+                    "raw_output_json": raw,
+                    "output_status": "fragment",
+                }
+            )
+    if not result:
+        result.append(
+            {
+                **base,
+                "representation": "final",
+                "rank": None,
+                "chunk_id": None,
+                "score": None,
+                "raw_output_json": None,
+                "output_status": "not_produced",
+            }
+        )
+    return result
 
 
 def run_in_fresh_process(
@@ -527,6 +892,8 @@ def run_in_fresh_process(
     dtype: str,
     frozen_pool_collection: Mapping[str, object] | None,
     child_run_id: str | None,
+    preparation_only: bool = False,
+    index_dependencies: Mapping[str, object] | None = None,
 ):
     payload = {
         "candidate": candidate,
@@ -537,6 +904,8 @@ def run_in_fresh_process(
         "dtype": dtype,
         "frozen_pool_collection": frozen_pool_collection,
         "child_run_id": child_run_id,
+        "preparation_only": preparation_only,
+        "index_dependencies": dict(index_dependencies or {}),
     }
     result = run_json_worker(
         WORKER,
@@ -609,11 +978,8 @@ def execute_payload(payload: dict[str, object]) -> dict[str, object]:
                 if payload.get("child_run_id") is not None
                 else None
             ),
-            worker_started_at=(
-                float(payload["worker_started_at"])
-                if payload.get("worker_started_at") is not None
-                else None
-            ),
+            preparation_only=bool(payload.get("preparation_only", False)),
+            index_dependencies=payload_mapping(payload.get("index_dependencies")),
         )
     except CandidateExecutionError as exc:
         return candidate_execution_payload(exc)
@@ -723,15 +1089,17 @@ def _first_stage(
     query: str,
     retriever: str,
     protocol: RetrievalProtocol,
+    *,
+    timings: dict[str, float] | None = None,
 ) -> list[tuple[int, float]]:
     if retriever == "dense":
-        return dense_rank_with_scores(index, query, protocol.pool_size)
+        return dense_rank_with_scores(index, query, protocol.pool_size, timings=timings)
     if index.bm25 is None:
         raise RuntimeError("BM25 state is unavailable")
     lexical = index.bm25.rank(query, protocol.pool_size)
     if retriever == "bm25":
         return lexical
-    dense = dense_rank_with_scores(index, query, protocol.pool_size)
+    dense = dense_rank_with_scores(index, query, protocol.pool_size, timings=timings)
     return reciprocal_rank_fusion_with_scores(
         [[position for position, _ in dense], [position for position, _ in lexical]],
         protocol.pool_size,
@@ -842,7 +1210,7 @@ def _load_pool_collection(
             "Frozen pool collection does not account for every answerable question"
         )
     for question_id, values in by_question.items():
-        if not values or len(values) > protocol.pool_size:
+        if len(values) != min(protocol.pool_size, len(index.chunks)):
             raise ValueError(f"Frozen query pool has an invalid size for {question_id}")
         ranks = [
             int(row["rank"])
@@ -854,44 +1222,11 @@ def _load_pool_collection(
         identifiers = [position for position, _ in values]
         if len(identifiers) != len(set(identifiers)):
             raise ValueError(f"Frozen query pool duplicates chunks for {question_id}")
+        _require_pool(values, index, protocol, question_id)
     return by_question, {
         "pool_collection_checksum": checksum,
         "owner_child_run_id": owner_child_run_id,
     }
-
-
-def _reranker_preflight(
-    reranker: Reranker | None,
-    questions: Sequence[Mapping[str, object]],
-    pools: Mapping[str, Sequence[tuple[int, float]]],
-    index: ExactIndex,
-) -> list[int]:
-    if reranker is None:
-        return []
-    totals: list[int] = []
-    for question in questions:
-        positions = pools[str(question["id"])]
-        counts = reranker.input_token_counts(
-            str(question["question"]),
-            [index.chunks[position].text for position, _ in positions],
-        )
-        oversized = [count for count in counts if count > reranker.maximum_length]
-        if oversized:
-            raise InputCompatibilityError(
-                f"{reranker.model_name} has inputs beyond its "
-                f"{reranker.maximum_length}-token contract",
-                {
-                    "status": "failed",
-                    "reason_code": "input_length_exceeded",
-                    "maximum_length": reranker.maximum_length,
-                    "question_id": str(question["id"]),
-                    "maximum_input_tokens": max(oversized),
-                    "offending_input_count": len(oversized),
-                    "truncated_inputs": 0,
-                },
-            )
-        totals.append(sum(counts))
-    return totals
 
 
 def _require_same_pool(
@@ -910,7 +1245,16 @@ def _require_permutation(
 ) -> None:
     observed_ids = [position for position, _ in observed]
     pool_ids = [position for position, _ in pool]
-    if len(observed_ids) != len(pool_ids) or sorted(observed_ids) != sorted(pool_ids):
+    if (
+        any(
+            isinstance(pos, bool) or not isinstance(pos, (int, np.integer))
+            for pos in observed_ids
+        )
+        or len(set(pool_ids)) != len(pool_ids)
+        or len(set(observed_ids)) != len(observed_ids)
+        or len(observed_ids) != len(pool_ids)
+        or sorted(observed_ids) != sorted(pool_ids)
+    ):
         raise ValueError(f"Reranker output is not a pool permutation for {question_id}")
 
 
@@ -919,69 +1263,95 @@ def _require_finite_scores(rows: Sequence[tuple[int, float]]) -> None:
         raise ValueError("Ranking contains non-finite scores")
 
 
-def _storage_metrics(
-    index: ExactIndex,
-    candidate: RetrievalCandidate,
-    reranker: Reranker | None,
-) -> dict[str, float]:
-    dense_bytes = int(index.vectors.nbytes) if index.vectors is not None else 0
-    bm25_bytes = index.bm25.storage_bytes if index.bm25 is not None else 0
-    result: dict[str, float] = {}
-    if reranker is None:
-        if candidate.retriever == "dense":
-            result["storage.index_bytes"] = float(dense_bytes)
-        elif candidate.retriever == "bm25":
-            result["storage.index_bytes"] = float(bm25_bytes)
-        else:
-            result["storage.required_index_bytes"] = float(dense_bytes + bm25_bytes)
-            result["storage.incremental_index_bytes"] = 0.0
-    if reranker is not None:
-        result["storage.reranker_snapshot_bytes"] = float(reranker.snapshot_bytes)
-    return result
+def _require_pool(rows, index, protocol, question_id):
+    if len(rows) != min(protocol.pool_size, len(index.chunks)):
+        raise ValueError(f"Incomplete query pool for {question_id}")
+    ids = [position for position, _ in rows]
+    if any(
+        isinstance(pos, bool)
+        or not isinstance(pos, (int, np.integer))
+        or not 0 <= pos < len(index.chunks)
+        for pos in ids
+    ) or len(set(ids)) != len(ids):
+        raise ValueError(f"Invalid/duplicate chunk IDs in pool for {question_id}")
+    _require_finite_scores(rows)
+    if any(not index.tokenizer.spans(index.chunks[pos].text) for pos in ids):
+        raise ValueError(f"Token-free chunk in pool for {question_id}")
 
 
-def _candidate_contract_errors(
-    candidate: RetrievalCandidate,
-    metrics: Mapping[str, float],
-    operational: Mapping[str, float],
-    protocol: RetrievalProtocol,
-) -> list[str]:
+def _storage_metrics(index, candidate, reranker=None):
+    if candidate.reranker != "none":
+        return {}
+    dense = int(index.vectors.nbytes) if index.vectors is not None else None
+    bm25 = index.bm25.storage_bytes if index.bm25 is not None else None
+    if candidate.retriever == "dense":
+        return {"storage.index_size_bytes": float(dense) if dense is not None else None}
+    if candidate.retriever == "bm25":
+        return {"storage.index_size_bytes": float(bm25) if bm25 is not None else None}
+    return {
+        "storage.index_size_bytes": float(dense + bm25)
+        if dense is not None and bm25 is not None
+        else None,
+        "storage.dense_index_size_bytes": float(dense) if dense is not None else None,
+        "storage.bm25_index_size_bytes": float(bm25) if bm25 is not None else None,
+    }
+
+
+def _candidate_contract_errors(candidate, metrics, operational, protocol):
     required_metrics = {
-        "workload.reranker_input_tokens_per_query_mean",
-        "workload.reranker_input_tokens_per_query_p95",
-        "storage.reranker_snapshot_bytes",
+        f"workload.retrieved_context_tokens_at_{k}_{suffix}"
+        for k in protocol.quality_cutoffs
+        for suffix in ("mean", "p95")
     }
     required_operational = {
         "full_stack_latency_ms_p50",
         "full_stack_latency_ms_p95",
-        "first_stage_latency_ms_p50",
-        "first_stage_latency_ms_p95",
+        "retrieval_latency_ms_p50",
+        "retrieval_latency_ms_p95",
         "cold_initialization_seconds",
     }
     if candidate.reranker == "none":
-        required_metrics = {
-            protocol.pool_recall_metric,
-            f"{protocol.pool_recall_metric}.sample_count",
-        }
-        required_operational.add("index_build_seconds")
-        required_metrics.add(
-            "storage.required_index_bytes"
-            if candidate.retriever == "rrf"
-            else "storage.index_bytes"
+        required_metrics.update(
+            {protocol.pool_recall_metric, "storage.index_size_bytes"}
         )
         if candidate.retriever == "rrf":
-            required_metrics.add("storage.incremental_index_bytes")
+            required_metrics.update(
+                {"storage.dense_index_size_bytes", "storage.bm25_index_size_bytes"}
+            )
+        else:
+            required_operational.add("index_build_seconds")
     else:
+        required_metrics.update(
+            {
+                "workload.reranker_input_tokens_per_query_mean",
+                "workload.reranker_input_tokens_per_query_p95",
+            }
+        )
         required_operational.update(
             {"reranker_latency_ms_p50", "reranker_latency_ms_p95"}
         )
-    missing_metrics = sorted(required_metrics - metrics.keys())
-    missing_operational = sorted(required_operational - operational.keys())
     errors = []
-    if missing_metrics:
-        errors.append("missing candidate metrics: " + ", ".join(missing_metrics))
-    if missing_operational:
-        errors.append("missing operational metrics: " + ", ".join(missing_operational))
+    for label, names, values in (
+        ("candidate", required_metrics, metrics),
+        ("operational", required_operational, operational),
+    ):
+        missing = sorted(name for name in names if values.get(name) is None)
+        invalid = sorted(
+            name
+            for name in names
+            if values.get(name) is not None
+            and (not np.isfinite(values[name]) or values[name] < 0)
+        )
+        if missing:
+            errors.append(f"missing {label} metrics: " + ", ".join(missing))
+        if invalid:
+            errors.append(f"invalid {label} metrics: " + ", ".join(invalid))
+    if metrics.get("validity.truncated_input_count", 0) != 0:
+        errors.append("Prohibited truncated inputs")
+    if metrics.get("validity.nonfinite_score_count", 0) != 0:
+        errors.append("Non-finite output scores")
+    if metrics.get("validity.exact_pool_permutation") != 1:
+        errors.append("Required pool permutation verification incomplete or failed")
     return errors
 
 
@@ -1033,22 +1403,103 @@ def _index_identity(index: ExactIndex, candidate: RetrievalCandidate) -> dict[st
     return identity
 
 
-def _index_build_artifact(
-    index: ExactIndex,
-    candidate: RetrievalCandidate,
-    identity: Mapping[str, str] | None = None,
-) -> dict[str, object]:
+def _index_build_artifact(index, candidate, identity=None):
     identity = dict(identity or _index_identity(index, candidate))
+    dependencies = {}
+    for name in ("dense", "bm25"):
+        checksum = identity.get(f"{name}_index_sha256")
+        if checksum is None:
+            continue
+        dense = name == "dense"
+        dependencies[name] = {
+            "index_sha256": checksum,
+            "chunks_sha256": identity["chunks_sha256"],
+            "build_seconds": index.phase_seconds.get(f"{name}_index_build_seconds"),
+            "size_bytes": int(index.vectors.nbytes)
+            if dense
+            else index.bm25.storage_bytes,
+            "representation": "raw-contiguous-vector-matrix"
+            if dense
+            else "bm25-serialized-state",
+            "included_components": ["vectors"]
+            if dense
+            else ["serialized-lexical-state"],
+            "excluded_components": [
+                "model-weights",
+                "saved-pools",
+                "canonical-chunk-inputs",
+            ],
+            "shape": list(index.vectors.shape) if dense else None,
+            "dtype": str(index.vectors.dtype) if dense else None,
+            "owner_candidate": f"{name}|none",
+            "observation_provenance": "candidate-preparation",
+        }
     return {
+        "status": "complete",
         "chunking_fingerprint": index.chunking_fingerprint,
         **identity,
-        "build_seconds": index.corpus_build_seconds,
-        "dense_index_bytes": (
-            int(index.vectors.nbytes) if index.vectors is not None else 0
-        ),
-        "bm25_index_bytes": (index.bm25.storage_bytes if index.bm25 is not None else 0),
-        "rrf_incremental_index_bytes": 0 if candidate.retriever == "rrf" else None,
+        "phase_seconds": dict(index.phase_seconds),
+        "corpus_build_seconds": index.corpus_build_seconds,
+        "dependencies": dependencies,
     }
+
+
+def _interrupted_index_artifact(progress, candidate):
+    """Retain verified completed dependencies, never a partial RRF total."""
+    dependencies = {}
+    unavailable = {}
+    for name in ("dense", "bm25"):
+        value = progress.get("vectors" if name == "dense" else "bm25")
+        if value is None:
+            continue
+        view = SimpleNamespace(
+            chunks=progress["chunks"],
+            vectors=value if name == "dense" else None,
+            bm25=value if name == "bm25" else None,
+            chunking_fingerprint=progress["chunking_contract"]["fingerprint"],
+            phase_seconds=progress.get("phase_seconds", {}),
+            corpus_build_seconds=None,
+        )
+        try:
+            component = _index_build_artifact(view, parse_candidate(f"{name}|none"))
+        except Exception as exc:  # noqa: BLE001 - retain other dependencies after a failed-state measurement
+            unavailable[name] = f"{type(exc).__name__}: {exc}"
+        else:
+            dependencies.update(component["dependencies"])
+    return {
+        "status": "incomplete",
+        "retriever": candidate.retriever,
+        "dependencies": dependencies,
+        "unavailable_dependencies": unavailable,
+        "phase_seconds": dict(progress.get("phase_seconds", {})),
+        "elapsed_to_failure_seconds": progress.get("build_elapsed_to_failure"),
+        "phase_elapsed_to_failure_seconds": progress.get(
+            "phase_elapsed_to_failure_seconds", {}
+        ),
+    }
+
+
+def _reference_dependencies(observed, references):
+    result = {**observed, "dependencies": dict(observed["dependencies"])}
+    for name, original in observed["dependencies"].items():
+        if name not in references:
+            continue
+        reference = dict(references[name])
+        for key in (
+            "index_sha256",
+            "chunks_sha256",
+            "size_bytes",
+            "representation",
+            "shape",
+            "dtype",
+        ):
+            if reference.get(key) != original.get(key):
+                raise ValueError(f"{name} index dependency identity mismatch: {key}")
+        result["dependencies"][name] = {
+            **reference,
+            "observation_provenance": "referenced-independent-build",
+        }
+    return result
 
 
 def _parameters(
@@ -1196,11 +1647,3 @@ def _unexpected_failure(
             }
         },
     }
-
-
-def _mean(values: Sequence[int]) -> float:
-    return float(np.mean(values)) if values else 0.0
-
-
-def _quantile(values: Sequence[int], quantile: float) -> float:
-    return float(np.quantile(values, quantile)) if values else 0.0

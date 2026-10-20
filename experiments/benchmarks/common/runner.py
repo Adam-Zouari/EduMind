@@ -689,6 +689,39 @@ def _run_candidate(
                     confidence=confidence_level,
                 )
                 metrics.update(candidate_metrics)
+                incomplete_quality = {
+                    name: {
+                        "estimate": metrics[name],
+                        "scheduled": len(samples),
+                        "contributing": sum(
+                            sample.metrics.get(name) is not None for sample in samples
+                        ),
+                        "reason": "required_quality_coverage_incomplete",
+                    }
+                    for name in required_metrics
+                    if (name == "quality" or name.startswith("quality."))
+                    and name in metrics
+                    and name not in nullable_metrics
+                    and any(sample.metrics.get(name) is None for sample in samples)
+                }
+                if incomplete_quality:
+                    raise CandidateExecutionError(
+                        "Required quality observations are incomplete",
+                        samples=tuple(samples),
+                        operational=operational,
+                        parameters=candidate_parameters,
+                        metrics={
+                            key: value
+                            for key, value in metrics.items()
+                            if key not in incomplete_quality
+                        },
+                        intervals={
+                            key: value
+                            for key, value in intervals.items()
+                            if key not in incomplete_quality
+                        },
+                        artifacts={"partial_quality": incomplete_quality},
+                    )
             _validate_required_metrics(
                 metrics,
                 operational,
@@ -750,10 +783,12 @@ def _run_candidate(
                 artifact_payloads.setdefault(resource_artifact_name, resource_rows)
             error = str(exc)
             structured_failure = True
+            runner_rejection = False
         except Exception as exc:  # noqa: BLE001 - retain arbitrary candidate failures
             error = f"{type(exc).__name__}: {exc}"
             artifact_payloads = dict(artifact_tables)
             structured_failure = bool(artifact_payloads)
+            runner_rejection = True
 
         if temporary_directory is not None:
             shutil.rmtree(temporary_directory, ignore_errors=True)
@@ -763,7 +798,8 @@ def _run_candidate(
                     sample_artifact_name, _sample_rows(samples)
                 )
             if (
-                "validation_report" in artifact_payloads
+                runner_rejection
+                and "validation_report" in artifact_payloads
                 and artifact_payloads["validation_report"].get("status") != "failed"
             ):
                 report = dict(artifact_payloads["validation_report"])

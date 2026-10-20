@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -58,6 +59,7 @@ class ExactIndex:
     chunking_contract: Mapping[str, object]
     corpus_build_seconds: float
     preflight: Mapping[str, object]
+    phase_seconds: Mapping[str, float] = field(default_factory=dict)
 
 
 class InputCompatibilityError(RuntimeError):
@@ -66,7 +68,35 @@ class InputCompatibilityError(RuntimeError):
         self.report = dict(report)
 
 
+class OutputIntegrityError(RuntimeError):
+    """An invalid model/vector/ranking is not an ordinary request failure."""
+
+    reason_code = "output_integrity_failed"
+
+
 def build_index(
+    *args,
+    progress: dict[str, object] | None = None,
+    **kwargs,
+) -> ExactIndex:
+    """Build searchable state, retaining phase evidence before worker teardown."""
+    progress = progress if progress is not None else {}
+    try:
+        return _build_index(*args, progress=progress, **kwargs)
+    except BaseException:
+        stopped = time.perf_counter()
+        active = progress.pop("active_phase", None)
+        if active is not None:
+            name, started = active
+            progress.setdefault("phase_elapsed_to_failure_seconds", {})[name] = (
+                stopped - started
+            )
+        if "build_started" in progress:
+            progress["build_elapsed_to_failure"] = stopped - progress["build_started"]
+        raise
+
+
+def _build_index(
     manifest,
     chunker_name,
     embedding_name,
@@ -84,6 +114,10 @@ def build_index(
         raise ValueError("build_index requires explicit chunking/embedding settings")
     if with_bm25 and retrieval_protocol is None:
         raise ValueError("BM25 index construction requires explicit retrieval settings")
+    progress = progress if progress is not None else {}
+    phases = progress.setdefault("phase_seconds", {})
+    load_started = time.perf_counter()
+    progress["active_phase"] = ("cold_model_load_seconds", load_started)
     entry = model_lock[embedding_name]
     revision = str(entry["revision"])
     local_path = str(entry["model_path"])
@@ -111,8 +145,9 @@ def build_index(
     if embedder is not None:
         embedder.prepare()
     synchronize(device)
-    progress = progress if progress is not None else {}
+    phases["cold_model_load_seconds"] = time.perf_counter() - load_started
     progress["build_started"] = build_started = time.perf_counter()
+    progress["active_phase"] = ("chunking_seconds", build_started)
     semantic_sentence_counts: list[int] = []
 
     def input_counts(texts: Sequence[str], *, role: str) -> list[int]:
@@ -213,6 +248,9 @@ def build_index(
     chunk_ids = [chunk.identifier for chunk in chunks]
     if len(chunk_ids) != len(set(chunk_ids)):
         raise RuntimeError(f"Chunker {chunker_name} produced duplicate stable IDs")
+    synchronize(device)
+    phases["chunking_seconds"] = time.perf_counter() - build_started
+    progress.pop("active_phase", None)
     questions = [
         row
         for row in manifest.samples
@@ -227,6 +265,9 @@ def build_index(
         "semantic_sentence_input_count": len(semantic_sentence_counts),
         "maximum_semantic_sentence_tokens": max(semantic_sentence_counts, default=0),
     }
+    embedding_started = time.perf_counter()
+    if with_dense:
+        progress["active_phase"] = ("chunk_embedding_seconds", embedding_started)
     if embedder is not None:
         document_counts = input_counts(
             [chunk.text for chunk in chunks], role="document"
@@ -284,19 +325,32 @@ def build_index(
             vectors, dtype=np.dtype(chunking_protocol.stored_vector_dtype)
         )
         _validate_vectors(vectors, len(chunks), spec.dimension, "stored document")
+        synchronize(device)
+        phases["chunk_embedding_seconds"] = time.perf_counter() - embedding_started
+        # Exact dense state is the validated contiguous matrix and chunk inventory.
+        phases["dense_index_build_seconds"] = phases["chunk_embedding_seconds"]
+        progress["vectors"] = vectors
+        progress.pop("active_phase", None)
     if embedder is not None:
         placement_report = getattr(embedder, "placement_report", None)
         if callable(placement_report):
             preflight["placement"] = placement_report(device)
-    bm25 = (
-        BM25(
+    bm25 = None
+    if with_bm25:
+        lexical_started = time.perf_counter()
+        progress["active_phase"] = ("bm25_index_build_seconds", lexical_started)
+        bm25 = BM25(
             [chunk.text for chunk in chunks],
             k1=retrieval_protocol.bm25_k1,
             b=retrieval_protocol.bm25_b,
             epsilon=retrieval_protocol.bm25_epsilon,
         )
-        if with_bm25
-        else None
+        phases["bm25_index_build_seconds"] = time.perf_counter() - lexical_started
+        progress["bm25"] = bm25
+        progress.pop("active_phase", None)
+    phases["index_build_seconds"] = sum(
+        phases.get(name, 0.0)
+        for name in ("dense_index_build_seconds", "bm25_index_build_seconds")
     )
     synchronize(device)
     corpus_build_seconds = time.perf_counter() - build_started
@@ -312,6 +366,7 @@ def build_index(
         progress["chunking_contract"],
         corpus_build_seconds,
         preflight,
+        dict(phases),
     )
 
 
@@ -375,7 +430,11 @@ def rank(
 
 
 def dense_rank_with_scores(
-    index: ExactIndex, query: str, limit: int | None = None
+    index: ExactIndex,
+    query: str,
+    limit: int | None = None,
+    *,
+    timings: dict[str, float] | None = None,
 ) -> list[tuple[int, float]]:
     """Exact cosine ranking with stable corpus-order tie-breaking."""
 
@@ -385,48 +444,71 @@ def dense_rank_with_scores(
         raise ValueError("Exact dense ranking requires an explicit result limit")
     if limit <= 0:
         raise ValueError("Exact dense ranking requires a positive result limit")
-    counts = _model_input_counts(index.embedder, [query], role="query", batch_size=1)
-    if counts[0] > index.embedding_spec.maximum_length:
-        raise InputCompatibilityError(
-            "Query exceeds the native input limit",
-            {
-                "reason_code": "input_length_exceeded",
-                "query_tokens": counts[0],
-                "maximum_length": index.embedding_spec.maximum_length,
-                "truncated_inputs": 0,
-            },
+    with _query_timer(timings, "query_embedding_latency_ms"):
+        counts = _model_input_counts(
+            index.embedder, [query], role="query", batch_size=1
         )
-    index.preflight.setdefault("query_token_counts", {})[query] = counts[0]
-    index.preflight["maximum_query_tokens"] = max(
-        counts[0], index.preflight.get("maximum_query_tokens", 0)
-    )
-    query_vector = np.asarray(index.embedder.embed_query(query), dtype=np.float32)
-    if query_vector.ndim != 1:
-        raise RuntimeError("Query embedding must be one-dimensional")
-    norms = _validate_vectors(
-        query_vector.reshape(1, -1), 1, index.embedding_spec.dimension, "query"
-    )
-    scores = index.vectors @ (query_vector / norms[0])
-    if not np.isfinite(scores).all():
-        raise RuntimeError("Exact cosine scores contain non-finite values")
-    positions = np.arange(len(scores))
-    order = np.lexsort((positions, -scores))[:limit]
-    result = [(int(position), float(scores[position])) for position in order]
-    synchronize(index.embedding_spec.query_device)
+        if counts[0] > index.embedding_spec.maximum_length:
+            raise InputCompatibilityError(
+                "Query exceeds the native input limit",
+                {
+                    "reason_code": "input_length_exceeded",
+                    "query_tokens": counts[0],
+                    "maximum_length": index.embedding_spec.maximum_length,
+                    "truncated_inputs": 0,
+                },
+            )
+        index.preflight.setdefault("query_token_counts", {})[query] = counts[0]
+        index.preflight["maximum_query_tokens"] = max(
+            counts[0], index.preflight.get("maximum_query_tokens", 0)
+        )
+        query_vector = np.asarray(index.embedder.embed_query(query), dtype=np.float32)
+        if query_vector.ndim != 1:
+            raise OutputIntegrityError("Query embedding must be one-dimensional")
+        norms = _validate_vectors(
+            query_vector.reshape(1, -1), 1, index.embedding_spec.dimension, "query"
+        )
+        query_vector = query_vector / norms[0]
+        synchronize(index.embedding_spec.query_device)
+    with _query_timer(timings, "vector_search_latency_ms"):
+        scores = index.vectors @ query_vector
+        if not np.isfinite(scores).all():
+            raise OutputIntegrityError("Exact cosine scores contain non-finite values")
+        positions = np.arange(len(scores))
+        order = np.lexsort((positions, -scores))[:limit]
+        result = [(int(position), float(scores[position])) for position in order]
+        validate_ranking(index, result, limit)
+        synchronize(index.embedding_spec.query_device)
     return result
+
+
+@contextmanager
+def _query_timer(timings, name):
+    started = time.perf_counter()
+    try:
+        yield
+    except BaseException:
+        if timings is not None:
+            timings[name.removesuffix("_latency_ms") + "_elapsed_to_failure_ms"] = (
+                time.perf_counter() - started
+            ) * 1000
+        raise
+    else:
+        if timings is not None:
+            timings[name] = (time.perf_counter() - started) * 1000
 
 
 def validate_ranking(index, ranking, limit):
     if len(ranking) != min(limit, len(index.chunks)):
-        raise RuntimeError("Retrieval returned an incomplete ranking")
+        raise OutputIntegrityError("Retrieval returned an incomplete ranking")
     positions = [position for position, _ in ranking]
     if len(set(positions)) != len(positions) or any(
         not isinstance(i, int) or isinstance(i, bool) or not 0 <= i < len(index.chunks)
         for i in positions
     ):
-        raise RuntimeError("Retrieval contains duplicate or out-of-index IDs")
+        raise OutputIntegrityError("Retrieval contains duplicate or out-of-index IDs")
     if any(not np.isfinite(score) or abs(score) > 1 + 1e-5 for _, score in ranking):
-        raise RuntimeError("Retrieval contains invalid cosine scores")
+        raise OutputIntegrityError("Retrieval contains invalid cosine scores")
 
 
 def synchronize(device):
@@ -452,8 +534,9 @@ def _model_input_counts(
         not isinstance(count, int) or isinstance(count, bool) or count <= 0
         for count in counts
     ):
-        raise RuntimeError(
-            "Native-token counts must match every nonempty inference input"
+        raise InputCompatibilityError(
+            "Native-token counts must match every nonempty inference input",
+            {"reason_code": "invalid_native_token_counts", "truncated_inputs": 0},
         )
     return counts
 
@@ -462,18 +545,24 @@ def _validate_vectors(
     vectors: np.ndarray, expected_rows: int, expected_dimension: int, label: str
 ) -> np.ndarray:
     if vectors.shape != (expected_rows, expected_dimension):
-        raise RuntimeError(
+        raise OutputIntegrityError(
             f"{label.title()} embedding shape mismatch: expected "
             f"{(expected_rows, expected_dimension)}, received {vectors.shape}"
         )
     if not np.isfinite(vectors).all():
-        raise RuntimeError(f"{label.title()} embeddings contain non-finite values")
+        raise OutputIntegrityError(
+            f"{label.title()} embeddings contain non-finite values"
+        )
     with np.errstate(over="ignore", invalid="ignore"):
         norms = np.linalg.norm(vectors, axis=1)
     if not np.isfinite(norms).all():
-        raise RuntimeError(f"{label.title()} embeddings contain non-finite norms")
+        raise OutputIntegrityError(
+            f"{label.title()} embeddings contain non-finite norms"
+        )
     if np.any(norms == 0):
-        raise RuntimeError(f"{label.title()} embeddings contain zero-norm vectors")
+        raise OutputIntegrityError(
+            f"{label.title()} embeddings contain zero-norm vectors"
+        )
     return norms
 
 

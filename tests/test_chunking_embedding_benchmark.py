@@ -13,7 +13,6 @@ from edumind.rag.embedder import Embedder
 from edumind.rag.errors import RAGConfigurationError
 from edumind.rag.text_chunker import TokenChunkingStrategy
 from edumind.rag.tokenizers import TiktokenOffsetTokenizer
-from edumind.rag.types import RetrievalHit
 from experiments.benchmarks.common.contracts import (
     BenchmarkPlan,
     DatasetManifest,
@@ -27,7 +26,10 @@ from experiments.benchmarks.preparation.datasets import _answers_and_evidence
 from experiments.benchmarks.rag.chunking_embedding import benchmark
 from experiments.benchmarks.rag.chunking_embedding.metrics import (
     aggregate_quality,
+    aggregate_repeatability,
     latency_intervals,
+    paired_quality,
+    ranking_repeatability,
     score_question,
 )
 from experiments.benchmarks.rag.chunking_embedding.profiles import embedding_spec
@@ -57,6 +59,13 @@ FIXTURE_EMBEDDING = replace(
     embedding_spec("Alibaba-NLP/gte-modernbert-base", revision="r", local_path="p"),
     dimension=2,
 )
+FIXTURE_PHASE_SECONDS = {
+    "cold_model_load_seconds": 0.5,
+    "chunking_seconds": 0.2,
+    "chunk_embedding_seconds": 0.6,
+    "dense_index_build_seconds": 0.6,
+    "index_build_seconds": 0.6,
+}
 
 
 def _protocol_settings(*, warmups=1, repetitions=1, bootstrap_resamples=0):
@@ -323,30 +332,6 @@ def test_downstream_retrieval_metrics_accept_multi_interval_evidence_units() -> 
         question, [chunk], [chunk], WordTokenizer(), cutoffs=(1, 3, 5, 10)
     )
     assert metrics["context_recall_at_5"] == 1.0
-
-
-def test_downstream_citation_support_accepts_multi_interval_evidence_units() -> None:
-    from experiments.benchmarks.rag.generation.evaluate import _supported_contexts
-
-    question = {
-        "id": "q1",
-        "document_id": "doc",
-        "evidence_type": "text",
-        "evidence": [
-            {
-                "id": "unit-a",
-                "evidence_type": "text",
-                "intervals": [
-                    {"document_id": "doc", "start": 0, "end": 5},
-                    {"document_id": "doc", "start": 20, "end": 25},
-                ],
-            }
-        ],
-    }
-    hit = RetrievalHit(
-        "chunk", "evidence", {"document_id": "doc", "start": 18, "end": 24}, 1.0
-    )
-    assert _supported_contexts(question, [hit]) == {1}
 
 
 @pytest.mark.parametrize(
@@ -1000,15 +985,15 @@ def test_candidate_emits_new_metrics_and_auditable_top_twenty(monkeypatch) -> No
         {"name": "fixture", "fingerprint": "chunker-fingerprint"},
         2.0,
         {"status": "passed", "truncated_inputs": 0},
+        FIXTURE_PHASE_SECONDS,
     )
     monkeypatch.setattr(benchmark, "build_index", lambda *_args, **_kwargs: index)
-    monkeypatch.setattr(
-        benchmark,
-        "dense_rank_with_scores",
-        lambda *_args, **_kwargs: [
-            (position, 1.0 - position / 100) for position in range(20)
-        ],
-    )
+
+    def rank(*args, timings, **kwargs):
+        timings.update(query_embedding_latency_ms=0.001, vector_search_latency_ms=0.001)
+        return [(position, 1.0 - position / 100) for position in range(20)]
+
+    monkeypatch.setattr(benchmark, "dense_rank_with_scores", rank)
     plan = BenchmarkPlan(
         "rag",
         "chunking-embedding",
@@ -1049,8 +1034,9 @@ def test_candidate_emits_new_metrics_and_auditable_top_twenty(monkeypatch) -> No
         "evidence_token_precision_at_5",
     }
     assert intervals == {}
-    assert len(artifacts["retrievals"]) == 20
-    assert len(artifacts["timings"]) == 3  # build plus measured queries
+    assert len(artifacts["retrievals"]) == 40
+    assert {row["repetition"] for row in artifacts["retrievals"]} == {1, 2}
+    assert len(artifacts["timings"]) == 6  # four phases plus measured queries
     assert set(artifacts) == {
         "chunk_manifest",
         "query_metrics",
@@ -1074,6 +1060,7 @@ def test_measured_query_failure_runs_every_repetition(monkeypatch) -> None:
         {"name": "fixture", "fingerprint": "chunker-fingerprint"},
         1.0,
         {"status": "passed", "truncated_inputs": 0},
+        FIXTURE_PHASE_SECONDS,
     )
     calls = 0
 
@@ -1082,6 +1069,9 @@ def test_measured_query_failure_runs_every_repetition(monkeypatch) -> None:
         calls += 1
         if calls == 1:
             raise RuntimeError("injected")
+        _kwargs["timings"].update(
+            query_embedding_latency_ms=0.001, vector_search_latency_ms=0.001
+        )
         return [(0, 1.0)]
 
     monkeypatch.setattr(benchmark, "build_index", lambda *_args, **_kwargs: index)
@@ -1108,7 +1098,7 @@ def test_measured_query_failure_runs_every_repetition(monkeypatch) -> None:
             dtype="float32",
         )
     assert calls == 3
-    assert len(caught.value.artifacts["timings"]) == 4
+    assert len(caught.value.artifacts["timings"]) == 7
     assert caught.value.samples[0].latency_seconds is not None
     assert caught.value.samples[0].metrics["quality.overall.ndcg_at_3"] is None
     assert caught.value.metrics["quality.overall.ndcg_at_3"] is None
@@ -1154,9 +1144,9 @@ def test_worker_serializes_unexpected_python_failures_with_validation_report(
         }
     )
     assert result["status"] == "failed"
-    assert result["artifacts"]["validation_report"]["errors"] == [
-        "RuntimeError: injected"
-    ]
+    assert (
+        "RuntimeError: injected" in result["artifacts"]["validation_report"]["errors"]
+    )
 
 
 def _manifest() -> DatasetManifest:
@@ -1265,7 +1255,7 @@ def test_partial_quality_stays_diagnostic_and_failed_documents_enter_draws():
     assert aggregate[name] is None
     assert name not in intervals
     assert diagnostics[name]["estimate"] == 0.5
-    assert diagnostics[name]["interval"]["independent_document_count"] == 3
+    assert diagnostics[name]["interval"]["independent_source_count"] == 3
     assert diagnostics[name]["interval"]["undefined_resamples"] > 0
     assert diagnostics[name]["failed_question_count"] == 1
 
@@ -1285,7 +1275,7 @@ def test_supported_degenerate_ci_is_retained_and_one_document_has_no_bounds():
         samples[:1], resamples=100, seed=42, confidence=0.95
     )
     assert intervals[name]["lower"] is None
-    assert intervals[name]["reason"] == "insufficient_independent_documents"
+    assert intervals[name]["reason"] == "insufficient_independent_sources"
 
 
 @pytest.mark.parametrize("failed_attempt", [1, 2, 3])
@@ -1304,6 +1294,7 @@ def test_first_quality_and_successful_latency_have_separate_support(
         {},
         1.0,
         {},
+        FIXTURE_PHASE_SECONDS,
     )
     monkeypatch.setattr(benchmark, "build_index", lambda *args, **kwargs: index)
     calls = 0
@@ -1313,6 +1304,9 @@ def test_first_quality_and_successful_latency_have_separate_support(
         calls += 1
         if calls == failed_attempt:
             raise RuntimeError("injected")
+        kwargs["timings"].update(
+            query_embedding_latency_ms=0.001, vector_search_latency_ms=0.001
+        )
         return [(0, 1.0)]
 
     monkeypatch.setattr(benchmark, "dense_rank_with_scores", rank)
@@ -1328,8 +1322,8 @@ def test_first_quality_and_successful_latency_have_separate_support(
         0,
         _protocol_settings(warmups=0, repetitions=3),
     )
-    with pytest.raises(benchmark.CandidateExecutionError) as caught:
-        benchmark.evaluate_candidate(
+    try:
+        evaluated = benchmark.evaluate_candidate(
             "fixture|embedding",
             _manifest(),
             {"embedding": {"revision": "r", "model_path": "p"}},
@@ -1337,7 +1331,27 @@ def test_first_quality_and_successful_latency_have_separate_support(
             device="cpu",
             dtype="float32",
         )
-    result = caught.value
+    except benchmark.CandidateExecutionError as exc:
+        assert failed_attempt == 1
+        result = exc
+    else:
+        assert failed_attempt != 1
+        result = SimpleNamespace(
+            **dict(
+                zip(
+                    (
+                        "samples",
+                        "operational",
+                        "metrics",
+                        "parameters",
+                        "intervals",
+                        "artifacts",
+                    ),
+                    evaluated,
+                    strict=True,
+                )
+            )
+        )
     assert calls == 3
     assert result.metrics["quality.overall.ndcg_at_3"] == (
         None if failed_attempt == 1 else 1.0
@@ -1511,6 +1525,8 @@ def test_partial_build_preserves_inventory_but_no_final_bytes_or_duration(monkey
             generation_complete=True,
             build_started=0.0,
             chunking_contract={"fingerprint": "actual-chunker", "size": 256},
+            phase_seconds={"cold_model_load_seconds": 0.5, "chunking_seconds": 0.2},
+            phase_elapsed_to_failure_seconds={"chunk_embedding_seconds": 0.3},
         )
         raise RuntimeError("embedding failed")
 
@@ -1540,7 +1556,19 @@ def test_partial_build_preserves_inventory_but_no_final_bytes_or_duration(monkey
     assert result.metrics["workload.chunk_count"] == 1.0
     assert result.metrics["workload.embedding_matrix_bytes"] is None
     assert result.operational["corpus_build_seconds"] is None
-    assert result.artifacts["timings"][1]["status"] == "unexecuted"
+    assert result.operational["cold_model_load_seconds"] == 0.5
+    assert result.operational["chunking_seconds"] == 0.2
+    assert result.operational["chunk_embedding_seconds"] is None
+    phase = next(
+        row for row in result.artifacts["timings"] if row["phase"] == "chunk_embedding"
+    )
+    assert phase["elapsed_to_failure_seconds"] == 0.3
+    assert (
+        next(row for row in result.artifacts["timings"] if row["phase"] == "query")[
+            "status"
+        ]
+        == "unexecuted"
+    )
     assert result.parameters["measurement.resource_scope"] == "partial"
     assert result.operational["peak_process_tree_ram_mb"] > 0
     assert result.parameters["chunking_fingerprint"] == "actual-chunker"
@@ -1719,6 +1747,9 @@ def test_fatal_worker_retains_missing_records_without_inventing_attempts(monkeyp
     assert caught.value.samples == ()
     report = caught.value.artifacts["validation_report"]
     assert report["missing_attempt_record_count"] == 3
+    assert len(caught.value.artifacts["timings"]) == 3
+    assert all(row["status"] == "missing" for row in caught.value.artifacts["timings"])
+    assert report["completeness"]["outcome_ledger_complete"] is False
     assert "failed_attempt_count" not in report
     assert caught.value.operational["peak_vram_mb"] == 600
     assert caught.value.parameters["measurement.resource_scope"] == "partial"
@@ -1920,7 +1951,12 @@ def test_phase_decisions_reject_stale_protocols_and_select_exact_winners(
     from edumind.common.artifacts import atomic_write_json
     from experiments.benchmarks.rag.chunking_embedding.run import _selected_candidates
 
-    candidate = CHUNKING_PROTOCOL.smoke_pair
+    payload = deepcopy(CHUNKING_PROTOCOL.meta.resolved)
+    payload["statistics"].update(
+        minimum_quality_ci_documents=2, minimum_repeatability_ci_documents=2
+    )
+    protocol = chunking_protocol_from_mapping(payload)
+    candidate = protocol.smoke_pair
     summary = {
         "run_id": "source-run",
         "complete": True,
@@ -1930,9 +1966,7 @@ def test_phase_decisions_reject_stale_protocols_and_select_exact_winners(
             "profile": source_profile,
             "settings": {"preflight_fingerprint": "current-qualification"},
         },
-        "protocols": {
-            "chunking_embedding": {"checksum": CHUNKING_PROTOCOL.meta.checksum}
-        },
+        "protocols": {"chunking_embedding": {"checksum": protocol.meta.checksum}},
         "candidates": [{"candidate": candidate, "status": "success"}],
     }
     source = tmp_path / "summary.json"
@@ -1951,18 +1985,16 @@ def test_phase_decisions_reject_stale_protocols_and_select_exact_winners(
         },
     )
     options = {"qualification_fingerprint": "current-qualification"}
-    assert _selected_candidates(profile, decision, CHUNKING_PROTOCOL, **options) == (
-        candidate,
-    )
+    assert _selected_candidates(profile, decision, protocol, **options) == (candidate,)
     summary["plan"]["settings"]["preflight_fingerprint"] = "old-qualification"
     atomic_write_json(source, summary)
     with pytest.raises(ValueError, match="different hardware qualification"):
-        _selected_candidates(profile, decision, CHUNKING_PROTOCOL, **options)
+        _selected_candidates(profile, decision, protocol, **options)
     summary["plan"]["settings"]["preflight_fingerprint"] = "current-qualification"
     summary["protocols"]["chunking_embedding"]["checksum"] = "old-protocol"
     atomic_write_json(source, summary)
     with pytest.raises(ValueError, match="different chunking_embedding protocol"):
-        _selected_candidates(profile, decision, CHUNKING_PROTOCOL, **options)
+        _selected_candidates(profile, decision, protocol, **options)
 
 
 def test_unchanged_production_embedding_keeps_its_persistent_fingerprint():
@@ -1977,3 +2009,569 @@ def test_unchanged_production_embedding_keeps_its_persistent_fingerprint():
     del previous_contract["config_options"]
     del previous_contract["buffer_initialization"]
     assert spec.fingerprint == stable_hash(previous_contract)
+
+
+@pytest.mark.parametrize(
+    "outcomes,expected,status",
+    [
+        (["A", "A", "A"], 1, "scored"),
+        (["A", "A", "B"], 1 / 3, "scored"),
+        ([None, "A", "A"], 1 / 3, "scored"),
+        ([None, None, None], 0, "scored"),
+        (["A", "B", "C"], 0, "scored"),
+        (["A"], None, "inapplicable"),
+        (["A", "A", "unexecuted"], None, "incomplete"),
+    ],
+)
+def test_ce_repeatability_uses_every_scheduled_pair(outcomes, expected, status):
+    attempts = [
+        {
+            "repetition": rep,
+            "status": "failed"
+            if value is None
+            else "unexecuted"
+            if value == "unexecuted"
+            else "success",
+            "ranking_ids": [value] if value is not None else None,
+        }
+        for rep, value in enumerate(outcomes, 1)
+    ]
+    result = ranking_repeatability(attempts, depth=5)
+    assert result["value"] == expected
+    assert result["status"] == status
+    assert len(result["pairs"]) == len(outcomes) * (len(outcomes) - 1) // 2
+
+
+def test_ce_repeatability_depth_and_source_bootstrap_keep_query_weighting():
+    attempts = [
+        {"repetition": rep, "status": "success", "ranking_ids": [*range(5), tail]}
+        for rep, tail in enumerate((6, 7, 8), 1)
+    ]
+    assert ranking_repeatability(attempts, depth=5)["value"] == 1
+    name = "diagnostic.ranking_repeatability"
+    samples = [
+        SampleResult(
+            str(i),
+            {name: value},
+            None,
+            {
+                "document_id": source,
+                "repeatability_status": "scored",
+                "scheduled_pair_count": 3,
+                "successful_pair_count": int(value * 3),
+            },
+        )
+        for i, (source, value) in enumerate((("a", 1), ("a", 0), ("b", 1)))
+    ]
+    aggregate, intervals, support = aggregate_repeatability(
+        samples,
+        resamples=100,
+        seed=42,
+        minimum_documents=2,
+        confidence=0.95,
+    )
+    assert aggregate[name] == 0.75  # not the pooled query mean 2/3
+    assert aggregate[name + ".sample_count"] == 2
+    assert support["sample_unit"] == "source_document_macro_value"
+    assert support["scored_question_count"] == 3
+    assert intervals[name]["independent_source_count"] == 2
+    assert intervals[name]["defined_resamples"] == 100
+    assert intervals[name]["lower"] == 0.5
+    assert intervals[name]["upper"] == 1
+    _, intervals, _ = aggregate_repeatability(
+        samples,
+        resamples=100,
+        seed=42,
+        minimum_documents=None,
+        confidence=0.95,
+    )
+    assert intervals[name]["reason"] == "ci_support_not_frozen"
+    samples[-1].metadata["repeatability_status"] = "incomplete"
+    samples[-1].metrics[name] = None
+    aggregate, intervals, support = aggregate_repeatability(
+        samples,
+        resamples=100,
+        seed=42,
+        minimum_documents=2,
+        confidence=0.95,
+    )
+    assert aggregate[name] is None and intervals == {}
+    assert support["status"] == "incomplete"
+
+
+def _ce_timed_fixture(
+    monkeypatch, outcomes, *, warmups=0, phases=None, manifest=None, repetitions=None
+):
+    """No model loading, GPU access, or downloads; distinct completed stage clocks."""
+    lengths = (1, 2, 3, 4, 5, 6)
+    chunks = [
+        Chunk(str(i), "doc", "alpha " * size, 0, 6 * size, size, size)
+        for i, size in enumerate(lengths)
+    ]
+    index = ExactIndex(
+        chunks,
+        np.ones((6, 2), dtype=np.float32),
+        object(),
+        WordTokenizer(),
+        None,
+        FIXTURE_EMBEDDING,
+        "fixture",
+        {},
+        1.0,
+        {},
+        FIXTURE_PHASE_SECONDS if phases is None else phases,
+    )
+    monkeypatch.setattr(benchmark, "seed_deterministically", lambda seed: None)
+    monkeypatch.setattr(benchmark, "build_index", lambda *args, **kwargs: index)
+    scheduled = iter(outcomes)
+
+    def rank(*args, timings=None, **kwargs):
+        if timings is None:  # warmup fails outside measured requests when requested
+            raise RuntimeError("warmup failed")
+        outcome = next(scheduled)
+        timings.update(outcome.get("timings", {}))
+        if outcome.get("error") is not None:
+            raise outcome["error"]
+        return [
+            (position, 0.9 - i / 100)
+            for i, position in enumerate(outcome.get("order", range(6)))
+        ]
+
+    monkeypatch.setattr(benchmark, "dense_rank_with_scores", rank)
+    repetitions = len(outcomes) if repetitions is None else repetitions
+    plan = BenchmarkPlan(
+        "rag",
+        "chunking-embedding",
+        "smoke",
+        "fixture",
+        ("fixture|embedding",),
+        42,
+        repetitions,
+        0,
+        warmups,
+        _protocol_settings(warmups=warmups, repetitions=repetitions),
+    )
+    if manifest is None:
+        base = _manifest()
+        manifest = replace(
+            base, samples=({**base.samples[0], "text": "alpha " * 6}, *base.samples[1:])
+        )
+    return benchmark.evaluate_candidate(
+        "fixture|embedding",
+        manifest,
+        {"embedding": {"revision": "r", "model_path": "p"}},
+        plan,
+        device="cpu",
+        dtype="float32",
+    )
+
+
+def test_ce_timers_context_and_saved_attempts_use_independent_cohorts(monkeypatch):
+    samples, operational, metrics, parameters, _, artifacts = _ce_timed_fixture(
+        monkeypatch,
+        [
+            {
+                "timings": {
+                    "query_embedding_latency_ms": 10,
+                    "vector_search_latency_ms": 4,
+                }
+            },
+            {
+                "timings": {"query_embedding_latency_ms": 100},
+                "error": RuntimeError("search failed"),
+            },
+            {
+                "timings": {
+                    "query_embedding_latency_ms": 20,
+                    "vector_search_latency_ms": 6,
+                }
+            },
+        ],
+    )
+    assert operational["cold_model_load_seconds"] == 0.5
+    assert operational["chunking_seconds"] == 0.2
+    assert operational["chunk_embedding_seconds"] == 0.6
+    assert operational["corpus_build_seconds"] == 1
+    assert operational["query_embedding_latency_ms_p50"] == 20
+    assert operational["vector_search_latency_ms_p50"] == 5
+    assert metrics["diagnostic.ranking_repeatability"] == pytest.approx(1 / 3)
+    assert metrics["workload.retrieved_context_tokens_at_3_mean"] == 6
+    assert metrics["workload.retrieved_context_tokens_at_5_p95"] == 15
+    assert parameters["completeness"]["accepted"] is True
+    assert parameters["measurement.resource_scope"] == "complete"
+    assert (
+        parameters["latency_support"]["query_embedding_latency_ms"][
+            "contributing_question_count"
+        ]
+        == 1
+    )
+    assert (
+        samples[0].metadata["query_embedding_latency_ms.completed_attempt_count"] == 3
+    )
+    failed = next(row for row in artifacts["timings"] if row.get("repetition") == 2)
+    assert failed["latency_ms"] is None and failed["elapsed_to_failure_ms"] is not None
+    assert failed["query_embedding_status"] == "success"
+    assert failed["vector_search_status"] == "failed"
+    assert {row["repetition"] for row in artifacts["retrievals"]} == {1, 2, 3}
+    assert (
+        len([row for row in artifacts["retrievals"] if row["status"] == "success"])
+        == 12
+    )
+    assert artifacts["validation_report"]["status"] == "passed"
+    assert len(artifacts["validation_report"]["request_errors"]) == 1
+
+
+def test_ce_valid_changed_order_is_diagnostic_not_integrity_failure(monkeypatch):
+    durations = {"query_embedding_latency_ms": 1, "vector_search_latency_ms": 2}
+    _, _, metrics, parameters, _, artifacts = _ce_timed_fixture(
+        monkeypatch,
+        [
+            {"timings": durations},
+            {"timings": durations},
+            {"timings": durations, "order": [1, 0, 2, 3, 4, 5]},
+        ],
+    )
+    assert metrics["diagnostic.ranking_repeatability"] == pytest.approx(1 / 3)
+    assert parameters["completeness"]["accepted"]
+    assert artifacts["query_metrics"][0]["retrieved_context_tokens_at_3"] == 6
+    assert metrics["quality.overall.ndcg_at_3"] == 1
+    assert len(artifacts["retrievals"]) == 18
+
+
+def test_ce_failed_first_does_not_borrow_later_quality_or_context(monkeypatch):
+    with pytest.raises(benchmark.CandidateExecutionError) as caught:
+        _ce_timed_fixture(
+            monkeypatch,
+            [
+                {"error": RuntimeError("first failed")},
+                {
+                    "timings": {
+                        "query_embedding_latency_ms": 1,
+                        "vector_search_latency_ms": 2,
+                    }
+                },
+                {
+                    "timings": {
+                        "query_embedding_latency_ms": 1,
+                        "vector_search_latency_ms": 2,
+                    }
+                },
+            ],
+        )
+    result = caught.value
+    assert result.metrics["quality.overall.ndcg_at_3"] is None
+    assert result.metrics["workload.retrieved_context_tokens_at_3_mean"] is None
+    assert result.metrics["diagnostic.ranking_repeatability"] == pytest.approx(1 / 3)
+    assert result.operational["cold_model_load_seconds"] == 0.5
+    assert result.parameters["completeness"] == {
+        "outcome_ledger_complete": True,
+        "execution_complete": True,
+        "quality_complete": False,
+        "integrity_passed": True,
+        "accepted": False,
+    }
+
+
+def test_ce_warmup_failure_accounts_for_unexecuted_not_failed_attempts(monkeypatch):
+    with pytest.raises(benchmark.CandidateExecutionError) as caught:
+        _ce_timed_fixture(monkeypatch, [{}, {}, {}], warmups=1)
+    result = caught.value
+    assert result.metrics["validity.failed_attempt_count"] == 0
+    assert result.metrics["validity.unexecuted_attempt_count"] == 3
+    assert result.metrics["diagnostic.ranking_repeatability"] is None
+    assert result.parameters["repeatability_support"]["status"] == "incomplete"
+    assert result.parameters["measurement.resource_scope"] == "partial"
+    assert len(result.artifacts["retrievals"]) == 3
+    assert result.operational["chunking_seconds"] == 0.2
+
+
+@pytest.mark.parametrize("missing", ["phases", "component"])
+def test_ce_missing_completed_timing_never_becomes_zero_or_accepted(
+    monkeypatch, missing
+):
+    with pytest.raises(benchmark.CandidateExecutionError) as caught:
+        _ce_timed_fixture(
+            monkeypatch,
+            [
+                {
+                    "timings": {}
+                    if missing == "component"
+                    else {
+                        "query_embedding_latency_ms": 1,
+                        "vector_search_latency_ms": 2,
+                    }
+                }
+            ],
+            phases={} if missing == "phases" else None,
+        )
+    name = (
+        "cold_model_load_seconds"
+        if missing == "phases"
+        else "query_embedding_latency_ms_p50"
+    )
+    assert caught.value.operational[name] is None
+    assert caught.value.metrics["quality.overall.ndcg_at_3"] == 1
+    assert caught.value.parameters["completeness"]["integrity_passed"] is False
+
+
+def test_ce_component_latency_intervals_keep_all_sources_and_own_query_medians():
+    samples = [
+        SampleResult(
+            str(i),
+            {},
+            None,
+            {"document_id": source, "query_embedding_latency_ms": value},
+        )
+        for i, (source, value) in enumerate(
+            (("a", 1), ("a", 3), ("b", 10), ("c", None))
+        )
+    ]
+    intervals = latency_intervals(
+        samples,
+        resamples=100,
+        seed=42,
+        minimum_documents=2,
+        confidence=0.95,
+        metric="query_embedding_latency_ms",
+    )
+    assert intervals["operational.query_embedding_latency_ms_p50"]["estimate"] == 3
+    bounds = intervals["operational.query_embedding_latency_ms_p95"]
+    assert bounds["estimate"] == pytest.approx(9.3)
+    assert bounds["independent_source_count"] == 3
+    assert bounds["contributing_document_count"] == 2
+    assert bounds["undefined_resamples"] > 0
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("depth", 0), ("depth", 21), ("minimum_repeatability_ci_documents", 1)],
+)
+def test_ce_repeatability_protocol_rejects_invalid_controls(field, value):
+    payload = deepcopy(CHUNKING_PROTOCOL.meta.resolved)
+    payload["repeatability" if field == "depth" else "statistics"][field] = value
+    with pytest.raises(ValueError):
+        chunking_protocol_from_mapping(payload)
+
+
+def test_ce_reviewed_groups_preserve_document_macro_and_cluster_draw_copies():
+    from experiments.benchmarks.common.contracts import CandidateResult
+
+    quality, repeat = "quality.overall.ndcg_at_3", "diagnostic.ranking_repeatability"
+    samples = [
+        SampleResult(
+            str(i),
+            {quality: value, repeat: value},
+            latency / 1000,
+            {
+                "document_id": doc,
+                "evidence_type": "text",
+                "repeatability_status": "scored",
+                "query_embedding_latency_ms": latency,
+                # Exercise the reviewed alias, not just canonical independent IDs.
+                "source_group_id" if doc == "a2" else "independent_source_id": group,
+            },
+        )
+        for i, (doc, group, value, latency) in enumerate(
+            (
+                ("a1", "A", 1, 10),
+                ("a1", "A", 0, 20),
+                ("a2", "A", 1, 30),
+                ("a3", "A", 1, 40),
+                ("b", "B", 0, 50),
+            )
+        )
+    ]
+    options = {"resamples": 400, "seed": 42, "confidence": 0.95, "minimum_documents": 2}
+    aggregate, intervals = aggregate_quality(samples, metric_names=[quality], **options)
+    assert aggregate[quality] == 0.625  # four document means, not two group means
+    assert aggregate[quality + ".sample_count"] == 4
+    assert intervals[quality]["eligible_document_count"] == 4
+    assert intervals[quality]["independent_source_count"] == 2
+    assert intervals[quality]["lower"] == 0
+    assert intervals[quality]["upper"] == pytest.approx(5 / 6)
+    aggregate, intervals, _ = aggregate_repeatability(samples, **options)
+    assert aggregate[repeat] == 0.625
+    assert intervals[repeat]["upper"] == pytest.approx(5 / 6)
+    latency = latency_intervals(samples, metric="query_embedding_latency_ms", **options)
+    p50 = latency["operational.query_embedding_latency_ms_p50"]
+    assert p50["estimate"] == 30
+    assert p50["lower"] == 25 and p50["upper"] == 50
+    # Requiring three independent units cannot be satisfied by four documents.
+    _, intervals = aggregate_quality(
+        samples,
+        metric_names=[quality],
+        **{**options, "minimum_documents": 3},
+    )
+    assert intervals[quality]["reason"] == "insufficient_independent_sources"
+    left = CandidateResult("left", "success", "left", {}, {}, tuple(samples), {})
+    right = replace(
+        left,
+        candidate="right",
+        samples=tuple(replace(row, metrics={quality: 0}) for row in samples),
+    )
+    comparison = paired_quality([left, right], [quality], **options)[0]["metrics"][
+        quality
+    ]
+    assert comparison["left_minus_right"] == 0.625
+    assert comparison["paired_resampling_units"] == 2
+    assert comparison["paired_documents"] == 4
+    assert comparison["paired_samples"] == 5
+    assert comparison["upper"] == pytest.approx(5 / 6)
+
+
+def test_ce_context_descriptors_are_query_weighted_and_partial_is_diagnostic(
+    monkeypatch,
+):
+    base = _manifest()
+    queries = [{**base.samples[-1], "id": f"q{i}"} for i in range(3)]
+    manifest = replace(
+        base,
+        samples=(
+            {**base.samples[0], "text": "alpha " * 6, "source_group_id": "reviewed"},
+            base.samples[1],
+            *queries,
+        ),
+    )
+    duration = {"query_embedding_latency_ms": 1, "vector_search_latency_ms": 2}
+    outcomes = [
+        {"timings": duration},
+        {"timings": duration},
+        {"timings": duration, "order": [5, 4, 3, 2, 1, 0]},
+    ]
+    _, _, metrics, _, _, artifacts = _ce_timed_fixture(
+        monkeypatch,
+        outcomes,
+        manifest=manifest,
+        repetitions=1,
+    )
+    assert metrics["workload.retrieved_context_tokens_at_3_mean"] == 9
+    assert metrics["workload.retrieved_context_tokens_at_3_p95"] == pytest.approx(14.1)
+    assert metrics["operational.query_embedding_latency_ms_p50.sample_count"] == 3
+    assert all(
+        row["independent_source_id"] == "reviewed" for row in artifacts["query_metrics"]
+    )
+    outcomes[-1] = {"error": RuntimeError("missing first")}
+    with pytest.raises(benchmark.CandidateExecutionError) as caught:
+        _ce_timed_fixture(monkeypatch, outcomes, manifest=manifest, repetitions=1)
+    result = caught.value
+    assert result.metrics["workload.retrieved_context_tokens_at_3_mean"] is None
+    assert (
+        result.parameters["workload_support"]["retrieved_context_tokens_at_3"]["mean"]
+        == 6
+    )
+    assert (
+        result.parameters["workload_support"]["retrieved_context_tokens_at_3"]["status"]
+        == "partial"
+    )
+
+
+def test_ce_context_survives_independent_offline_scorer_failure(monkeypatch):
+    def fail(*args, **kwargs):
+        raise ValueError("offline scoring failed")
+
+    monkeypatch.setattr(benchmark, "score_question", fail)
+    with pytest.raises(benchmark.CandidateExecutionError) as caught:
+        _ce_timed_fixture(
+            monkeypatch,
+            [
+                {
+                    "timings": {
+                        "query_embedding_latency_ms": 1,
+                        "vector_search_latency_ms": 2,
+                    }
+                }
+            ],
+        )
+    result = caught.value
+    assert result.metrics["workload.retrieved_context_tokens_at_3_mean"] == 6
+    assert result.metrics["quality.overall.ndcg_at_3"] is None
+    assert result.parameters["measurement.resource_scope"] == "complete"
+
+
+def test_ce_paired_parent_hook_writes_grouped_comparison_evidence(tmp_path):
+    from experiments.benchmarks.rag.chunking_embedding.run import _paired_artifact
+
+    plan = BenchmarkPlan(
+        "rag",
+        "chunking-embedding",
+        "development",
+        "fixture",
+        (),
+        42,
+        3,
+        10000,
+        1,
+        {"chunking_embedding_protocol": CHUNKING_PROTOCOL.meta.worker_payload()},
+    )
+    paths = _paired_artifact(tmp_path, [], plan)
+    assert len(paths) == 1 and paths[0].name == "paired_comparisons.json"
+    assert paths[0].read_text(encoding="utf-8").strip() == "[]"
+    assert _paired_artifact(tmp_path, [], replace(plan, profile="smoke")) == []
+
+
+@pytest.mark.parametrize("kind", ["invalid_ranking", "typed_integrity", "oom"])
+def test_ce_later_integrity_and_hardware_failures_still_fail_gates(monkeypatch, kind):
+    error = RuntimeError("invalid vector")
+    error.reason_code = "output_integrity_failed"
+
+    class OutOfMemoryError(RuntimeError):
+        pass
+
+    durations = {"query_embedding_latency_ms": 1, "vector_search_latency_ms": 2}
+    bad = (
+        {"timings": durations, "order": [0, 0, 2, 3, 4, 5]}
+        if kind == "invalid_ranking"
+        else {
+            "error": error
+            if kind == "typed_integrity"
+            else OutOfMemoryError("gpu_oom"),
+        }
+    )
+    with pytest.raises(benchmark.CandidateExecutionError) as caught:
+        _ce_timed_fixture(
+            monkeypatch, [{"timings": durations}, bad, {"timings": durations}]
+        )
+    result = caught.value
+    assert result.metrics["quality.overall.ndcg_at_3"] == 1
+    assert result.metrics["diagnostic.ranking_repeatability"] == pytest.approx(1 / 3)
+    assert result.parameters["completeness"]["quality_complete"]
+    assert not result.parameters["completeness"]["integrity_passed"]
+    if kind == "invalid_ranking":
+        assert any(
+            row.get("raw_ranking") not in {None, "null"}
+            for row in result.artifacts["retrievals"]
+        )
+
+
+def test_ce_unfrozen_ci_support_is_explicit_and_cannot_advance(monkeypatch):
+    from experiments.benchmarks.rag.chunking_embedding import run
+
+    assert CHUNKING_PROTOCOL.unfrozen_ci_policies == (
+        "quality",
+        "ranking_repeatability",
+    )
+    assert CHUNKING_PROTOCOL.meta.version == "chunking-embedding-v6"
+    plan = run._plan(
+        CHUNKING_PROTOCOL,
+        _manifest(),
+        (CHUNKING_PROTOCOL.smoke_pair,),
+        "development",
+        "cuda",
+        "float16",
+    )
+    assert plan.settings["ci_support_policy_frozen"] is False
+    assert plan.settings["reporting_interpretation"] == "exploratory"
+    monkeypatch.setattr(
+        run,
+        "load_engineer_decision",
+        lambda *args, **kwargs: SimpleNamespace(
+            selected_candidates=(CHUNKING_PROTOCOL.smoke_pair,)
+        ),
+    )
+    with pytest.raises(ValueError, match="frozen CI support policies"):
+        run._selected_candidates(
+            "validation",
+            "unused",
+            CHUNKING_PROTOCOL,
+            qualification_fingerprint="current",
+        )

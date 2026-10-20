@@ -6,6 +6,7 @@ import argparse
 import json
 import math
 import tempfile
+import uuid
 from dataclasses import asdict
 from pathlib import Path
 
@@ -319,7 +320,7 @@ def run(
             },
         )
 
-        def evaluate(candidate: str):
+        def evaluate(candidate: str, context):
             worker_error = None
             try:
                 output = _run_worker(
@@ -331,6 +332,8 @@ def run(
                     profile=profile,
                     directory=canonical_directory,
                     protocol=protocol,
+                    prediction_directory=Path(context["artifact_directory"])
+                    / "predictions",
                 )
             except WorkerExecutionError as exc:
                 output = exc.resource_evidence.get("worker_result")
@@ -348,6 +351,11 @@ def run(
                         }
                     )
                     exc.parameters.update(evidence.get("parameters", {}))
+                    exc.parameters["prediction_evidence"] = [
+                        row["prediction"]
+                        for row in evidence.get("timings", [])
+                        if row.get("prediction")
+                    ]
                     exc.operational["cold_model_load_seconds"] = evidence.get(
                         "cold_model_load_seconds"
                     )
@@ -499,6 +507,7 @@ def run(
             protocols={"audio": protocol.meta},
             no_mlflow=no_mlflow,
             monitor_resources=False,
+            evaluator_receives_context=True,
             operational_prefix="",
             paired_comparisons=False,
             candidate_artifact_name="candidate.json",
@@ -589,6 +598,7 @@ def _run_worker(
     directory,
     protocol,
     mode=None,
+    prediction_directory=None,
 ):
     safe = "".join(character if character.isalnum() else "-" for character in candidate)
     return run_json_worker(
@@ -601,6 +611,12 @@ def _run_worker(
             "device": device,
             "profile": profile,
             "protocol": protocol.meta.worker_payload(),
+            "prediction_directory": str(
+                prediction_directory
+                or PROJECT_ROOT
+                / "artifacts/benchmarks/asr-predictions"
+                / uuid.uuid4().hex
+            ),
             **({"mode": mode} if mode else {}),
         },
         device=device,

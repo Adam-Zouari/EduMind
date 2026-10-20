@@ -20,16 +20,15 @@ best?
 
 ## Implementation boundary
 
-This page and the metric reference define the approved reporting contract.
-The existing runner's standalone validation, designated-first evidence scoring,
-exact search, total build/query timing, and resource collection do not by
-themselves implement the additional stage breakdowns and context descriptors.
-Separate cold-load/chunking/chunk-embedding and query-embedding/search counters,
-diagnostic all-pairs Ranking Repeatability with supported intervals, replayable
-per-attempt evidence, and the revised completeness/acceptance distinction require
-implementation alignment. The existing top-five equality gate and blanket
-request-failure validity policy must not be relabelled as those diagnostics.
-These documentation changes do not migrate code, protocols, or historical runs.
+The runner implements the reporting contract below: separate load/build/query
+measurements, first-ranking quality and context descriptors, retained per-attempt
+rankings, diagnostic all-pairs Ranking Repeatability, and explicit execution,
+quality, and integrity coverage. Valid ranking changes are not a failure gate.
+
+Independent-source CI support requirements still need data review. Unfrozen
+support retains descriptive points with null bounds and an exploratory-readiness
+record; it cannot support authoritative advancement. Historical runs are not
+rewritten or reinterpreted as results under this protocol.
 
 ## Terminology and unit of comparison
 

@@ -25,6 +25,7 @@ from experiments.benchmarks.extraction.audio.evaluate import (
     validate_prediction,
 )
 from experiments.benchmarks.extraction.audio.protocol import protocol_from_worker
+from experiments.benchmarks.extraction.evidence import retain_prediction
 from experiments.benchmarks.extraction.scoring import attempt_rates, source_id
 
 
@@ -101,12 +102,13 @@ def execute(payload):
                     for repetition in range(1, repetitions + 1):
                         seed_deterministically(protocol.meta.seed)
                         started = time.perf_counter()
-                        transcript = error = None
+                        transcript = error = converted = None
+                        runtime.raw_prediction = None
                         try:
                             transcript = runtime.transcribe(
                                 Path(str(item["canonical_path"]))
                             )
-                            validate_prediction(
+                            converted = validate_prediction(
                                 transcript.text,
                                 transcript.segments,
                                 float(item["duration_seconds"]),
@@ -119,27 +121,53 @@ def execute(payload):
                             synchronize(device)
                         except Exception as exc:  # noqa: BLE001 - retain and continue scheduled attempts
                             error = f"{type(exc).__name__}: {exc}"
-                            transcript = None
                         elapsed = time.perf_counter() - started
-                        timing_rows.append(
+                        timing = {
+                            "sample_id": str(item["id"]),
+                            "sample_type": sample_type,
+                            "repetition": repetition,
+                            "executed": True,
+                            "success": error is None,
+                            "error": error,
+                            "latency_seconds": elapsed,
+                            "duration_seconds": float(item["duration_seconds"]),
+                            "device": device,
+                            "projected_transcript_sha256": stable_hash(
+                                normalize_transcript(transcript.text)
+                            )
+                            if transcript is not None and error is None
+                            else None,
+                        }
+                        timing_rows.append(timing)
+                        outputs.setdefault(str(item["id"]), []).append(
+                            transcript if error is None else None
+                        )
+                        prediction = retain_prediction(
+                            Path(payload["prediction_directory"])
+                            / f"{stable_hash(str(item['id']))}-{repetition}.json",
                             {
                                 "sample_id": str(item["id"]),
-                                "sample_type": sample_type,
                                 "repetition": repetition,
-                                "executed": True,
+                                "candidate": payload["candidate"],
+                                "input": item,
+                                "protocol": payload["protocol"],
+                                "model_lock_sha256": stable_hash(payload["model_lock"]),
                                 "success": error is None,
                                 "error": error,
-                                "latency_seconds": elapsed,
-                                "duration_seconds": float(item["duration_seconds"]),
-                                "device": device,
-                                "projected_transcript_sha256": stable_hash(
-                                    normalize_transcript(transcript.text)
-                                )
-                                if transcript
+                                "transcript": transcript.text
+                                if transcript is not None
                                 else None,
-                            }
+                                "segments": transcript.segments
+                                if transcript is not None
+                                else None,
+                                "converted_segments": converted,
+                                "raw_prediction": runtime.raw_prediction,
+                                "warnings": transcript.warnings
+                                if transcript is not None
+                                else None,
+                            },
                         )
-                        outputs.setdefault(str(item["id"]), []).append(transcript)
+                        timing["prediction"] = prediction
             phase = "telemetry"
         phase = "placement_after"
         after = (
@@ -401,6 +429,9 @@ def execute(payload):
             "seed": protocol.meta.seed,
             "warmups": execution.warmups,
             "repetitions": execution.repetitions,
+            "prediction_evidence": [
+                row["prediction"] for row in timing_rows if row.get("prediction")
+            ],
         },
     }
 

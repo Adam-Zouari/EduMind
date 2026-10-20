@@ -1,10 +1,12 @@
 """ASR lifecycle, preprocessing seals, and frozen-contract regressions."""
 
+import json
 from copy import deepcopy
 from pathlib import Path
 
 import pytest
 
+from edumind.common.artifacts import sha256_file
 from experiments.benchmarks.common.preflight import _probe_candidate
 from experiments.benchmarks.common.process import (
     WorkerExecutionError,
@@ -23,7 +25,7 @@ from experiments.benchmarks.extraction.audio.runner import (
 
 
 @pytest.fixture
-def lifecycle(monkeypatch):
+def lifecycle(monkeypatch, tmp_path):
     protocol = load_protocol()
     state = {
         "calls": 0,
@@ -107,6 +109,7 @@ def lifecycle(monkeypatch):
         "speech": speech,
         "reliability": [],
         "protocol": protocol.meta.worker_payload(),
+        "prediction_directory": str(tmp_path / "predictions"),
     }
     return state, payload
 
@@ -287,6 +290,46 @@ def test_failed_first_attempt_never_uses_later_output(lifecycle):
         1 / 3
     )
     assert result["execution_error"] is None
+    references = [row["prediction"] for row in result["timings"]]
+    records = []
+    for reference in references:
+        path = Path(reference["path"])
+        assert reference["uploaded"] is False
+        assert reference["sha256"] == sha256_file(path)
+        records.append(json.loads(path.read_text(encoding="utf-8")))
+    assert [record["transcript"] for record in records] == [None, "hello", "hello"]
+    assert all(record["input"]["canonical_path"] == "speech.wav" for record in records)
+    assert all(record["protocol"] == payload["protocol"] for record in records)
+    assert '"transcript":' not in json.dumps(result)
+
+
+def test_invalid_output_fragment_survives_offline_failure_locally(
+    lifecycle, monkeypatch
+):
+    state, payload = lifecycle
+    validate = worker.validate_prediction
+
+    def invalid(*args):
+        if state["calls"] == 2:  # measured request, not warmup
+            raise ValueError("invalid timestamp")
+        return validate(*args)
+
+    def scoring_error(*args, **kwargs):
+        raise RuntimeError("offline failure")
+
+    monkeypatch.setattr(worker, "validate_prediction", invalid)
+    monkeypatch.setattr(worker, "aggregate", scoring_error)
+    with pytest.raises(WorkerExecutionError) as caught:
+        worker.execute(payload)
+    timing = caught.value.resource_evidence["timings"][0]
+    assert timing["success"] is False
+    reference = timing["prediction"]
+    path = Path(reference["path"])
+    assert reference["sha256"] == sha256_file(path)
+    record = json.loads(path.read_text(encoding="utf-8"))
+    assert record["transcript"] == "hello" and record["segments"][0]["end"] == 1
+    assert record["converted_segments"] is None
+    assert '"transcript":' not in json.dumps(caught.value.artifacts)
 
 
 @pytest.mark.parametrize("mutation", ["hash", "duration", "missing"])

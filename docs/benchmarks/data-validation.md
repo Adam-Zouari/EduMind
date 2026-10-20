@@ -9,9 +9,10 @@ Automatic checks establish consistency, not annotation truth: a reviewer must
 still check transcripts, blank sources, evidence, and labels against the assets.
 
 **Implementation status:** standalone validation and sealed report verification
-are implemented for Document, ASR (`audio`), Video, and Chunking–Embedding. Their runners require a
-matching successful report before execution. The remaining benchmark validators
-below define planned interfaces; they are not yet executable.
+are implemented for Document, ASR (`audio`), Video, Chunking–Embedding,
+Retrieval–Reranking, and Generation. Their runners require a matching successful
+report before execution. Final RAG and Vector Database retain the planned
+validator interfaces below.
 
 ## Preparation and execution
 
@@ -132,8 +133,8 @@ experiments/benchmarks/
 │   └── video/validation.py
 ├── rag/
 │   ├── chunking_embedding/validation.py
-│   ├── retrieval_reranking/validation.py # planned
-│   ├── generation/validation.py          # planned
+│   ├── retrieval_reranking/validation.py
+│   ├── generation/validation.py
 │   └── final/validation.py               # planned
 └── vectordb/validation.py                # planned
 
@@ -153,22 +154,24 @@ python -m experiments.benchmarks.validate audio --profile all
 python -m experiments.benchmarks.validate document --profile all
 python -m experiments.benchmarks.validate video --profile all
 python -m experiments.benchmarks.validate chunking-embedding --profile all
+python -m experiments.benchmarks.validate retrieval-reranking --profile all
+python -m experiments.benchmarks.validate generation --profile all
 python -m experiments.benchmarks.validate all --profile smoke
 python -m experiments.benchmarks.validate all --profile all
 ```
 
-`all` currently coordinates extraction and chunking–embedding validators. It reports missing
+`all` currently coordinates extraction and the three implemented RAG validators. It reports missing
 authoritative inputs as failures, while `--profile smoke` checks their fixtures.
 Use `--manifest` and `--protocol` for a single benchmark/profile override;
 `--inventory` supplies the frozen cross-split manifests, and ASR also accepts
-`--reliability-manifest`. Verification hashes actual inputs and validates the
+`--reliability-manifest`. Retrieval–reranking composes the chunking input contract
+explicitly; use `--chunking-protocol` when its upstream protocol is not the
+project default. Verification hashes actual inputs and validates the
 report's content seal; it neither repairs inputs nor creates a passed report.
 
 Planned commands for the remaining benchmarks:
 
 ```powershell
-python -m experiments.benchmarks.validate retrieval-reranking --profile all
-python -m experiments.benchmarks.validate generation --profile all
 python -m experiments.benchmarks.validate final-rag --profile locked
 python -m experiments.benchmarks.validate vectordb --profile all
 ```
@@ -403,8 +406,9 @@ report, not another Input Context Overflow Rate. If the gate blocks all measured
 generation, mark the candidate's execution evidence incomplete; do not emit a
 zero Runtime Error or Context-Limit-Reached Rate. Generator schema checks,
 citation-ID checks, and judge calibration happen separately from reference and
-input compatibility validation. These generation interfaces remain planned
-until the runner implements the approved contract.
+input compatibility validation. Generation implements these separate gates;
+its judge identity and calibration evidence must still be supplied before
+authoritative execution. The live Final RAG integration remains deferred.
 
 ## Data validity and metric applicability
 

@@ -442,6 +442,8 @@ def test_runtime_construction_failure_retains_unexecuted_windows(
     result = environment.run()
     assert result["execution_error"]["phase"] == "load"
     assert result["videos"][0]["unexecuted_window_count"] == 3
+    assert result["videos"][0]["transcript"] is None
+    assert result["videos"][0]["segments"] is None
 
 
 def test_cleanup_failure_does_not_replace_load_error(environment):
@@ -769,7 +771,7 @@ def test_fully_accounted_window_failures_can_be_reused_as_reliability_evidence(
     artifact, _ = _load(path)
     assert artifact["metrics"]["attempt_failure_rate"] == 1
     assert artifact["metrics"]["word_error_rate"] is None
-    assert artifact["videos"][0]["segments"] == []
+    assert artifact["videos"][0]["segments"] is None
 
 
 @pytest.mark.parametrize(

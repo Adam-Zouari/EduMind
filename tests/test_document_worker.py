@@ -323,6 +323,9 @@ def test_recoverable_attempt_failures_are_json_safe_and_remaining_attempts_run(
     assert result["attempts"][0]["document"] is None
     assert result["attempts"][0]["output_fingerprint"] is None
     assert result["attempts"][0]["error"]
+    if failure_kind in {"schema", "sync"}:
+        assert result["attempts"][0]["produced_document"]["text"]
+    assert all("produced_document" not in row for row in result["attempts"][1:])
     assert lifecycle.runtime.calls == 4
     json.dumps(result, allow_nan=False)
 

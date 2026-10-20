@@ -156,7 +156,7 @@ def test_whisper_loader_passes_offline_mode_once(monkeypatch) -> None:
     assert dtype == "float32"
 
 
-def test_mocked_asr_worker_phase_runs_end_to_end(monkeypatch) -> None:
+def test_mocked_asr_worker_phase_runs_end_to_end(monkeypatch, tmp_path) -> None:
     from experiments.benchmarks.extraction.audio import worker
 
     class Runtime:
@@ -204,6 +204,7 @@ def test_mocked_asr_worker_phase_runs_end_to_end(monkeypatch) -> None:
             "device": "cpu",
             "profile": "smoke",
             "protocol": AUDIO_PROTOCOL.meta.worker_payload(),
+            "prediction_directory": str(tmp_path / "predictions"),
         }
     )
     assert output["metrics"]["word_error_rate"] == 0.0

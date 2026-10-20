@@ -633,6 +633,7 @@ def _transcribe_video(
             input_duration = min(window_duration, canonical_duration - start)
             window_started = time.perf_counter()
             output = None
+            runtime.raw_prediction = None
             failure = None
             executed = False
             try:
@@ -693,6 +694,7 @@ def _transcribe_video(
                     "transcript": output.text if output is not None else None,
                     "segments": list(output.segments) if output is not None else None,
                     "warnings": list(output.warnings) if output is not None else [],
+                    "raw_prediction": runtime.raw_prediction,
                 }
             )
         transcript = " ".join(str(segment["text"]) for segment in segments)
@@ -735,8 +737,10 @@ def _transcribe_video(
         "executed_window_count": sum(window["executed"] for window in windows),
         "failed_window_count": sum(window["success"] is False for window in windows),
         "unexecuted_window_count": sum(not window["executed"] for window in windows),
-        "transcript": " ".join(str(segment["text"]) for segment in segments),
-        "segments": segments,
+        "transcript": " ".join(str(segment["text"]) for segment in segments)
+        if any(window["success"] for window in windows)
+        else None,
+        "segments": segments if any(window["success"] for window in windows) else None,
         "latency_seconds": time.perf_counter() - started,
         "canonical_sha256": canonical_checksum,
         "canonical_duration_seconds": canonical_duration,
@@ -782,8 +786,8 @@ def _unexecuted_video(item, protocol, reason):
         "executed_window_count": 0,
         "failed_window_count": 0,
         "unexecuted_window_count": len(windows),
-        "transcript": "",
-        "segments": [],
+        "transcript": None,
+        "segments": None,
         "latency_seconds": None,
         "canonical_sha256": None,
         "canonical_duration_seconds": None,

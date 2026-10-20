@@ -56,6 +56,8 @@ class RetrievalProtocol:
     reranker_maximum_tokens: Mapping[str, int]
     quality_cutoffs: tuple[int, ...]
     alpha_ndcg_alpha: float
+    minimum_quality_ci_documents: int | None
+    minimum_repeatability_ci_documents: int | None
     minimum_latency_ci_documents: int
     confidence_level: float
     maximum_finalists: int
@@ -300,8 +302,24 @@ def protocol_from_mapping(
     statistics = strict_object(
         root["statistics"],
         "statistics",
-        {"minimum_latency_ci_documents", "confidence_level"},
+        {
+            "minimum_quality_ci_documents",
+            "minimum_repeatability_ci_documents",
+            "minimum_latency_ci_documents",
+            "confidence_level",
+        },
     )
+    support = {
+        name: (
+            integer(statistics[name], f"statistics.{name}", minimum=2)
+            if statistics[name] is not None
+            else None
+        )
+        for name in (
+            "minimum_quality_ci_documents",
+            "minimum_repeatability_ci_documents",
+        )
+    }
     minimum_documents = integer(
         statistics["minimum_latency_ci_documents"],
         "statistics.minimum_latency_ci_documents",
@@ -366,6 +384,10 @@ def protocol_from_mapping(
         reranker_maximum_tokens=maximum_tokens,
         quality_cutoffs=cutoffs,
         alpha_ndcg_alpha=alpha,
+        minimum_quality_ci_documents=support["minimum_quality_ci_documents"],
+        minimum_repeatability_ci_documents=support[
+            "minimum_repeatability_ci_documents"
+        ],
         minimum_latency_ci_documents=minimum_documents,
         confidence_level=confidence,
         maximum_finalists=maximum_finalists,

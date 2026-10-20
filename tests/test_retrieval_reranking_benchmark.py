@@ -72,6 +72,8 @@ def _settings(
     **overrides: object,
 ) -> dict[str, object]:
     payload = deepcopy(default_protocol().meta.resolved)
+    payload["statistics"]["minimum_quality_ci_documents"] = 2
+    payload["statistics"]["minimum_repeatability_ci_documents"] = 2
     execution = payload["profiles"][profile]
     if warmups is not None:
         execution["warmups"] = warmups
@@ -172,7 +174,12 @@ def test_validation_runs_exactly_the_engineer_selected_candidates(monkeypatch) -
     )
     assert (
         retrieval_run._selected_candidates(
-            "validation", Path("decision.json"), RETRIEVAL_CANDIDATES, 3
+            "validation",
+            Path("decision.json"),
+            RETRIEVAL_CANDIDATES,
+            3,
+            protocols={"retrieval": "test-protocol"},
+            qualification="test-qualification",
         )
         == selected
     )
@@ -185,7 +192,12 @@ def test_locked_retrieval_requires_exactly_one_candidate(monkeypatch) -> None:
 
     monkeypatch.setattr(retrieval_run, "load_engineer_decision", decision)
     assert retrieval_run._selected_candidates(
-        "locked", Path("decision.json"), RETRIEVAL_CANDIDATES, 3
+        "locked",
+        Path("decision.json"),
+        RETRIEVAL_CANDIDATES,
+        3,
+        protocols={"retrieval": "test-protocol"},
+        qualification="test-qualification",
     ) == ("rrf|ettin-400m",)
 
 
@@ -307,10 +319,13 @@ def test_smoke_fixture_produces_exactly_thirty_frozen_chunks() -> None:
 def test_metric_contract_excludes_obsolete_retrieval_metrics() -> None:
     manifest = load_manifest(PROJECT_ROOT / "data/benchmarks/rag/smoke.json")
     protocol = default_protocol()
-    directions, required = directions_for(manifest, protocol)
+    directions, _ = directions_for(manifest, protocol)
     assert "quality.overall.ndcg_at_3" in directions
     assert "quality.overall.evidence_unit_recall_at_5" in directions
-    assert "validity.ranking_agreement" in required
+    assert "validity.ranking_agreement" not in directions
+    assert directions["diagnostic.ranking_repeatability"] == "max"
+    assert "validity.pool_collection_match" not in directions
+    assert directions["validity.failed_query_count"] == "descriptive"
     assert (
         directions["diagnostic.pool_evidence_unit_recall_at_20.sample_count"]
         == "descriptive"
@@ -359,7 +374,6 @@ class _FixtureReranker:
     model_path = "."
     maximum_length = 8192
     batch_size = 1
-    snapshot_bytes = 1234
 
     def prepare(self) -> None:
         pass
@@ -449,7 +463,12 @@ def _fixture_index() -> ExactIndex:
         ),
         chunking_fingerprint="chunking-fingerprint",
         chunking_contract={"name": "fixture"},
-        corpus_build_seconds=0.1,
+        corpus_build_seconds=0.0,
+        phase_seconds={
+            "dense_index_build_seconds": 0.03,
+            "bm25_index_build_seconds": 0.07,
+            "index_build_seconds": 0.1,
+        },
         preflight={"status": "passed", "truncated_inputs": 0},
     )
 
@@ -587,7 +606,7 @@ def test_owner_pool_is_reused_by_every_reranker_child(
         "_reranker",
         lambda *_args, **_kwargs: _FixtureReranker(),
     )
-    with pytest.raises(ValueError, match="index identity mismatch"):
+    with pytest.raises(CandidateExecutionError, match="index identity mismatch"):
         evaluate_candidate(
             "bm25|ettin-150m",
             manifest,
@@ -601,7 +620,7 @@ def test_owner_pool_is_reused_by_every_reranker_child(
             },
             child_run_id="child-run",
         )
-    with pytest.raises(ValueError, match="unexpected dense_index_sha256"):
+    with pytest.raises(CandidateExecutionError, match="unexpected dense_index_sha256"):
         evaluate_candidate(
             "bm25|ettin-150m",
             manifest,
@@ -635,9 +654,9 @@ def test_owner_pool_is_reused_by_every_reranker_child(
     assert child[3]["reranker_batch_size"] == 1
     assert child[3]["reranker_input_template"] == "tokenizer(query, passage)"
     assert "reranker_contract" not in child[3]
-    assert child[2]["validity.pool_collection_match"] == 1.0
+    assert "validity.pool_collection_match" not in child[2]
     assert child[2]["validity.exact_pool_permutation"] == 1.0
-    assert child[2]["validity.ranking_agreement"] == 1.0
+    assert child[2]["diagnostic.ranking_repeatability"] == 1.0
     assert len(child[5]["timings"]) == 2
 
 
@@ -677,27 +696,27 @@ def test_measured_failure_keeps_every_timing_row(
             chunker_embedding=f"token-256-32|{PRODUCTION_EMBEDDING_MODEL}",
         ),
     )
-    with pytest.raises(CandidateExecutionError) as captured:
-        evaluate_candidate(
-            "bm25|none",
-            manifest,
-            {
-                PRODUCTION_EMBEDDING_MODEL: {
-                    "revision": "revision",
-                    "model_path": ".",
-                    "model_cache_manifest_sha256": "embedding-sha",
-                }
-            },
-            plan,
-            device="cpu",
-            dtype="float32",
-            frozen_pool_collection=None,
-            child_run_id="owner-run",
-        )
+    evaluated = evaluate_candidate(
+        "bm25|none",
+        manifest,
+        {
+            PRODUCTION_EMBEDDING_MODEL: {
+                "revision": "revision",
+                "model_path": ".",
+                "model_cache_manifest_sha256": "embedding-sha",
+            }
+        },
+        plan,
+        device="cpu",
+        dtype="float32",
+        frozen_pool_collection=None,
+        child_run_id="owner-run",
+    )
     assert calls == 3
-    assert len(captured.value.artifacts["timings"]) == 3
-    assert captured.value.metrics["validity.failed_query_count"] == 1.0
-    assert captured.value.metrics["validity.ranking_agreement"] < 1.0
+    assert len(evaluated[5]["timings"]) == 3
+    assert evaluated[2]["validity.failed_query_count"] == 1.0
+    assert evaluated[2]["diagnostic.ranking_repeatability"] == pytest.approx(1 / 3)
+    assert evaluated[2]["quality.overall.ndcg_at_3"] is not None
 
 
 def test_parent_comparisons_are_separated_and_csv_matches_parquet(
@@ -707,9 +726,9 @@ def test_parent_comparisons_are_separated_and_csv_matches_parquet(
         "quality.overall.ndcg_at_3": "max",
         "diagnostic.pool_evidence_unit_recall_at_20": "max",
         "operational.full_stack_latency_ms_p50": "min",
-        "operational.first_stage_latency_ms_p50": "min",
-        "workload.retrieved_tokens_at_3_mean": "descriptive",
-        "storage.required_index_bytes": "descriptive",
+        "operational.retrieval_latency_ms_p50": "min",
+        "workload.retrieved_context_tokens_at_3_mean": "descriptive",
+        "storage.index_size_bytes": "descriptive",
     }
     pool_collection_checksums = {
         retriever: stable_hash([{"retriever": retriever}])
@@ -747,14 +766,14 @@ def test_parent_comparisons_are_separated_and_csv_matches_parquet(
                 metrics={
                     "quality.overall.ndcg_at_3": value,
                     "diagnostic.pool_evidence_unit_recall_at_20": value,
-                    "workload.retrieved_tokens_at_3_mean": 100.0 + position,
-                    "storage.required_index_bytes": 1000.0 + position,
+                    "workload.retrieved_context_tokens_at_3_mean": 100.0 + position,
+                    "storage.index_size_bytes": 1000.0 + position,
                 },
                 intervals={},
                 samples=samples,
                 operational={
                     "full_stack_latency_ms_p50": 10.0 + position,
-                    "first_stage_latency_ms_p50": 5.0 + position,
+                    "retrieval_latency_ms_p50": 5.0 + position,
                 },
                 mlflow_run_id=f"run-{position}",
                 parameters={
@@ -838,7 +857,7 @@ def test_parent_comparisons_are_separated_and_csv_matches_parquet(
         finalists[["baseline_candidate", "candidate"]].drop_duplicates().shape[0] == 1
     )
     workload = reranker[
-        reranker["metric_name"] == "workload.retrieved_tokens_at_3_mean"
+        reranker["metric_name"] == "workload.retrieved_context_tokens_at_3_mean"
     ]
     assert workload["direction"].eq("descriptive").all()
     assert workload["favors_candidate"].isna().all()
@@ -863,3 +882,396 @@ def test_parent_comparisons_are_separated_and_csv_matches_parquet(
         "logical_table_sha256"
     ]
     assert not (tmp_path / "retrieval_protocol.json").exists()
+
+
+def _rr_plan(*, warmups=0, repetitions=3):
+    manifest = _fixture_manifest()
+    return BenchmarkPlan(
+        "rag",
+        "retrieval-reranking",
+        "smoke",
+        manifest.name,
+        ("bm25|none",),
+        seed=42,
+        warmups=warmups,
+        repetitions=repetitions,
+        bootstrap_resamples=0,
+        settings=_settings(
+            profile="smoke",
+            warmups=warmups,
+            repetitions=repetitions,
+            bootstrap_resamples=0,
+            chunker_embedding=f"token-256-32|{PRODUCTION_EMBEDDING_MODEL}",
+        ),
+    )
+
+
+def _rr_lock():
+    entry = {
+        "revision": "revision",
+        "model_path": ".",
+        "model_cache_manifest_sha256": "sha",
+    }
+    return {
+        PRODUCTION_EMBEDDING_MODEL: entry,
+        "cross-encoder/ettin-reranker-150m-v1": entry,
+    }
+
+
+def _rr_evaluate(
+    monkeypatch,
+    *,
+    index=None,
+    plan=None,
+    candidate="bm25|none",
+    frozen=None,
+    preparation_only=False,
+):
+    monkeypatch.setattr(
+        retrieval_benchmark, "build_index", lambda *a, **kw: index or _fixture_index()
+    )
+    return evaluate_candidate(
+        candidate,
+        _fixture_manifest(),
+        _rr_lock(),
+        plan or _rr_plan(),
+        device="cpu",
+        dtype="float32",
+        frozen_pool_collection=frozen,
+        child_run_id=None if preparation_only else "run",
+        preparation_only=preparation_only,
+    )
+
+
+def _frozen(evaluated):
+    build = evaluated[5]["index_build"]
+    return {
+        "owner_candidate": "bm25|none",
+        "owner_child_run_id": None,
+        "pool_collection_checksum": evaluated[3]["pool_collection_checksum"],
+        "rows": evaluated[5]["pool_collection"],
+        **{
+            key: build[key]
+            for key in ("retriever", "chunks_sha256", "bm25_index_sha256")
+        },
+    }
+
+
+def test_one_attempt_smoke_repeatability_is_inapplicable_not_missing(monkeypatch):
+    result = _rr_evaluate(monkeypatch, plan=_rr_plan(repetitions=1))
+    name = "diagnostic.ranking_repeatability"
+    details = result[5]["validation_report"]["metric_support"][name]
+    assert result[2][name] is None
+    assert details["status"] == "inapplicable"
+    assert details["unavailable_question_count"] == 0
+    assert details["eligible_question_count"] == 0
+    assert result[4][name]["reason"] == "repeatability_not_measured"
+
+
+def test_none_owner_has_only_one_warmup_and_scheduled_retrievals(monkeypatch):
+    index, calls = _fixture_index(), []
+    original = index.bm25.rank
+    monkeypatch.setattr(
+        index.bm25,
+        "rank",
+        lambda query, limit: calls.append(query) or original(query, limit),
+    )
+    evaluated = _rr_evaluate(monkeypatch, index=index, plan=_rr_plan(warmups=1))
+    assert len(calls) == 4
+    assert {row["repetition"] for row in evaluated[5]["rankings"]} == {1, 2, 3}
+    assert evaluated[1]["index_build_seconds"] == 0.07
+    assert "storage.reranker_snapshot_bytes" not in evaluated[2]
+    assert not any(name.startswith("workload.corpus") for name in evaluated[2])
+
+
+@pytest.mark.parametrize("failures,expected", [({1}, 1 / 3), ({1, 2, 3}, 0.0)])
+def test_failed_first_never_uses_later_quality_and_keeps_outcomes(
+    monkeypatch, failures, expected
+):
+    index, calls = _fixture_index(), 0
+    original = index.bm25.rank
+
+    def rank(query, limit):
+        nonlocal calls
+        calls += 1
+        if calls in failures:
+            raise RuntimeError("recoverable request failure")
+        return original(query, limit)
+
+    monkeypatch.setattr(index.bm25, "rank", rank)
+    with pytest.raises(CandidateExecutionError) as caught:
+        _rr_evaluate(monkeypatch, index=index)
+    error = caught.value
+    assert calls == 3
+    assert error.metrics["quality.overall.ndcg_at_3"] is None
+    assert error.metrics["diagnostic.ranking_repeatability"] == pytest.approx(expected)
+    assert error.metrics["validity.processed_query_count"] == 1
+    assert error.metrics["validity.failed_query_count"] == 1
+    assert len(error.artifacts["timings"]) == 3
+    assert error.operational["index_build_seconds"] == 0.07
+    assert error.metrics["storage.index_size_bytes"] == len(index.bm25.serialized)
+
+
+def test_malformed_ranking_retains_raw_fragment_and_completed_build(monkeypatch):
+    index = _fixture_index()
+    monkeypatch.setattr(index.bm25, "rank", lambda *a: ["bad row", [0, "bad score"]])
+    with pytest.raises(CandidateExecutionError) as caught:
+        _rr_evaluate(monkeypatch, index=index)
+    rankings = caught.value.artifacts["rankings"]
+    assert any("bad row" in str(row.get("raw_output_json")) for row in rankings)
+    assert caught.value.operational["index_build_seconds"] == 0.07
+    assert caught.value.metrics["quality.overall.evidence_token_precision_at_3"] is None
+
+
+def test_preparation_only_is_explicit_and_native_validation_is_measured(monkeypatch):
+    index = _fixture_index()
+    prepared = _rr_evaluate(monkeypatch, index=index, preparation_only=True)
+    assert prepared[0] == []
+    assert prepared[5]["timings"] == []
+    assert prepared[3]["pool_owner_child_run_id"] is None
+    events = []
+
+    class Reranker(_FixtureReranker):
+        def input_token_counts(self, query, documents):
+            events.append("validate")
+            return super().input_token_counts(query, documents)
+
+        def rank_with_scores(self, query, documents, **kwargs):
+            events.append("rank")
+            return super().rank_with_scores(query, documents, **kwargs)
+
+    monkeypatch.setattr(retrieval_benchmark, "_reranker", lambda *a, **kw: Reranker())
+    child = _rr_evaluate(
+        monkeypatch,
+        index=index,
+        candidate="bm25|ettin-150m",
+        frozen=_frozen(prepared),
+        plan=_rr_plan(warmups=1),
+    )
+    assert events == ["validate", "rank"] * 4
+    assert child[5]["validation_report"]["native_inputs"]["q1"]["total"] > 0
+    assert child[2]["workload.reranker_input_tokens_per_query_mean"] > 0
+    assert "storage.index_size_bytes" not in child[2]
+
+
+def test_repeatability_all_three_pairs_full_order_and_missing_outcomes():
+    from experiments.benchmarks.rag.retrieval_reranking.metrics import repeatability
+
+    def attempt(rep, ids=None, status="success"):
+        return {
+            "repetition": rep,
+            "status": status,
+            "valid": status == "success",
+            "ordered_chunk_ids": ids,
+        }
+
+    a, b = list(range(20)), [*range(18), 19, 18]
+    result = repeatability([attempt(1, a), attempt(2, a), attempt(3, b)], 3)
+    assert result["value"] == pytest.approx(1 / 3)
+    assert len(result["pairs"]) == 3
+    assert repeatability(
+        [attempt(1, status="failed"), attempt(2, a), attempt(3, a)], 3
+    )["value"] == pytest.approx(1 / 3)
+    assert (
+        repeatability(
+            [attempt(1, a), attempt(2, a), attempt(3, status="not_executed")], 3
+        )["value"]
+        is None
+    )
+    assert repeatability([attempt(1, a)], 1)["status"] == "inapplicable"
+
+
+def test_repeatability_source_ci_policy_and_degenerate_bounds():
+    from experiments.benchmarks.rag.retrieval_reranking.metrics import aggregate_quality
+
+    key = "diagnostic.ranking_repeatability"
+    samples = [
+        SampleResult(
+            str(i), {key: 1.0}, None, {"document_id": str(i), "evidence_type": "text"}
+        )
+        for i in range(2)
+    ]
+    values, intervals, _ = aggregate_quality(
+        samples,
+        names=[key],
+        resamples=100,
+        seed=42,
+        confidence=0.95,
+        minimum_documents=2,
+    )
+    assert values[key] == 1
+    assert intervals[key]["lower"] == intervals[key]["upper"] == 1
+    assert intervals[key]["degenerate"]
+    assert intervals[key]["defined_resamples"] == 100
+    _, intervals, _ = aggregate_quality(
+        samples,
+        names=[key],
+        resamples=100,
+        seed=42,
+        confidence=0.95,
+        minimum_documents=None,
+    )
+    assert intervals[key]["lower"] is None
+    assert intervals[key]["reason"] == "ci_support_not_frozen"
+
+
+def test_document_macro_weights_survive_reviewed_multi_document_source_groups():
+    from experiments.benchmarks.rag.retrieval_reranking.metrics import aggregate_quality
+
+    name = "quality.overall.ndcg_at_5"
+    samples = [
+        SampleResult(
+            f"{document}-{i}",
+            {name: value},
+            None,
+            {
+                "document_id": document,
+                "independent_source_id": source,
+                "evidence_type": "text",
+            },
+        )
+        for document, source, value, count in (
+            ("a", "shared", 1.0, 1),
+            ("b", "shared", 0.0, 5),
+            ("c", "other", 1.0, 1),
+        )
+        for i in range(count)
+    ]
+    metrics, intervals, support = aggregate_quality(
+        samples,
+        names=[name],
+        resamples=200,
+        seed=42,
+        confidence=0.95,
+        minimum_documents=2,
+    )
+    assert metrics[name] == pytest.approx(2 / 3)
+    assert metrics[name + ".sample_count"] == 3
+    assert support[name]["eligible_question_count"] == 7
+    assert intervals[name]["independent_source_count"] == 2
+    assert intervals[name]["lower"] == 0.5
+    assert intervals[name]["upper"] == 1
+
+
+def test_paired_latency_recalculates_percentiles_not_mean_query_differences():
+    from experiments.benchmarks.rag.retrieval_reranking.metrics import (
+        paired_document_interval,
+    )
+
+    def rows(times):
+        return [
+            SampleResult(
+                str(i), {}, seconds, {"document_id": str(i), "evidence_type": "text"}
+            )
+            for i, seconds in enumerate(times)
+        ]
+
+    bounds, questions, documents, sources = paired_document_interval(
+        rows([1.0, 2.0, 100.0]),
+        rows([2.0, 10.0, 101.0]),
+        "operational.full_stack_latency_ms_p50",
+        resamples=200,
+        seed=42,
+        confidence=0.95,
+        minimum_documents=2,
+    )
+    assert bounds["estimate"] == 8000  # median 10 minus median 2, in milliseconds
+    assert bounds["estimate"] != pytest.approx((1000 + 8000 + 1000) / 3)
+    assert (questions, documents, sources) == (3, 3, 3)
+    assert bounds["defined_resamples"] == 200
+
+
+def test_interrupted_rrf_build_preserves_only_completed_dependency():
+    index = _fixture_index()
+    index.vectors = np.tile(np.eye(1, 768, dtype=np.float32), (len(index.chunks), 1))
+    index.phase_seconds = {"dense_index_build_seconds": 0.5}
+    progress = {
+        "chunks": index.chunks,
+        "vectors": index.vectors,
+        "chunking_contract": {"fingerprint": index.chunking_fingerprint},
+        "phase_seconds": index.phase_seconds,
+        "build_elapsed_to_failure": 0.7,
+    }
+    artifact = retrieval_benchmark._interrupted_index_artifact(
+        progress, parse_candidate("rrf|none")
+    )
+    assert artifact["status"] == "incomplete"
+    assert set(artifact["dependencies"]) == {"dense"}
+    assert artifact["dependencies"]["dense"]["size_bytes"] == index.vectors.nbytes
+    assert artifact["dependencies"]["dense"]["build_seconds"] == 0.5
+    assert "corpus_build_seconds" not in artifact
+
+
+def test_rr_validator_binds_explicit_chunking_protocol_and_reuses_report(tmp_path):
+    from experiments.benchmarks.rag.retrieval_reranking.validation import (
+        prepare_report,
+        verify_inputs,
+    )
+
+    path = PROJECT_ROOT / "data/benchmarks/rag/smoke.json"
+    protocol, chunking = default_protocol(), default_chunking_protocol()
+    report_path, report = prepare_report(
+        path, "smoke", protocol, chunking_protocol=chunking, report_root=tmp_path
+    )
+    assert report["status"] == "passed"
+    assert (
+        verify_inputs(
+            path, "smoke", protocol, chunking_protocol=chunking, report_root=tmp_path
+        )[0]
+        == report_path
+    )
+    payload = deepcopy(chunking.meta.resolved)
+    payload["data"]["minimum_structured_questions"]["table"] += 1
+    changed = chunking_protocol_from_mapping(payload)
+    # Smoke deliberately has no authoritative allocation requirement.
+    assert (
+        verify_inputs(
+            path, "smoke", protocol, chunking_protocol=changed, report_root=tmp_path
+        )[0]
+        == report_path
+    )
+
+
+def test_decision_is_bound_to_protocol_and_qualification(monkeypatch):
+    observed = {}
+
+    def decision(path, **kwargs):
+        observed.update(kwargs)
+        return SimpleNamespace(selected_candidates=("bm25|ettin-150m",))
+
+    monkeypatch.setattr(retrieval_run, "load_engineer_decision", decision)
+    retrieval_run._selected_candidates(
+        "locked",
+        Path("decision.json"),
+        RETRIEVAL_CANDIDATES,
+        3,
+        protocols={"retrieval": "protocol-sha"},
+        qualification="qualification-sha",
+    )
+    assert observed["expected_protocols"] == {"retrieval": "protocol-sha"}
+    assert observed["expected_qualification"] == "qualification-sha"
+
+
+def test_attempt_tables_are_durably_serializable(monkeypatch, tmp_path):
+    evaluated = _rr_evaluate(monkeypatch)
+    for name in (
+        "query_metrics",
+        "rankings",
+        "evidence_matches",
+        "timings",
+        "resources",
+    ):
+        frame = pd.DataFrame(evaluated[5][name])
+        destination = tmp_path / f"{name}.parquet"
+        frame.to_parquet(destination, index=False)
+        assert len(pd.read_parquet(destination)) == len(frame)
+
+
+def test_small_corpus_pool_size_is_exact_not_padded():
+    index = _fixture_index()
+    index.chunks = index.chunks[:12]
+    rows = [(i, float(i)) for i in range(12)]
+    retrieval_benchmark._require_pool(rows, index, default_protocol(), "q1")
+    index.chunks = _fixture_index().chunks
+    with pytest.raises(ValueError, match="Incomplete query pool"):
+        retrieval_benchmark._require_pool(rows, index, default_protocol(), "q1")

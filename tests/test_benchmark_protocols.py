@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -27,7 +26,6 @@ from experiments.benchmarks.rag.chunking_embedding.strategies import (
 from experiments.benchmarks.rag.final.protocol import (
     load_protocol as load_final_protocol,
 )
-from experiments.benchmarks.rag.generation.evaluate import _questions
 from experiments.benchmarks.rag.generation.protocol import (
     load_protocol as load_generation_protocol,
 )
@@ -75,7 +73,7 @@ PROTOCOL_CASES = (
         "generation",
         ROOT / "experiments/benchmarks/rag/generation/protocol.yaml",
         load_generation_protocol,
-        ("generation", "temperature"),
+        ("decoding", "qwen3-0.6b-direct", "temperature"),
     ),
     (
         "final_rag",
@@ -245,19 +243,16 @@ def test_rag_and_vector_behavior_comes_from_protocol(tmp_path) -> None:
     assert retrieval.pool_size == retrieval.rrf_source_depth == 12
 
     generation_root = deepcopy(load_generation_protocol().meta.resolved)
-    generation_root["development_screen"]["question_count"] = 12
-    generation_root["context"]["frozen_packing_limit_tokens"] = 3000
-    generation_root["generation"]["maximum_answer_tokens"] = 128
+    generation_root["decoding"]["qwen3-0.6b-direct"]["temperature"] = 0.5
     generation_root["generation"]["streamer_timeout_seconds"] = 90
     generation = load_generation_protocol(
         _write_protocol(tmp_path, "generation-behavior", generation_root)
     )
     assert (
-        generation.question_count,
-        generation.context_packing_tokens,
-        generation.maximum_answer_tokens,
+        generation.decoder("qwen3-0.6b-direct")["temperature"],
+        generation.context_tokens,
         generation.streamer_timeout_seconds,
-    ) == (12, 3000, 128, 90)
+    ) == (0.5, 8192, 90)
 
     final_root = deepcopy(load_final_protocol().meta.resolved)
     final_root["selection"]["top_k"] = [2, 4]
@@ -288,22 +283,14 @@ def test_rag_and_vector_behavior_comes_from_protocol(tmp_path) -> None:
     assert _protocol_confidence_level({"vector_database": vector.meta}) == 0.9
 
 
-def test_generation_screen_limit_and_final_profiles_are_explicit() -> None:
-    manifest = SimpleNamespace(
-        samples=tuple(
-            {
-                "id": f"q-{index}",
-                "kind": "question",
-                "answerable": True,
-                "evidence": [{"unit_id": f"e-{index}"}],
-                "evidence_type": "text",
-            }
-            for index in range(30)
-        )
-    )
-    assert len(_questions(manifest, 24, 42)) == 24
-    assert len(_questions(manifest, None, 42)) == 30
-
+def test_generation_modes_and_final_profiles_are_explicit() -> None:
+    generation = load_generation_protocol()
+    assert len(generation.models) == 7
+    assert len(set(generation.models.values())) == 4
+    assert generation.measured_seeds == (42, 43, 44)
+    assert generation.profile("development").warmups == 1
+    assert "development_screen" not in generation.meta.resolved
+    assert "maximum_answer_tokens" not in generation.meta.resolved["generation"]
     final = load_final_protocol()
     assert final.profile("development") == final.meta.profile("development")
     assert final.profile("validation") == final.meta.profile("validation")
@@ -320,6 +307,10 @@ def test_retrieval_uses_the_supplied_chunking_smoke_pair(tmp_path, monkeypatch) 
     chunk_root = deepcopy(load_chunking_protocol().meta.resolved)
     chunk_root["smoke_pair"] = "token-256-32|Snowflake/snowflake-arctic-embed-m-v2.0"
     chunk_path = _write_protocol(tmp_path, "chunking-smoke", chunk_root)
+    monkeypatch.setattr(
+        "experiments.benchmarks.rag.retrieval_reranking.run.verify_inputs",
+        lambda *_, **__: (tmp_path / "validated.json", {}),
+    )
 
     def check_model_selection(_path, *, candidates):
         assert "Snowflake/snowflake-arctic-embed-m-v2.0" in candidates

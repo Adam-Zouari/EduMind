@@ -110,7 +110,7 @@ def test_protocols_declare_the_expected_smoke_and_locked_profiles() -> None:
     assert chunking().profile("smoke").dtype_for("cuda") == "float16"
     assert retrieval().profile("smoke").dtype_for("cuda") == "float16"
     assert generation().profile("smoke").devices == ("cpu", "cuda")
-    assert generation().profile("smoke").dtype_for("cpu") == "auto"
+    assert generation().profile("smoke").dtype_for("cpu") == "float32"
     assert generation().profile("smoke").dtype_for("cuda") == "float16"
     assert final_rag().profile("smoke").devices == ("cpu", "cuda")
     assert vectordb().profile("smoke").devices == ("cpu",)

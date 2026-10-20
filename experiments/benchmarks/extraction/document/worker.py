@@ -424,10 +424,12 @@ def execute(payload):
         ):
             measured_batch_seconds = time.perf_counter() - batch_started
 
-    def extract_payload(request):
+    def extract_payload(request, evidence=None):
         document = extractor.extract(request, request.source_kind)
-        synchronize(backend_device, profile.runtime_engine)
         data = document.to_dict()
+        if evidence is not None:
+            evidence["produced_document"] = data
+        synchronize(backend_device, profile.runtime_engine)
         validated = validate_document_payload(data)
         if (
             validated.source_kind != request.source_kind
@@ -485,11 +487,16 @@ def execute(payload):
                     row.update(executed=True, not_executed_reason=None)
                     try:
                         seed_deterministically(protocol.meta.seed)
-                        data, document = extract_payload(requests[row["sample_id"]])
+                        data, document = extract_payload(
+                            requests[row["sample_id"]], row
+                        )
                         fingerprint = _document_fingerprint(document)
                         row.update(
                             success=True, document=data, output_fingerprint=fingerprint
                         )
+                        row.pop(
+                            "produced_document", None
+                        )  # completed output already retained
                     except Exception as exc:  # noqa: BLE001 - preserve every recoverable attempt
                         row.update(
                             success=False,

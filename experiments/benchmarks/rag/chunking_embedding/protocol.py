@@ -58,8 +58,10 @@ class ChunkingEmbeddingProtocol:
     quality_cutoffs: tuple[int, ...]
     audit_depth: int
     alpha_ndcg_alpha: float
+    repeatability_depth: int
     minimum_latency_ci_documents: int
     minimum_quality_ci_documents: int | None
+    minimum_repeatability_ci_documents: int | None
     data_requirements: Mapping[str, object]
     confidence_level: float
     maximum_finalists: int
@@ -67,6 +69,17 @@ class ChunkingEmbeddingProtocol:
 
     def profile(self, name: str):
         return self.meta.profile(name)
+
+    @property
+    def unfrozen_ci_policies(self) -> tuple[str, ...]:
+        return tuple(
+            name
+            for name, minimum in (
+                ("quality", self.minimum_quality_ci_documents),
+                ("ranking_repeatability", self.minimum_repeatability_ci_documents),
+            )
+            if minimum is None
+        )
 
     @property
     def primary_quality_metrics(self) -> tuple[str, ...]:
@@ -123,6 +136,7 @@ def protocol_from_mapping(
             "smoke_pair",
             "index",
             "quality",
+            "repeatability",
             "statistics",
             "data",
             "selection",
@@ -221,6 +235,7 @@ def protocol_from_mapping(
         {
             "minimum_latency_ci_documents",
             "minimum_quality_ci_documents",
+            "minimum_repeatability_ci_documents",
             "confidence_level",
         },
     )
@@ -233,6 +248,19 @@ def protocol_from_mapping(
     if quality_support is not None:
         quality_support = integer(
             quality_support, "statistics.minimum_quality_ci_documents", minimum=2
+        )
+    repeatability = strict_object(root["repeatability"], "repeatability", {"depth"})
+    repeatability_depth = integer(
+        repeatability["depth"], "repeatability.depth", minimum=1
+    )
+    if repeatability_depth > audit_depth:
+        raise ValueError("repeatability.depth must not exceed quality.audit_depth")
+    repeatability_support = statistics["minimum_repeatability_ci_documents"]
+    if repeatability_support is not None:
+        repeatability_support = integer(
+            repeatability_support,
+            "statistics.minimum_repeatability_ci_documents",
+            minimum=2,
         )
     data = strict_object(
         root["data"], "data", {"qasper_papers", "minimum_structured_questions"}
@@ -301,8 +329,10 @@ def protocol_from_mapping(
         cutoffs,
         audit_depth,
         alpha,
+        repeatability_depth,
         minimum_documents,
         quality_support,
+        repeatability_support,
         data,
         confidence,
         maximum_finalists,

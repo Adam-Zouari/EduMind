@@ -6,6 +6,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
+from edumind.common.artifacts import atomic_write_json
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.arguments import (
     LIFECYCLE_PROFILES,
@@ -38,9 +39,11 @@ from experiments.benchmarks.rag.chunking_embedding.benchmark import (
     preflight_in_fresh_process,
     run_in_fresh_process,
 )
+from experiments.benchmarks.rag.chunking_embedding.metrics import paired_quality
 from experiments.benchmarks.rag.chunking_embedding.protocol import (
     DEFAULT_PROTOCOL_PATH,
     load_protocol,
+    protocol_from_settings,
 )
 from experiments.benchmarks.rag.chunking_embedding.validation import verify_inputs
 
@@ -304,15 +307,18 @@ def _run_evaluation(
         },
         protocols={"chunking_embedding": protocol.meta},
         nullable_metrics=tuple(
-            name for name in required_metrics if name.startswith("operational.")
+            name
+            for name in required_metrics
+            if name.startswith("operational.")
+            or name == "diagnostic.ranking_repeatability"
         ),
         no_mlflow=no_mlflow,
         candidate_artifact_name="candidate.json",
         sample_artifact_name="query_metrics",
         resource_artifact_name="resources",
         monitor_resources=False,
-        paired_group_key="document_id",
-        paired_minimum_ci_units=protocol.minimum_quality_ci_documents,
+        paired_comparisons=False,
+        parent_artifact_builder=_paired_artifact,
         run_name_prefix=(f"smoke-{device}" if profile == "smoke" else profile),
         operational_maximums=(
             {"peak_vram_mb": protocol.authoritative_peak_vram_mb}
@@ -320,6 +326,25 @@ def _run_evaluation(
             else None
         ),
     )
+
+
+def _paired_artifact(directory, results, plan):
+    if plan.profile == "smoke":
+        return []
+    protocol = protocol_from_settings(plan.settings)
+    path = directory / "paired_comparisons.json"
+    atomic_write_json(
+        path,
+        paired_quality(
+            results,
+            [f"quality.overall.{name}" for name in protocol.quality_metrics],
+            resamples=plan.bootstrap_resamples,
+            seed=plan.seed,
+            minimum_documents=protocol.minimum_quality_ci_documents,
+            confidence=protocol.confidence_level,
+        ),
+    )
+    return [path]
 
 
 def _plan(protocol, manifest, candidates, profile, device, dtype):
@@ -337,6 +362,16 @@ def _plan(protocol, manifest, candidates, profile, device, dtype):
         settings={
             "device": device,
             "dtype": dtype,
+            "quality_sample_unit": "source_document_macro_value",
+            "bootstrap_independent_unit": "reviewed_source_group",
+            "paired_comparison_artifact": "paired_comparisons.json",
+            "ci_support_policy_frozen": not protocol.unfrozen_ci_policies,
+            "unfrozen_ci_policies": protocol.unfrozen_ci_policies,
+            "reporting_interpretation": "wiring_only"
+            if profile == "smoke"
+            else "exploratory"
+            if protocol.unfrozen_ci_policies
+            else "authoritative_if_complete_and_valid",
             "chunking_embedding_protocol": protocol.meta.worker_payload(),
         },
     )
@@ -371,6 +406,11 @@ def _selected_candidates(profile, shortlist, protocol, *, qualification_fingerpr
         raise ValueError(
             "Chunking/embedding decision contains undeclared pairs: "
             + ", ".join(unknown)
+        )
+    if protocol.unfrozen_ci_policies:
+        raise ValueError(
+            "Authoritative advancement requires frozen CI support policies: "
+            + ", ".join(protocol.unfrozen_ci_policies)
         )
     return decision.selected_candidates
 

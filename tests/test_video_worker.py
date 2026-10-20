@@ -1,11 +1,14 @@
 """Visual lifecycle, first-attempt ownership, and strict frame output regressions."""
 
+import json
+import tempfile
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from edumind.extraction import ExtractedDocument, ExtractionProfile, SourceKind
 from experiments.benchmarks.common.process import WorkerExecutionError
 from experiments.benchmarks.extraction.audio.protocol import (
     load_protocol as audio_protocol,
@@ -266,6 +269,7 @@ def test_frame_conversion_failure_preserves_completed_selection(monkeypatch, tmp
     extractor = SimpleNamespace(
         extract=lambda *_args: SimpleNamespace(to_dict=lambda: {"text": "bad"})
     )
+    evidence = {}
     with pytest.raises(worker.VisualAttemptFailure) as caught:
         worker._process_video(
             extractor,
@@ -276,6 +280,68 @@ def test_frame_conversion_failure_preserves_completed_selection(monkeypatch, tmp
             "revision",
             "cpu",
             {},
+            evidence,
         )
     assert caught.value.selected_frame_count == 1
     assert caught.value.command == ["ffmpeg"]
+    assert evidence["selected_frame_timestamps"] == [0]
+    assert evidence["frames"] == [
+        {
+            "frame_index": 0,
+            "timestamp": 0,
+            "input_sha256": "checksum",
+            "document": {"text": "bad"},
+        }
+    ]
+
+
+def test_frame_times_and_structured_outputs_survive_temporary_cleanup(
+    monkeypatch, tmp_path
+):
+    evidence = {}
+    with tempfile.TemporaryDirectory(dir=tmp_path) as raw:
+        directory = Path(raw)
+        monkeypatch.setattr(
+            worker,
+            "_extract_frames",
+            lambda *_args: (
+                [(directory / "zero.png", 0.0), (directory / "five.png", 5.0)],
+                ["ffmpeg"],
+            ),
+        )
+        monkeypatch.setattr(
+            worker,
+            "_image_request",
+            lambda *_args: SimpleNamespace(checksum="checksum"),
+        )
+        document = ExtractedDocument(
+            "id",
+            "frame.png",
+            SourceKind.IMAGE,
+            "checksum",
+            None,
+            "alpha",
+            (),
+            ExtractionProfile("test", "test", "1"),
+        )
+        extractor = SimpleNamespace(extract=lambda *_args: document)
+        predictions, _, count, fingerprint = worker._process_video(
+            extractor,
+            None,
+            {"source_path": "video.mp4", "duration_seconds": 10},
+            directory,
+            "engine",
+            "revision",
+            "cpu",
+            {},
+            evidence,
+        )
+    assert not directory.exists()
+    saved = json.loads(json.dumps(evidence))
+    assert saved["selected_frame_timestamps"] == [0, 5]
+    assert [frame["document"]["text"] for frame in saved["frames"]] == [
+        "alpha",
+        "alpha",
+    ]
+    assert [prediction["timestamp"] for prediction in predictions] == [0, 5]
+    assert count == 2 and fingerprint

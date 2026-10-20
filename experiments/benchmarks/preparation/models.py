@@ -23,9 +23,9 @@ from edumind.rag.contracts import PRODUCTION_EMBEDDING_MODEL
 from experiments.benchmarks.common.selection import SelectionEntry, selection_entries
 
 MODEL_COMPONENTS = frozenset(
-    {"embedding", "reranker", "generator", "evaluator", "asr", "document_extraction"}
+    {"embedding", "reranker", "generator", "asr", "document_extraction"}
 )
-RAG_COMPONENTS = frozenset({"embedding", "reranker", "generator", "evaluator"})
+RAG_COMPONENTS = frozenset({"embedding", "reranker", "generator"})
 EMBEDDING_COMPONENTS = frozenset({"embedding"})
 EXTRACTION_COMPONENTS = frozenset({"asr", "document_extraction"})
 INFERENCE_SNAPSHOT_IGNORE_PATTERNS = (

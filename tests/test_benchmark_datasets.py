@@ -5,6 +5,7 @@ from dataclasses import replace
 import pytest
 
 from edumind.common.paths import PROJECT_ROOT
+from experiments.benchmarks.common.data_validation import manifest_path
 from experiments.benchmarks.common.datasets import (
     DatasetValidationError,
     assert_no_split_leakage,
@@ -65,3 +66,19 @@ def test_generated_docx_fixture_is_byte_deterministic(tmp_path) -> None:
     _write_minimal_docx(first, "Heading\nDeterministic content")
     _write_minimal_docx(second, "Heading\nDeterministic content")
     assert first.read_bytes() == second.read_bytes()
+
+
+@pytest.mark.parametrize(
+    "benchmark", ["chunking-embedding", "retrieval-reranking", "generation"]
+)
+def test_rag_validators_resolve_the_same_frozen_corpus_inventory(benchmark):
+    fixture = "generation-smoke" if benchmark == "generation" else "smoke"
+    assert (
+        manifest_path(benchmark, "smoke")
+        == PROJECT_ROOT / f"data/benchmarks/rag/{fixture}.json"
+    )
+    assert manifest_path(benchmark, "development").name == "rag-selection-dev.json"
+    assert (
+        manifest_path(benchmark, "validation").name == "rag-selection-validation.json"
+    )
+    assert manifest_path(benchmark, "locked").name == "rag-selection-locked-test.json"

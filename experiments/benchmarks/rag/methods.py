@@ -6,7 +6,6 @@ import pickle
 import re
 from collections.abc import Sequence
 from functools import cached_property
-from pathlib import Path
 
 import numpy as np
 
@@ -127,11 +126,6 @@ class Reranker:
         if batch_size <= 0 or maximum_length <= 0:
             raise ValueError("Reranker batch size and maximum length must be positive")
         self.model = None
-
-    @property
-    def snapshot_bytes(self) -> int:
-        root = Path(self.model_path)
-        return sum(path.stat().st_size for path in root.rglob("*") if path.is_file())
 
     def prepare(self) -> None:
         if self.model is None:
