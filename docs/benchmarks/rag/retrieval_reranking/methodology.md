@@ -35,6 +35,9 @@ runner/protocol outputs still differ from this contract:
   and BM25 build observations and report their storage dependency breakdown.
 - Expanded metric-specific status/support rules and small-corpus behavior need
   verification. The standalone validator/report-reuse interface remains planned.
+- Repeatability intervals, durable per-attempt ranking evidence, and separation
+  of recorded failures from missing execution/quality need verification. A
+  legacy zero-failed-query gate does not implement the approved accounting rule.
 
 These are implementation limitations, not alternative metric definitions or
 permission to silently relabel old results.
@@ -280,7 +283,10 @@ measured attempts supply timing and diagnostic Ranking Repeatability, not
 additional quality scores. The [shared availability rules](../../metrics.md#shared-availability-rules)
 govern failed attempts and partial required evidence.
 
-Failures and truncation are validity conditions rather than quality metrics.
+Request failures are retained outcomes; prohibited truncation and invalid
+artifacts remain integrity conditions. Use the
+[shared execution/quality distinction](../../metrics.md#execution-accounting-and-result-completeness)
+rather than requiring zero measured failures implicitly.
 Ranking Repeatability applies the [shared pair rule](../../metrics.md#pairwise-repeatability)
 to complete ordered results, normally 20 IDs. Valid differences are diagnostic, not an automatic
 disqualification. Corpus inventory and pool-size checks stay in parameters and
@@ -422,7 +428,7 @@ They are observed counts or integrity gates, not additional quality families:
 |---|---|---|
 | `validity.expected_query_count` | Unique scheduled answerable question IDs, not repetitions. | Equals the planned answerable workload. |
 | `validity.processed_query_count` | Unique questions with produced query-result records, not necessarily successful attempts. | Must account for every planned question; complete attempt rows are checked separately. |
-| `validity.failed_query_count` | Unique questions with at least one recorded failed measured attempt. | Current validity requires zero; one question failing twice still counts once here. |
+| `validity.failed_query_count` | Unique questions with at least one recorded failed measured attempt. | Outcome count, not a blanket zero-error gate; one question failing twice counts once. Inspect quality coverage and the actual failure requirements separately. |
 | `validity.truncated_input_count` | Model inputs actually truncated, not native-token counts or unexecuted inputs. | Must be zero; rejected oversized inputs retain their separate failure report. |
 | `validity.nonfinite_score_count` | Recorded attempt-level nonfinite-score errors in the current counter, not the number of bad scalar entries. | Must be zero; preserve errors rather than inferring individual bad-score counts. |
 | `validity.exact_pool_permutation` | Binary check of exact output membership/uniqueness for each required pool. | One passes; zero fails; missing required checks are incomplete. |
@@ -441,7 +447,7 @@ Current alpha eligibility differs as described in the implementation boundary.
 Scored/unavailable support and independent source grouping remain separate from
 these reference counts. A contributing `sample_count` is not permission to
 discard planned questions or treat repetitions as independent documents.
-Required checks include expected/processed/failed queries, zero truncation,
+Required checks include complete query/attempt accounting, zero truncation,
 finite scores, pool provenance/live-order agreement, exact pool permutation,
 the ordered top-K prefix, and verification completeness. These checks retain
 detailed outcomes without a redundant pool-collection-match scalar. A failed
@@ -451,7 +457,12 @@ the affected result is not complete authoritative selection evidence. Absence
 of recorded mismatches does not prove verification happened.
 Every child stores `query_metrics.parquet`, `rankings.parquet`,
 `evidence_matches.parquet`, `timings.parquet`, `resources.parquet`,
-`candidate.json`, and `validation_report.json`. Pool-owner children additionally
+`candidate.json`, and `validation_report.json`. `rankings.parquet` retains complete
+ordered outputs/scores for every executed query attempt, source/attempt identity,
+and failure fragments/status where produced, under the
+[shared prediction-retention rule](../../metrics.md#prediction-evidence-and-rescoring).
+Failed attempts without an output retain null/fragment status, not an invented
+ranking. Hashes or pair scores do not replace produced rankings. Pool-owner children additionally
 store `pool_collection.parquet` and `index_build.json`. Raw documents and model
 weights are never copied into child artifacts.
 
@@ -537,7 +548,11 @@ such as Dense versus BM25. Do not invent a zero RRF build-time observation or
 substitute an unmeasured sum; its required dependency storage is reported separately.
 Ranking Repeatability remains diagnostic; its observed pair outcomes do not
 replace integrity checks or quality comparisons.
-Validity counters are gates, not winner metrics, and receive no comparison rows.
+Its supported document-bootstrap interval estimates source-sampling uncertainty
+under the [metric CI contract](metrics.md#which-values-receive-an-interval).
+Outcome counts and validity counters receive no winner-comparison rows.
+Required integrity checks remain gates; an observed failure count alone is not
+an automatic zero-error gate.
 
 Quality differences apply the [shared paired-bootstrap procedure](../../metrics.md#confidence-intervals)
 to aligned source documents. Point-only observations retain point-only

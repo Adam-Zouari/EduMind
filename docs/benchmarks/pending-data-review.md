@@ -19,6 +19,11 @@ the authoritative dataset manifests and methodology, then remove the item.
   original source. Freeze the independent resampling/group IDs in the reviewed
   manifests so all dependent observations travel together in bootstrap draws
   and paired comparisons.
+- Freeze minimum independent eligible/contributing-source support separately
+  from observation counts. State required attempt/evaluation coverage and keep
+  descriptive points with null bounds when support is insufficient. Diagnostic
+  repeatability can have source-sampling uncertainty; repeated pairs do not add
+  sources, and no universal numerical minimum has been adopted.
 
 ## Document extraction
 
@@ -127,9 +132,15 @@ the authoritative dataset manifests and methodology, then remove the item.
   those shared-manifest queries are not retrieval/timing requests in this phase.
   Review atomic units and token/source spans so complete-unit coverage and token
   overlap describe the intended evidence without candidate-specific repairs.
-  Freeze quality/slice and p50/p95 CI support requirements under the
+  Freeze quality/slice, diagnostic top-five Ranking Repeatability, and complete-
+  query/query-embedding/vector-search p50/p95 CI support requirements under the
   [shared support policy](metrics.md#confidence-intervals) before authoritative comparisons;
   insufficient support retains defined point estimates with null bounds/reasons.
+- Freeze corresponding source support for retrieval–reranking's complete-order
+  Ranking Repeatability. Preserve source-document grouping and every scheduled
+  pair/failure inside each draw; do not infer support from the number of queries
+  or repeated outputs. Candidate-roster and index-selection changes are not
+  part of this statistical-support review.
 - Build and review the structured supplement independently for development,
   validation, and locked test. Confirm at least ten answerable questions with
   verified evidence for each of `table`, `formula`, and `mixed` in every split.

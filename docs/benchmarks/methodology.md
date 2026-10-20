@@ -223,7 +223,7 @@ another observation, not an automatic replacement for a failed earlier one.
 | Frozen Video ASR | One complete stitched result per video from its scheduled windows; no transcription repeatability score. |
 | Generation quality | The protocol's measured seed outputs, aggregated within each question before source-document aggregation. |
 | Warm latency | Successful completed measured operations under each suite's component/request boundaries. |
-| Repeatability or ranking consistency | The exact attempt comparisons and representation specified by that suite, not extra quality samples. |
+| Repeatability | The diagnostic attempt comparisons and representation specified by that suite, not extra quality samples; artifact-integrity checks remain separate. |
 
 For example, a document's attempts `A, A, failure` preserve the first
 `A` for quality, both successful durations for latency, and all three outcomes
@@ -245,6 +245,17 @@ It then runs the one query warmup and measures queries on the fixed corpus;
 query repetitions never rebuild the matrix. Offline scoring and bootstrap work
 begin after the candidate resource window ends. See the
 [suite lifecycle](rag/chunking_embedding/methodology.md#per-candidate-execution).
+
+The [shared execution-accounting rules](metrics.md#execution-accounting-and-result-completeness)
+distinguish a recorded request failure, explicitly unexecuted required work, and
+a missing outcome record. Keep ledger completeness, execution coverage, quality
+coverage, and integrity separate in summaries and engineer decisions. A complete
+ledger can include failures without claiming complete quality. No new automatic
+zero-error selection policy is inferred from the number of failed attempts.
+
+Preserve [prediction evidence for rescoring](metrics.md#prediction-evidence-and-rescoring)
+with the existing run artifacts and immutable input references. Candidate
+provenance identifies its durable local and uploaded evidence, not only hashes.
 
 `gpu_oom` and `offload_detected` are definitive hardware exclusions;
 `vram_limit_exceeded` additionally applies only to benchmark families with an
@@ -351,8 +362,12 @@ Component transition decisions use this contract:
 The runner rejects a decision unless the referenced summary is complete, its
 run ID and expected suite/stage/profile match, and every selected candidate is a
 child of that run with complete required evidence and successful run-level
-validation. A failed sample attempt is distinct from an incomplete or invalid
-candidate run; measured failures remain in its quality and reliability evidence.
+validation. Complete required evidence is assessed by the
+[execution/quality distinction](metrics.md#execution-accounting-and-result-completeness),
+not a blanket requirement that every measured request succeed. Failed sample
+attempts remain in outcome, failure, and repeatability evidence; dependent
+quality follows its own availability rule. Partial required quality does not
+become complete selection evidence by omitting its missing values.
 The protocol sets the permitted finalist count; locked decisions require exactly
 one winner. Each consumed decision is uploaded as an MLflow input artifact, and
 its content fingerprint is attached to the parent and candidate children.

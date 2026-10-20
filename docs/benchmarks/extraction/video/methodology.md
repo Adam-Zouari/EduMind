@@ -338,10 +338,19 @@ peak_vram_mb
 Each visual child stores `samples.parquet` with one row per scheduled video,
 `timings.parquet` with every scheduled attempt, and `candidate.json` with
 resolved settings, values/statuses/reasons, support, and interval fields. Retain
-per-attempt frame counts and canonical output fingerprints. Quality is not
-rescored from later outputs. The frozen-ASR child retains its checksummed
+per-attempt frame counts, selected-frame timestamps, ordered parsed visual
+text/structured outputs, warnings, outcomes, and canonical fingerprints, with
+sample/attempt IDs and source/protocol/conversion identities. Durable prediction
+records and their local/uploaded references follow the
+[shared evidence-retention rule](../../metrics.md#prediction-evidence-and-rescoring);
+fingerprints alone cannot reconstruct occurrence matching. Raw videos and
+redundant frame-image copies are not required when the retained prediction and
+immutable inputs suffice. Quality is not rescored from later outputs. The
+frozen-ASR child retains its checksummed
 artifact, per-video completion/failure records, raw edits/reference counts,
 reviewed nonspeech-unit records, window outcomes/timings, and resource samples.
+Its retained window records include predicted transcripts and timestamp units,
+so stitching and spoken alignment can be inspected without retranscription.
 Do not create a separate child run for each video, window, metric, or repetition.
 
 Applicable sample-based aggregates use the

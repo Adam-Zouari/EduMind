@@ -432,7 +432,8 @@ records `input_compatibility=passed`; subsequent output-context terminations
 contribute to the existing context-limit metric and per-attempt outcomes.
 There is no separate Input Context Overflow Rate.
 
-Artifacts retain each question/seed's raw stream and visible response, native
+Under the [shared evidence-retention rule](../../metrics.md#prediction-evidence-and-rescoring),
+artifacts retain each question/seed's raw stream and visible response, native
 token counts, citation/claim counts and labels, structural and ID checks,
 behavioral checks, outcome/finish reason, and timing. A finish-reason count/share
 table is a diagnostic artifact, not another scalar family. Keep monitoring

@@ -61,7 +61,9 @@ equal aggregation or eligibility.
 Shared definitions on this page:
 
 - [Availability and result status](#shared-availability-rules)
+- [Execution accounting and result completeness](#execution-accounting-and-result-completeness)
 - [Dependent metrics and partial observations](#dependent-metrics-and-partial-observations)
+- [Prediction evidence and rescoring](#prediction-evidence-and-rescoring)
 - [Reporting slices](#reporting-slices)
 - [Prose scoring projection](#prose-scoring-projection)
 - [Recognition error rates and empty references](#recognition-error-rates-and-empty-references)
@@ -69,6 +71,7 @@ Shared definitions on this page:
 - [Content and detection empty comparisons](#content-and-detection-empty-comparisons)
 - [Pairwise repeatability](#pairwise-repeatability)
 - [Retrieval evidence quality](#retrieval-evidence-quality)
+- [Retrieved-context workload](#retrieved-context-workload)
 - [Latency percentiles](#latency-percentiles)
 - [Ratio-of-totals throughput](#ratio-of-totals-throughput)
 - [Resource measurements](#resource-measurements)
@@ -166,6 +169,35 @@ Likewise, a valid output may contain an incorrect or unreconstructed object:
 apply the metric's object-level penalty rather than treating every wrong table
 or formula as a failed whole request.
 
+### Execution accounting and result completeness
+
+Report execution accounting, execution coverage, quality coverage, and integrity
+separately. A complete outcome ledger is not a claim that every request succeeded
+or that every required quality value is available.
+
+| Condition | Accounting and coverage | Metric consequence |
+|---|---|---|
+| Every scheduled attempt executes and its outcome is recorded | Complete accounting and execution coverage, including observed failures. | Calculate each metric from its own valid observations and failure conventions. |
+| A scheduled attempt has an explicit `not_executed` outcome and reason | Accounted for, but required execution coverage is incomplete. | Do not invent a failed request, success, or completed repeatability/failure-rate aggregate. |
+| A required attempt has no outcome record | Accounting and execution evidence are incomplete. | Preserve known observations; absence of a record proves neither execution nor failure. |
+| The protocol deliberately schedules no task | No missing required execution; the task is inapplicable. | For example, one-attempt smoke has no repeatability pair task. |
+
+For three scheduled attempts, `A,A,failure` can retain complete first-output
+quality, repeatability `1/3`, and failure fraction `1/3`. The same fractions for
+`failure,A,A` do not supply first-output quality. Three executed failures have
+complete failure evidence but no completed quality outputs. An unexecuted third
+attempt instead leaves pairwise and scheduled failure-rate evidence incomplete,
+even when its reason is recorded. Never silently replace a scheduled denominator
+with the number of surviving requests.
+
+Measured request errors do not by themselves erase earlier measurements or
+create an implicit zero-error acceptance rule. Preserve declared hardware,
+placement, telemetry, input, and output-integrity requirements. Missing required
+quality remains partial evidence, not a complete quality comparison. Engineer
+advancement decisions review these separate facts; any stricter exclusion must
+be an explicit justified execution contract, not an inference from an MLflow
+status or an unavailable scalar.
+
 ### Dependent metrics and partial observations
 
 A derived value requires valid inputs from the same declared observation and
@@ -193,6 +225,30 @@ deliberately uses successful requests, while still retaining every outcome and
 its support. Similarly, a fully evaluated zero-denominator case follows the
 metric's own convention and reason. It is not an unresolved evaluator error.
 
+### Prediction evidence and rescoring
+
+Retain the prediction evidence and immutable input references needed to inspect
+and rescore the declared metrics. Hashes supplement that evidence; they cannot
+reconstruct a transcript, timestamp sequence, parsed table, or ranked result.
+
+Keep sample and attempt IDs, executed outcomes, produced outputs or recorded
+failure fragments, source identities/checksums, and the protocol, conversion,
+normalization, and evaluator identities needed to interpret them. Retain every
+executed attempt's relevant output representation for repeatability, while
+quality still uses only the observations declared by its suite. A saved later
+output is not a replacement first-quality observation.
+
+Reuse the existing output records and artifact references rather than copying
+the same prediction into every table. Document durable local paths/checksums and
+whether the evidence is uploaded, referenced, or retained under controlled access.
+Temporary worker files deleted after execution are not durable retained evidence.
+Raw media, model weights, and full embedding matrices need not be duplicated
+when immutable inputs and sufficient prediction records already exist.
+
+Rescoring under a repaired evaluator preserves the original outputs and creates
+versioned evaluation provenance; it does not silently rewrite a historical run.
+Changed definitions require newly identified results, not relabelled old scores.
+
 ### Reporting slices
 
 A slice is a reviewed subset of the same evaluation records, for example a
@@ -209,6 +265,13 @@ end boundaries defined by its benchmark. **Warm latency** is latency measured
 after the candidate is ready and its warmup has finished. The word "warm"
 describes the runtime state; it does not add another duration to the request.
 
+Display names use **Time** for initialization and complete corpus-preparation
+operations, and **Latency** for a query/request or a component inside it. Both
+measure elapsed duration; seconds versus milliseconds and the presence of
+inference do not determine the name. The search algorithm belongs in the
+execution contract: Vector Search Latency can measure exact cosine search
+without making "exact" part of its display name.
+
 For example, a model takes 8 seconds to load, its warmup request takes
 200 milliseconds, and a subsequent measured request takes 50 milliseconds.
 The measured request's warm latency is **50 milliseconds**, not 8.25 seconds.
@@ -221,6 +284,14 @@ the duration of model loading or warmup. Component latency and complete-request
 latency can have different boundaries, so their names must identify what is
 timed. See the [shared lifecycle](methodology.md#preflight-and-measured-run-lifecycles)
 for monitoring, synchronization, loading, and warmup order.
+
+Component timers have explicit, non-overlapping boundaries inside the same live
+execution. Required asynchronous work is synchronized at its measured boundary.
+Keep orchestration/assembly work in the enclosing timer rather than hiding it
+or counting one operation in two components. Observe the complete interval
+directly; neither component percentiles nor different successful cohorts can be
+combined to invent a total. Timing records retain full precision and phase
+outcomes, including elapsed-to-failure separately from completed durations.
 
 ### Calculation and result rules
 
@@ -346,10 +417,14 @@ perfect empty scores from this rule. Their local contracts govern eligibility.
 ### Pairwise repeatability
 
 Document and visual-video Repeatability Success Rate, ASR Transcript
-Repeatability Success Rate, and retrieval Ranking Repeatability share one
-pair-counting rule. Each benchmark freezes its own output representation and
-role; this rule does not replace chunking–embedding's ranking-consistency gate
-or generation's semantic/citation comparison functions.
+Repeatability Success Rate, and Chunking–Embedding/Retrieval–Reranking Ranking
+Repeatability share one pair-counting rule. Each benchmark freezes its own output
+representation and comparison depth. These metrics are diagnostic: a different
+valid output does not itself fail integrity. Invalid IDs, incorrect provenance,
+prohibited truncation, and non-permutation outputs retain their separate gates.
+Generation keeps its local semantic/citation comparison functions. Deferred
+Vector Database and Final RAG revisions retain their explicitly documented
+implementation boundaries; a shared definition does not certify those runners.
 
 Compare every unordered pair of scheduled measured attempts. A pair succeeds
 only when both outputs are valid and identical in the benchmark's chosen
@@ -371,6 +446,13 @@ interrupted outputs, or structurally invalid outputs. Their local comparison
 functions assign binary or fractional scores to otherwise evaluable pairs;
 sum those scores over scheduled pairs. An evaluator error is unavailable
 evaluation, not an executed candidate disagreement.
+
+Where the suite lists repeatability intervals, resample complete independent
+sources under [Confidence intervals](#confidence-intervals), retaining every
+scheduled attempt and pair. The recorded pair comparison is exact; the interval
+describes variation of its aggregate across sampled sources, not uncertainty
+about whether two saved outputs match. Diagnostic status does not remove that
+source-sampling question or create an automatic selection threshold.
 
 ### Retrieval evidence quality
 
@@ -410,6 +492,33 @@ valid-output denominator. A token-free or invalid ranking is unavailable
 under the integrity contract, not a scored empty comparison. Valid rankings
 recovering no evidence receive ordinary zero scores. Each local page keeps
 its @3/@5 examples, metric roles, pool diagnostics, and aggregation/CI rules.
+
+### Retrieved-context workload
+
+Chunking–Embedding and Retrieval–Reranking count selected context from the valid
+designated first ranking, after reranking when that stage exists. At each cutoff
+`K=3` and `K=5`, sum `tiktoken:cl100k_base` lengths of the selected canonical chunk
+texts. Count each chunk separately, including overlapping/repeated source text;
+exclude model-native prefixes and inference special tokens. A valid corpus
+smaller than K uses its available chunks without padding or rescaling.
+
+Mean Retrieved Context Tokens is the sum of these per-query totals divided by
+contributing queries. p95 Retrieved Context Tokens is their interpolated 95th
+percentile. These are query-weighted workload descriptors, not document-macro
+quality, token budgets, or native-generator compatibility checks. The mean
+describes average returned volume; p95 describes its upper tail. Neither has an
+automatic better direction or a workload-descriptor confidence interval.
+
+Require a valid first ranking and complete token counting for each query total.
+Known totals survive later independent evaluator failures; later rankings never
+replace a failed first observation. If eligible queries exist but no complete
+total contributes, the aggregate is `null/unavailable`, not an observed zero.
+No eligible task in an optional slice is instead inapplicable; missing required
+corpus/query inputs still fail data validation. An incomplete collection of
+required totals remains a labelled partial workload diagnostic with
+planned/contributing counts. Shared percentile
+rules handle one observation and fractional interpolated counts; invalid empty
+rankings remain output-integrity failures, not a new empty-context convention.
 
 ### Latency percentiles
 
@@ -531,6 +640,16 @@ only from that metric's bounds, not from other defined metrics or retained rows.
 With sufficient support, equal calculated bounds such as `[0,0]` remain valid
 observed bounds with a degeneracy flag, not a claim of future certainty. Artifacts
 keep null bounds/reasons; MLflow omits the corresponding scalar keys.
+
+Support policy identifies the independent source groups, required attempt and
+evaluation coverage, and minimum independent eligible/contributing sources for
+each listed metric or slice. Forty independent papers with ten questions and
+three attempts each still supply forty independent papers, not 1,200 sources.
+Reviewed grouping can reduce that count further. Numeric minima remain pending
+where the protocol/review checklist says so; no universal threshold is implied.
+Source count alone does not establish representative coverage. Freeze the
+policy before inspecting authoritative comparison results, not to obtain
+favorable bounds after the fact.
 
 Smoke, fixed identifiers/configuration counts, and one cold-load, index-build,
 or resource-peak observation have no authoritative interval. Each benchmark's

@@ -9,6 +9,7 @@ On this page:
 - [Retrieval quality](#retrieval-quality-1)
 - [Why the metrics are not interchangeable](#why-the-metrics-are-not-interchangeable)
 - [Worked candidate interpretation](#worked-candidate-interpretation)
+- [Ranking consistency](#ranking-consistency-1)
 - [Operational performance](#operational-performance-1)
 - [Workload and storage descriptors](#workload-and-storage-descriptors-1)
 - [Aggregation and comparison completeness](#aggregation-and-comparison-completeness)
@@ -23,6 +24,10 @@ The four quality families adopt the
 [shared retrieval-evidence definitions](../../metrics.md#retrieval-evidence-quality).
 The applications below use each candidate pair's complete generated corpus,
 not another pair's corpus or the retrieved top-20 pool.
+
+The [implementation boundary](methodology.md#implementation-boundary) identifies
+pending operational-breakdown, repeatability, and reporting changes. Definitions
+below are the approved contract, not aliases for unmodified older output keys.
 
 ## Metric summary
 
@@ -39,12 +44,23 @@ not another pair's corpus or the retrieved top-20 pool.
 and first five ranked chunks. Both are reported to compare retrieval quality
 at the two candidate context counts before the final system's top-K is frozen.
 
+### Ranking consistency
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Ranking Repeatability | Diagnostic | How often do repeated requests deliver the same valid ordered top-five result? | Higher |
+
 ### Operational performance
 
 | Metric | Role | Question answered | Direction |
 |---|---|---|---|
+| Cold Model-Load Time | Operational | What startup delay makes the embedding model and tokenizer ready? | Lower |
+| Chunking Time | Operational | How expensive is creating the complete chunk inventory? | Lower at equal quality |
+| Chunk-Embedding Time | Operational | How expensive is producing the final vectors for all chunks? | Lower at equal quality |
 | Corpus-Build Time | Operational | How long does chunking, document embedding, and searchable-matrix preparation take? | Lower |
 | Corpus-Build Throughput | Operational | How many original source tokens are processed per second? | Higher |
+| Query-Embedding Latency p50/p95 | Operational | What typical and slow-tail query cost belongs to producing its vector? | Lower at equal quality |
+| Vector Search Latency p50/p95 | Operational | What typical and slow-tail query cost belongs to searching and selecting results? | Lower at equal quality |
 | p50 Warm Query Latency | Operational | What is normal query-embedding and exact-search latency? | Lower |
 | p95 Warm Query Latency | Operational | What is slow-case warm query latency? | Lower |
 | Peak Process-Tree RAM | Operational | What peak host memory is observed for the worker and its children? | Lower at equal quality |
@@ -59,6 +75,7 @@ at the two candidate context counts before the final system's top-K is frozen.
 | Indexed-Token Occurrences | Workload descriptor | How much source text do the generated chunks represent, including overlap and repeated context? | Descriptive |
 | Chunk Count | Workload descriptor | How many searchable vectors and metadata records did the strategy create? | Descriptive |
 | Mean/p95 Chunk Tokens | Workload descriptor | What typical and long-tail chunk sizes did the strategy actually produce? | Descriptive |
+| Mean/p95 Retrieved Context Tokens@3/@5 | Workload descriptor | How much text do the actual selected prefixes return on average and in the upper tail? | Descriptive |
 | Embedding Dimension and Dtype | Storage descriptor | What shape and numeric representation did each vector use? | Descriptive |
 | Embedding-Matrix Bytes | Storage descriptor | How large is the complete matrix's raw vector payload? | Descriptive |
 
@@ -317,20 +334,135 @@ identify repeated coverage; neither the score nor the gap establishes that
 repetition harms answers. The same interpretation is performed separately at
 `@3`. No formula combines these values.
 
+## Ranking consistency
+
+### Ranking Repeatability
+
+**Question:** How often do repeated requests deliver the same valid ordered
+top-five chunks?
+
+Apply [shared pairwise repeatability](../../metrics.md#pairwise-repeatability)
+to all three unordered pairs of measured attempts for each answerable question.
+Compare ordered top-five IDs, or all available IDs in a legitimately smaller
+corpus, not bit-identical scores. Average question pair scores within documents,
+then macro-average documents. Every attempt executes retrieval; it does not
+return a cached earlier ranking.
+
+```text
+Question Ranking Repeatability = identical valid top-five pairs / scheduled pairs
+```
+
+**Example:** `A,A,B` and `failure,A,A` each have one agreeing valid pair among
+three, giving `1/3`. Three executed failures give zero. Three identical valid
+rankings give one even when they retrieve irrelevant text.
+
+This diagnoses repeatable delivery, not relevance. A different valid order does
+not invalidate a candidate; unknown/duplicate IDs, incorrect provenance, and
+other output-integrity violations retain their separate requirements. This
+suite examines the selected top five; retrieval–reranking examines its complete
+normally top-20 ranking. Those declared depths are not interchangeable.
+
+**Range and direction:** `[0,1]`; higher is more repeatable, not necessarily
+higher quality.
+
+**Edge cases and availability:**
+
+| Edge case | Example | Value/status | Explanation |
+|---|---|---|---|
+| No attempt pairs are scheduled | One-attempt smoke | `null` (`inapplicable`) | No repeatability task was measured. |
+
+Missing required execution or records follows the shared pair rule, not a
+surviving-pair average. Supported source-document intervals follow
+[this suite's CI table](#which-values-receive-an-interval).
+
 ## Operational performance
 
 The phase calls preparation of the searchable embedding matrix **corpus build**.
 It is not the later vector-server indexing experiment.
 
 Operational availability follows the
-[shared rules](../../metrics.md#shared-availability-rules). Corpus-build values
-require a complete searchable matrix; query latency uses each query's median
-successful-attempt duration. Apply the shared
+[shared rules](../../metrics.md#shared-availability-rules). Each build component
+requires its own completed phase; total corpus-build values require the complete
+searchable matrix. Query-component latency uses each query's median successful
+completed component duration, and complete-query latency uses successful complete
+requests. A completed embedding can survive a later search failure. Keep each
+cohort's support; component success does not establish whole-query success.
+Apply the shared
 [percentile](../../metrics.md#latency-percentiles) and
 [resource](../../metrics.md#resource-measurements) definitions with the lifecycle
 windows below. Partial-resource scope is recorded as specified by the
 [run structure](methodology.md#mlflow-result-structure); CI applicability remains
 in this page's [interval table](#which-values-receive-an-interval).
+
+Use the [shared timing boundaries and naming convention](../../metrics.md#latency-and-warm-latency).
+Build components explain total preparation, and query components explain total
+query time; they are not independent quality benefits to count again. Preserve
+assembly, validation, and dispatch overhead in the observed enclosing interval.
+
+### Cold Model-Load Time
+
+**Question:** What startup delay makes the embedding model and tokenizer ready?
+
+Start before their construction/loading and stop at full readiness on the
+requested device, after required placement checks and synchronization. Exclude
+chunking, corpus embedding, warmup, and measured queries. Cold means a fresh
+worker/model, not forcibly cleared operating-system disk caches.
+
+**Example:** Construction starts at second `0` and readiness occurs at second
+`4`: Cold Model-Load Time is `4 seconds`. The corpus-build timer starts afterward.
+
+**Range and direction:** Non-negative seconds; lower is better at equal scope.
+
+**Edge cases and availability:**
+
+[Shared completed-phase rules apply.](../../metrics.md#dependent-metrics-and-partial-observations)
+A completed load survives later failure; interrupted loading retains elapsed-
+to-failure separately. There is no additional metric-specific empty convention.
+
+### Chunking Time
+
+**Question:** How expensive is creating the complete corpus's passages?
+
+Time canonical-document processing through the complete chunk inventory: boundary
+selection, overlaps, text, IDs, source offsets, and chunk metadata. Include native
+checks and embedding calls used to choose semantic boundaries. Exclude model
+loading and final chunk-vector production. The completed inventory must satisfy
+its source/offset contract; a partial inventory is not a completed phase.
+
+**Example:** Ten documents become 800 complete chunk records in `6 seconds`.
+That is chunk creation cost, not the time to create the final 800 search vectors.
+The semantic strategy's boundary embeddings belong to this phase.
+
+**Range and direction:** Non-negative seconds; lower is better at equal quality.
+
+**Edge cases and availability:**
+
+[Shared completed-phase rules apply.](../../metrics.md#dependent-metrics-and-partial-observations)
+No additional metric-specific exception is needed. Retain a completed chunking
+duration if later vector production fails; invalid empty inventories remain
+runtime-integrity failures, not new duration conventions.
+
+### Chunk-Embedding Time
+
+**Question:** How expensive is producing the final searchable chunk vectors?
+
+After the chunk inventory is ready, time final-chunk native preparation and
+length checks, model inference, normalization, stored-dtype conversion, and
+required transfer/synchronization through the complete final vector set.
+Semantic-boundary embeddings are not counted again. Searchable matrix/metadata
+assembly and final corpus validation remain inside the enclosing build timer.
+
+**Example:** The 800 completed chunks require `24 seconds` to produce their
+final vectors. Embedding 700 before interruption does not establish an 800-chunk
+completion time; its known progress remains diagnostic evidence.
+
+**Range and direction:** Non-negative seconds; lower is better at equal quality.
+
+**Edge cases and availability:**
+
+[Shared completed-phase rules apply.](../../metrics.md#dependent-metrics-and-partial-observations)
+No additional metric-specific exception is needed. Missing vectors and invalid
+native inputs retain their separate integrity/input outcomes.
 
 ### Corpus-Build Time
 
@@ -346,8 +478,10 @@ boundary embedding, native-input checks on generated inference inputs, and
 first-use work performed during corpus build belong to this timer. Build the
 corpus once; query repetitions do not rebuild it.
 
-**Example:** A completed build taking 80 seconds reports `80`: that is the
-elapsed preparation cost of the searchable corpus, not just document embedding.
+**Example:** Chunking takes `6 seconds`, final chunk embedding `24 seconds`, and
+assembly/validation `2 seconds`. Corpus-Build Time is the observed `32 seconds`,
+not only the embedding component. A completed build taking 80 seconds similarly
+reports `80` as the complete preparation cost.
 
 **Range and direction:** Non-negative seconds; lower is better at equal quality.
 
@@ -372,6 +506,9 @@ The required nonempty corpus is checked during
 tokens/second, regardless of how many overlapping chunk-token occurrences were
 embedded.
 
+On the same fixed source workload this rate is derived from Corpus-Build Time;
+it provides a useful capacity unit, not an independent advantage to count twice.
+
 **Range and direction:** Non-negative source tokens/second; higher is better at
 equal quality.
 
@@ -384,6 +521,92 @@ equal quality.
 [Shared availability rules apply.](../../metrics.md#shared-availability-rules)
 Incomplete builds and invalid timers follow the
 [operational completion rules](#operational-performance-1).
+
+### Query-Embedding Latency p50/p95
+
+The component starts with preparation of the current question and ends when its
+validated query vector is ready for search. Include native tokenization/length
+checks, embedding inference, normalization, and required synchronization. Exclude
+corpus embedding and vector search. Use each query's median completed component
+duration before applying the shared percentiles.
+
+#### Query-Embedding Latency p50
+
+**Question:** What typical query time belongs to preparing its search vector?
+
+Take p50 of the per-query query-embedding observations.
+
+**Example:** Query observations `8,10,12,14,16 ms` give p50 `12 ms`. A request
+whose embedding completes in 12 ms keeps that component observation if search
+subsequently fails.
+
+**Range and direction:** Non-negative milliseconds; lower is better at equal quality.
+
+**Edge cases and availability:**
+
+Apply [shared availability](../../metrics.md#shared-availability-rules) and
+[percentile rules](../../metrics.md#latency-percentiles). One observation is its
+own p50. If no completed component observation contributes, the aggregate is
+`null/unavailable`, not zero.
+
+#### Query-Embedding Latency p95
+
+**Question:** What is the slow tail of question-vector preparation?
+
+Take p95 over the same per-query component observations, not all attempts pooled.
+
+**Example:** `8,10,12,14,16 ms` gives position `3.8` and p95
+`14 + 0.8 × (16 - 14) = 15.6 ms`.
+
+**Range and direction:** Non-negative milliseconds; lower is better at equal quality.
+
+**Edge cases and availability:**
+
+Apply the shared [percentile](../../metrics.md#latency-percentiles) and
+[availability](../../metrics.md#shared-availability-rules) rules. One observation
+is its own p95; sufficient source support is separately required for bounds.
+
+### Vector Search Latency p50/p95
+
+Start from the ready query vector and searchable matrix; stop after cosine
+scoring, deterministic ordering/tie-breaking, top-20 selection, output validation,
+and required synchronization. This suite executes exact NumPy cosine search;
+the display name does not imply a vector server or approximate index. Use each
+query's median successful completed search duration.
+
+#### Vector Search Latency p50
+
+**Question:** What typical query time belongs to searching the matrix?
+
+Take p50 over the per-query vector-search observations.
+
+**Example:** `4,6,8,10,12 ms` gives p50 `8 ms`. This can grow when a chunker
+creates more vectors, even with an unchanged query-embedding model.
+
+**Range and direction:** Non-negative milliseconds; lower is better at equal quality.
+
+**Edge cases and availability:**
+
+Apply [shared availability](../../metrics.md#shared-availability-rules) and
+[percentile rules](../../metrics.md#latency-percentiles). Search never entered
+after embedding failure is unexecuted, not a fabricated search failure.
+
+#### Vector Search Latency p95
+
+**Question:** What is the slow tail of matrix search and result selection?
+
+Take p95 over the same per-query search observations.
+
+**Example:** `4,6,8,10,12 ms` gives p95 `10 + 0.8 × (12 - 10) = 11.6 ms`.
+This is not complete-query p95 minus query-embedding p95.
+
+**Range and direction:** Non-negative milliseconds; lower is better at equal quality.
+
+**Edge cases and availability:**
+
+Apply the shared [percentile](../../metrics.md#latency-percentiles) and
+[availability](../../metrics.md#shared-availability-rules) rules. A completed
+search survives later independent offline-scoring failure.
 
 ### p50 Warm Query Latency
 
@@ -418,6 +641,9 @@ and [CI support requirements](#chunking-and-embedding-confidence-intervals).
 Use the same per-query successful-attempt medians as p50 and calculate their
 linearly interpolated 95th percentile. Do not pool repetitions as independent
 queries or include elapsed times from failed requests.
+
+Component timings explain this complete path; their p95 values must not be
+added to derive its p95.
 
 **Example:** Query observations of 10, 20, 30, 40, and 50 milliseconds have
 zero-based percentile position `(5 - 1) × 0.95 = 3.8`, giving
@@ -662,6 +888,56 @@ makes a single chunk's p95 equal its length. See the
 [generated-inventory and partial-scope rules](#workload-and-storage-descriptors-1)
 and [descriptor CI rules](#which-values-receive-an-interval).
 
+### Mean Retrieved Context Tokens@3/@5
+
+**Question:** How much text do the selected chunks return per query on average?
+
+Apply the [shared retrieved-context workload contract](../../metrics.md#retrieved-context-workload)
+to this pair's first ranking. Sum fixed-tokenizer lengths inside each prefix,
+then average those per-query totals separately at @3 and @5. This is not average
+chunk size or document-macro quality.
+
+```text
+Mean Retrieved Context Tokens@K = sum of complete query-prefix token totals
+                                 / contributing queries
+```
+
+**Example:** Chunk lengths `180,220,200,300,100` give that query 600 tokens at
+@3 and 1,000 at @5. Across ten queries, nine 500-token contexts and one 5,000-token
+context give mean `950`, while p50 would be `500`. The mean describes average
+volume, including the large context; it is not a latency prediction or limit.
+
+**Range and direction:** Non-negative tokens/query; descriptive.
+
+**Edge cases and availability:**
+
+The valid workload has a positive contributing denominator. No additional
+valid-empty convention is needed. Use shared
+[context-count availability](../../metrics.md#retrieved-context-workload) for
+missing/partial totals; later rankings never repair a failed first observation.
+
+### p95 Retrieved Context Tokens@3/@5
+
+**Question:** How large is the upper tail of selected context volumes?
+
+Take the [shared interpolated p95](../../metrics.md#latency-percentiles) of the
+same complete per-query totals, independently for each cutoff. This is a size
+percentile, not a confidence interval or model-native input capacity.
+
+**Example:** @3 totals `400,600,800` give p95 `780 tokens`; @5 totals
+`600,900,1,200` give `1,170 tokens`. A mean can conceal the larger contexts this
+descriptor makes visible. It imposes no context budget.
+
+**Range and direction:** Non-negative tokens; descriptive. Interpolation may
+produce a fractional count, for example `600.95` from totals `600,601`.
+
+**Edge cases and availability:**
+
+One contributing query's p95 equals its count under the shared percentile rule.
+If eligible queries exist but no complete total contributes, the aggregate is
+`null/unavailable`, not a zero-token context. Missing/partial totals follow
+[shared context-count availability](../../metrics.md#retrieved-context-workload).
+
 ### Embedding Dimension and Dtype
 
 **Question:** How many coordinates does each vector contain, and how are they
@@ -731,10 +1007,12 @@ partial estimate in artifacts with its status, rather than logging it as a
 normal `quality.*` aggregate. Unavailable scores are neither imputed as zero
 nor silently discarded from the account of what was scheduled.
 
-Quality, successful-latency support, and execution validity are separate. A
-later request failure may leave first-ranking quality complete while still
-failing the candidate's run-level execution contract. Only complete, valid
-children enter normal comparisons and engineer advancement decisions.
+Apply the [shared completeness distinction](../../metrics.md#execution-accounting-and-result-completeness)
+to execution coverage, quality coverage, and integrity. A later request failure
+does not automatically invalidate complete first-ranking quality or a fully
+accounted invocation. Missing required first scores remain partial; declared
+hardware/integrity violations remain enforced. Normal quality comparisons need
+complete valid quality, and the engineer reviews recorded failures separately.
 
 ## Chunking and embedding confidence intervals
 
@@ -744,9 +1022,10 @@ children enter normal comparisons and engineer advancement decisions.
 |---|---:|---|
 | Development, validation, and locked nDCG, Evidence-unit Recall, Evidence-token Precision, and alpha-nDCG at @3/@5 | When defined and sufficiently supported | Resample source documents and recalculate each aggregate. Partial estimates and any bounds remain diagnostic, not complete selection evidence. |
 | Text, table, formula, and mixed evidence slices | When defined and sufficiently supported | Resample eligible source documents with their first-ranking and failure records; do not prefilter to successful contributors. |
-| p50/p95 warm query latency | Conditional | Report bounds only when enough independent source documents support the query-level percentile; otherwise retain any defined descriptive point estimate without bounds. |
+| Ranking Repeatability | When complete and sufficiently supported | Resample source documents with every query's scheduled attempt pairs and recalculate the macro pair score. |
+| p50/p95 complete-query, query-embedding, and vector-search latency | Conditional | Resample source documents with each component's own query medians; otherwise retain defined descriptive points without bounds. |
 | Smoke metrics | No authoritative interval | Smoke validates execution and is too small for selection claims. |
-| Corpus-build time and throughput | No | One corpus-build observation cannot estimate uncertainty. |
+| Cold load, chunking, chunk embedding, corpus-build time and throughput | No | Each is one completed phase/build observation, not independent repeated builds. |
 | Peak Process-Tree RAM and Peak Device VRAM | No | Report the observed peak without invented bounds. |
 | Workload and storage descriptors | No | These are observed properties of the candidate and fixed corpus, not sampled quality estimates. |
 
@@ -755,9 +1034,10 @@ children enter normal comparisons and engineer advancement decisions.
 Apply the [shared CI procedure](../../metrics.md#confidence-intervals) to complete
 source documents eligible for the metric/slice, carrying their question,
 first-ranking, timing, and failure records. Each quality draw recalculates the
-question-then-document macro statistic. Latency draws collect the sampled
-documents' per-query successful-attempt medians and recalculate p50/p95, not a
-macro-average of document latencies.
+question-then-document macro statistic. Repeatability draws recalculate the
+question-then-document pair statistic from all scheduled outcomes. Latency draws
+collect the sampled documents' per-query successful component/request medians
+and recalculate each p50/p95 separately, not a macro-average of document latencies.
 
 The shared support, undefined-draw, duplicate-draw, and degenerate-bound rules,
 including the [support-freeze deadline](../../metrics.md#confidence-intervals),

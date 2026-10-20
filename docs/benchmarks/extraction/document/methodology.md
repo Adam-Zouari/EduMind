@@ -599,7 +599,10 @@ The child run stores:
 - `timings.parquet` with one row for every scheduled measured attempt, its
   executed/not-executed state, completion/error, elapsed time, verified input
   page count, and canonical output fingerprint; and
-- retained outputs for every executed attempt. Official quality evaluation uses
+- retained outputs for every executed attempt under the
+  [shared evidence-retention rule](../../metrics.md#prediction-evidence-and-rescoring),
+  with durable prediction references and input/conversion identities. Official
+  quality evaluation uses
   only the first measured output; later outputs are validated and fingerprinted,
   not rescored. Warmup and loading records are separate from measured attempts.
 

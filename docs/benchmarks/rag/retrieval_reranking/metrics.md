@@ -7,7 +7,7 @@ On this page:
 - [Metric summary](#metric-summary)
 - [Scoring inputs and result status](#scoring-inputs-and-result-status)
 - [Retrieval quality](#retrieval-quality-1)
-- [Ranking consistency](#ranking-consistency)
+- [Ranking consistency](#ranking-consistency-1)
 - [Why the quality metrics are not interchangeable](#why-the-quality-metrics-are-not-interchangeable)
 - [Operational performance](#operational-performance-1)
 - [Workload descriptors](#workload-descriptors-1)
@@ -144,8 +144,10 @@ corpus uses every available chunk without padding or renaming @3/@5. The smoke
 fixture has 30 chunks and therefore requires 20 results. Returning 12 when 100
 chunks exist is an integrity failure; returning all 12 when only 12 exist is not.
 
-A failed child may retain valid measurements but is not a complete selection
-result. Failure counts are validity evidence, not fabricated irrelevant chunks.
+Apply the [shared completeness distinction](../../metrics.md#execution-accounting-and-result-completeness):
+request-failure counts describe observed outcomes, not fabricated irrelevant
+chunks or an implicit zero-error acceptance rule. Missing required execution,
+partial quality, and failed integrity each retain their own consequences.
 
 Integrity checks verify pool provenance, exact live retrieval order against the
 frozen reference, output permutation/prefix, finite scores, and absence of
@@ -375,11 +377,13 @@ attempt outcomes so a high score cannot hide failed execution.
 
 This diagnostic measures output-order repeatability, not repeatability of every
 quality score or latency. It does not require a perfect score for selection.
-Execution and integrity failures remain subject to their own validity rules.
+Declared hardware and integrity requirements remain enforced. Recorded request
+failures retain their own outcomes rather than automatically creating a new
+zero-error eligibility rule.
 For learned rerankers, the enforced live-pool check already establishes retrieval
 order consistency among passing executions; no extra retrieval-repeatability
 scalar is required. For `none`, the complete output is the retrieval ordering.
-Unlike chunking/embedding's top-five check, this examines the reranker's full
+Unlike chunking/embedding's top-five diagnostic, this examines the reranker's full
 input/output ordering and can expose changes hidden below rank five.
 
 **Range and direction:** [0, 1]; higher is more repeatable, not necessarily more
@@ -698,6 +702,10 @@ Shared availability rules apply. See the
 
 ## Workload descriptors
 
+Selected-context means and percentiles adopt the
+[shared retrieved-context workload contract](../../metrics.md#retrieved-context-workload).
+The examples below retain this suite's selected-stack interpretation.
+
 Verified input counts remain known after failure. Actual generated or measured
 quantities keep their own availability and complete/partial scope.
 
@@ -862,10 +870,9 @@ Shared availability rules apply. See the
 **Question:** How much canonical source text would the selected context pass
 downstream on average?
 
-For each valid first ranking after any enabled reranking, sum
-tiktoken:cl100k_base occurrences in its first three/five chunks. Average
-per-query totals. Text repeated across chunks counts again; model prefixes do
-not count.
+Apply the shared context-token calculation to the valid designated first ranking
+after any enabled reranking, then average per-query totals. This descriptor is
+query-weighted, not document-macro quality or average chunk size.
 
 In plain language:
 
@@ -876,6 +883,8 @@ In plain language:
 and 1,200: mean (600 + 900 + 1,200) / 3 = 900 tokens/query.
 Each cutoff describes its own selected context. This imposes no token budget
 and is not inherently better when smaller.
+The mean describes average returned volume, while p50 would describe the middle
+query; p95 separately describes larger contexts.
 
 **Range and direction:** Non-negative tokens/query; descriptive.
 
@@ -1162,7 +1171,8 @@ usable scores make its aggregate unavailable. Partial required quality remains a
 diagnostic, not a normal complete-result leaderboard value or paired selection
 comparison. For example, 0.90 on eight of ten questions cannot establish
 superiority over 0.85 on all ten. Complete first-ranking quality can survive a
-later failed attempt while the candidate still fails run-level validity.
+later failed attempt. Execution coverage, quality coverage, and integrity follow
+the shared completeness distinction, not a blanket zero-request-failure gate.
 
 ### Which values receive an interval
 
@@ -1171,7 +1181,7 @@ later failed attempt while the candidate still fails run-level validity.
 | Development/validation/locked @3/@5 quality and pool recall | When defined and sufficiently supported | Resample independent source documents and recalculate the macro statistic. |
 | Text, table, formula, and mixed quality slices | When defined and sufficiently supported | Preserve eligible source question/failure records. |
 | Full-stack, retrieval, and reranker warm p50/p95 | Conditional | Resample source documents with query-level successful-attempt medians; recalculate percentiles. |
-| Ranking Repeatability | No selection-uncertainty interval | Retain all scheduled attempt pairs, valid ordering matches, and failures. |
+| Ranking Repeatability | When complete and sufficiently supported | Resample source documents with all scheduled query pairs and recalculate question-then-document means. |
 | Validity counters | No selection-uncertainty interval | Retain actual checks, support, and failure details. |
 | Smoke | No authoritative interval | Wiring evidence only. |
 | One cold initialization, index build, or observed memory peak | No | One lifecycle observation cannot estimate uncertainty. |
@@ -1183,8 +1193,11 @@ Apply the [shared CI procedure](../../metrics.md#confidence-intervals) to the
 reference-eligible source-document inventory and its complete query/failure
 records. Recalculate document-macro quality and pool recall; latency draws use
 the sampled documents' query-level successful-attempt medians before calculating
-each component's percentile. The shared support, undefined-draw, paired-draw,
-and degenerate-bound rules apply.
+each component's percentile. Repeatability draws recalculate each question's
+scheduled pair score and document-macro mean; they do not create new rankings or
+treat pairs as independent documents. The shared support, undefined-draw,
+paired-draw, and degenerate-bound rules apply. Diagnostic status does not waive
+source-support requirements; null bounds do not erase a defined descriptive point.
 
 **Example:** nDCG@5 0.84 with CI [0.79, 0.88] describes the observed macro
 score and source-sampling uncertainty, not individual-question score ranges.

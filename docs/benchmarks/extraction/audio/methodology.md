@@ -350,7 +350,7 @@ cannot finish:
 | Artifact | Contents and purpose |
 |---|---|
 | `samples.parquet` | One row per speech/control sample with source/group IDs, labels, duration, designated-first-attempt status, known reference lengths, raw word/character edit counts when available, timestamp denominators/matches/errors, event eligibility/flags, repeatability score, and warnings. Unavailable predicted edit counts remain null. |
-| `timings.parquet` | One row per scheduled speech/control measured attempt: index, success/failure/not-executed status, error, elapsed time, duration, valid completed latency where available, and device. Canonical transcript hashes allow pairwise agreement audit without uploading raw predictions. |
+| `timings.parquet` | One row per scheduled speech/control measured attempt: index, success/failure/not-executed status, error, elapsed time, duration, valid completed latency where available, device, canonical transcript hash, and a reference to its retained prediction record. |
 | `candidate.json` | Resolved runtime parameters, execution status, fingerprint, all metric values, intervals, operational values, and artifact references. |
 | `metric_statuses.json` | Every aggregate metric's value, scored/inapplicable/unavailable/incomplete status, reason, and support counts. Separates availability of a recorded estimate from completeness of the comparison. |
 | `placement.json` | CUDA model-placement checks before and after inference; CPU checks are inapplicable and retained as null. |
@@ -361,6 +361,18 @@ unavailable values, not omitted required fields or fabricated zeros.
 Raw audio and candidate predictions are not uploaded to MLflow. The frozen
 speech manifest is uploaded and contains the verified reference transcripts,
 source identifiers, and checksums needed to reproduce scoring.
+
+Keep durable local prediction records for every executed attempt, referenced
+with paths/checksums in `candidate.json`: raw transcript, native timestamp units,
+converted segments, warnings, and outcome or available failure fragment. Output
+fields are null when no prediction was produced, not invented empty transcripts.
+Keep the input and conversion/normalization identities needed to replay recognition,
+alignment, and repeatability calculations under the
+[shared evidence-retention rule](../../metrics.md#prediction-evidence-and-rescoring).
+The local records need not be uploaded or duplicated in every table, but must
+survive temporary-worker cleanup. Counts and hashes alone cannot reproduce word
+alignment or inspect a disputed timestamp. Access to these records is required
+for an independent rescore; uploaded summaries alone do not establish it.
 
 Startup compares each newly decoded canonical WAV's checksum and duration with
 the sealed data-validation report. Preflight identity also includes the tested
@@ -389,6 +401,9 @@ remaining requests not executed; do not invent failure records or a complete
 repeatability score. Missing required records/artifacts or unresolved telemetry
 make the comparison incomplete. Fully recorded attempt failures remain visible
 reliability evidence rather than silently excluding difficult clips.
+An explicit unexecuted row is accounted for but leaves required execution
+coverage incomplete, as distinct from a missing outcome record under the
+[shared accounting rule](../../metrics.md#execution-accounting-and-result-completeness).
 
 The engineer reviews the completed child runs and per-sample artifacts. No
 weighted overall score is calculated. Finalist and winner choices are written

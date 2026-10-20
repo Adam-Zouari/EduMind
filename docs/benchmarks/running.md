@@ -22,13 +22,21 @@ first-ranking/failure rules, successful-attempt latency, one query warmup, and
 execution-only resource monitoring. Its standalone validator and sealed-report
 verification are available. Quality-CI support remains unset until data review;
 such results retain descriptive scores and null confidence bounds.
+The approved separate load/build/query-component counters, retrieved-context
+descriptors, diagnostic top-five pair score/intervals, and revised acceptance
+accounting still require runner alignment; see its
+[implementation boundary](rag/chunking_embedding/methodology.md#implementation-boundary).
 Retrieval–reranking's expanded reporting contract also needs alignment,
 including one authoritative warmup and alpha-nDCG eligibility for single-unit
 questions. Its methodology marks those limitations explicitly.
-Document, ASR, and Video implement their revised metric, failure, repeatability,
-resource, and display-name contracts. Their standalone data validators and
+Document, ASR, and Video provide their extraction metric, failure, repeatability,
+resource, and display-name paths. Their standalone data validators and
 automatic sealed-report verification are available. Video uses grouped parents
 with separate shared-audio preparation and visual children.
+Verify the [required retained prediction evidence](metrics.md#prediction-evidence-and-rescoring)
+before claiming independent rescoring from a run; summary counts/fingerprints
+alone are insufficient. This documentation update does not certify new artifact
+writers or migrate historical outputs.
 
 Start MLflow in a separate terminal:
 
@@ -442,13 +450,25 @@ locked result is reporting-only.
   matrix validation in Corpus-Build Time. Run one query warmup after the matrix
   exists, then one measured request per query in smoke or three in authoritative
   profiles with the same seed/settings.
+- Under the approved breakdown, record Cold Model-Load Time before build;
+  Chunking Time includes semantic-boundary inference, Chunk-Embedding Time
+  includes final chunk-vector production, and the enclosing build includes
+  assembly/validation. Do not count semantic inference in two components.
 - Score only the first measured ranking at both `@3` and `@5`; retain top-20
   artifacts. First-request failure leaves unavailable quality even after later
   success. Later failure does not erase valid first-ranking quality.
-- Construct p50/p95 from each query's median successful measured latency,
+- Construct complete-query and embedding/search-component p50/p95 from each
+  query's own median completed duration under that timer's boundary,
   excluding failed elapsed times. Preserve all outcomes and failed elapsed times
   in `timings.parquet`. A query with no completed measured request has null
-  latency, not zero.
+  complete-query latency, not zero; its completed earlier component may remain
+  available. Component percentiles are not additive.
+- Diagnostic Ranking Repeatability compares all three attempt pairs on ordered
+  top-five IDs. Valid ordering changes are not an integrity failure. Keep all
+  attempt rankings, not just agreement hashes or first-quality scores.
+- Mean/p95 Retrieved Context Tokens@3/@5 use complete first-ranking prefix
+  counts with `cl100k_base`, including repeated source occurrences. These describe
+  returned volume, not corpus-wide chunk sizes, native limits, or a token budget.
 - Read linear evidence-count nDCG with Recall and token Precision. Zero complete
   evidence in the candidate corpus gives nDCG/alpha-nDCG zero. Invalid empty
   rankings give unavailable quality. Alpha-nDCG includes single-unit questions
@@ -456,6 +476,10 @@ locked result is reporting-only.
 - Partial quality estimates stay labelled in artifacts and do not enter normal
   quality scalars, successful leaderboards, or paired selection comparisons.
   Inspect planned/scored/failed/unavailable support, not just surviving scores.
+- Distinguish a complete outcome ledger from executed workload coverage and
+  complete quality. Explicit unexecuted rows account for missing execution;
+  they are neither successes nor observed model failures. Do not infer a blanket
+  zero-request-error acceptance rule from legacy validity counters.
 - A failed child can retain completed build measurements and observed resource
   peaks. `measurement.resource_scope=partial` labels interrupted windows on the
   existing child; missing CUDA telemetry is unavailable and CPU VRAM inapplicable.
@@ -463,6 +487,9 @@ locked result is reporting-only.
 - Apply the [shared CI procedure](metrics.md#confidence-intervals) to whole source
   documents with their dependent queries/attempts; review the suite's
   [CI applicability](rag/chunking_embedding/metrics.md#which-values-receive-an-interval).
+  Ranking Repeatability and each query-latency family require frozen source
+  support for intervals; single load/build-component observations and token
+  descriptors do not receive invented intervals.
 
 See [metric definitions](rag/chunking_embedding/metrics.md) and the
 [artifact/MLflow contract](rag/chunking_embedding/methodology.md#mlflow-result-structure)
@@ -510,6 +537,10 @@ Repeatability compares all measured-attempt pairs over the complete ordered
 result and is diagnostic, while pool provenance, live retrieval consistency,
 exact permutation, and final ordered-prefix checks remain enforced integrity
 checks. No separate pool-match scalar is required.
+Its supported Ranking Repeatability interval uses whole-source resampling of
+saved pair records, not extra inference. A failed-query count is an observed
+outcome count; required execution, quality coverage, and actual integrity gates
+determine evidence completeness under the shared accounting rule.
 
 Index owners use `storage.index_size_bytes` and
 `operational.index_build_seconds`. RRF uses the same size key for its dependency

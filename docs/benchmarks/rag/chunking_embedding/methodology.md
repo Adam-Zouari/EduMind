@@ -4,6 +4,7 @@
 
 On this page:
 
+- [Implementation boundary](#implementation-boundary)
 - [Terminology and unit of comparison](#terminology-and-unit-of-comparison)
 - [Candidate pairs](#candidate-pairs)
 - [Data](#data)
@@ -16,6 +17,19 @@ On this page:
 
 Which complete chunker/embedding pair retrieves verified educational evidence
 best?
+
+## Implementation boundary
+
+This page and the metric reference define the approved reporting contract.
+The existing runner's standalone validation, designated-first evidence scoring,
+exact search, total build/query timing, and resource collection do not by
+themselves implement the additional stage breakdowns and context descriptors.
+Separate cold-load/chunking/chunk-embedding and query-embedding/search counters,
+diagnostic all-pairs Ranking Repeatability with supported intervals, replayable
+per-attempt evidence, and the revised completeness/acceptance distinction require
+implementation alignment. The existing top-five equality gate and blanket
+request-failure validity policy must not be relabelled as those diagnostics.
+These documentation changes do not migrate code, protocols, or historical runs.
 
 ## Terminology and unit of comparison
 
@@ -186,18 +200,19 @@ batch or a different precision to avoid an out-of-memory result.
 After input verification, an eligible pair performs:
 
 ```text
-start resource monitoring and load the pinned embedding model/tokenizer
+start resource monitoring; time loading the pinned embedding model/tokenizer
+-> synchronize readiness and stop the cold-load timer
 -> start the corpus-build timer
--> split documents into chunks with exact source offsets
+-> time chunk creation through the complete source-consistent inventory
    (validate semantic-boundary inputs before their embedding calls)
--> validate every chunk with the candidate model tokenizer
--> embed every valid chunk
+-> time final chunk-vector production, including native checks and synchronization
 -> assemble/validate the complete matrix/metadata and synchronize; stop the build timer
 -> run one complete representative query warmup, outside query timing/quality
--> execute the measured answerable queries with the corpus fixed
--> retain the designated first ranking and every attempt's status/timing
+-> measure each query's embedding stage, search stage, and enclosing request
+-> retain every attempt's ranking, stage outcomes, and timings
 -> stop resource monitoring after measured execution ends
--> score the first ranking at @3/@5; aggregate and bootstrap offline
+-> score the first ranking at @3/@5 and count its returned context tokens
+-> calculate diagnostic top-five pairwise repeatability; aggregate/bootstrap offline
 ```
 
 Exact NumPy search removes vector-database approximation from this experiment.
@@ -217,12 +232,24 @@ work during that build, and matrix/metadata assembly. Its measured cost is not
 hidden inside query warmup. The complete matrix is needed before the one query
 warmup can exercise exact search.
 
+Chunking Time includes semantic-boundary inference; Chunk-Embedding Time starts
+from the finished inventory and includes final-chunk native preparation, vector
+production, normalization/conversion, and required synchronization. Do not count
+boundary embeddings in both phases. Assembly, final validation, and orchestration
+remain in the enclosing Corpus-Build Time. Cold Model-Load Time ends before any
+of that work. These single-phase observations receive no invented build/load CI.
+
 Smoke measures one request per answerable query; development, validation, and
 locked measure three with the same seed/settings. Each request validates native
 input length and its output. Query timing covers tokenization and native-length
 validation, query embedding, exact cosine scoring, deterministic top-20
-selection, output validation, and device synchronization. Use each query's median successful measured latency
-for p50/p95, retaining failed elapsed times separately. Downloading, full data
+selection, output validation, and device synchronization. Query-Embedding Latency
+ends at the ready validated vector; Vector Search Latency then covers matrix
+scoring through validated results. Each component uses its own per-query median
+completed duration for p50/p95; the enclosing request uses complete-query
+successes. Retain completed embedding timing after later search failure and
+all elapsed-to-failure separately. Component percentiles are not additive.
+Downloading, full data
 validation and validated-input verification, model loading, corpus build,
 warmup, and offline scoring are outside warm-query timing. RAM/VRAM monitoring
 includes loading, build, warmup, and measured requests, but excludes offline
@@ -232,29 +259,33 @@ Quality uses only attempt 1. A failed first request leaves unavailable quality
 even when later requests succeed; a later failed request does not erase valid
 first-ranking quality. Keep one outcome per scheduled attempt, including an
 explicit unexecuted status when execution stops. Missing records are incomplete,
-not presumed request failures. Repetitions supply timing and the frozen ranking-
-consistency checks, not additional quality observations.
+not presumed request failures. Repetitions supply timing and diagnostic Ranking
+Repeatability, not additional quality observations.
 
-The consistency check here compares repeated **ordered top-five IDs**. It is
-not generation's three-pair semantic/citation agreement and is not the
-retrieval–reranking benchmark's diagnostic complete top-20 Ranking Repeatability.
-Preserve each suite's scope rather than importing a stricter or looser
-comparison from another stage.
+Ranking Repeatability applies the [shared pair rule](../../metrics.md#pairwise-repeatability)
+to repeated **ordered top-five IDs**, or all available IDs in a smaller corpus.
+Average pair scores within questions, then questions within documents, then
+documents. Valid ordering differences are diagnostic, not an acceptance gate.
+The retrieval–reranking diagnostic instead compares its complete normally top-20
+order; neither depth is silently substituted for the other.
 
 A successful child must account for every expected document and answerable
 query and attempt, produce nonempty source-consistent chunks and the expected
-number, dimension, and stored dtype of finite nonzero vectors, use zero truncated
-inputs, and reproduce the same ordered top-five IDs for repeated identical
-queries. Empty/short rankings outside the expected corpus size, duplicate or
+number, dimension, and stored dtype of finite nonzero vectors, and use zero
+truncated inputs. Empty/short rankings outside the expected corpus size, duplicate or
 out-of-index IDs, invalid offsets, and token-free chunks fail output integrity.
 Distinct chunk IDs may legitimately contain identical text. A substantive
 out-of-range or non-finite reported score fails scoring integrity; alpha-nDCG's
 uncapped diagnostic ratio is not a reported bounded score.
-An evaluation-time input-limit violation, crash, OOM, or
-malformed output retains its validation report and makes the child failed and
-comparison incomplete. Definitive hardware exclusions recorded by preflight
-are different: those candidates never enter the development comparison, and
-their reasons remain in its qualification provenance.
+Retain input-limit, request, OOM, and output-integrity outcomes under the
+[shared completeness distinction](../../metrics.md#execution-accounting-and-result-completeness).
+Declared hardware and integrity violations still fail their requirements. A
+request failure leaves dependent output/quality unavailable; it neither erases
+completed independent phases nor implies an additional zero-error acceptance
+rule. Missing required quality or execution
+prevents a complete quality comparison. Definitive hardware exclusions recorded
+by preflight are different: those candidates never enter development, and their
+reasons remain in its qualification provenance.
 
 ## Result completeness and advancement
 
@@ -276,11 +307,19 @@ and successful run-level validity, not merely a high surviving-output average.
 The engineer still chooses among valid complete alternatives; no weighted score
 or automatic quality winner is introduced.
 
-A completed corpus build and valid resource observations survive later request
-failures. Conversely, incomplete matrix preparation has no final matrix-byte or
-completed-build-time value. Retain known progress and elapsed-to-failure evidence
-without adding a partial-matrix-bytes metric. Recorded attempts, partial outputs,
-and scope labels do not turn an invalid child into a successful comparison.
+A completed build component and valid resource observations survive later
+failures. Incomplete matrix preparation has no final matrix-byte or completed
+total-build value, even if chunking completed. Retain known progress and
+elapsed-to-failure without adding a partial-matrix-bytes metric. Scope labels
+do not turn missing quality, execution, or integrity into complete evidence.
+
+Mean/p95 Retrieved Context Tokens at @3/@5 follow the
+[shared context-workload rule](../../metrics.md#retrieved-context-workload).
+Count each query's valid designated-first ranking prefix with the fixed tokenizer,
+then average/query-percentile the totals. This descriptor is query-weighted, not
+document-macro quality. Later rankings never replace a failed first observation;
+partial required totals stay labelled workload diagnostics. No token budget or
+new descriptor CI is introduced.
 
 ## Development, validation, and locked test
 
@@ -306,8 +345,9 @@ the selected pair on 40 locked QASPER papers plus their structured supplement
 ```
 
 Smoke validates wiring only. Development compares the qualified matrix members, and
-validation checks the finalists on unseen papers. A failed pair makes its parent
-comparison incomplete. The component locked report evaluates the selected pair
+validation checks the finalists on unseen papers. Parent reporting distinguishes
+recorded failures from missing execution, partial quality, and invalid evidence.
+The component locked report evaluates the selected pair
 in isolation and is not another chunking/embedding selection round.
 
 Validation and locked decisions must reference complete source comparisons
@@ -321,8 +361,9 @@ qualification and selection evidence rather than reuse of an older decision.
 |---|---|---|
 | Retrieval quality | **nDCG@3/@5**, **Evidence-unit Recall@3/@5**, **Evidence-token Precision@3/@5**; alpha-nDCG@3/@5 diagnostic | Measures evidence-richness ordering, evidence completeness, and context concentration; alpha-nDCG diagnoses novelty on the same answerable questions. |
 | Evidence slices | Retrieval metrics repeated for text, table, formula, and mixed questions | Reveals a pair that performs well only on the majority evidence type. |
-| Operational | Corpus-build time and source-token throughput, p50/p95 warm query latency, peak process-tree RAM, peak device VRAM | Measures the observed preparation, query, and hardware cost of the complete pair. |
-| Workload and storage | Corpus counts, source and indexed-token counts, chunk count and lengths, embedding dimension and dtype, matrix bytes | Explains how much work and storage each pair creates without treating those values as quality. |
+| Diagnostic | Ranking Repeatability | Describes valid top-five ordering stability and delivery across all scheduled attempt pairs without requiring a perfect score. |
+| Operational | Cold load; chunking, chunk embedding, total corpus-build time and source-token throughput; query-embedding, vector-search, and complete warm p50/p95; peak RAM/VRAM | Measures complete costs and explains their non-overlapping components without double-counting them as independent quality benefits. |
+| Workload and storage | Corpus counts, source/indexed tokens, chunk count/lengths, mean/p95 retrieved-context tokens at @3/@5, vector dimension/dtype, matrix bytes | Describes preparation, returned context, and storage; descriptors have no automatic better direction. |
 
 The three bold metric families are primary and reviewed separately at both
 cutoffs. Apply the [shared retrieval-quality definitions](../../metrics.md#retrieval-evidence-quality)
@@ -371,6 +412,9 @@ Each parent stores the phase, dataset and checksum, candidate plan, seed,
 repetitions, metric contract, model lock, Git and
 dependency provenance, hardware, and any engineer-decision file. Its direct
 metrics contain completion counts only: planned, successful, and failed pairs.
+Summaries additionally distinguish complete outcome ledgers, executed/unexecuted
+coverage, required quality coverage, and integrity outcomes rather than treating
+every request error as a missing comparison.
 `plan.json`, `provenance.json`, `metric_contract.json`, `leaderboard.parquet`,
 paired comparisons, and `summary.json` are parent artifacts. The chosen pair's
 locked result remains in this component experiment and cannot reopen selection.
@@ -380,7 +424,7 @@ Each child is one planned pair. Its run name is the complete pair identifier,
 embedding contracts, model and tokenizer revisions and checksums, device, dtype,
 prefixes, pooling, normalization, evaluation tokenizer, evidence rule,
 `quality_cutoffs=[3,5]`, `artifact_top_k=20`, `alpha=0.5`, seed, warmups,
-repetitions, split, and manifest checksum.
+repetitions, `repeatability_depth=5`, split, and manifest checksum.
 The child has no child runs for documents, questions, repetitions, or metrics.
 
 A valid child logs:
@@ -400,8 +444,17 @@ quality.table.<metric>
 quality.formula.<metric>
 quality.mixed.<metric>
 
+diagnostic.ranking_repeatability
+
+operational.cold_model_load_seconds
+operational.chunking_seconds
+operational.chunk_embedding_seconds
 operational.corpus_build_seconds
 operational.corpus_build_source_tokens_per_second
+operational.query_embedding_latency_ms_p50
+operational.query_embedding_latency_ms_p95
+operational.vector_search_latency_ms_p50
+operational.vector_search_latency_ms_p95
 operational.query_latency_ms_p50
 operational.query_latency_ms_p95
 operational.peak_process_tree_ram_mb
@@ -415,6 +468,10 @@ workload.unanswerable_query_count
 workload.chunk_count
 workload.chunk_tokens_mean
 workload.chunk_tokens_p95
+workload.retrieved_context_tokens_at_3_mean
+workload.retrieved_context_tokens_at_3_p95
+workload.retrieved_context_tokens_at_5_mean
+workload.retrieved_context_tokens_at_5_p95
 workload.embedding_dimension
 workload.embedding_matrix_bytes
 ```
@@ -424,13 +481,16 @@ roles; they are not repeated as MLflow prefixes. The prefixes above describe
 metric families and evidence slices. Eligible uncertainty bounds use the shared
 `.ci_lower` and `.ci_upper` suffixes.
 Validity counters such as expected/processed documents and queries, scheduled,
-successful, failed, and unexecuted attempts, truncated inputs, and ranking-
-consistency mismatches are logged under `validity.*`. Vector shape, finiteness,
+successful, failed, and unexecuted attempts and truncated inputs are logged under
+`validity.*`. Valid ranking differences are diagnostic, not failed validity
+checks. Vector shape, finiteness,
 and norm checks retain any failure reason in `validation_report.json`.
 All four quality metrics share reference eligibility; log eligible,
 scored, failed, and unavailable question/document support per metric and evidence
-scope. Independent contributing counts use the shared `.sample_count` convention.
-The final decision is also stored as a
+scope. Contributing observations use the shared `.sample_count` convention;
+record independent-source support separately in metric artifacts. Query medians,
+document-macro values, and independent sources are not interchangeable counts.
+The run-level validation outcome is also stored as a
 `benchmark.valid` tag and a `validation.status` tag whose value is `passed` or
 `failed`. MLflow scalar values do not replace the
 detailed `validation_report.json` artifact. Stored dtype is a parameter in the
@@ -440,9 +500,11 @@ Nulls and their statuses/reasons remain in artifacts; MLflow scalar keys are
 absent. Partial quality estimates are artifact diagnostics, not normal quality
 scalars. A failed child can retain complete first-ranking quality aggregates,
 genuinely completed operational values, and observed resource peaks. Later
-failure does not erase those observations or make the child eligible for
-selection. Its MLflow status is `FAILED`, with
-`benchmark.valid=false` and `validation.status=failed`. Set
+failure does not erase observations; acceptance follows the declared coverage
+and integrity requirements, not the number of ordinary request failures alone.
+A child blocked by those requirements retains `benchmark.valid=false` and
+`validation.status=failed`; missing evidence is separately marked incomplete.
+Transport-level MLflow completion is not proof of complete required quality. Set
 `measurement.resource_scope=partial` for an interrupted execution window
 (`complete` for a completed window) and record the monitoring boundaries and
 per-measurement availability in `candidate.json` and `resources.parquet`.
@@ -451,8 +513,9 @@ For example, observed RAM of 2,800 MiB and device VRAM of 2,900 MiB remain under
 `operational.peak_process_tree_ram_mb` and `operational.peak_vram_mb` on a failed
 child with partial scope. They are not evidence that the remaining workload
 would fit. Missing measurements stay unavailable; CPU VRAM stays inapplicable.
-Failed/incomplete children are omitted from the successful leaderboard and
-paired selection comparisons, not removed from the parent plan or summary.
+Children without complete required quality or passing integrity do not enter
+complete-result quality leaderboards or paired selection comparisons. All
+planned candidates and their outcomes remain in the parent summary.
 
 Each successful child stores the artifacts below. Failed children retain the
 same available records, including explicit null/status rows for planned queries
@@ -461,19 +524,20 @@ and unexecuted attempts; a missing output is not a successful empty artifact.
 | Artifact | Contents and purpose |
 |---|---|
 | `chunk_manifest.parquet` | One row per chunk with source document, exact offsets, strategy metadata, and token counts. |
-| `query_metrics.parquet` | One row per planned answerable question with first-ranking @3/@5 values, null statuses/reasons when unavailable, evidence slice, and support. Raw alpha-nDCG ratios/flags preserve greedy-baseline exceedances. |
-| `retrievals.parquet` | Ordered up-to-20 chunk IDs and scores for near-miss diagnosis; the first three and first five are scored. |
+| `query_metrics.parquet` | One row per planned answerable question with first-ranking @3/@5 values, context-token totals, diagnostic top-five pair score, statuses/reasons, evidence slice, and support. Raw alpha-nDCG ratios/flags preserve greedy-baseline exceedances. |
+| `retrievals.parquet` | Ordered up-to-20 chunk IDs and scores for each executed attempt, with sample/attempt IDs and input identities. The designated first prefix supplies quality/context counts; saved later rankings support repeatability, not replacement quality. |
 | `evidence_matches.parquet` | Trace from each question and evidence unit to the chunks that recovered it. |
-| `timings.parquet` | One row per query and scheduled measured attempt with outcome, actual elapsed time when executed, and errors, plus the separate corpus-build outcome/duration and elapsed-to-failure evidence. Only successful query elapsed times enter warm-latency percentiles. |
+| `timings.parquet` | One row per query/attempt with outcome and embedding/search/enclosing durations and phase status, plus separate cold-load, chunking, chunk-embedding, total-build records and elapsed-to-failure. Each completed component enters its own latency cohort. |
 | `resources.parquet` | Timestamped process-tree RAM and raw assigned-device VRAM samples, with method, availability, and complete/partial window scope. |
 | `candidate.json` | Resolved contracts, run and metric statuses, fingerprint, complete or labelled partial aggregates, support, CI draw counts/degeneracy flags, operational values and measurement scope, and artifact references. |
 | `validation_report.json` | Input-length and validity checks, counts, limits, checksums, and any errors. |
 
 Raw documents, model weights, and a full embedding matrix are not duplicated
 into every child; frozen inputs, offsets, revisions, and checksums make the rows
-reproducible. Any failed child logs its reason and available validation evidence,
-remains visible with MLflow status `FAILED`, and makes the parent comparison
-incomplete.
+reproducible under the [shared evidence-retention rule](../../metrics.md#prediction-evidence-and-rescoring).
+Retain explicit unexecuted rows and missing-evidence reasons; a completed ledger
+does not imply complete execution or quality. Report each candidate's coverage
+and integrity without a blanket parent-failure rule for every measured error.
 
 Aggregation and uncertainty follow the
 [chunking and embedding confidence-interval contract](metrics.md#chunking-and-embedding-confidence-intervals).
