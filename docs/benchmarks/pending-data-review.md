@@ -213,13 +213,39 @@ the authoritative dataset manifests and methodology, then remove the item.
 
 ## Vector databases
 
-- Freeze the independent synthetic corpus/query seeds and selected-real-corpus
-  allocation for validation and locked reporting, including exact workload sizes,
-  dimensions, filters, concurrency, and source provenance. Locked requests must
-  not reuse inputs observed during server/index selection.
-- Set minimum successful-request and independent-query support for p95/p99
-  reporting per workload cell. Record submitted, successful, and failed counts;
-  many failed or repeated requests do not establish tail-latency support.
+- Inspect representative selected-model vectors and queries; freeze the initial
+  corpus, plausible growth sizes, source allocations and held-out validation/locked
+  workloads. Record dimensions/dtype, corpus/query checksums, related-source
+  grouping, and separately labelled synthetic stress seeds. The old synthetic
+  100k/1M grid is not automatically the reviewed real-data scale.
+- Freeze each database's bounded configuration roster and tuning budget before
+  comparative runs, including supported native planning. Record shortlist limits;
+  validation and locked reuse complete database–configuration identities without
+  retuning. Any recall target used for review must be declared, not inferred from
+  a driver's old automatic selector.
+- Review document-ID filters, exact eligible sets, restrictive/compound/empty
+  cases, and correlation between filter membership and query/vector clusters.
+  Integration evidence must be available inside each question's allowed scope.
+- Freeze exact-distance evaluator precision and identity. Keep boundary-tie
+  equality exact by default; any nonzero tolerance requires numerical evidence
+  and a protocol revision before candidate comparison. The boundary-slot credit
+  rule itself is fixed, not selected from benchmark outcomes.
+- Freeze request payloads, concurrency, schedules, representative and load warmup,
+  measured window duration/count, connection/retry/timeout policies, and drain
+  boundaries. Identify first quality and three repeatability observations before
+  execution. Keep static search and document mutations separate unless an explicit
+  mixed-load condition is needed.
+- Select representative logical document insertion/replacement/deletion sizes
+  and independent source groups. Freeze starting/restored states, visibility
+  probes and polling intervals, restart/cache procedure, server memory/cache
+  accounting, and the synchronized apparent-byte post-build storage checkpoint.
+- Set independent query/source support for ANN/evidence/repeatability intervals,
+  and independent load-window or operation-group support for p50/p95, QPS and
+  rates before authoritative comparisons, including development. Preserve
+  concurrent dependence. Record submitted, completed, failed,
+  not-executed and checkable counts; 10,000 bootstrap draws do not create new
+  independent data or load executions. Unsupported bounds remain null while
+  descriptive points retain their actual scope.
 
 ## Resolution rule
 

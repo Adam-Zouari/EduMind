@@ -270,7 +270,14 @@ runs remain blocked until that calibration and freeze are complete.
 
 ## Vector databases
 
-The benchmark compares self-hosted network servers with the same vectors, metadata, filters, schema, query order, and client-visible latency. Vendor benchmark numbers are not used to rank them because those numbers do not hold EduMind's workload and environment constant.
+The benchmark compares self-hosted network servers with the same vectors,
+metadata, filters, logical schema, query schedule and client-visible measurement
+boundaries. Each candidate is a database plus its explicit configuration;
+development compares the declared settings, validation confirms frozen finalists,
+and locked reports one selected pair. Native query planning is permitted under
+those settings. Vendor benchmark numbers do not rank these candidates because
+they do not hold EduMind's workload and environment constant. See the revised
+[methodology and implementation boundary](vectordb/methodology.md).
 
 | Server | Benchmark profile | Why it is included | Evidence |
 |---|---|---|---|

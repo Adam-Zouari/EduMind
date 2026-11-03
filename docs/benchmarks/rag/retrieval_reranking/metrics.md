@@ -426,8 +426,7 @@ component/request duration, then calculate percentiles across query observations
 using the [shared percentile calculation](../../metrics.md#latency-percentiles).
 Keep support per component: retrieval can complete before its reranker fails.
 Interval applicability is listed under
-[aggregation and confidence intervals](#aggregation-and-confidence-intervals);
-p99 belongs to the separate vector-server load experiment.
+[aggregation and confidence intervals](#aggregation-and-confidence-intervals).
 
 ### Full-Stack Warm Latency p50
 

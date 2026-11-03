@@ -13,7 +13,7 @@ for dependencies, model snapshots, data preparation, evaluator images, and
 vector-server images. A benchmark does not download missing models while it is
 running.
 
-The Vector Database locked stage, frozen vector-index finalist selection, and
+The revised Vector Database configuration/metric/reporting contract and the
 locked-only Final RAG workflow below retain their implementation boundaries.
 Chunking–embedding implements its separate load/build/query-component timings,
 retrieved-context descriptors, diagnostic top-five pair score, and execution,
@@ -121,8 +121,10 @@ smoke-cpu + smoke-cuda -> preflight -> development -> validation -> locked
 - `validation` runs the finalists named in the reviewed development decision.
 - `locked` runs exactly one validation winner and is reporting-only.
 
-Vector Database is CPU-only and has no CUDA preflight, but has its own locked
-report. Final RAG has only one locked evaluation of the already-selected system;
+Vector Database server execution is CPU-only and has no CUDA preflight. Its own
+locked report is specified but not yet executable; see the
+[implementation boundary](vectordb/methodology.md#implementation-boundary).
+Final RAG has only one locked evaluation of the already-selected system;
 it does not run another smoke, preflight, development, or validation comparison.
 
 Development, validation, and locked use the device, dtype, and batch size in
@@ -554,13 +556,20 @@ model lock, not candidate-run metrics.
 
 ## 9. Vector databases
 
-Start the four servers before available CPU-only runs and stop them afterward.
-The command sequence below also shows the approved target for frozen-finalist
-validation and a component locked report. Those final-stage contracts are not
-yet fully implemented; follow the
-[vector methodology's implementation status](vectordb/methodology.md#implementation-status)
-before interpreting a current run as that report. In particular, validation
-must not retune the index settings that it is supposed to confirm.
+The [revised vector methodology](vectordb/methodology.md) and
+[metric contract](vectordb/metrics.md) specify one database–configuration child
+per candidate, tie-aware ANN/Filtered ANN Recall@20, evidence quality, database
+Ranking Repeatability, operation-specific error rates, p50/p95/QPS, and verified
+write/startup boundaries. This documentation revision does not implement them.
+Existing commands below remain diagnostic under their recorded older protocol;
+do not interpret their keys or a successful exit as the revised report.
+
+### Existing diagnostic entry points
+
+The current Compose command starts the legacy driver services. These entry
+points exist, but neither validation path establishes the complete revised
+contract. In particular, dense validation still retunes settings. Follow the
+[implementation boundary](vectordb/methodology.md#implementation-boundary).
 
 ```powershell
 docker compose -f experiments/benchmarks/vectordb/compose.yml up -d
@@ -568,20 +577,35 @@ python -m experiments.benchmarks.vectordb.run --profile smoke
 python -m experiments.benchmarks.vectordb.run --profile development
 python -m experiments.benchmarks.vectordb.run --profile validation
 python -m experiments.benchmarks.vectordb.retrieval_run --profile validation
-python -m experiments.benchmarks.vectordb.run --profile locked
 docker compose -f experiments/benchmarks/vectordb/compose.yml down
 ```
 
-The server-finalist decision defaults to `vector-database-validation.json` and
-selects one or more complete server/index finalists from development, including
-their exact tested HNSW settings. The grid search belongs to development;
-validation rebuilds and compares only those recorded configurations without
-retuning. Complete retrieval consumes those finalists together with the locked
-chunking–embedding and retrieval–reranking decisions. After reviewing all
-validation evidence, record exactly one selected server/index profile in
-`vector-database-locked.json`. Its own locked run reports that frozen
-configuration on the reviewed held-out workload. Final RAG consumes the same
-choice without further server or index selection.
+### Target lifecycle after migration
+
+Run candidate services sequentially under controlled allocations. Prepare the
+representative corpus/query/operation workloads and their input-validation seal;
+verify those identities outside measurement at each profile start. Exact data
+sizes, configuration ranges, and load-window/support settings remain in
+[pending data review](pending-data-review.md#vector-databases).
+
+Development compares the declared database–configuration pairs. The engineer's
+`data/benchmarks/decisions/vector-database-validation.json` selects complete
+development pairs and exact tested settings. Validation rebuilds only those
+configurations on its own corpus without retuning. Database-only and frozen-stack
+measurements are paths of the same comparison, with condition-scoped scalars and
+per-request artifacts; they do not produce independently selected winners.
+
+After validation, `vector-database-locked.json` in that decisions directory
+records exactly one selected pair and its source-run/protocol provenance. The
+target `python -m experiments.benchmarks.vectordb.run --profile locked` command
+is not executable yet. Its eventual report uses held-out inputs and frozen
+settings, without new tuning. Final RAG consumes that same choice. Advancement
+uses decisions, not edits to the protocol roster.
+
+Metric names include units for bytes and durations. Rates remain separate for
+search/insert/update/delete; there is no global error-rate scalar. Execution
+counts belong to `validity.*` support and the request ledger. See the complete
+[MLflow hierarchy, keys and artifacts](vectordb/methodology.md#mlflow-result-structure).
 
 ## 10. Generation and Final RAG
 

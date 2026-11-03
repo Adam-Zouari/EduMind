@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Revised the vector-database documentation contract around explicit database
+  configurations, tie-aware ANN Recall@20, application evidence quality,
+  operation-specific reliability, visibility-based maintenance timing, and
+  scoped MLflow/uncertainty reporting. Runner migration remains pending.
 - Expanded vector-database metric explanations and documented current runner
   limitations; clarified setup, architecture, and contribution guidance without
   changing benchmark implementation or methodology settings.

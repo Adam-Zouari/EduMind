@@ -240,7 +240,7 @@ declared shared holdout policy.
 | Retrieval and reranking | The same reviewed RAG inputs and selected upstream data identities. Runtime pool collection, chunk-content, and dense/BM25 index checksums remain artifact-integrity gates, not data annotations. |
 | Generation | Required facts, accepted answers, supplied evidence for answerable questions, unanswerable labels, and frozen context provenance. Judge calibration/readiness and predicted-output validation are separate gates. |
 | Final RAG | Its untouched held-out inputs, frozen composition's input requirements, and source isolation from component selection/confirmation. Automatic checks cannot prove that a reviewer has never examined a holdout. |
-| Vector database | Workload dimensions/counts, seeds, vector/metadata/query shape, finite values, filter cases, and exact-search reference inputs for synthetic or selected-real workloads. Database readiness is an environment gate. |
+| Vector database | Representative corpus/growth provenance, query/source allocation and split isolation, vector shape/dtype/finiteness/nonzero norms, canonical chunk/document IDs and metadata, trusted filter eligibility, exact-distance inputs/tie policy, integration evidence, and prepared insert/replace/delete expectations. Synthetic stress inputs remain labelled. Readiness, actual responses and write visibility are runtime checks; this suite's standalone validator remains planned. |
 
 ### Document references, including blank sources
 

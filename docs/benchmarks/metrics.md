@@ -36,8 +36,8 @@ availability rules. A word formula names its actual denominator: reference
 objects, generated claims, returned tokens, completed requests, and scheduled
 attempts are not interchangeable.
 
-The Document, ASR, Video, Chunking–Embedding, Retrieval–Reranking, and Generation references
-use the following order for each individual metric:
+The Document, ASR, Video, Chunking–Embedding, Retrieval–Reranking, Generation,
+and Vector Database references use the following order for each individual metric:
 
 1. **Question:** what the metric answers.
 2. **Calculation:** exactly what is counted, timed, compared, or averaged.
@@ -417,13 +417,13 @@ perfect empty scores from this rule. Their local contracts govern eligibility.
 ### Pairwise repeatability
 
 Document and visual-video Repeatability Success Rate, ASR Transcript
-Repeatability Success Rate, and Chunking–Embedding/Retrieval–Reranking Ranking
-Repeatability share one pair-counting rule. Each benchmark freezes its own output
-representation and comparison depth. These metrics are diagnostic: a different
+Repeatability Success Rate, and Chunking–Embedding/Retrieval–Reranking/Vector
+Database Ranking Repeatability share one pair-counting rule. Each benchmark
+freezes its own output representation and comparison depth. These metrics are diagnostic: a different
 valid output does not itself fail integrity. Invalid IDs, incorrect provenance,
 prohibited truncation, and non-permutation outputs retain their separate gates.
 Generation keeps its local semantic/citation comparison functions. Deferred
-Vector Database and Final RAG revisions retain their explicitly documented
+Vector Database and Final RAG runners retain their explicitly documented
 implementation boundaries; a shared definition does not certify those runners.
 
 Compare every unordered pair of scheduled measured attempts. A pair succeeds
@@ -522,8 +522,8 @@ rankings remain output-integrity failures, not a new empty-context convention.
 
 ### Latency percentiles
 
-For p50, p95, or p99, sort the benchmark's eligible observations and locate
-zero-based position `(n - 1) × p`, where `p` is `0.50`, `0.95`, or `0.99`.
+For p50 or p95, sort the benchmark's eligible observations and locate
+zero-based position `(n - 1) × p`, where `p` is `0.50` or `0.95`.
 Interpolate linearly between adjacent values at fractional positions. With one
 observation, every percentile equals it; with none, the percentile is unavailable.
 The same interpolation applies to a descriptor explicitly reporting p95, such
@@ -608,9 +608,10 @@ shared percentile-bootstrap procedure, calculated offline from retained records:
 
 1. Resample complete independent units with replacement 10,000 times, using
    seed `42`. The benchmark declares its unit and eligible inventory: source
-   documents, source-grouped clips/videos, or queries within a vector workload
-   cell. Retain all dependent pages, questions, outputs, attempts, failures,
-   and windows inside that unit; do not prefilter to successful records.
+   documents, source-grouped clips/videos, queries within a vector workload
+   condition, or independent load windows for server-load uncertainty. Retain
+   all dependent pages, questions, outputs, attempts, failures, and windows
+   inside that unit; do not prefilter to successful records.
 2. Recalculate the metric's declared statistic on each draw: its macro-average,
    pooled-count ratio, percentile, or other defined aggregate. A unit drawn
    twice contributes twice; do not deduplicate drawn copies by ID.

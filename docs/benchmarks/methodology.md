@@ -17,7 +17,7 @@ another candidate comparison.
 1 + 2 --> 3. Video keyframes with parser and ASR frozen
 
 4. Chunking x embedding --> 5. Retrieval and reranking
-5 --> 6. Real vector-server retrieval
+5 --> 6. Vector database configurations and frozen-stack retrieval
 
 7. Generation on fixed evidence (independent of retrieval)
 
@@ -28,11 +28,12 @@ selected extraction + chunking/embedding + retrieval + server + generator
 --> one Final RAG locked report, followed by reporting-only human review
 ```
 
-Document extraction, audio, chunking/embedding, the synthetic
-vector-server workload, and generation can start independently. Video waits for
-a document parser and ASR. Retrieval waits for chunking/embedding. Real server
-retrieval waits for a retrieval stack. Final RAG waits for one selected server,
-retrieval stack, and generator.
+Document extraction, audio, chunking/embedding, database smoke/conformance
+preparation, and generation can start independently. Video waits for a document
+parser and ASR. Retrieval waits for chunking/embedding. Representative database
+vectors and full-stack retrieval require their frozen upstream components;
+synthetic server checks alone do not establish application impact. Final RAG
+waits for one selected server/configuration, retrieval stack, and generator.
 
 ## Benchmark methodologies
 
@@ -476,8 +477,11 @@ EduMind / <Benchmark>
    `- one selected candidate child
 ```
 
-Only applicable phases appear. Vector Database omits CUDA smoke and preflight
-but retains its own locked report. Final RAG has only a locked parent with one
+Only applicable phases appear. Vector Database omits CUDA smoke and preflight;
+its own locked report remains part of the target contract, subject to the
+[vector implementation boundary](vectordb/methodology.md#implementation-boundary).
+Its flat children are database–configuration pairs, not hidden configuration
+trials beneath one database winner. Final RAG has only a locked parent with one
 frozen complete-system child. Document uses source-specific parents: its locked
 invocation reports the selected PDF route, selected image route, and fixed DOCX
 route as one frozen routing policy, not three competing winners. See the
@@ -564,7 +568,9 @@ resampling procedure, with the independent unit appropriate to its benchmark:
 | ASR | Speech or control clip; related clips remain grouped if the reviewed manifest defines their common source as the independent unit. |
 | Video | Video; related excerpts remain grouped by the reviewed original source when required. |
 | Chunking–embedding, retrieval–reranking, generation, Final RAG, and real vector-server retrieval quality | Source document with all eligible questions, repeated outputs, and pair results. |
-| Vector-database ANN workloads | Query with its aligned requests, within one declared workload cell. |
+| Vector-database ANN quality and database-ranking repeatability | Query with its aligned requests within one condition; related queries remain grouped by their reviewed source. |
+| Vector-database server load | Independent complete load windows, or a reviewed dependence-aware design; retain concurrent requests and wall time together. |
+| Vector-database standalone document operations | Independent operation/source groups, retaining related documents and repeated mutations. |
 
 The [shared metric reference](metrics.md#confidence-intervals) owns the bootstrap
 algorithm, parameters, paired-draw rules, support requirements, and reporting of

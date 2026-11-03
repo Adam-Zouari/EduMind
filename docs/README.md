@@ -31,16 +31,18 @@ The main dependencies are:
 
 ```text
 document parser + audio ASR -> video extraction
-chunking x embedding -> retrieval/reranking -> real vector-server retrieval
+chunking x embedding -> retrieval/reranking -> database configurations and frozen-stack retrieval
 generation on frozen evidence (independent of retrieval)
 
 selected components -> non-locked extraction-impact confirmation
                     -> one Final RAG locked report -> human review
 ```
 
-Document, audio, chunking/embedding, synthetic vector-server checks, and
-generation can begin independently. Each component has its own locked report;
-Final RAG evaluates one already-selected complete system. Each benchmark has
+Document, audio, chunking/embedding, database smoke/conformance preparation, and
+generation can begin independently. Database application-impact measurements
+require the frozen upstream stack; synthetic checks alone do not supply them.
+Each component has its own locked reporting contract, subject to its documented
+implementation boundary. Final RAG evaluates one already-selected complete system. Each benchmark has
 its own methodology and metric reference under `benchmarks/extraction/`,
 `benchmarks/rag/`, or `benchmarks/vectordb/`, matching the implementation layout.
 The shared methodology explains the lifecycle and decision files; shared metric

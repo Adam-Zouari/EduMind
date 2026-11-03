@@ -649,10 +649,6 @@ added to derive its p95.
 zero-based percentile position `(5 - 1) × 0.95 = 3.8`, giving
 `40 + 0.8 × (50 - 40) = 48` milliseconds. This describes the slow tail rather
 than the typical query; p50 is not a mean and does not replace p95.
-
-p99 is not reported in this phase. The vector-server load benchmark measures
-it under controlled concurrency; it is not part of this pair's metric contract.
-
 **Range and direction:** Non-negative milliseconds per query; lower is better at
 equal quality.
 

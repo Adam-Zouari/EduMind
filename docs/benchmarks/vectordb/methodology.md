@@ -4,211 +4,472 @@
 
 On this page:
 
-- [Servers](#servers)
-- [Data and configurations](#data-and-configurations)
-- [Execution](#execution)
+- [Implementation boundary](#implementation-boundary)
+- [Terminology and unit of comparison](#terminology-and-unit-of-comparison)
+- [Candidate configurations](#candidate-configurations)
+- [Data](#data)
+- [Common input and output rules](#common-input-and-output-rules)
+- [Per-candidate execution](#per-candidate-execution)
+- [Result completeness and advancement](#result-completeness-and-advancement)
+- [Development, validation, and locked test](#development-validation-and-locked-test)
 - [Metrics and why they are used](#metrics-and-why-they-are-used)
-- [Implementation status](#implementation-status)
+- [MLflow result structure](#mlflow-result-structure)
 
-Which networked vector server preserves nearest-neighbour and filter correctness
-while providing the most useful latency, concurrency, ingestion, memory, and
-storage trade-off?
+Which database and configuration preserve vector-search accuracy and useful
+educational evidence while providing suitable search, document-maintenance,
+startup, memory, and storage performance?
 
-This page defines the intended comparison and identifies the current execution
-gaps below. Reviewed workloads, completed comparative runs, and a final server
-decision are not claimed. The [metric reference](metrics.md) owns calculations,
-worked examples, result statuses, support, and confidence intervals.
+## Implementation boundary
 
-## Servers
+This page defines the revised benchmark contract. The existing vector drivers
+have not yet been migrated to it. Their synthetic workloads, configuration
+tuning, metric keys, agreement checks, and separate retrieval-validation entry
+point must not be presented as execution of this revision. In particular, the
+current driver does not implement the complete frozen-configuration validation
+and locked workflow, tie-aware @20 scoring, or the reporting structure below.
+The standalone validated-input/report interface also remains planned for this
+suite. [The runbook](../running.md#9-vector-databases) distinguishes existing
+diagnostic commands from the target lifecycle.
 
-| Server | Why it is included |
+Reviewed data, configuration ranges, load conditions, and independent-support
+requirements remain in [pending data review](../pending-data-review.md#vector-databases).
+Historical runs retain their original protocols; they are not relabeled with
+the revised metrics. A successful old driver exit does not establish conformance
+with this contract.
+
+## Terminology and unit of comparison
+
+One candidate is a **database–configuration pair**. The database identity alone
+does not determine search accuracy, build cost, or memory use. One child run
+records the exact configuration and all declared workload conditions it executes.
+
+The benchmark has two measurement paths within the same comparison:
+
+- **Database search:** prepared query vectors go directly to the server. Exact
+  neighbour preservation, filtering, request latency, and load handling isolate
+  database behaviour from model inference.
+- **Full-stack retrieval:** questions pass through the frozen query embedding,
+  retrieval strategy, and selected reranker to the final chunks. This checks
+  application impact while varying only the database–configuration pair. It
+  does not generate answers or use an LLM judge.
+
+A **workload condition** identifies its corpus snapshot, query inventory,
+filter, request payload, execution mode, and concurrency. Conditions have separate
+results; an unfiltered result does not replace a filtered measurement.
+Concurrency means outstanding client requests, not a database's advertised
+worker limit or model batch size. Each search request contains one query vector.
+
+One document insertion, replacement, or deletion is one **logical operation**,
+even when its adapter needs several API batches. A document with 40 chunks is
+not counted as 40 insert operations. Chunk counts and payload bytes explain
+the work in the operation artifact.
+
+## Candidate configurations
+
+| Database | Why it is included |
 |---|---|
-| Chroma server | Current provisional production baseline. |
+| Chroma server | Provisional application baseline. |
 | Qdrant server | Purpose-built vector server with payload filtering. |
 | Weaviate | Independent vector-server architecture with structured filters. |
-| PostgreSQL + pgvector | Transactional relational alternative with JSON metadata and HNSW. |
+| PostgreSQL + pgvector | Relational alternative with SQL metadata and vector indexes. |
 
-All servers receive identical precomputed vectors and metadata. They never create
-embeddings internally.
+Pinned product identities are in [model selection](../model-selection.md#vector-databases).
+Image digests and deployment endpoints remain in deployment locks; benchmark
+behaviour and the configuration roster belong in the versioned vector
+`protocol.yaml`. Each configuration has a stable alias and resolved settings.
+No parameter changes are hidden behind the same alias/checksum.
 
-## Data and configurations
+Development evaluates a small, declared configuration set per database. Search
+breadth, graph connectivity, construction effort, and filter-planning settings
+are useful dimensions when supported by the pinned backend. Freeze ranges and
+tuning budgets before comparative runs; identical numeric settings across
+implementations do not establish equivalent effort or accuracy. Unsupported
+settings are distinguished from execution/infrastructure errors.
 
-The [shared data-validation workflow](../data-validation.md) checks synthetic
-and selected-real workload shapes, finite vectors, metadata/filter cases,
-reference inputs, seeds, and provenance before timed execution. Its proposed
-standalone/report interface remains pending implementation. Database health,
-index readiness, and adapter conformance are separate runtime/environment gates.
+Each tested pair receives its own child, not a hidden trial inside a database
+winner run. Examine recall, latency, QPS, build cost, and resources together.
+Compare speed at reasonably comparable recall instead of rewarding configurations
+that search less thoroughly. A recall target, if used to organize review, must
+be declared in advance; there is no implicit 0.99 gate or automatic winner.
 
-| Execution profile | Workload |
+Native planning may select an exact scan for a small eligible set or another
+documented path within the frozen configuration. This is a database comparison,
+not a requirement that every query traverse HNSW. Record index readiness and
+executed plans where observable. Apply this permission consistently to all
+backends; an automatic plan change is not engineer retuning on held-out results.
+
+## Data
+
+Representative real chunks and the selected embedding model's vectors are the
+core workload. Freeze a realistic initial corpus, plausible growth conditions,
+held-out queries, and their source provenance. Synthetic stress conditions remain
+separately labelled; their dimensions or easy self-neighbour queries do not
+substitute for application-representative measurements.
+
+| Profile | Data role |
 |---|---|
-| Smoke | 1,000 vectors at dimension 384; 50 queries; concurrency 1 |
-| Development | 100,000 vectors at dimensions 384 and 1,024; 500 queries; concurrency 1/8/32 |
-| Validation | Selected real embeddings plus 1,000,000 clustered vectors; up to 1,000 queries; concurrency 1/8/32/64 |
-| Locked (planned; not executable yet) | One selected server and frozen index settings on a held-out vector/query workload fixed before execution; reporting only |
+| Smoke | Small fixtures exercising search, filters, writes, restart, and reporting. |
+| Development | Reviewed representative and stress workloads for configuration comparison. |
+| Validation | Unseen queries/source allocations and reviewed corpus conditions for frozen finalists. |
+| Locked | Held-out workload for one selected pair; reporting only. |
 
-Synthetic vectors contain clusters and 5% near-duplicates. Metadata creates
-filters matching approximately 50%, 10%, 1%, and in validation 0.1% of records.
+Exact counts, growth sizes, synthetic seeds, query schedules, concurrency,
+load-window lengths/repeats, and shortlist limits are frozen after data review.
+They are not inherited automatically from the old driver's synthetic grid.
+Source-related questions remain grouped across splits and uncertainty draws.
+All candidates within a condition receive the same corpus and query inventory.
 
-Development searches the supported HNSW combinations:
+Filters refer to known metadata, such as a user-selected document's stable
+internal ID. They do not infer a subject from an ambiguous filename. Freeze
+eligible IDs/counts from trusted input metadata, including restrictive, compound,
+and empty-match cases. Review both selectivity and its relationship to vector
+clusters/query intent; equal matching percentages can create different workloads.
+
+Answerable integration questions have reviewed gold evidence in their allowed
+source scope. Shared evidence IDs/intervals and the `tiktoken:cl100k_base` scoring
+tokenizer are unchanged. Unanswerable questions are not empty-reference retrieval
+comparisons. Gold units outside a requested document filter indicate an invalid
+question/filter pairing, not failure to recover forbidden evidence.
+
+Full [data validation](../data-validation.md) runs separately during preparation.
+It verifies corpus/query shapes, finite nonzero vectors, identities/checksums,
+metadata, reference distances, evidence and split isolation. Each profile verifies
+its inputs against that report before resource/timing windows. Database health,
+generated output validity, index readiness, and write visibility remain runtime
+checks, not claims made by the data validator.
+
+## Common input and output rules
+
+### Frozen upstream stack and exact reference
+
+All candidates receive identical chunk IDs/text, vectors, metadata, similarity
+definition, storage precision, query inputs, and equivalent returned payloads.
+The server never generates embeddings. IDs-only and text-bearing responses are
+different workload conditions, not interchangeable latency observations.
+
+The full-stack path freezes the selected chunker, embedding, retriever, reranker,
+top-20 pool depth, and @3/@5 scoring. Dense search uses the tested database.
+For RRF, retain the same external BM25 implementation, source depth, and fusion
+settings; do not substitute each server's native hybrid algorithm. A BM25-only
+selected stack has no dense-search dependency: label that integrated path and
+do not attribute identical BM25 results to ANN performance.
+
+Compute exhaustive reference distances offline over the frozen vectors. Filtered
+references use only the allowed subset. ANN Recall@20 uses the
+[boundary-tie rule](metrics.md#exact-neighbours-and-boundary-ties): strictly closer
+records receive individual credit; boundary alternatives receive credit only
+up to the remaining slots. The common evaluator, not server-reported scores,
+determines these classes. Exact equality is the default. A nonzero tolerance
+requires numerical validation and a frozen protocol revision, never tuning
+against candidate scores.
+
+### Pool identity and integrity
+
+Record each executed pool with query, attempt, condition, corpus/vector/metadata
+checksums, configuration identity, ordered IDs, and scores. Its checksum verifies
+that observation and provenance; it does not require different databases or
+repeated searches to return identical pools.
+
+The reranker receives the actual verified pool for that attempt and must return
+exactly its IDs once each. Final @3/@5 results are ordered prefixes of that
+validated ranking. The exact-retrieval benchmark's live-pool-equality gate is
+not copied into this ANN benchmark. No reranked-output repeatability metric is
+added here; only the database's pre-reranking output is compared across attempts.
+
+Duplicate/unknown IDs, nonfinite required scores, forbidden records, and malformed
+responses retain explicit integrity outcomes. Check filter eligibility against
+trusted input metadata, not merely the values echoed by the server. A completed
+usable response with known forbidden records supplies a Filter Violation Rate
+event and retains its execution-success timing/QPS observation, but cannot
+supply accepted ANN or downstream evidence quality. Malformed, duplicate-ID,
+unknown-ID and nonfinite-score responses are execution errors instead. The
+[search-outcome table](metrics.md#scoring-inputs-and-result-status) fixes these
+cohorts; operational observations do not excuse a failed correctness requirement.
+
+A well-formed eligible response may contain fewer than the requested neighbours.
+Preserve its ANN score, with credit only for recovered neighbours; do not pad or
+silently refill it. Integration expects `min(20, eligible chunk count)` records
+in each required source pool. An unexpectedly short pool leaves dependent
+integration quality unavailable while retaining the database observation. A
+truly smaller eligible corpus is not a short-pool failure. Unexpectedly empty or
+token-free integration rankings follow shared evidence-scoring integrity rules.
+Empty-filter probes are separate tasks, not answerable integration questions.
+
+### Correctness probes
+
+Use small controlled probes for vector/similarity semantics, wrong-dimension
+rejection, compound and empty filters, unique-ID replacement, complete document
+replacement, deletion, persistence, and configured-index readiness. Verify stored
+identities/contents, not just counts. An unrelated connection error does not
+prove correct rejection of a wrong dimension.
+
+Store pass/fail/unverified outcomes and details in the validation artifact.
+They are integrity evidence, not another family of quality percentages.
+Do not add a perfect Ranking Repeatability or zero Request Error Rate selection
+gate. Required correctness and verification remain necessary for trustworthy
+evidence; performance trade-offs cannot excuse invalid results.
+
+## Per-candidate execution
+
+Run candidate servers sequentially with controlled CPU/RAM allocations, client
+resources, connection reuse, request payloads, and pinned software. Unrelated
+database workloads must not consume the same resources. Database server
+measurements are CPU-only; full-stack models retain their frozen upstream
+CUDA/dtype/batch-one settings without becoming database GPU candidates.
 
 ```text
-m:                     16 or 32
-construction breadth:  100 or 200
-search breadth:         64 or 128
+verify inputs and deployment identities outside measurement
+-> run isolated correctness probes and prepare a clean benchmark state
+-> start server lifecycle monitoring
+-> time initial ingestion and configured-index readiness
+-> record the synchronized post-build storage checkpoint
+-> run one representative query/operation or load-window warmup for each path
+-> execute controlled query attempts and declared server-load windows
+-> execute document operations with visibility checks and restored baselines
+-> stop the database; time startup against the preserved workload state
+-> stop monitoring; retain all outcomes and samples
+-> score designated first outputs and all-pairs database Ranking Repeatability
+-> aggregate and bootstrap offline
 ```
 
-This makes sure one server is not compared with an unnecessarily weak default.
-Unsupported settings are recorded rather than silently replaced.
-Every supported configuration remains visible in MLflow; the runner does not
-automatically choose the database winner.
+### Query attempts and load windows
 
-The grid has eight declared combinations per server/dimension. Current tuning
-evaluates up to 10,000 corpus vectors and 50 queries, records supported and
-unsupported trials, and uses Recall@10 target `0.99`. Among trials meeting that
-target it selects the lowest p95, breaking ties by `m`, search breadth, then
-construction breadth. If none meets it, it retains the highest-recall supported
-trial, with latency as the next criterion. This selects a configuration to
-measure, not the winning server. Trials are recorded as values under the
-server child run, not as eight independent finalist children.
+Smoke has one measured attempt per controlled query. Development, validation,
+and locked schedule three with frozen inputs/settings. The first supplies
+quality; later outputs never replace it. Database Ranking Repeatability uses
+all three unordered pairs before reranking. Valid alternative pools are not
+failures. Repeated queries on one built index do not establish reproducibility
+across independently rebuilt indexes.
 
-The protocol uses Qdrant's minimum supported full-scan threshold, 10 KiB; the
-pinned server rejects zero. Index readiness is verified before measurement.
-Small filtered candidate sets may still use the server's exact-search path;
-their measured recall and latency describe that server behavior.
+Server load is a separately labelled workload mode within the same child. Freeze
+its query schedule, concurrency, completion/timeout policy and independent window
+repeats. Three repeatability attempts alone do not define its duration or support.
+Mark the first scheduled occurrence of each query in a condition before execution;
+only that occurrence supplies the condition's ANN quality, not the best or first
+successful response. Where repeatability is claimed, identify its three scheduled
+observations per query in advance. Additional traffic contributes to load
+statistics, not extra quality samples. Retain each window's outputs and condition
+identity; serial recall cannot substitute for a load-specific quality observation.
 
-A validation finalist is a server together with its exact development-tested
-index settings. Validation rebuilds those indexes on the validation corpus and
-compares only the recorded finalists without changing their settings or
-reopening the grid search.
+Use one warmup appropriate to each execution path: a representative complete
+query/operation for controlled evaluation, or one untimed warmup window for a
+server-load condition. The load warmup's duration and warm-state criterion are
+frozen during workload review. Warmup never enters measured quality, repeatability,
+error rates, latency, or QPS. Restore equal state after a mutation-path warmup.
+Warmup is not configuration tuning; a startup measurement has no preceding warm
+query against the stopped server.
 
-That frozen-settings validation rule is the contract, not a claim that the
-current dense-ANN driver enforces it: its validation path still retunes.
-At most three server finalists advance. Do not treat a newly tuned validation
-configuration as the same frozen development-tested profile.
+Database Search Latency begins at the common client adapter operation and ends
+at complete response decoding, including serialization, communication and server
+work. Scheduling wait before that boundary is outside request latency but inside
+the enclosing load window. Keep connection limits, timeout handling, retry policy,
+and payloads explicit. Do not retry a failed measured operation and relabel its
+successor as the designated first success. Deliberately enabled internal retries
+remain inside the same logical operation and timer.
 
-## Execution
+QPS divides successful measured completions by the complete load-window wall
+time, including dispatch, queuing, failures, and draining submitted requests to
+completion or fixed timeout. Setup, warmup, oracle work, scoring and bootstrap
+are outside. A fixed-concurrency result is not a discovered universal capacity
+limit. Do not sum concurrent request durations as the QPS denominator.
 
-The experiment has three steps.
+Full-Stack Retrieval Latency starts with the question request and ends with
+validated final chunks, including preparation/embedding, required source searches,
+fusion, reranking and synchronization. Model loading and corpus preparation are
+outside this warm timer. Each question contributes its median successful measured
+duration; p50/p95 then summarize questions. Server-load percentiles instead
+summarize individual completed requests. Keep the different observations labelled.
 
-### A. Conformance
+### Document operations, build and startup
 
-The real server is checked for health, cosine behavior, wrong-dimension
-rejection, compound filters, empty filters, duplicate-ID replacement, complete
-document replacement, deletion, real ANN-index use, persistence after restart,
-and index availability after restart. These are validity checks. A server that
-fails one is reported as non-conformant rather than assigned a misleading
-performance rank.
+Initial Build Time starts from a running empty server at collection/schema/index
+creation and prepared-data ingestion, and ends when all records are queryable and
+configured indexes are ready. Include required metadata indexes and first-use
+build work. Exclude downloads, extraction, chunking, embedding, oracle preparation,
+and isolated conformance fixtures.
 
-The small conformance corpus has 40 records. It is a controlled semantic probe,
-not representative retrieval-quality data or a full-scale restart measurement.
-Record each check and its reason; a missing check is incomplete. Current probe
-coverage and gate-enforcement limitations are listed in the
-[metric reference](metrics.md#current-measurement-limitations).
+| Logical operation | Timed start | Verified finish |
+|---|---|---|
+| Insert | First submission of the prepared document records | Every intended record is available through the declared visibility check. |
+| Update | First operation replacing an existing document | New vectors/metadata are available and obsolete chunks are absent. |
+| Delete | First submission deleting the document | Its records are confirmed absent. |
 
-### B. Dense ANN performance
+Use the same original states and prepared replacements for every pair. Include
+adapter batching and the visibility barrier; acknowledgment is not completion.
+Verification establishes availability/absence, not an expectation that ANN will
+retrieve every inserted record for an arbitrary query. Freeze verification queries
+and polling intervals. Restore baseline state outside the timed logical operation;
+retain restoration failures instead of continuing on a different corpus. Static
+search, mutation, and any declared mixed-load conditions remain separate. Logical
+deletion need not reclaim disk blocks immediately.
 
-```text
-NumPy computes exact top neighbours
-→ server returns approximate neighbours
-→ compare returned IDs with the exact IDs
-→ repeat unfiltered and filtered queries
-→ repeat at each configured concurrency
-```
+Startup Time measures a start command for an already stopped server holding the
+preserved benchmark corpus through health, state/index verification, and a
+successful required query. Stopping occurs before the timer. Do not substitute
+an empty server or the small conformance corpus. This is not an OS-cache-cold
+guarantee; freeze and record the restart/cache procedure.
 
-All servers receive the same normalized vectors, metadata, exact-oracle IDs,
-query order, and conditions. Search-quality scores use the designated first
-request; do not average later rankings or choose a later successful output.
-Apply the [shared availability rules](../metrics.md#shared-availability-rules)
-to failed first quality requests. A valid empty response against nonempty exact
-neighbours really does score zero. Required filter and conformance checks keep
-their separate failure rules.
+### Resources and storage
 
-The current protocol specifies two load warmups, one measured repetition for
-smoke, and three for development/validation. In the current driver, serial
-quality and filtered searches run once per query before load warmups; the
-repeated concurrent workload is unfiltered. Thus the
-diagram describes the intended condition coverage, not proof that filtered
-load cells are already implemented. Synthetic ANN does not inherit extraction's
-pairwise repeatability metric. Real retrieval retains its existing ranking
-agreement gate and first-ranking quality rule.
+Peak Server RAM follows [shared resource rules](../metrics.md#resource-measurements)
+within the build/warmup/query/operation/restart lifecycle. Sample the server
+container or declared container group with one consistent Docker/cgroup method;
+record cache accounting and do not alternate raw API usage with cache-subtracted
+CLI values. Sum simultaneous components, not independent maxima. Client model
+memory is outside this metric. Stop/restart periods and telemetry gaps remain
+explicit; unrelated services and offline scoring are excluded.
 
-Report each workload/dimension/K/filter/concurrency cell with actual coverage,
-not only a pooled server mean. Warm successful-request latency excludes build,
-warmup, and oracle scoring; batch wall time includes failed requests and
-dispatch/queue overhead. Time to failure is not successful-response latency.
-Use shared retention and incomplete-reporting rules across phases. The current
-driver's partial-retention gaps must not be mistaken for an intentional discard policy.
+Persistent Storage Size is the apparent byte size of dedicated database data,
+indexes, metadata, and required logs at the synchronized completed-build checkpoint,
+before warm query/mutation workloads. Use identical measurement semantics, not
+an apparent-size/allocated-block fallback. Exclude image layers, model snapshots
+and benchmark artifacts. Later/partial footprints retain their checkpoint labels
+but do not replace the completed-build scalar.
 
-### C. Real retrieval
+## Result completeness and advancement
 
-`vector-database-validation.json` selects one or more complete server/index
-finalists from the completed development comparison, preserving their exact
-tested settings. During validation, every finalist stores the same real chunks
-and vectors and the complete selected retrieval strategy is rerun so database
-ANN behavior is connected to actual RAG quality. Only after all validation
-evidence is reviewed does `vector-database-locked.json` record the single
-server/index profile approved for its own locked report and for Final RAG.
-Planned locked execution evaluates only that server with its frozen index
-settings and workload. It repeats the applicable conformance and performance
-checks without reopening the HNSW search or server selection. Exact held-out
-workload sizes and source provenance must be reviewed and recorded before the
-locked run.
+Apply [shared execution, quality and integrity accounting](../metrics.md#execution-accounting-and-result-completeness).
+Retain every scheduled outcome, including not-executed work. A failed first
+request leaves dependent quality unavailable; independent timings/resources
+survive. Later failures do not erase completed first quality. Ordinary ANN misses
+are scored search outcomes, not request errors.
 
-The complete-retrieval path freezes chunking, embedding, first-stage retrieval,
-reranking, evidence annotations, and score cutoffs while varying only the server
-and its recorded index profile. It uses three measured rankings per question;
-the first supplies quality, later rankings supply agreement/timing. Questions
-must remain grouped by source document for document-macro quality and uncertainty.
-Its nDCG, Evidence-unit Recall, and Evidence-token Precision at `@3`/`@5` adopt
-the [shared retrieval evidence rules](../metrics.md#retrieval-evidence-quality)
-on that server-backed path; they are separate from synthetic exact-neighbour recall.
-This is evidence retrieval, not generated-answer evaluation, and uses no LLM
-judge. Current scoring and aggregation limitations are explicit in the metric
-reference.
+Submitted-operation error rates and completed-response filter violations have
+different denominators. An execution failure is not a checkable filter response.
+Missing checks mean unverified, not pass. Partial required quality remains a
+labelled diagnostic, not a complete comparison obtained by dropping failed queries.
+Conditional successful latency still retains its failure coverage.
+
+The engineer reviews complete applicable evidence and records finalists; no
+weighted score, automatic winner, or extra zero-request-error rule is implied.
+Protocol violations and missing required evidence block authoritative use of
+affected results. No runner promotes application settings automatically.
+
+## Development, validation, and locked test
+
+| Profile | Candidate scope | Purpose and output |
+|---|---|---|
+| Smoke | Declared small fixtures for database paths | Wiring/conformance checks; no selection or authoritative CI. |
+| Development | All declared database–configuration pairs | Compare the search space and review trade-offs; write the finalist decision. |
+| Validation | Selected development pairs with exactly their recorded settings | Rebuild on the validation corpus without retuning; write one winner decision. |
+| Locked | Exactly one selected validation pair | Report on held-out inputs without configuration search or reselection. |
+
+Both database and applicable full-stack evidence belong to the pair's comparison.
+Early server smoke/stress preparation may precede upstream selection; authoritative
+application-impact measurements require the frozen stack. Changed upstream choices
+require a new identified comparison, not mixed results. The two execution paths
+are not independent ways to select conflicting winners. The database-only suite
+has no CUDA smoke or GPU preflight; integration models retain their upstream checks.
+
+Engineer decisions live in `data/benchmarks/decisions/`.
+`vector-database-validation.json` references complete development candidate IDs,
+exact configurations and source runs; `vector-database-locked.json` references
+exactly one complete validation pair. Both retain reviewer, date, rationale, and
+input/protocol provenance under the shared decision contract. Final RAG consumes
+the same selected database configuration without new selection.
 
 ## Metrics and why they are used
 
 | Role | Metrics | Why they are needed |
 |---|---|---|
-| Validity gate | Health, cosine behavior, dimension rejection, Filter Correctness, Empty-Filter Correctness, replacement, deletion, persistence, restart, and ANN-index verification | Determines whether results are trustworthy; these are not quality scores. |
-| Primary | ANN Recall@3/@5/@10, Filtered ANN Recall@3/@5/@10 | Measures preservation of exact neighbours at application-relevant depths, with and without metadata filters. |
-| Secondary | ANN and Filtered ANN Recall@1; real-retrieval nDCG, Evidence-unit Recall, and Evidence-token Precision at @3/@5 | Shows rank-one behavior and whether ANN results preserve real evidence retrieval. |
-| Diagnostic | Unfiltered/filtered p50 latency, first query after restart | Explains typical and cold-query behavior. |
-| Operational | Unfiltered/filtered p95/p99, throughput and error rate at each concurrency, build time and vectors/second, incremental upsert/delete throughput, restart readiness, peak server RAM, persistent storage | Measures tail latency, load handling, ingestion, restart, memory, and disk cost. |
+| Primary | ANN Recall@20; Filtered ANN Recall@20 | Measures exact-neighbour preservation in each search condition. |
+| Secondary | nDCG, Evidence-unit Recall, Evidence-token Precision at @3/@5 | Checks the frozen stack's useful evidence and ordering. |
+| Diagnostic | Candidate-pool Evidence-unit Recall@20; Ranking Repeatability; per-operation Request Error Rates; Filter Violation Rate | Explains available evidence, database output stability, execution failures, and forbidden returns. |
+| Operational | Database Search and Full-Stack Retrieval Latency p50/p95; QPS; Initial Build Time; Insert/Update/Delete Latency p50/p95; Startup Time; Peak Server RAM | Separates search/load, application wait, maintenance, readiness and memory costs. |
+| Descriptor | Persistent Storage Size | Records persistent footprint at a comparable checkpoint. |
 
-The database report remains separate evidence. It shows which server should be
-used by the final benchmark, but the benchmark never changes the current Chroma
-production default automatically.
+The [metric reference](metrics.md) owns questions, calculations, examples,
+directions and genuine edge cases. Probe outcomes and workload inventories remain
+validation evidence/parameters, not additional quality metrics.
 
-## Implementation status
+## MLflow result structure
 
-Implemented entry points are dense ANN `smoke`, `development`, and `validation`,
-plus the separate complete-retrieval `validation` entry point. Pinned image
-verification, real network adapters, NumPy exact search, controlled conformance
-probes, tuning-trial values, load measurements, server memory/storage collection,
-and MLflow artifacts exist. The server-only workload is CPU-based and follows the
-[shared CPU-VRAM rule](../metrics.md#peak-device-vram); GPU-backed embedding/reranking
-preparation in real retrieval is a separate model workload.
+Use `EduMind / Vector Database`, one parent per comparison and flat children per
+database–configuration pair. Names omit dates and timestamps. These aliases
+illustrate structure, not a frozen roster:
 
-The following are not yet implemented as the complete contract:
+```text
+EduMind / Vector Database
+├── smoke
+│   ├── chroma-config-01
+│   └── ...
+├── development
+│   ├── chroma-config-01
+│   ├── chroma-config-02
+│   ├── qdrant-config-01
+│   ├── weaviate-config-01
+│   └── pgvector-config-01
+├── validation
+│   └── <selected development database–configuration pairs>
+└── locked
+    └── <one selected validation pair>
+```
 
-- Dense-ANN validation reruns the HNSW grid instead of enforcing the finalists'
-  exact development-tested settings. Complete retrieval does read selected
-  settings from the development source summary, so these two paths must not be
-  assumed to use the same newly tuned validation profile.
-- The vector protocol and CLI have no `locked` profile. A frozen winner decision
-  is required before that reporting-only stage, but a decision file does not
-  make a missing execution path available.
-- The standalone validated-input/report interface is still planned for vector
-  workloads; existing inline checks are not a sealed validation report.
-- Filtered concurrency coverage, successful-throughput accounting on errors,
-  latency support gates/cluster intervals, document-macro real-retrieval
-  aggregation, complete per-request status/partial retention, uniform mutation
-  visibility timing, and exhaustive gate enforcement need the qualifications
-  listed in [metrics](metrics.md#current-measurement-limitations).
+The parent retains plan, protocol source/resolved checksum, deployment lock,
+input-validation identity, manifests, upstream decisions, completion accounting
+and comparison tables. Children record configuration/profile, corpus/query/vector/
+metadata checksums, resource allocations, payload and source-run provenance.
+Query/attempt/window observations are artifact rows, not nested runs.
 
-Current output is diagnostic where these requirements are unmet. A `success`
-status or populated MLflow chart alone does not establish complete conformance
-or an authoritative comparison. These gaps must be resolved before claiming the
-corresponding frozen validation or locked evidence. The reporting contract keeps
-the existing attempt counts, numeric settings, candidate roster, and gate scopes.
+Keep workload conditions separate in scalar names. The following base keys use
+`.condition.<condition_id>` for query/load/mutation results. The stable condition
+ID resolves to its full specification in `workloads.json`. Build/startup/storage
+facts instead use `.corpus.<corpus_id>` to identify their lifecycle; a whole-child
+memory peak explicitly identifies that scope rather than claiming per-cell peaks.
+
+```text
+quality.ann_recall_at_20
+quality.filtered_ann_recall_at_20
+quality.ndcg_at_3                         # also @5
+quality.evidence_unit_recall_at_3         # also @5
+quality.evidence_token_precision_at_3     # also @5
+diagnostic.candidate_pool_evidence_unit_recall_at_20
+diagnostic.ranking_repeatability
+diagnostic.request_error_rate.search
+diagnostic.request_error_rate.insert
+diagnostic.request_error_rate.update
+diagnostic.request_error_rate.delete
+diagnostic.filter_violation_rate
+operational.database_search_latency_ms_p50       # also p95
+operational.full_stack_retrieval_latency_ms_p50   # also p95
+operational.qps
+operational.initial_build_time_seconds
+operational.insert_latency_ms_p50                # also p95
+operational.update_latency_ms_p50                # also p95
+operational.delete_latency_ms_p50                # also p95
+operational.startup_time_seconds
+operational.peak_server_ram_bytes
+descriptor.persistent_storage_size_bytes
+```
+
+For example, `operational.database_search_latency_ms_p95.condition.dev-doc17-c4`
+is not pooled with `...condition.dev-unfiltered-c1`. Matched condition IDs denote
+matched observations across candidates. Metric contracts/status artifacts record
+roles and observation units. Shared sample-count and supported-CI suffixes append
+to each fully scoped key.
+
+Planned workload counts are parameters. Actual support counters may use
+`validity.<operation>.submitted_count`, `.successful_count`, `.failed_count`, and
+`.not_executed_count`, scoped by condition. They reconcile to the ledger; they
+are not a global error-rate metric or quantities to optimize. Integrity,
+filter-checkability, quality and independent-source support stay explicit in
+artifacts and metric-specific support fields.
+
+| Artifact | Contents |
+|---|---|
+| `workloads.json` | Conditions, shapes, query/source IDs, filters/eligible counts, schedules, operation sizes, and checksums. |
+| `candidate.json` | Resolved configuration, upstream identities, resource scope, lifecycle boundaries, and readiness status. |
+| `requests.parquet` | Scheduled/submitted/completed/failed/not-executed outcomes, logical operation/query/attempt/window IDs, durations and errors. |
+| `rankings.parquet` | Actual ordered database pools and downstream rankings, IDs/scores, provenance, expected/actual counts. |
+| `query_metrics.parquet` | First-output ANN/evidence values, statuses, tie cutoff/slot/credit details, and source support. |
+| `repeatability.parquet` | Three scheduled database-ranking pair comparisons per query when applicable. |
+| `timings.parquet` | Build/startup/operation/full-stack boundaries, load-window wall time, and elapsed-to-failure. |
+| `resources.parquet` | Timestamped server samples, monitoring coverage and storage checkpoints. |
+| `validation_report.json` | Runtime conformance, visibility, provenance, permutation, filter and output-integrity evidence; separate from the input-validation seal. |
+| `metric_statuses.json` | Scored/inapplicable/unavailable/incomplete statuses, units, counts, CI support, and reasons. |
+
+Parent comparison tables preserve conditions and upstream identities. Paired
+differences use aligned queries/source groups or independent load windows as
+defined in [confidence intervals](metrics.md#vector-database-confidence-intervals).
+Counts, configurations and descriptive storage facts do not acquire fabricated
+winner directions or CIs. This reporting contract does not certify old artifacts.

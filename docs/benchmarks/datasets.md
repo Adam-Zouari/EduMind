@@ -158,6 +158,24 @@ freeze the semantic judge; it is not
 added to candidate quality results and never contains validation or locked-test
 questions.
 
+### Vector databases
+
+Reuse reviewed RAG source text/evidence and the frozen selected chunking and
+embedding outputs for representative database workloads. Every compared
+database/configuration receives identical chunk IDs, vectors, metadata and
+query inventories within a condition. RAG's paper allocation does not by itself
+establish a representative database scale: review the initial corpus, plausible
+growth, held-out queries, and related-source split isolation separately.
+
+Store trusted document-filter eligibility, prepared document insertions and
+replacements, expected deletion states, and their checksums with the workload.
+Record original/replacement chunk counts and payload sizes; no subject inference
+from filenames is required. Synthetic stress corpora are separate conditions,
+not replacements for real-data evidence. Exact counts, dimensions, configuration
+ranges and load support remain in [pending data review](pending-data-review.md#vector-databases).
+The [vector methodology](vectordb/methodology.md) defines the target lifecycle;
+its input-validator and revised runner migration remain pending.
+
 ## 2. Prerequisites and storage layout
 
 Activate the project virtual environment and install the benchmark dependencies

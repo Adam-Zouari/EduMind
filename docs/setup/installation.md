@@ -413,7 +413,9 @@ Before using a run as comparative evidence:
   evidence-offset, and split-leakage validation.
 - all candidate runs retain per-sample results and exact revisions.
 - generation candidates share the same explicit device.
-- vector servers report healthy and use actual ANN indexes.
+- vector servers report healthy, preserve the required data, and verify their
+  configured indexes/planning rules. Recorded native exact-search paths are
+  allowed; every query need not traverse an ANN index.
 - the parent MLflow run reports `benchmark_complete=1`; failed candidates and partial artifacts remain visible, and smoke output is never treated as comparative evidence.
 - component winners and the complete system are frozen before candidates are evaluated on their applicable locked data; offline annotation review remains separate from candidate selection.
 - Final RAG human review is imported as reporting-only evidence, not used to select another system.

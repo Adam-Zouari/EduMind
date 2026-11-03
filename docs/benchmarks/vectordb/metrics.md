@@ -4,590 +4,957 @@
 
 On this page:
 
-- [Reading the results](#reading-the-results)
-- [Search and filter quality](#search-and-filter-quality)
-- [Real-retrieval quality](#real-retrieval-quality)
-- [Conformance validity gates](#conformance-validity-gates)
-- [Performance and resources](#performance-and-resources)
-- [Support, aggregation, and confidence intervals](#support-aggregation-and-confidence-intervals)
-- [Current measurement limitations](#current-measurement-limitations)
+- [Metric summary](#metric-summary)
+- [Scoring inputs and result status](#scoring-inputs-and-result-status)
+- [Exact neighbours and boundary ties](#exact-neighbours-and-boundary-ties)
+- [Search quality](#search-quality-1)
+- [Application retrieval quality](#application-retrieval-quality-1)
+- [Diagnostics](#diagnostics-1)
+- [Reliability and filter correctness](#reliability-and-filter-correctness-1)
+- [Why the quality metrics are not interchangeable](#why-the-quality-metrics-are-not-interchangeable)
+- [Operational performance](#operational-performance-1)
+- [Storage descriptors](#storage-descriptors-1)
+- [Worked candidate interpretation](#worked-candidate-interpretation)
+- [Vector-database confidence intervals](#vector-database-confidence-intervals)
 
-NumPy exact cosine search is the oracle for neighbour preservation, not a
-production candidate. Keep workload, dimension, K, filter selectivity, and
-concurrency separate. Primary metrics are ANN Recall and Filtered ANN Recall
-at 3, 5, and 10. Their rank-one versions and real-evidence retrieval scores
-are secondary. Correctness gates cannot be traded against speed, and there
-is no weighted winner score.
+This benchmark evaluates database–configuration pairs. ANN quality measures
+preservation of exact nearest neighbours; evidence quality checks the frozen
+retrieval stack's educational usefulness. Latency, reliability, maintenance and
+resource measurements answer separate questions rather than forming one weighted
+score. Primary status does not select a winner automatically.
 
-These definitions are the reporting contract. The implementation does not yet
-satisfy every rule; [current limitations](#current-measurement-limitations)
-identify the differences. All examples are illustrative arithmetic, not
-measured results or server-selection evidence.
+Each metric follows the document-extraction reference: question, calculation,
+example, interpretation, range/direction, and **Edge cases and availability**.
+The [shared availability rules](../metrics.md#shared-availability-rules) own
+failures, missing records and partial observations. Local blocks add only genuine
+metric-specific exceptions, not bad-data cases or repeated general rules.
+All numbers below illustrate arithmetic, not measured database results.
 
-## Reading the results
+The [implementation boundary](methodology.md#implementation-boundary) applies to
+this entire reporting contract. Old keys/measurements must not be renamed to imply
+the revised calculations already execute.
 
-Reference eligibility is fixed before execution. Apply the
-[shared availability and artifact-reporting rules](../metrics.md#shared-availability-rules)
-to scored, inapplicable, unavailable, and incomplete results. Invalid vectors,
-predicates, or references must be repaired before authoritative execution,
-not scored as poor quality.
+## Metric summary
 
-An executed request failure still enters the appropriate failure/gate
-observation, whose zero rule is separate from unavailable recall. Within each
-workload cell, retain scheduled, submitted, successful, failed, not-executed,
-reference-eligible, scored, and unavailable counts as applicable. A quality mean
-over available outputs describes completed-output quality, not the whole workload.
+### Search quality
 
-## Search and filter quality
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| ANN Recall@20 | Primary | How many exact nearest neighbours does unfiltered search preserve? | Higher |
+| Filtered ANN Recall@20 | Primary | How many exact nearest neighbours inside the allowed subset are preserved? | Higher |
 
-### ANN Recall@K
+### Application retrieval quality
 
-**Question:** Which exact neighbours remain in the first K server results?
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| nDCG@3/@5 | Secondary | Does the database-backed stack rank evidence-rich chunks early? | Higher |
+| Evidence-unit Recall@3/@5 | Secondary | How much required evidence reaches the selected context? | Higher |
+| Evidence-token Precision@3/@5 | Secondary | How much selected context consists of verified evidence? | Higher |
 
-Rank the complete normalized-vector corpus by exact cosine similarity. The
-oracle breaks exact ties by ascending corpus index. For one query:
+### Diagnostics
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Candidate-pool Evidence-unit Recall@20 | Diagnostic | How much required evidence is available before reranking? | Higher |
+| Ranking Repeatability | Diagnostic | Does the database reproduce the same ordered retrieved IDs? | Higher stability, not necessarily better relevance |
+
+### Reliability and filter correctness
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Request Error Rate — Search | Diagnostic | How often do submitted searches fail to execute successfully? | Lower |
+| Request Error Rate — Insert | Diagnostic | How often do submitted document insertions fail to complete? | Lower |
+| Request Error Rate — Update | Diagnostic | How often do submitted document replacements fail to complete? | Lower |
+| Request Error Rate — Delete | Diagnostic | How often do submitted document deletions fail to complete? | Lower |
+| Filter Violation Rate | Diagnostic | How often does a completed checkable filtered response contain forbidden records? | Lower |
+
+### Operational performance
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Database Search Latency p50 | Operational | What is a typical completed database request's duration? | Lower |
+| Database Search Latency p95 | Operational | How slow is the completed database-request tail? | Lower |
+| Full-Stack Retrieval Latency p50 | Operational | What is a typical complete retrieval/reranking wait? | Lower |
+| Full-Stack Retrieval Latency p95 | Operational | How slow is the complete retrieval/reranking tail across questions? | Lower |
+| QPS | Operational | How many successful search requests finish per wall-clock second? | Higher |
+| Initial Build Time | Operational | How long until prepared data and configured indexes are query-ready? | Lower |
+| Insert Latency p50/p95 | Operational | How long until prepared documents become available? | Lower |
+| Update Latency p50/p95 | Operational | How long until document replacements are fully reflected? | Lower |
+| Delete Latency p50/p95 | Operational | How long until documents are confirmed absent? | Lower |
+| Startup Time | Operational | How long until an existing stopped database can serve its preserved data? | Lower |
+| Peak Server RAM | Operational | What is the highest observed server memory use in the declared lifecycle? | Lower at comparable quality/workload |
+
+### Storage descriptors
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Persistent Storage Size | Descriptor | How much persistent state does the completed database require? | No quality direction; smaller is a footprint advantage at comparable functionality |
+
+Workload counts, dimensions, concurrency, filters, requested/actual result counts,
+and document operation sizes remain parameters or artifact fields. Actual
+execution-support counters use the shared `validity.*` reporting convention; they
+are not extra selection metrics. See [MLflow structure](methodology.md#mlflow-result-structure).
+
+## Scoring inputs and result status
+
+Quality uses the designated first measured response for each query/condition.
+Later attempts supply timing and diagnostic database-ranking comparisons, not
+replacement quality. Reference eligibility is fixed before execution. Apply
+[shared completeness accounting](../metrics.md#execution-accounting-and-result-completeness)
+to failed, unavailable and not-executed outcomes. Partial required quality is
+retained as labelled diagnostic evidence, not a normal complete-quality aggregate.
+
+Invalid vectors, missing evidence, incorrect filter references, and split leakage
+belong to [data validation](../data-validation.md). Duplicate/unknown output IDs,
+nonfinite required scores and unverified provenance belong to runtime integrity.
+Do not bury these cases in metric-specific empty-denominator conventions.
+
+Each filter is evaluated against trusted source metadata. Search execution
+success means a completed response with a usable envelope, known unique IDs and
+finite required scores. Filter correctness is checked separately. Use the same
+execution-success cohort for Search Request Error Rate, database latency and QPS:
+
+| Search outcome | Execution error? | Include in successful QPS/database latency? | Filter observation |
+|---|---|---|---|
+| Usable response, all records allowed | No | Yes | `0` when filtering applies. |
+| Usable response, known forbidden record returned | No | Yes, with correctness failure retained | `1`; dependent ANN/integration quality is unavailable. |
+| Timeout, transport failure, unusable envelope, duplicate/unknown IDs, or nonfinite required scores | Yes | No; retain elapsed-to-failure/invalid response separately | Unavailable if filtering was required; do not infer a violation or pass. |
+
+Thus successful execution is not a claim of correct filtering or accepted
+benchmark evidence. A filter-violating child's retained performance cannot be
+presented as a conformant comparison. An execution failure supplies no checkable
+filter response. Low recall and legitimate alternative tied neighbours are not
+request errors. Missing outcome/verification records remain incomplete rather
+than presumed success or failure.
+
+Well-formed short or empty ANN responses against nonempty references retain
+their low recall. Integration has a stricter declared pool contract:
+`min(20, eligible corpus size)` for each required source retrieval. Unexpectedly
+short/empty pools leave dependent evidence metrics unavailable, not zero. Do not
+silently rerun, pad, or refill them. A genuinely smaller eligible corpus uses
+all available chunks. Its valid final ranking must still contain source tokens.
+
+Application metrics use answerable questions and the
+[shared retrieval-evidence definitions](../metrics.md#retrieval-evidence-quality).
+Unanswerable questions are inapplicable, not empty gold comparisons. Complete-unit
+coverage uses source intervals; token precision uses `tiktoken:cl100k_base` source
+token occurrences. The nDCG ideal uses the entire eligible frozen corpus, never
+only the retrieved pool. A reranker must permute its actual verified pool; the
+exact-retrieval suite's repeated-live-pool equality gate does not apply here.
+
+## Exact neighbours and boundary ties
+
+For each query, calculate exhaustive distances from the frozen vectors with the
+common evaluator. Filter before selecting neighbours. Let the effective result
+count be the smaller of 20 and the eligible record count. If it is positive,
+find that position's exact distance and split the eligible records into:
+
+1. records strictly closer than the cutoff;
+2. records tied at the cutoff; and
+3. records farther away.
+
+The number of **boundary slots** is the effective result count minus the number
+of strictly closer records. Credit each recovered strictly closer ID once.
+Credit recovered boundary IDs only up to the number of boundary slots. Extra
+boundary alternatives cannot compensate for a missing strictly closer record.
+This calculates the best ID overlap with a valid exact top-result set without
+enumerating all possible tied sets. Do not increase K or ask the database to
+return every tied record.
+
+Use canonical evaluator distances, not backend-reported rounded similarities.
+Default to exact equality. Any justified nonzero numerical tolerance must be
+fixed before comparison and recorded with evaluator precision/version. With
+absolute tolerance `t`, boundary records satisfy `abs(distance - cutoff) <= t`
+and strictly closer records satisfy `distance < cutoff - t`. If a relative
+component is adopted, its rule for deriving `t` must also be frozen. Tolerance
+is numerical policy, not a permitted relevance loss tuned to improve recall.
+
+**Worked tie example:** At @3 for illustration, distances are A=0.10,
+B=C=D=0.20, E=0.30. A is strictly closer and two boundary slots remain:
+
+| Returned IDs | Credit | Recall |
+|---|---|---:|
+| A,B,C | A and two boundary records | 1 |
+| A,C,D | An equally valid exact result | 1 |
+| A,B,E | A and one boundary record | 2/3 |
+| B,C,D | Two boundary slots; A is missing | 2/3 |
+
+The benchmark uses @20; the small example only explains the arithmetic. Record
+cutoff distance, effective count, tolerance, strict/boundary counts, slots and
+credited counts with each scored query. Returned IDs and reference checksums
+allow independent verification. Repeatability still compares actual ordered IDs;
+two different valid tied answers need not agree.
+
+## Search quality
+
+### ANN Recall@20
+
+**Question:** How many of the exact nearest neighbours survive unfiltered search?
+
+Apply the boundary-tie rule to the first 20 returned IDs, with no ordering credit
+inside that prefix. In plain language:
 
 ```text
-distinct returned top-K IDs also in the exact top-K
--------------------------------------------------
-             number of exact top-K IDs
+recovered strictly closer records + credited boundary records
+------------------------------------------------------------
+                 effective requested count
 ```
 
-The denominator is the smaller of K and eligible corpus size. Compare only
-the first K returned IDs; ordering inside that prefix does not change recall.
-Average query scores equally within a workload cell. Duplicate or unknown
-returned IDs are invalid responses, not extra credit. Near-duplicate vectors
-with different legitimate IDs remain different records.
-
-**Examples by cutoff:** For exact order `A,B,C,D,E,F,G,H,I,J` and server
-order `B,A,X,D,Y,F,G,Z,I,J`, where `X,Y,Z` are legitimate corpus IDs outside
-the exact top ten:
-
-- **ANN Recall@1:** `A` is absent at rank one: `0 / 1 = 0`. This secondary
-  diagnostic is stricter than finding `A` later in the list.
-- **ANN Recall@3:** `A,B` are preserved: `2 / 3 ≈ 0.67`.
-- **ANN Recall@5:** `A,B,D` are preserved: `3 / 5 = 0.60`.
-- **ANN Recall@10:** seven exact IDs are preserved: `7 / 10 = 0.70`.
-
-High recall means exact-neighbour preservation, not relevance to an educational
-question. Recall need not increase with K because both prefixes and denominators
-change. If only two oracle records exist at @5, returning one earns
-`1 / 2 = 0.50`, not 0.20.
-
-**Range and direction:** all cutoffs lie in `[0,1]`; higher is better. A valid
-empty response against a nonempty oracle earns zero; a failed request has
-unavailable quality. An empty unfiltered corpus is not the declared workload.
-Apply the query-level support and CI rules below to each cutoff separately.
-
-### Filtered ANN Recall@K
-
-**Question:** Which exact neighbours survive when the required predicate applies?
-
-Apply the identical frozen predicate to the oracle corpus and server request
-before selecting neighbours. Divide matching distinct top-K IDs by the number
-of exact filtered top-K IDs. Average queries separately in each selectivity
-band; an unfiltered oracle is not a valid denominator.
-
-**Examples by cutoff:** For filtered oracle order `P,Q,R,S,T,U,V,W,X,Y`
-and predicate-valid server order `P,Q,Z,S,N,U,V,M,X,Y`:
-
-- **Filtered ANN Recall@1:** `P` is preserved: `1 / 1 = 1` (secondary).
-- **Filtered ANN Recall@3:** `P,Q` are preserved: `2 / 3 ≈ 0.67`.
-- **Filtered ANN Recall@5:** `P,Q,S` are preserved: `3 / 5 = 0.60`.
-- **Filtered ANN Recall@10:** seven are preserved: `7 / 10 = 0.70`.
-
-A missed neighbour need not be a filter violation: `Z` can satisfy the
-predicate but be less similar than an omitted exact neighbour. If only two
-records satisfy a predicate, retaining both at @5 earns `2 / 2 = 1`.
-
-**Range and direction:** all cutoffs lie in `[0,1]`; higher is better. An
-empty filtered oracle makes recall inapplicable; Empty-Filter Correctness
-evaluates that case. Missing neighbours in a valid response earn zero credit;
-a failed nonempty-filter request has unavailable quality. Calculate query-level
-CIs within each band, not by pooling unlike predicates.
-
-### Filter Correctness
-
-**Question:** Does every returned record obey every requested predicate?
-
-Assign one to a successful request only when all returned metadata satisfy
-every predicate, including conjunctions; otherwise assign zero. The rate is
-passed requests divided by all accounted-for requests in the filter cohort.
-An executed request failure scores zero for this validity check, not for recall.
-
-**Example:** Nine valid responses and one response leaking another document
-among ten requests give `9 / 10 = 0.90`, failing conformance regardless of speed.
-A successful empty response passes this leakage check vacuously; Filtered ANN
-Recall exposes missing nonempty results.
-
-**Range and direction:** `[0,1]`; must equal `1.0`. Report each filter cohort
-and the required all-checks outcome. No requests means no rate; unexecuted
-required checks mean incomplete, not a pass. Query-bootstrap intervals can
-describe sample variation but cannot relax this gate.
-
-### Empty-Filter Correctness
-
-**Question:** Does a predicate with no possible match return nothing?
-
-Count a pass only when a verified-empty predicate completes with zero records.
-Divide passes by all accounted-for verified-empty requests. A request failure
-or any returned record earns zero.
-
-**Example:** Nineteen empty successes and one leaked record among twenty requests
-give `19 / 20 = 0.95`, which fails. Twenty empty successes give one, but do not
-create twenty perfect filtered-recall observations.
-
-**Range and direction:** `[0,1]`; must equal `1.0`. No verified-empty requests
-means no test evidence, not perfection. Missing required checks are incomplete.
-Any query-bootstrap CI is descriptive and does not replace the pass requirement.
-
-## Real-retrieval quality
-
-Finalists receive the same canonical chunks, precomputed document vectors,
-questions, evidence annotations, and frozen retrieval strategy. Databases never
-create embeddings. These are evidence-retrieval scores, not generated-answer
-scores or exact-neighbour recall. No context-token budget is applied.
-
-The three real-retrieval metrics below adopt the
-[shared retrieval evidence definitions](../metrics.md#retrieval-evidence-quality)
-at `@3` and `@5`. Retain each tested server's returned-ID provenance through the
-frozen retrieval/reranking path and score that path's ordered chunk-ID prefixes,
-not an oracle-substituted ranking. The complete frozen chunk corpus shared by
-finalists supplies normalization, not replacement result IDs.
-
-Quality uses only the designated first measured ranking. Later attempts measure
-timing and ranking agreement; they do not average quality or replace a failed
-first ranking. Each metric below is calculated for answerable questions with
-verified required evidence, averaged within each source document, then
-macro-averaged over documents. Unanswerable questions are inapplicable; missing
-required annotations are invalid inputs. Failed first rankings are unavailable,
-not empty rankings. The complete retrieval contract requires the frozen top-20
-pool; an unexpectedly empty/short ranking or invalid permutation is an integrity
-failure, not a valid zero-quality response. Detailed evidence identities and
-token accounting follow
-the [retrieval metric reference](../rag/retrieval_reranking/metrics.md).
-
-### Real-retrieval nDCG@3/@5
-
-**Question:** Are chunks containing more required evidence ranked earlier?
-
-Apply the [shared nDCG calculation](../metrics.md#retrieval-evidence-quality)
-to the real-retrieval prefix at each cutoff. Its ideal comes from the complete
-frozen corpus shared by finalists, not the tested server's returned pool.
-
-**Example:** Corpus gains are `2,1,0,0,0`; returned gains are `1,2,0,0,0`.
-At @3, the returned sum is `1 + 2 / log2(3) ≈ 2.262`; the ideal is
-`2 + 1 / log2(3) ≈ 2.631`. nDCG@3 is about `0.860`. Here ranks 4 and 5
-add zero, so nDCG@5 is also `0.860`. Moving the two-unit chunk first gives
-one at both cutoffs.
-
-**Range and direction:** `[0,1]`; higher is better. A valid ranking with no
-complete evidence units uses the shared zero-score/zero-ideal conventions;
-retain any corpus-coverage limitation. Failed rankings follow shared availability.
-Use document-level support and CIs, not synthetic-query intervals.
-
-### Real-retrieval Evidence-unit Recall@3/@5
-
-**Question:** How much distinct required evidence appears anywhere in the prefix?
+**Example:** With 20 eligible nearest-neighbour slots and no boundary ambiguity,
+18 recovered neighbours give `18 / 20 = 0.90`. This measures vector-search
+accuracy, not whether those neighbours answer the educational question.
 
-Apply the [shared unit-recall calculation](../metrics.md#retrieval-evidence-quality)
-at each cutoff. The denominator is the question's complete required-unit
-inventory, not its exact top-K neighbours or only units returned by the server.
-
-**Example:** A question needs `A,B,C`. Top three chunks cover only `A`:
-Recall@3 is `1 / 3 ≈ 0.33`. Ranks 4 and 5 add `B`: Recall@5 is
-`2 / 3 ≈ 0.67`. Another copy of `A` adds no recall. High recall establishes
-availability, not early placement or concise context.
-
-**Range and direction:** `[0,1]`; higher is better. Apply the shared coverage
-and availability rules within the frozen top-20 output contract above.
-Use document-macro support and CIs.
-
-### Real-retrieval Evidence-token Precision@3/@5
-
-**Question:** What share of returned text is annotated evidence?
-
-Apply the [shared evidence-token calculation](../metrics.md#retrieval-evidence-quality)
-to the canonical text identified by the returned prefix at each cutoff. Its
-denominator is that prefix's `tiktoken:cl100k_base` token occurrences, not
-corpus-wide tokens, vector counts, or generated-answer tokens.
-
-**Example:** At @3, 120 of 300 token occurrences are evidence:
-`120 / 300 = 0.40`. Ranks 4 and 5 add 180 evidence tokens in 200 total tokens;
-Precision@5 is `(120 + 180) / (300 + 200) = 0.60`.
-Additional chunks can raise or lower concentration; extra text is not necessarily
-false text.
-
-**Range and direction:** `[0,1]`; higher is better. Apply shared zero-evidence
-and availability rules to the valid returned prefix, not an invented empty result.
-Use document-macro support and CIs; token occurrences are not independent samples.
-
-## Conformance validity gates
-
-Each controlled check below is binary: one means the observed check passes,
-zero means it fails. A single check has no CI. All required checks must pass;
-missing checks are incomplete, not assumed passes. Exceptions retain their reason
-and cannot prove that a semantic operation worked. Performance may survive as
-diagnostic evidence but cannot compensate for non-conformance. Filter rates
-are explained above.
-
-### Health Correctness
-
-**Question:** Is the endpoint ready? Record one when the required adapter
-health check succeeds, otherwise zero. An unreachable loopback endpoint fails;
-a valid required health response passes. This proves connectivity, not stored
-vector correctness. **Range:** `{0,1}`; must pass; no CI.
-
-### Cosine Correctness
-
-**Question:** Does a controlled cosine probe find its expected neighbour?
-Record one when the known probe returns its expected nearest ID. Querying
-`A`'s unique normalized vector should return `A` at rank one; `B` fails.
-Tied vectors require the frozen tie rule to support a unique-ID probe.
-This is a small semantic check, not corpus ANN recall.
-**Range:** `{0,1}`; must pass; no CI.
-
-### Dimension-Rejection Correctness
-
-**Question:** Is a wrong-length vector rejected? Rejection passes; acceptance
-fails. A 385-value vector in a 384-dimensional collection must be rejected.
-An unrelated connection exception does not establish dimension enforcement.
-**Range:** `{0,1}`; must pass; no CI.
-
-### Compound-Filter Correctness
-
-**Question:** Are all predicates enforced together? The positive controlled
-probe must return matching records and no record outside the conjunction.
-For `course=A AND page=2`, a `course=A,page=3` hit fails. Empty output also
-fails this positive probe, unlike the general leakage metric.
-**Range:** `{0,1}`; must pass; no CI.
-
-### Duplicate-ID Correctness
-
-**Question:** Does upserting an existing ID avoid creating a second record?
-Pass when uniqueness and cardinality are preserved. Replacing ID `0` in a
-40-record collection should leave 40 records, not 41. This alone does not prove
-that updated values are visible; replacement has a separate contract.
-**Range:** `{0,1}`; must pass; no CI.
-
-### Replacement Correctness
-
-**Question:** Are obsolete values/chunks removed when an ID/document is replaced?
-Pass only when new vector/metadata values are visible and obsolete document chunks
-are absent. Replacing document `D`'s five old chunks with one new chunk must
-leave only the new ID under `D`'s filter, not six searchable records.
-A count check alone cannot verify updated vector/metadata contents.
-**Range:** `{0,1}`; must pass; no CI.
-
-### Deletion Correctness
-
-**Question:** Are deleted IDs/documents absent from later search and filtering?
-Pass only after visibility verification. If `D:new` is the last chunk of
-document `D`, deleting it must leave an empty `D` filter result.
-A successful delete acknowledgment alone is insufficient.
-**Range:** `{0,1}`; must pass; no CI.
-
-### Restart-Persistence Correctness
-
-**Question:** Does committed state survive restart? Pass when records and their
-required vectors/metadata survive. Thirty-five retained records must remain
-after restart; 34 fails. A matching count of 35 alone cannot prove that the same
-contents survived. **Range:** `{0,1}`; must pass; no CI.
-
-### ANN-Index Verification
-
-**Question:** Is the configured ANN index available and used where required?
-Verify index state before measurement and again after restart. A configured
-pgvector HNSW index needs matching index/plan evidence, not a silent alternate
-path for the required ANN probe. Qdrant's documented small-filter exact-search
-exception remains unchanged. **Range:** `{0,1}` per check; both before/after
-checks must pass; no CI.
-
-### Target-Concurrency Success
-
-**Question:** Does the highest declared concurrency finish without request errors?
-Record one only when all submitted requests in that target cell succeed.
-For 500 queries with three repeats, 1,500 successes pass; 1,499 successes fail.
-Lower-concurrency error rates remain visible without changing this gate's scope.
-**Range:** `{0,1}`; must pass; no CI for this observed cell state.
-
-### Real-retrieval Ranking Agreement
-
-**Question:** Do repeated complete rankings agree with the first ranking?
-The retrieval contract divides matching later ordered-ID lists by expected
-later comparisons. Three attempts `A,A,B` have one match among two comparisons:
-`1 / 2 = 0.50`, failing the gate; `A,A,A` passes. Failed comparisons never
-earn agreement. This is not extraction's three-pair Repeatability Success Rate,
-and does not add that metric to synthetic ANN.
-**Range:** `[0,1]`; must equal one. The current vector wrapper instead emits
-an all-repetitions-equal flag per question; both representations fail this
-example. A single observed flag has no CI; an average cannot excuse one failure.
-
-## Performance and resources
-
-The server-only timer surrounds the adapter call: serialization, loopback
-transfer, server work, and complete response decoding are included. Thread-pool
-queue waiting before the timer begins is not per-request latency, but remains
-inside batch wall time. Embedding, reranking, exact-oracle computation, and
-scoring are excluded; label full-stack real-retrieval timing separately.
-
-Apply the [shared latency-percentile calculation](../metrics.md#latency-percentiles)
-to successful completions within each declared cell, retaining failure coverage.
-Resource availability and partial-window reporting follow the
-[shared resource rules](../metrics.md#resource-measurements); the server/Docker
-and persistent-storage methods below remain distinct from worker RSS.
-
-### Unfiltered / Filtered Latency p50
-
-**Question:** What does a typical successful search take? Take the median warm
-request time separately for unfiltered and each filtered/concurrency cell.
-For separately labeled complete-retrieval results, apply the same percentile
-calculation to that full-stack timer, not to server-only observations.
-
-**Example:** `2,3,4,5,11 ms` gives p50 `4 ms`; filtered
-`3,4,6,8,15 ms` gives `6 ms`. Do not pool the two lists.
-**Range and direction:** non-negative seconds/request; lower is better at equal
-quality/correctness. No successes means unavailable, not zero. Query-cluster
-CIs require adequate independent support.
-
-### Unfiltered / Filtered Latency p95
-
-**Question:** How slow is the warm search tail? Take the interpolated 95th
-percentile of successful times in the declared cell, not the mean of query p95s.
+Average query scores within the declared condition; do not pool recovered counts
+when effective denominators differ. Compare speed at comparable recall.
+
+**Range and direction:** `[0,1]`; higher is better.
+
+**Edge cases and availability:**
+
+| Edge case | Example | Value/status | Explanation |
+|---|---|---|---|
+| Fewer eligible records than 20 | Only 8 records exist; 6 are recovered. | `6/8 = 0.75` (`scored`). | Score the available task, not 20 imaginary records. |
+| Empty valid response against a nonempty reference | No IDs returned for 20 reference slots. | `0` (`scored`). | No neighbours were recovered; this is not a runtime crash. |
+| More records tie at the cutoff than there are slots | 18 strict neighbours and 5 tied alternatives. | Credit at most 2 boundary records. | Equally close alternatives are interchangeable only in those slots. |
+
+An empty required unfiltered corpus fails input validation. Shared availability
+rules govern failed requests; they do not receive this valid-empty zero.
+
+### Filtered ANN Recall@20
+
+**Question:** How many exact neighbours inside the allowed subset survive search?
+
+Use the same calculation, after restricting the exact reference and the request
+to the same frozen predicate. The denominator is `min(20, eligible records)`,
+not the unfiltered corpus size. Report conditions separately.
+
+**Example:** A document filter permits 100 records. Recovering 17 of its exact
+nearest 20 gives `17/20 = 0.85`. A different filter permitting only 8 records,
+of which 6 are returned, gives `6/8 = 0.75`.
+
+A missed eligible neighbour is not necessarily a filter violation: another
+returned record may satisfy the filter but be farther away.
+
+**Range and direction:** `[0,1]`; higher is better.
+
+**Edge cases and availability:**
+
+| Edge case | Example | Value/status | Explanation |
+|---|---|---|---|
+| Filter legitimately permits no records | An empty-match control returns no IDs. | `null` (`inapplicable`). | There are no nearest neighbours to recover; filter behaviour is checked separately. |
+| Filter permits fewer than 20 records | All 3 permitted records are returned. | `1` (`scored`). | All available neighbours were recovered. |
+| Valid empty result with eligible neighbours | Filter permits 30 records but returns none. | `0` (`scored`). | The nonempty reference supplies a positive denominator. |
+| Boundary ties in the eligible subset | Several permitted vectors tie for the final slot. | Apply the same boundary-slot credit. | Filtering does not change the tie policy. |
+
+Shared availability and output-integrity rules apply; forbidden records are not
+silently discarded to turn an invalid response into an accepted recall score.
+
+## Application retrieval quality
+
+### nDCG@3/@5
+
+**Question:** Does the database-backed stack place evidence-rich chunks early?
+
+Each chunk's gain is the number of distinct complete required evidence units it
+contains, used linearly. Apply the shared rank discount and normalize against the
+exact ideal over the entire eligible frozen corpus, identically for every pair.
+
+```text
+discounted evidence gain of the final ranking prefix
+----------------------------------------------------
+ discounted evidence gain of the ideal corpus ranking
+```
+
+**Example:** Ideal gains `[3,1,0]` have discounted gain about 3.631. Returned
+gains `[1,3,0]` give about 2.893, so nDCG@3 is approximately `0.80`. If ranks
+4/5 add zero in both rankings, nDCG@5 is also approximately `0.80`.
+
+This secondary application measure exposes ordering effects beyond geometric
+neighbour preservation. Different chunks containing the same evidence retain
+their ordinary linear gain.
+
+**Range and direction:** `[0,1]`; higher is better.
+
+**Edge cases and availability:**
+
+| Edge case | Example | Value/status | Explanation |
+|---|---|---|---|
+| Zero ideal gain in an otherwise valid frozen corpus | Every chunk fragments the required evidence. | `0` (`scored`), with upstream-fragmentation limitation. | Inherit the shared zero-ideal convention; the database cannot repair those boundaries. |
+
+Shared availability and [integration integrity](#scoring-inputs-and-result-status)
+apply. Missing evidence annotations are not this zero-ideal case.
+
+### Evidence-unit Recall@3/@5
+
+**Question:** How much distinct required evidence reaches the selected context?
+
+```text
+distinct required evidence units fully contained in selected chunks
+-----------------------------------------------------------------
+                     required evidence units
+```
+
+**Example:** The question requires E1, E2 and E3. Top three chunks recover E1,
+giving Recall@3 `1/3`; ranks 4/5 add E2, giving Recall@5 `2/3`.
+
+Count each unit once regardless of repetition or position within the cutoff.
+This measures coverage, not the rank discounts of nDCG or the exact vector IDs
+of ANN recall. Eligible answerable questions have a positive gold denominator.
+
+**Range and direction:** `[0,1]`; higher is better.
+
+**Edge cases and availability:**
+
+No additional empty-reference convention is needed for the eligible task.
+[Shared availability](../metrics.md#shared-availability-rules) and
+[integration integrity](#scoring-inputs-and-result-status) apply.
+
+### Evidence-token Precision@3/@5
+
+**Question:** How much selected context consists of verified evidence?
+
+Use canonical source text and `tiktoken:cl100k_base`, not the embedding/reranker
+tokenizer. Count each returned token occurrence once against overlapping gold
+intervals; occurrences repeated through different chunks count again.
+
+```text
+returned source-token occurrences overlapping verified evidence
+--------------------------------------------------------------
+                returned source-token occurrences
+```
+
+**Example:** Top three chunks contain 120 relevant token occurrences out of
+300, giving Precision@3 `0.40`. If ranks 4/5 add 80 relevant occurrences out
+of 200, Precision@5 is `200/500 = 0.40`. The other tokens are additional context,
+not necessarily false statements.
+
+This measures context concentration; a relevant fragment may contribute tokens
+without containing an entire evidence unit.
+
+**Range and direction:** `[0,1]`; higher is better.
+
+**Edge cases and availability:**
+
+The valid integration task has a positive source-token denominator. Token-free
+or invalid rankings follow [output integrity](#scoring-inputs-and-result-status),
+not an artificial zero-denominator score. Shared availability rules apply.
+
+## Diagnostics
+
+### Candidate-pool Evidence-unit Recall@20
+
+**Question:** How much required evidence is available before reranking?
+
+Apply Evidence-unit Recall to the actual verified first-stage pool of the frozen
+stack, after fusion for RRF but before learned reranking.
+
+```text
+distinct required evidence units contained anywhere in the candidate pool
+-----------------------------------------------------------------------
+                        required evidence units
+```
+
+**Example:** E1 and E2 are in the pool but E3 is absent: `2/3`. Reranking can
+change which available chunks reach @3/@5, but cannot introduce E3.
+
+Record the pool identity with this observation. It is not ANN Recall: E1 can be
+available in a useful alternative chunk outside the exact nearest-neighbour set.
+
+**Range and direction:** `[0,1]`; higher is a better evidence-availability ceiling.
+
+**Edge cases and availability:**
+
+Eligible questions have a positive gold denominator. A legitimately smaller
+corpus uses its available pool; unexpected short integration pools follow
+[integrity rules](#scoring-inputs-and-result-status). Shared availability applies.
+
+### Ranking Repeatability
+
+**Question:** Does the database reproduce the same ordered retrieved IDs?
+
+Apply the [shared all-pairs rule](../metrics.md#pairwise-repeatability) to the
+database output before reranking: compare ordered IDs, not floating-point score
+bit patterns. The scope is the requested top 20, or the actual valid returned
+list when fewer records are returned; retain requested/actual counts.
+
+```text
+scheduled pairs with two valid identical ordered database outputs
+----------------------------------------------------------------
+                      scheduled pairs
+```
+
+**Example:** Lists A,A,B agree only in pair (1,2), giving `1/3`. Failure,A,A
+also gives `1/3`, through pair (2,3). Three executed failures give zero, not
+agreement. Average per-query pair rates within the declared condition.
+
+This is diagnostic, not a perfect-agreement gate. Valid tied alternative pools
+may have perfect ANN recall but less than perfect repeatability. This does not
+measure reranked ordering, metric-value repeatability, or independent-index-build
+reproducibility.
+
+**Range and direction:** `[0,1]`; higher means more stable output, not more relevance.
+
+**Edge cases and availability:**
+
+| Edge case | Example | Value/status | Explanation |
+|---|---|---|---|
+| Only one attempt deliberately scheduled | Smoke executes one request. | `null` (`inapplicable`). | No pairwise comparison task exists. |
+| Valid empty results repeat | An empty-match filter returns `[]` three times. | `1` (`scored`). | Identical valid absence is stable; it does not establish nonempty-search recall. |
+
+Failed and not-executed outcomes follow the shared pair rule, not new local
+conventions. Legitimate short lists may agree without meeting integration needs.
+
+## Reliability and filter correctness
+
+Request Error Rates use submitted **logical operations**, not backend batch
+counts. Include execution errors, timeouts and unusable response envelopes.
+An ordinary low-recall/short ANN result is not an execution error. Completed
+checkable filter violations have their own correctness outcome; they are not
+relabeled as transport errors. Missing required verification remains unverified,
+not an assumed success or failure. Deliberately invalid conformance probes and
+warmup requests are outside these measured-operation denominators.
+
+### Request Error Rate — Search
+
+**Question:** What fraction of submitted search operations fail to execute successfully?
+
+```text
+failed submitted search operations / submitted search operations
+```
+
+**Example:** 10 timeouts among 1,000 submitted searches give `0.01`, or 1%.
+Interpret with QPS and successful-request latency; a fast surviving subset does
+not describe the failed requests.
+
+**Range and direction:** `[0,1]`; lower is better.
+
+**Edge cases and availability:**
+
+No submitted searches gives `null`, not 0% errors. Deliberately absent search
+work is inapplicable; missing required execution is incomplete under shared rules.
+
+### Request Error Rate — Insert
+
+**Question:** What fraction of submitted document insertions fail to complete?
+
+```text
+failed submitted document insertions / submitted document insertions
+```
+
+**Example:** Two of 40 insertions fail before their visibility barrier, giving
+`2/40 = 0.05`. A partially inserted document is one failed logical operation,
+not several successful API batches and one unrelated failure.
+
+**Range and direction:** `[0,1]`; lower is better.
+
+**Edge cases and availability:**
+
+No submitted insertions gives `null`. Apply shared task-eligibility and incomplete
+execution rules; an operation never submitted is not a failed insertion.
+
+### Request Error Rate — Update
+
+**Question:** What fraction of submitted document replacements fail to complete?
+
+```text
+failed submitted document replacements / submitted document replacements
+```
+
+**Example:** One of 20 replacements cannot remove obsolete chunks before its
+deadline, giving `1/20 = 0.05`. Its acknowledged new chunks do not establish a
+completed replacement.
+
+**Range and direction:** `[0,1]`; lower is better.
+
+**Edge cases and availability:**
+
+No submitted updates gives `null`, with task-free versus incomplete status under
+shared rules. Do not use insertion counts as this denominator.
+
+### Request Error Rate — Delete
+
+**Question:** What fraction of submitted document deletions fail to complete?
+
+```text
+failed submitted document deletions / submitted document deletions
+```
+
+**Example:** All 10 submitted deletions fail, giving `1`. This remains visible
+even if 10,000 searches succeed; there is no global error rate hiding it.
+
+**Range and direction:** `[0,1]`; lower is better.
+
+**Edge cases and availability:**
+
+No submitted deletions gives `null`, not proof that deletion works. Shared
+availability and execution-accounting rules apply.
+
+### Filter Violation Rate
+
+**Question:** How often does a completed checkable filtered response contain
+at least one record forbidden by the requested predicate?
+
+Check each returned ID against trusted original metadata. Count responses, not
+the number of forbidden records inside them.
+
+```text
+completed checkable filtered responses containing a forbidden record
+------------------------------------------------------------------
+                 completed checkable filtered responses
+```
+
+**Example:** Two of 100 checkable responses contain forbidden IDs, giving
+`2/100 = 0.02`, even if one response contains five such IDs. Three additional
+timeouts are recorded as search failures, not added as filter violations.
+
+This metric measures observed filter leakage, not complete database security or
+all filter correctness. Positive/compound-filter correctness probes remain separate.
+
+**Range and direction:** `[0,1]`; lower is better.
+
+**Edge cases and availability:**
+
+| Edge case | Example | Value/status | Explanation |
+|---|---|---|---|
+| Valid empty response | No returned IDs. | Violation event `0`. | No forbidden record was returned; positive-reference recall can still be poor. |
+| Empty allowed subset but a known record is returned | Predicate permits nothing; output contains A. | Violation event `1`. | Every record is forbidden for this predicate. |
+| No completed checkable responses | All submitted filtered requests time out. | `null` (`unavailable`). | There is no observed leakage denominator; failures remain visible separately. |
+
+When no filtering task is scheduled, Filter Violation Rate is `null/inapplicable`.
+Unknown IDs or missing checks are integrity/verification problems, not evidence
+that filtering passed.
+
+## Why the quality metrics are not interchangeable
+
+| Observation | What it can mean |
+|---|---|
+| High ANN recall, low evidence recall | The database accurately reproduced neighbours that lack the needed evidence. |
+| Lower ANN recall, high evidence recall | Useful alternative chunks supplied evidence despite missing some exact neighbours. |
+| High pool recall, lower final recall | Evidence was available but did not reach the selected @3/@5 prefix. |
+| High final recall, low token precision | Required evidence is present with substantial additional context. |
+| Perfect ANN recall, lower repeatability | Different valid tied sets or orderings were returned. |
+
+These are distinct questions, not competing definitions of one universal quality
+score. nDCG adds rank sensitivity to evidence coverage; error rates describe
+execution rather than nearest-neighbour or evidence correctness.
+
+## Operational performance
+
+Use [shared timing and availability rules](../metrics.md#latency-and-warm-latency).
+Database request timers include adapter preparation, serialization, communication,
+server work and decoded response. Upstream model inference, offline reference
+calculation and quality scoring are excluded. Full-stack timers include the
+frozen model-backed retrieval path. Build/startup/visibility boundaries are in
+[execution methodology](methodology.md#per-candidate-execution).
+
+Server-load and document-operation percentiles use individual completed logical
+operations within their condition. Full-stack percentiles use each question's
+median successful measured attempt. Apply the same
+[percentile interpolation](../metrics.md#latency-percentiles) to those explicitly
+different observation sets. Never average workload-cell percentiles or sum
+component percentiles to invent a total. Failed elapsed times remain separate.
+Here completed database observations mean the execution-success cohort defined
+in [scoring inputs and result status](#scoring-inputs-and-result-status), including
+separately flagged checkable filter violations, not every decoded invalid response.
+
+### Database Search Latency p50
+
+**Question:** How long does a typical completed database request take?
+
+Take p50 over completed request durations in one declared corpus/filter/load
+condition. This is the median, not document-macro averaging.
+
+**Example:** `2,3,4,5,11 ms` gives `4 ms`. A filtered condition has its own list.
+This describes request service time at the client boundary, not model inference.
+
+**Range and direction:** non-negative milliseconds/request; lower is better
+at comparable quality and load.
+
+**Edge cases and availability:**
+
+Use [shared percentile and availability rules](../metrics.md#latency-percentiles):
+one completed observation supplies the descriptive point; none gives unavailable
+latency. Do not turn failed elapsed time into successful-completion latency.
+
+### Database Search Latency p95
+
+**Question:** How slow is the completed database-request tail under this load?
+
+Take the interpolated 95th percentile of the same condition's individual completed
+durations. It is not the mean of per-query p95 values.
 
 **Example:** For `2,3,4,5,11 ms`, position `4 × 0.95 = 3.8` gives
-`5 + 0.8 × (11 - 5) = 9.8 ms`. Filtered `3,4,6,8,15 ms` gives
-`8 + 0.8 × (15 - 8) = 13.6 ms`. These tiny lists illustrate arithmetic,
-not sufficient tail support.
-**Range and direction:** non-negative seconds/request; lower is better.
-No successes means unavailable. Report failures and query-cluster CIs only
-when independent support suffices.
+`5 + 0.8 × (11 - 5) = 9.8 ms`. These five values illustrate arithmetic, not
+sufficient evidence for a precise unseen-workload tail estimate.
 
-### Unfiltered / Filtered Latency p99
+**Range and direction:** non-negative milliseconds/request; lower is better.
 
-**Question:** How extreme is the successful-request tail? Take the interpolated
-99th percentile separately in each declared cell.
+**Edge cases and availability:**
 
-**Example:** For `2,3,4,5,11 ms`, position `3.96` gives
-`5 + 0.96 × (11 - 5) = 10.76 ms`; filtered `3,4,6,8,15 ms` gives
-`14.72 ms`. Neither tiny list supports an authoritative p99.
-**Range and direction:** non-negative seconds/request; lower is better.
-Insufficient successful requests or independent query IDs means null with
-`insufficient_requests`; no successes means unavailable. The support minimum
-must be frozen after data review, before authoritative runs. Repeating one
-query does not create independent support. The numeric minimum remains pending
-that review.
+Shared percentile rules apply. Weak independent support limits the confidence
+claim, not the existence of a descriptive point. No completed durations is unavailable.
 
-### Query Throughput
+### Full-Stack Retrieval Latency p50
 
-**Question:** How many successful requests finish per wall-clock second?
+**Question:** How long is a typical complete question-to-retrieved-context wait?
+
+Measure preparation/query embedding, database-backed source retrieval, any frozen
+fusion, reranking and validated final chunks. Take each question's median successful
+attempt duration, then p50 across those query observations.
+
+**Example:** Three questions have median durations `20,30,100 ms`: p50 is `30 ms`.
+This includes model work excluded from Database Search Latency, but no answer
+generation. The shared estimator matches retrieval–reranking.
+
+**Range and direction:** non-negative milliseconds/query; lower is better.
+
+**Edge cases and availability:**
+
+Shared completed-stage and percentile rules apply. A completed database search
+followed by reranker failure supplies no successful full-stack duration; its
+independent database timing remains available.
+
+### Full-Stack Retrieval Latency p95
+
+**Question:** How slow is the full-stack tail across benchmark questions?
+
+Take p95 across the same per-question median successful durations.
+
+**Example:** For `20,30,100 ms`, the interpolated p95 is `93 ms`.
+It is the tail of typical per-question runtimes, not the percentile of every
+individual model attempt or a sum of stage p95s.
+
+**Range and direction:** non-negative milliseconds/query; lower is better.
+
+**Edge cases and availability:**
+
+Shared percentile/availability rules apply; contributing queries and independent
+source support determine the reported scope and CI applicability.
+
+### QPS
+
+**Question:** How many successful search requests complete per wall-clock second?
 
 ```text
-successful measured responses / complete measured batch seconds
+successful measured search completions / measured load-window wall seconds
 ```
 
-Include dispatch, queue waiting, and failed-request time; exclude setup,
-build, warmup, and offline scoring. Report every concurrency independently.
-**Example:** 1,500 submissions, 30 failures, and a 10-second interval give
-`1,470 / 10 = 147 successful queries/second`, not 150.
-High throughput alone establishes neither correct filtering nor good recall.
-**Range and direction:** non-negative successful queries/second; higher is
-better. Zero successes over a complete positive interval gives zero; no batch
-or non-positive/missing duration is unavailable. Partial batches are diagnostic,
-not completed-phase evidence. One batch has no CI.
+One request contains one query vector. The denominator includes scheduling,
+queuing, failed requests and the declared drain-to-completion/timeout period,
+not warmup or setup. Concurrent request durations are not summed.
 
-### Request Error Rate
+**Example:** 1,500 submitted searches, 30 failures and 10 measured seconds give
+`1,470/10 = 147 QPS`. This is successful throughput at the stated concurrency,
+not an automatically discovered server maximum.
 
-**Question:** What fraction of submitted requests fail? Divide executed failed
-requests by submitted measured requests within a concurrency cell. Count
-timeouts, transport errors, and invalid responses, not unsubmitted work.
+**Range and direction:** non-negative queries/second; higher is better at
+comparable quality, workload and resources.
 
-**Example:** 30 failures among 1,500 submissions give
-`30 / 1,500 = 0.02`, or 2%. Read with throughput and success-only latency.
-**Range and direction:** `[0,1]`; lower is better. No submissions means no
-rate. An interruption also reports unsent work and incomplete status.
-The current phase-level rate has no CI; query-cluster CIs would require
-retained request outcomes and adequate independent support.
+**Edge cases and availability:**
 
-### Build Time
+| Edge case | Example | Value/status | Explanation |
+|---|---|---|---|
+| No successes in a completely observed positive window | 50 requests fail over 5 seconds. | `0` (`scored`). | No successful work completed during the measured time. |
+| No positive usable measured interval | Clock evidence is missing or duration is zero. | `null` (`unavailable`). | Do not divide by zero or fabricate an epsilon duration. |
 
-**Question:** How long until an empty ready server has a queryable index?
-Subtract first-vector submission start from the time all vectors are queryable
-and the index is ready. **Example:** submission at `10 s`, readiness at
-`35 s`: `35 - 10 = 25 s`. Model preparation and server downloads are outside.
-**Range and direction:** non-negative seconds; lower is better for equal corpus
-and settings. Failed indexing has unavailable completed Build Time, with
-elapsed-to-failure and partial counts retained. One build has no CI.
+An interrupted window retains completed work/time as partial diagnostics, not a
+completed-window result, under the shared accounting rules. One window has no CI.
 
-### Build Throughput
+### Initial Build Time
 
-**Question:** At what average rate did initial indexing become ready? Divide
-successfully indexed queryable vectors by Build Time.
-**Example:** `100,000 / 25 = 4,000 vectors/second`. This is not query throughput
-or a promise of constant insertion speed.
-**Range and direction:** non-negative vectors/second; higher is better at equal
-settings/corpus. Failed builds retain partial diagnostics, not a completed-build
-rate. Zero/missing duration is unavailable, not division by an artificial small
-number. One build has no CI.
+**Question:** How long until the prepared corpus and configured indexes are ready?
 
-### Incremental Upsert Throughput
+```text
+verified query/index readiness time - start of collection/index setup and ingestion
+```
 
-**Question:** How quickly does a populated index make new mutations visible?
-Divide successful upserted records by elapsed time through query visibility.
-**Example:** 1,000 mutations visible in 2.5 seconds give
-`1,000 / 2.5 = 400 upserts/second`. Record whether these insert new IDs or
-replace existing IDs; they are different workloads.
-**Range and direction:** non-negative records/second; higher is better.
-Unverified/failed phases have unavailable completed throughput with partial
-acknowledgments retained. Non-positive/missing timing is unavailable.
-One phase has no CI; acknowledgment-only timing does not prove visibility.
+Start from a running empty server. Include schema/metadata index creation,
+loading prepared records, required index construction, and readiness checking.
+Exclude embedding, oracle computation, downloads and server startup.
 
-### Incremental Delete Throughput
+**Example:** Setup starts at 10 seconds and all readiness checks finish at
+35 seconds: Build Time is `25 seconds`. This captures ingestion readiness,
+not merely acknowledgment or an index-only internal timer.
 
-**Question:** How quickly does deletion remove records from queries? Divide
-successfully deleted records by elapsed time through verified absence.
-**Example:** 1,000 visible deletions in four seconds give
-`1,000 / 4 = 250 deletions/second`, independently of upsert speed.
-**Range and direction:** non-negative records/second; higher is better.
-An undeclared deletion task is inapplicable; a required phase that never runs
-is incomplete. Failed/unverified deletion is unavailable, not an invented zero
-rate. Retain partial counts. Missing/non-positive duration
-is unavailable. One phase has no CI.
+**Range and direction:** non-negative seconds; lower is better for the same corpus.
 
-### Restart Readiness
+**Edge cases and availability:**
 
-**Question:** How long before persisted indexed state is usable after restart?
-Measure from restart request through health and persisted-index query
-verification. **Example:** restart at zero, health at three seconds, verification
-at four seconds gives `4 s`, not three.
-**Range and direction:** non-negative seconds; lower is better only with passing
-persistence/index gates. A timeout has unavailable completed latency and retained
-elapsed-to-failure. One restart has no CI. The current timer ends at health,
-before later index checks, and must be labeled as that narrower observation.
+Use shared completed-phase rules: an unfinished build has no completed Build
+Time; retain progress and elapsed-to-failure. One build receives no inferred CI.
 
-### First-Query Latency after Restart
+### Insert Latency p50
 
-**Question:** How long does the first workload query after readiness take?
-Measure its adapter-call start through a decoded successful response, outside
-warm percentiles. **Example:** start at `4.0 s`, completion at `4.08 s` gives
-`0.08 s`; do not add restart duration. Readiness verification may already
-issue queries, so this does not promise untouched server caches.
-**Range and direction:** non-negative seconds/request; lower is better.
-A failed first query has unavailable successful latency and retained failure
-duration; do not rename a later success as the first. One probe has no CI.
-The current probe uses the small conformance corpus, not the full workload.
+**Question:** How long does a typical prepared document take to become available?
+
+For each submitted document, time first submission through verified availability
+of all intended records, including adapter batches and visibility polling.
+Take p50 across completed logical insertions in the condition.
+
+**Example:** Completed inserts take `20,30,40,50,100 ms`; p50 is `40 ms`.
+A 40-chunk document is one operation, regardless of backend batch count.
+
+**Range and direction:** non-negative milliseconds/document; lower is better.
+
+**Edge cases and availability:**
+
+Shared completed-phase/percentile rules apply. Partial acknowledgment is not a
+completed insertion; no completed inserts gives unavailable latency.
+
+### Insert Latency p95
+
+**Question:** How slow are the completed document insertions in the tail?
+
+Take p95 of the same completed logical-insertion durations.
+
+**Example:** `20,30,40,50,100 ms` gives `90 ms`. Retain document chunk/byte sizes
+so this is not mistaken for a per-vector insertion time.
+
+**Range and direction:** non-negative milliseconds/document; lower is better.
+
+**Edge cases and availability:**
+
+Shared percentile/support rules apply. Do not give zero latency to failed inserts
+or infer a precise tail from a small number of operations.
+
+### Update Latency p50
+
+**Question:** How long does a typical complete document replacement take?
+
+Time first replacement work through verification that new records/metadata are
+available and obsolete records are absent. Take p50 over completed replacements.
+This is not merely changing one scalar metadata field.
+
+**Example:** Replacing three documents takes `40,60,120 ms`; p50 is `60 ms`.
+If a five-chunk document becomes a two-chunk document, both new availability and
+removal of the obsolete chunks belong to that operation.
+
+**Range and direction:** non-negative milliseconds/document; lower is better.
+
+**Edge cases and availability:**
+
+Shared completed-phase/percentile rules apply. An acknowledged but incomplete
+replacement has no completed update latency; retain its partial state and error.
+
+### Update Latency p95
+
+**Question:** How slow is the tail of complete document replacements?
+
+Take p95 across the same completed replacement durations.
+
+**Example:** `40,60,120 ms` gives `114 ms`. Read it with the update error rate
+and operation sizes, not as a guarantee that every replacement finishes in time.
+
+**Range and direction:** non-negative milliseconds/document; lower is better.
+
+**Edge cases and availability:**
+
+Shared percentile/support rules apply. No completed replacement durations means
+unavailable latency, not zero.
+
+### Delete Latency p50
+
+**Question:** How long does a typical document deletion take to become visible?
+
+Time first deletion submission through verified absence of the document's records,
+then take p50 across completed logical deletions.
+
+**Example:** `5,8,20 ms` gives `8 ms`. Later physical disk reclamation is not
+part of the logical deletion timer.
+
+**Range and direction:** non-negative milliseconds/document; lower is better.
+
+**Edge cases and availability:**
+
+Shared completed-phase/percentile rules apply. An acknowledgment without verified
+absence supplies no completed deletion latency.
+
+### Delete Latency p95
+
+**Question:** How slow is the tail of verified document deletions?
+
+Take p95 across the same completed logical-deletion durations.
+
+**Example:** `5,8,20 ms` gives `18.8 ms`. This describes deletion visibility,
+not storage compaction or image/container removal.
+
+**Range and direction:** non-negative milliseconds/document; lower is better.
+
+**Edge cases and availability:**
+
+Shared percentile/support rules apply. A task-free deletion condition is inapplicable;
+a required task without completed durations is unavailable/incomplete as appropriate.
+
+### Startup Time
+
+**Question:** How long until an existing stopped database serves its preserved data?
+
+```text
+successful required query/state verification time - server start request time
+```
+
+Start with the populated server already stopped. Include readiness, preservation
+and configured-index checks and the required query. Exclude the preceding stop,
+image pulls and original corpus build. This does not imply an empty OS cache.
+
+**Example:** Start at 0 seconds, health at 3, required state/query verification
+at 4: Startup Time is `4 seconds`, not 3.
+
+**Range and direction:** non-negative seconds; lower is better with verified state.
+
+**Edge cases and availability:**
+
+Shared completed-phase rules apply. A server that becomes healthy but never
+serves the required preserved state has no completed Startup Time. One start has no CI.
 
 ### Peak Server RAM
 
-**Question:** What is the largest observed server memory footprint? Take the
-maximum sampled usage, not a sum of peaks from different times or the client.
-The current collector uses Docker-reported container memory usage converted to
-bytes, not a direct process-tree RSS sum. Record method and lifecycle scope.
+**Question:** What is the highest observed server memory usage in the declared lifecycle?
 
-**Example:** samples `600,900,750 MiB` give `900 MiB`, or
-`943,718,400 bytes`. Sparse samples can miss a shorter spike.
-**Range and direction:** non-negative bytes; lower at equal correctness/quality.
-Apply the shared resource availability and single-peak uncertainty rules using
-the recorded Docker scope. CPU server execution has no applicable GPU-memory
-metric under the shared CPU-VRAM rule.
+Take the maximum usable memory sample under the frozen container/cgroup method.
+For a declared multi-container server, sum simultaneous usage before taking the
+peak. Client model memory and unrelated services are outside this server scope.
 
-### Persistent Storage
+**Example:** Samples `600,900,750 MiB` give `900 MiB`, stored as
+`943,718,400 bytes`. Do not sum each component's separately timed maximum.
+Record cache accounting; raw Docker usage and cache-subtracted CLI memory are
+not interchangeable measurements.
 
-**Question:** How much persistent server state remains at the recorded checkpoint?
-Measure dedicated server data after declared writes are synchronized and before
-teardown. Exclude image layers, model snapshots, and client memory. Record
-whether the tool reports apparent bytes or allocated blocks.
+**Range and direction:** non-negative bytes; lower at comparable functionality
+and workload. Sampling may miss shorter spikes.
 
-**Example:** `du -sb` reporting `1,048,576,000 bytes` represents
-`1,000 MiB` of apparent state. A volume inspector reporting
-`1,024,000 KiB` converts to the same bytes but measures allocated usage;
-equal units do not establish equal measurement semantics.
-**Range and direction:** non-negative bytes; lower at equal correctness/quality.
-Missing data is unavailable. A partial run's footprint names its checkpoint;
-deleted records may leave unreclaimed storage. One snapshot has no CI.
-The current final snapshot is not a synchronized post-build observation per
-workload.
+**Edge cases and availability:**
 
-## Support, aggregation, and confidence intervals
+Use [shared resource rules](../metrics.md#resource-measurements), including retained
+partial peaks, missing telemetry and single-peak uncertainty. CPU-only server
+execution does not acquire a zero-valued GPU-memory metric.
 
-Synthetic ANN quality is scored once per frozen query, then averaged equally
-within each workload/filter cell. Scores `1,0.8,0.6` average to
-`(1 + 0.8 + 0.6) / 3 = 0.8`; do not pool neighbour counts when denominators
-differ. Real-retrieval quality instead averages questions within source
-documents, then documents equally. Counts, settings, revisions, and binary
-phase states are descriptors, not sampled quality estimates.
+## Storage descriptors
 
-For eligible development, validation, and planned locked sample-based results,
-apply the [shared bootstrap and confidence-interval rules](../metrics.md#confidence-intervals).
-The synthetic-ANN independent unit is the complete query ID within its workload
-cell, preserving compared servers, filter conditions, and dependent repeats
-together. Real retrieval instead uses independent source documents with all
-their questions. These are arithmetic resamples of saved results, not extra
-inference or search requests.
+### Persistent Storage Size
 
-Latency CIs recompute the declared percentile from successful observations in
-each query-cluster draw. Full-stack real retrieval retains source-document
-clusters. Paired server comparisons report their common scored cohort and
-exclusions; success-only differences do not represent failures.
+**Question:** How much persistent state does the completed database require?
 
-Apply shared support, undefined-draw, and degeneracy reporting within each
-workload/filter cell or real-retrieval source cohort. The independent-support
-threshold remains to be frozen after data review; do not invent it. Missing
-required values remain incomplete evidence even if some conditional bounds
-can be calculated.
+Sum apparent bytes of dedicated database data, index, metadata and required log
+files at the synchronized completed-build checkpoint. Exclude Docker images,
+model snapshots, client memory and benchmark artifacts. Record measurement tool
+and checkpoint; allocated disk blocks are a different quantity.
 
-For example, recall `0.94` with 95% bounds `[0.92,0.96]` describes uncertainty
-in the aggregate, not a guarantee that 95% of individual queries score in that
-range. Smoke has no authoritative CI. One-off batches, builds, mutation phases,
-restarts, peaks, and storage snapshots have no CI. Independent operational repeats
-could support one only with recorded repetition count, unit, and aggregation.
+**Example:** `1,048,576,000 bytes` is `1,000 MiB` of apparent persistent state.
+This exceeds raw vector payload size legitimately because database structures
+also occupy space. It is not a reranker/embedding snapshot-size measurement.
 
-## Current measurement limitations
+**Range and direction:** non-negative bytes. This is a descriptor, not a quality
+score; a smaller footprint is advantageous only at comparable functionality.
 
-The implementation in `experiments/benchmarks/vectordb/` does not yet meet all
-the reporting rules above:
+**Edge cases and availability:**
 
-- Dense ANN quality uses one serial request per query; the three measured
-  repetitions apply to concurrent load traffic. Serial quality/filter latency
-  precedes those load warmups. Filtered searches are not repeated at each
-  concurrency; their serial values are not warm filtered load-cell measurements.
-- Serial search exceptions abort a candidate without explicit unavailable
-  per-query rows or complete retention of earlier evaluator-local observations.
-  The recall helper deduplicates returned IDs rather than rejecting them;
-  empty-oracle recall emits an empty-result indicator instead of inapplicability.
-- Concurrent throughput divides submitted requests by elapsed time even after
-  errors. That is offered request rate, not successful throughput when errors
-  occur. Separate error rates and successful latencies lack the complete
-  request ledger/support policy.
-- p99 has no independent-support gate, and phase-level latency has no
-  query-cluster CIs. Generic quality aggregation pools workload sample rows;
-  filter-specific keys do not supply a complete per-cell report. Real-retrieval
-  generic aggregation averages questions, not source-document macro values.
-- The real-retrieval wrapper still calls the legacy overlap-graded scorer in
-  `rag/evaluation.py`: its nDCG uses exponential overlap grades, and its context
-  recall/precision are not Evidence-unit Recall/Evidence-token Precision. Those
-  keys cannot be relabeled as the evidence-count metrics defined above. The
-  current wrapper has not migrated to the retrieval benchmark's evidence scorer.
-- Tuning broadly classifies trial exceptions as unsupported configurations;
-  those labels alone do not distinguish genuine unsupported settings from
-  infrastructure or request failures. Real-retrieval output validation also
-  lacks the full checksummed-pool/permutation contract of the retrieval runner.
-- Mutation timers end at adapter return without a uniform visibility barrier.
-  Restart timing ends at health; persistence checks compare counts. The timed
-  first-query probe uses the conformance corpus. Dimension rejection accepts
-  any exception; replacement checks do not exhaustively verify updated values.
-  These are limited probes, not proof of every required semantic guarantee.
-- Docker memory monitoring spans tuning, conformance/restart, build, search,
-  and mutation across the candidate's workloads. Storage is sampled at the end,
-  with apparent-byte/allocated-block fallback methods and no uniform explicit
-  synchronization checkpoint. Missing telemetry is omitted numerically without
-  the full required status record.
-- Gates are emitted as metrics, but the vector call does not supply a complete
-  required-metric/gate validator to the common runner. A recorded `success`
-  status alone does not prove all correctness values equal one; the
-  real-retrieval `determinism` flag also needs explicit gate review.
+| Edge case | Example | Value/status | Explanation |
+|---|---|---|---|
+| No trustworthy completed-build checkpoint | Interrupted loading leaves measurable partial files. | Completed size is `null` (`unavailable`); retain labelled partial footprint. | Partial bytes do not establish the space needed by the complete database. |
 
-These gaps qualify the evidence; they do not authorize new cutoffs, repeats,
-candidate rosters, narrower gates, or automatic winner selection. See the
-[methodology implementation status](methodology.md#implementation-status) for
-frozen finalist settings and locked execution.
+Missing telemetry follows shared availability rules. Logical deletion need not
+reduce later physical footprint immediately; those later snapshots do not replace
+the defined post-build measurement. One checkpoint has no inferred CI.
+
+## Worked candidate interpretation
+
+For one illustrative pair on aligned workloads:
+
+```text
+Unfiltered ANN Recall@20              = 0.98
+Filtered ANN Recall@20                = 0.90
+Candidate-pool Evidence-unit Recall@20 = 0.95
+nDCG@5                               = 0.86
+Evidence-unit Recall@5                = 0.80
+Evidence-token Precision@5            = 0.44
+Ranking Repeatability                = 0.90
+Database Search Latency p95           = 12 ms
+Full-Stack Retrieval Latency p95      = 90 ms
+Search Request Error Rate            = 0.01
+Filter Violation Rate                = 0
+```
+
+The search preserves most exact neighbours, with more loss under the stated
+filter condition. Application pool recall is high, but not all evidence reaches
+the final five chunks. Token precision describes context concentration, not
+the truth of the remaining text. Repeatability exposes ordering changes without
+making them integrity failures. The latency values cover different paths and
+cannot be subtracted to calculate reranker p95. Zero observed filter violations
+is conditional on completed checkable responses; the 1% search failure rate
+remains visible. None of these values alone selects the database winner.
+
+## Vector-database confidence intervals
+
+Use [shared uncertainty conventions](../metrics.md#confidence-intervals), preserving
+metric-specific observations rather than applying quality's macro mean everywhere.
+
+### Aggregation and completeness
+
+| Metric family | Aggregate |
+|---|---|
+| ANN/Filtered ANN Recall | Mean first-response per-query scores within each condition; never pool different effective neighbour denominators. |
+| nDCG, evidence-unit/token metrics, candidate-pool evidence recall | Mean eligible questions within each source document, then document-macro mean. |
+| Database Ranking Repeatability | Mean scheduled-pair score within each query, then mean query scores within the condition. |
+| Database load and document-operation latency | Named percentile of individual completed logical operations within the condition. |
+| Full-stack latency | Named percentile of per-question median successful measured durations. |
+| Request Error Rate | Failed submitted logical operations / submitted operations, separately by operation and condition. |
+| Filter Violation Rate | Violating completed checkable responses / completed checkable filtered responses. |
+| QPS | Successful completions / complete corresponding load-window wall time. |
+| Build/startup/storage | Observed phase duration or checkpoint size; do not average unrelated corpus lifecycles. |
+| Server RAM | Maximum usable sample over the declared monitoring window. |
+
+**Example:** Evidence recalls `1,0` from one document and `1` from another give
+document-macro `(0.5 + 1)/2 = 0.75`. ANN recalls `1,0.8,0.6` for three queries
+give `0.8` within that workload. These answer different questions. Drawing source
+groups for a latency CI does not turn the percentile into document-macro latency.
+
+Report planned, eligible, contributing, failed, unavailable and independent-source
+counts where applicable. Do not silently drop required missing quality from an
+authoritative aggregate. Conditional successful latency/filter cohorts retain
+their outcome coverage. Different workload conditions never become one pooled
+database score.
+
+### Which values receive an interval
+
+| Value | 95% confidence interval? | Rule |
+|---|---|---|
+| ANN quality and database repeatability | Conditional on sufficient independent support | Resample complete queries, or source groups when queries share a source; retain attempts and first-response identities. |
+| Application evidence quality and pool recall | Conditional on sufficient independent sources | Resample complete source groups and recalculate document-macro scores. |
+| Full-stack p50/p95 | Conditional | Resample source groups with their query medians, then recalculate percentiles. |
+| Controlled-query Database Search Latency and search/filter rates | Conditional on sufficient independent queries/source groups | Retain each query's attempts and outcomes together; recalculate request-level percentiles or the declared count ratio, not per-query latency medians. |
+| Server-load latency, QPS and request/filter rates | Conditional on repeated independent load windows or a reviewed dependence-aware design | Preserve concurrent request dependence; individual requests are not independent load experiments. |
+| Standalone mutation latency/error rates | Conditional on independent operation/source groups and reviewed support | Keep related documents and repeated mutations together; preserve operation boundaries. |
+| Smoke, fixed settings, inventories and check states | No authoritative interval | Wiring observations or fixed facts, not supported selection estimates. |
+| One build/startup, lifecycle peak or storage checkpoint | No | One observation cannot establish execution-to-execution uncertainty. |
+
+### Calculation
+
+Apply the shared 10,000-resample, seed-42 percentile procedure offline. Quality
+draws use whole independent query/source groups, retaining failed and unavailable
+first observations and dependent attempts. Source grouping preserves dependence;
+it does not change the metric's declared query-mean or document-macro weights.
+Retain metadata distinguishing query-sampling uncertainty from variation between
+independently rebuilt indexes, which one index does not measure.
+
+For load uncertainty, resample independent complete load windows with their
+requests, failures, work counts and wall durations. Recompute percentiles over
+the sampled completed-request observations and QPS as total completions divided
+by total sampled wall time. Do not bootstrap concurrent requests as if each were
+a new experiment, or divide by summed per-request latency. Paired comparisons
+use matched window schedules/conditions and aligned source draws across candidates.
+If a condition lacks the reviewed window/support design, retain descriptive
+points and null bounds rather than claiming precision from 10,000 resamples.
+
+Freeze support requirements after [data review](../pending-data-review.md#vector-databases)
+and before authoritative comparisons, including development, not merely before
+choosing finalists. Shared undefined-draw and degeneracy rules apply. Repeated
+identical queries add workload but not new independent sources. No nonzero-width
+CI is fabricated when all defined bootstrap statistics agree.
+
+### Interpretation
+
+ANN Recall `0.94` with a supported 95% interval `[0.92,0.96]` describes uncertainty
+in the condition's mean recall, not a guarantee that 95% of queries have those
+scores. A p95 latency is a percentile of durations, not a confidence bound.
+Intervals do not excuse incomplete required evidence or choose finalists automatically.
