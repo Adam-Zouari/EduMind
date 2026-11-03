@@ -485,7 +485,7 @@ the same seed/settings, and adds no inference or quality rescoring.
 |---|---|---|---|
 | Repeatability is not measured | Smoke schedules one measured attempt per clip | `null` (`inapplicable`); `repeatability_not_measured` | The profile deliberately supplies no attempt pairs; this is not disagreement. |
 
-Shared availability rules apply: [execution and record completeness](../../metrics.md#shared-availability-rules).
+[Shared pairwise-repeatability rules](../../metrics.md#pairwise-repeatability) apply.
 
 ### Attempt Failure Rate
 
@@ -506,7 +506,7 @@ All scheduled attempts succeeding gives `0`; all executing and failing gives
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See [shared availability](../../metrics.md#shared-availability-rules)
+See [shared execution-accounting rules](../../metrics.md#execution-accounting-and-result-completeness)
 and the [audio execution-status rules](#scoring-inputs-eligibility-and-result-status).
 
 ## Operational performance
@@ -587,7 +587,8 @@ The median is a typical wait, not an arithmetic mean or duration-normalized spee
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See [shared availability](../../metrics.md#shared-availability-rules)
+See [shared availability](../../metrics.md#shared-availability-rules),
+[percentile rules](../../metrics.md#latency-percentiles),
 and [operational measurement availability](#operational-performance-1).
 No completed timed clips gives `null/unavailable`, not a zero-second median.
 Independent-source interval support follows [audio confidence intervals](#aggregation-and-confidence-intervals).
@@ -608,7 +609,8 @@ below `9.8 s`.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See [shared availability](../../metrics.md#shared-availability-rules)
+See [shared availability](../../metrics.md#shared-availability-rules),
+[percentile rules](../../metrics.md#latency-percentiles),
 and [operational measurement availability](#operational-performance-1).
 No completed timed clips gives `null/unavailable`, not a zero-second tail latency.
 Independent-source interval support follows [audio confidence intervals](#aggregation-and-confidence-intervals).
@@ -630,7 +632,7 @@ or first-request latency including warmup.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See [shared availability](../../metrics.md#shared-availability-rules)
+See [shared completed-phase rules](../../metrics.md#dependent-metrics-and-partial-observations)
 and [operational measurement availability](#operational-performance-1).
 
 ### Peak Process-Tree RAM
@@ -648,7 +650,7 @@ processes' separate peaks (`3,600 MiB`). This estimates simultaneous host demand
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See [shared availability](../../metrics.md#shared-availability-rules)
+See [shared resource-measurement rules](../../metrics.md#resource-measurements)
 and [resource-window and measurement availability](#operational-performance-1).
 
 ### Peak Device VRAM
@@ -669,7 +671,7 @@ baseline-subtracted `1,400 MiB`. This is observed device demand, not model size.
 |---|---|---|---|
 | CPU-only profile | An explicitly requested CPU smoke run | `null` (`inapplicable`) | No GPU-memory measurement task exists; this is not zero observed CUDA use. |
 
-Shared availability rules apply: [CUDA telemetry availability](../../metrics.md#shared-availability-rules)
+See [shared CPU/CUDA telemetry availability](../../metrics.md#peak-device-vram)
 and [resource-window measurement scope](#operational-performance-1).
 
 ## Worked result interpretation

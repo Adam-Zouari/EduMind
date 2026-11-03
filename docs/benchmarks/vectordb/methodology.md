@@ -193,8 +193,13 @@ responses retain explicit integrity outcomes. Check filter eligibility against
 trusted input metadata, not merely the values echoed by the server. A completed
 usable response with known forbidden records supplies a Filter Violation Rate
 event and retains its execution-success timing/QPS observation, but cannot
-supply accepted ANN or downstream evidence quality. Malformed, duplicate-ID,
-unknown-ID and nonfinite-score responses are execution errors instead. The
+supply accepted ANN or downstream evidence quality. Reference eligibility is
+established first: zero permitted records means no filtered-recall task, so its
+status stays inapplicable regardless of the response. With permitted records,
+a filter-violating result instead leaves recall unavailable. The metric reference
+defines the [empty-subset outcomes](metrics.md#filtered-ann-recall20).
+Malformed, duplicate-ID, unknown-ID and nonfinite-score responses are execution
+errors instead. The
 [search-outcome table](metrics.md#scoring-inputs-eligibility-and-result-status) fixes these
 cohorts; operational observations do not excuse a failed correctness requirement.
 
@@ -248,9 +253,9 @@ the same selected database configuration without new selection.
 
 Apply [shared execution, quality and integrity accounting](../metrics.md#execution-accounting-and-result-completeness).
 Retain every scheduled outcome, including not-executed work. A failed first
-request leaves dependent quality unavailable; independent timings/resources
-survive. Later failures do not erase completed first quality. Ordinary ANN misses
-are scored search outcomes, not request errors.
+request leaves applicable dependent quality unavailable; independent timings
+and resources survive. Later failures do not erase completed first quality.
+Ordinary ANN misses are scored search outcomes, not request errors.
 
 Submitted-operation error rates and completed-response filter violations have
 different denominators. An execution failure is not a checkable filter response.

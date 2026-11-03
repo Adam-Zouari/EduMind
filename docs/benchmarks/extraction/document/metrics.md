@@ -1749,7 +1749,7 @@ observed failures.
 |---|---|---|---|
 | Profile schedules only one measured attempt | Smoke's one attempt per fixture | `null` (`inapplicable`) (`repeatability_not_measured`) | No pair-comparison task is scheduled. This differs from missing one of three required attempts. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+[Shared pairwise-repeatability rules](../../metrics.md#pairwise-repeatability) apply.
 Required-attempt completeness follows the [page-wide execution rules](#scoring-inputs-eligibility-and-result-status).
 
 ### Attempt Failure Rate
@@ -1782,7 +1782,7 @@ attempts divided by total scheduled attempts.
 
 **Edge cases and availability:**
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+[Shared execution-accounting rules](../../metrics.md#execution-accounting-and-result-completeness) apply.
 Scheduled-attempt accounting, recoverable retries, and setup failures follow the
 [page-wide execution rules](#scoring-inputs-eligibility-and-result-status).
 
@@ -1837,7 +1837,7 @@ cache is not forcibly cleared. Run one complete warmup only after loading ends.
 
 **Edge cases and availability:**
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+[Shared completed-phase and partial-observation rules](../../metrics.md#dependent-metrics-and-partial-observations) apply.
 See [operational measurement availability](#operational-measurement-availability)
 for timed-phase completion and reporting.
 
@@ -1864,7 +1864,7 @@ Model-Load Time, which ends before that request begins.
 
 **Edge cases and availability:**
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+[Shared completed-phase and partial-observation rules](../../metrics.md#dependent-metrics-and-partial-observations) apply.
 See [operational measurement availability](#operational-measurement-availability)
 for timed-phase completion and reporting.
 
@@ -1907,7 +1907,8 @@ This gives equal weight to document speeds, not to every page in a large PDF.
 |---|---|---|---|
 | No fixed physical-page task | Native DOCX without a fixed renderer | `null` (`inapplicable`) | Complete-document latency remains meaningful, but no physical-page denominator exists. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+[Shared availability](../../metrics.md#shared-availability-rules) and
+[percentile rules](../../metrics.md#latency-percentiles) apply.
 See [operational measurement availability](#operational-measurement-availability)
 for successful-completion and measurement support.
 
@@ -1930,7 +1931,8 @@ sample falls below the estimate.
 |---|---|---|---|
 | No fixed physical-page task | Native DOCX without a fixed renderer | `null` (`inapplicable`) | Complete-document latency remains meaningful, but no physical-page denominator exists. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+[Shared availability](../../metrics.md#shared-availability-rules) and
+[percentile rules](../../metrics.md#latency-percentiles) apply.
 See [operational measurement availability](#operational-measurement-availability)
 for successful-completion and measurement support.
 
@@ -1959,7 +1961,8 @@ This is a whole-source wait, not a normalized page speed or arithmetic mean.
 
 **Edge cases and availability:**
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+[Shared availability](../../metrics.md#shared-availability-rules) and
+[percentile rules](../../metrics.md#latency-percentiles) apply.
 See [operational measurement availability](#operational-measurement-availability)
 for successful-completion and measurement support.
 
@@ -1977,7 +1980,8 @@ This exposes long user waits that a good per-page speed can hide.
 
 **Edge cases and availability:**
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+[Shared availability](../../metrics.md#shared-availability-rules) and
+[percentile rules](../../metrics.md#latency-percentiles) apply.
 See [operational measurement availability](#operational-measurement-availability)
 for successful-completion and measurement support.
 
@@ -2013,7 +2017,8 @@ batch duration gives zero throughput.
 |---|---|---|---|
 | No fixed physical-page task | Native DOCX without fixed physical pagination | `null` (`inapplicable`) | No physical pages can be counted as completed work. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+[Shared availability](../../metrics.md#shared-availability-rules) and
+[ratio-of-totals throughput rules](../../metrics.md#ratio-of-totals-throughput) apply.
 Batch timing requirements follow [operational measurement availability](#operational-measurement-availability).
 
 ### Peak Process-Tree RAM
@@ -2031,7 +2036,7 @@ MiB, Peak Process-Tree RAM is `2,450 MiB`.
 
 **Edge cases and availability:**
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+[Shared resource-measurement rules](../../metrics.md#resource-measurements) apply.
 Resource-window reporting follows [operational measurement availability](#operational-measurement-availability).
 
 ### Peak Device VRAM
@@ -2052,7 +2057,8 @@ Device VRAM `1,800 MiB`; an idle baseline is not subtracted.
 |---|---|---|---|
 | CPU-only execution | Native CPU extraction with no assigned GPU | `null` (`inapplicable`) | GPU-memory measurement is not a task for this execution; it is not a zero-MiB observation. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+[Shared CPU/CUDA availability](../../metrics.md#peak-device-vram) and
+[resource-window rules](../../metrics.md#resource-measurements) apply.
 CUDA telemetry and resource-window reporting follow [operational measurement availability](#operational-measurement-availability).
 
 ### Peak Temporary Disk
@@ -2081,7 +2087,7 @@ the sum of all sampled totals.
 
 **Edge cases and availability:**
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+[Shared resource-measurement rules](../../metrics.md#resource-measurements) apply.
 Resource-window reporting follows [operational measurement availability](#operational-measurement-availability).
 
 ## Worked result interpretation

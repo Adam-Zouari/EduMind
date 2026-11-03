@@ -116,7 +116,7 @@ execution-success cohort for Search Request Error Rate, database latency and QPS
 | Search outcome | Execution error? | Include in successful QPS/database latency? | Filter observation |
 |---|---|---|---|
 | Usable response, all records allowed | No | Yes | `0` when filtering applies. |
-| Usable response, known forbidden record returned | No | Yes, with correctness failure retained | `1`; dependent ANN/integration quality is unavailable. |
+| Usable response, known forbidden record returned | No | Yes, with correctness failure retained | `1`; retain the filtering violation separately from recall eligibility. |
 | Timeout, transport failure, unusable envelope, duplicate/unknown IDs, or nonfinite required scores | Yes | No; retain elapsed-to-failure/invalid response separately | Unavailable if filtering was required; do not infer a violation or pass. |
 
 Thus successful execution is not a claim of correct filtering or accepted
@@ -125,6 +125,19 @@ presented as a conformant comparison. An execution failure supplies no checkable
 filter response. Low recall and legitimate alternative tied neighbours are not
 request errors. Missing outcome/verification records remain incomplete rather
 than presumed success or failure.
+
+Filtered recall eligibility comes from the verified permitted-record set before
+examining the response. With zero permitted records, Filtered ANN Recall is
+`null/inapplicable` regardless of the execution outcome. A checkable empty
+response has filter-violation event `0`; a checkable response containing a known
+forbidden record has event `1`; a failed or uncheckable response has no filter
+observation. With a positive permitted-record count, an execution failure or
+invalid filtered result instead makes recall `null/unavailable`. Do not discard
+forbidden records to manufacture an accepted score. A missing or unverified
+reference cannot establish an empty permitted set.
+
+The unfiltered corpus must be nonempty under the input contract; an empty
+required corpus is rejected during data validation, not scored as empty recall.
 
 Well-formed short or empty ANN responses against nonempty references retain
 their low recall. Integration has a stricter declared pool contract:
@@ -139,7 +152,8 @@ Unanswerable questions are inapplicable, not empty gold comparisons. Complete-un
 coverage uses source intervals; token precision uses `tiktoken:cl100k_base` source
 token occurrences. The nDCG ideal uses the entire eligible frozen corpus, never
 only the retrieved pool. A reranker must permute its actual verified pool; the
-exact-retrieval suite's repeated-live-pool equality gate does not apply here.
+final @3/@5 results must be ordered prefixes of that complete validated ranking.
+The exact-retrieval suite's repeated-live-pool equality gate does not apply here.
 
 ### Exact neighbours and boundary ties
 
@@ -202,6 +216,9 @@ recovered strictly closer records + credited boundary records
 **Example:** With 20 eligible nearest-neighbour slots and no boundary ambiguity,
 18 recovered neighbours give `18 / 20 = 0.90`. This measures vector-search
 accuracy, not whether those neighbours answer the educational question.
+A valid empty response gives `0 / 20 = 0`; five recovered neighbours give
+`5 / 20 = 0.25`. These are ordinary results under the same calculation, not
+runtime failures or additional zero-denominator conventions.
 
 Average query scores within the declared condition; do not pool recovered counts
 when effective denominators differ. Compare speed at comparable recall.
@@ -213,11 +230,11 @@ when effective denominators differ. Compare speed at comparable recall.
 | Edge case | Example | Value/status | Explanation |
 |---|---|---|---|
 | Fewer eligible records than 20 | Only 8 records exist; 6 are recovered. | `6/8 = 0.75` (`scored`). | Score the available task, not 20 imaginary records. |
-| Empty valid response against a nonempty reference | No IDs returned for 20 reference slots. | `0` (`scored`). | No neighbours were recovered; this is not a runtime crash. |
 | More records tie at the cutoff than there are slots | 18 strict neighbours and 5 tied alternatives. | Credit at most 2 boundary records. | Equally close alternatives are interchangeable only in those slots. |
 
-An empty required unfiltered corpus fails input validation. Shared availability
-rules govern failed requests; they do not receive this valid-empty zero.
+[Shared availability rules](../metrics.md#shared-availability-rules) govern
+failed requests and unavailable evaluations; neither receives the valid-empty
+zero described above.
 
 ### Filtered ANN Recall@20
 
@@ -233,6 +250,9 @@ of which 6 are returned, gives `6/8 = 0.75`.
 
 A missed eligible neighbour is not necessarily a filter violation: another
 returned record may satisfy the filter but be farther away.
+A valid empty response against a positive permitted-record count receives zero
+recall under the ordinary calculation. Correct absence and forbidden returns
+when no records are permitted follow the task-eligibility cases below.
 
 **Range and direction:** `[0,1]`; higher is better.
 
@@ -240,13 +260,15 @@ returned record may satisfy the filter but be farther away.
 
 | Edge case | Example | Value/status | Explanation |
 |---|---|---|---|
-| Filter legitimately permits no records | An empty-match control returns no IDs. | `null` (`inapplicable`). | There are no nearest neighbours to recover; filter behaviour is checked separately. |
+| Filter legitimately permits no records; response is empty | No records belong to document C; the database returns `[]`. | Recall `null/inapplicable`; filter-violation event `0`. | There is no nearest-neighbour recovery task. Correct filtering does not create a perfect recall score. |
+| Filter legitimately permits no records; response contains a known forbidden record | No records belong to document C; a record from document A is returned. | Recall `null/inapplicable`; filter-violation event `1`. | The reference task remains absent. The filtering failure is recorded, not hidden by null recall. |
 | Filter permits fewer than 20 records | All 3 permitted records are returned. | `1` (`scored`). | All available neighbours were recovered. |
-| Valid empty result with eligible neighbours | Filter permits 30 records but returns none. | `0` (`scored`). | The nonempty reference supplies a positive denominator. |
 | Boundary ties in the eligible subset | Several permitted vectors tie for the final slot. | Apply the same boundary-slot credit. | Filtering does not change the tie policy. |
 
-Shared availability and output-integrity rules apply; forbidden records are not
-silently discarded to turn an invalid response into an accepted recall score.
+[Shared availability](../metrics.md#shared-availability-rules) and
+[output-integrity rules](#scoring-inputs-eligibility-and-result-status) apply
+after reference eligibility is established. The filter values above are
+per-response events, not an aggregate Filter Violation Rate.
 
 ## Application retrieval quality
 
@@ -280,8 +302,10 @@ their ordinary linear gain.
 |---|---|---|---|
 | Zero ideal gain in an otherwise valid frozen corpus | Every chunk fragments the required evidence. | `0` (`scored`), with upstream-fragmentation limitation. | Inherit the shared zero-ideal convention; the database cannot repair those boundaries. |
 
-Shared availability and [integration integrity](#scoring-inputs-eligibility-and-result-status)
-apply. Missing evidence annotations are not this zero-ideal case.
+The [shared retrieval-evidence conventions](../metrics.md#retrieval-evidence-quality),
+[availability rules](../metrics.md#shared-availability-rules), and
+[integration integrity](#scoring-inputs-eligibility-and-result-status) apply.
+Missing evidence annotations are not this zero-ideal case.
 
 ### Evidence-unit Recall@3/@5
 
@@ -305,8 +329,9 @@ of ANN recall. Eligible answerable questions have a positive gold denominator.
 **Edge cases and availability:**
 
 No additional empty-reference convention is needed for the eligible task.
-[Shared availability](../metrics.md#shared-availability-rules) and
-[integration integrity](#scoring-inputs-eligibility-and-result-status) apply.
+See the [shared retrieval-evidence conventions](../metrics.md#retrieval-evidence-quality),
+[availability rules](../metrics.md#shared-availability-rules), and
+[integration integrity](#scoring-inputs-eligibility-and-result-status).
 
 ### Evidence-token Precision@3/@5
 
@@ -336,7 +361,9 @@ without containing an entire evidence unit.
 
 The valid integration task has a positive source-token denominator. Token-free
 or invalid rankings follow [output integrity](#scoring-inputs-eligibility-and-result-status),
-not an artificial zero-denominator score. Shared availability rules apply.
+not an artificial zero-denominator score. The
+[shared retrieval-evidence conventions](../metrics.md#retrieval-evidence-quality)
+and [availability rules](../metrics.md#shared-availability-rules) apply.
 
 ## Diagnostics
 
@@ -358,6 +385,8 @@ change which available chunks reach @3/@5, but cannot introduce E3.
 
 Record the pool identity with this observation. It is not ANN Recall: E1 can be
 available in a useful alternative chunk outside the exact nearest-neighbour set.
+A verified designated-first pool remains scoreable if reranking later fails,
+under the [shared pool-recall dependency rule](../metrics.md#retrieval-evidence-quality).
 
 **Range and direction:** `[0,1]`; higher is a better evidence-availability ceiling.
 
@@ -365,7 +394,9 @@ available in a useful alternative chunk outside the exact nearest-neighbour set.
 
 Eligible questions have a positive gold denominator. A legitimately smaller
 corpus uses its available pool; unexpected short integration pools follow
-[integrity rules](#scoring-inputs-eligibility-and-result-status). Shared availability applies.
+[integrity rules](#scoring-inputs-eligibility-and-result-status). The
+[shared retrieval-evidence conventions](../metrics.md#retrieval-evidence-quality)
+and [availability rules](../metrics.md#shared-availability-rules) apply.
 
 ### Ranking Repeatability
 
@@ -375,6 +406,8 @@ Apply the [shared all-pairs rule](../metrics.md#pairwise-repeatability) to the
 database output before reranking: compare ordered IDs, not floating-point score
 bit patterns. The scope is the requested top 20, or the actual valid returned
 list when fewer records are returned; retain requested/actual counts.
+Valid here includes compliance with any requested filter, not just execution
+success; retain the separate execution and filter outcomes.
 
 ```text
 scheduled pairs with two valid identical ordered database outputs
@@ -385,6 +418,8 @@ scheduled pairs with two valid identical ordered database outputs
 **Example:** Lists A,A,B agree only in pair (1,2), giving `1/3`. Failure,A,A
 also gives `1/3`, through pair (2,3). Three executed failures give zero, not
 agreement. Average per-query pair rates within the declared condition.
+Three valid empty results, such as `[]` for an empty-match filter, give `1`:
+the lists agree, without establishing nonempty-search recall.
 
 This is diagnostic, not a perfect-agreement gate. Valid tied alternative pools
 may have perfect ANN recall but less than perfect repeatability. This does not
@@ -398,9 +433,8 @@ reproducibility.
 | Edge case | Example | Value/status | Explanation |
 |---|---|---|---|
 | Only one attempt deliberately scheduled | Smoke executes one request. | `null` (`inapplicable`). | No pairwise comparison task exists. |
-| Valid empty results repeat | An empty-match filter returns `[]` three times. | `1` (`scored`). | Identical valid absence is stable; it does not establish nonempty-search recall. |
 
-Failed and not-executed outcomes follow the shared pair rule, not new local
+Failed and not-executed outcomes follow [shared pairwise-repeatability rules](../metrics.md#pairwise-repeatability), not new local
 conventions. Legitimate short lists may agree without meeting integration needs.
 
 ## Reliability and filter correctness
@@ -430,7 +464,8 @@ not describe the failed requests.
 **Edge cases and availability:**
 
 No submitted searches gives `null`, not 0% errors. Deliberately absent search
-work is inapplicable; missing required execution is incomplete under shared rules.
+work is inapplicable; missing required execution is incomplete under the
+[shared execution-accounting rules](../metrics.md#execution-accounting-and-result-completeness).
 
 ### Request Error Rate — Insert
 
@@ -448,8 +483,8 @@ not several successful API batches and one unrelated failure.
 
 **Edge cases and availability:**
 
-No submitted insertions gives `null`. Apply shared task-eligibility and incomplete
-execution rules; an operation never submitted is not a failed insertion.
+No submitted insertions gives `null`. Apply [shared availability rules](../metrics.md#shared-availability-rules) and
+[shared execution-accounting rules](../metrics.md#execution-accounting-and-result-completeness); an operation never submitted is not a failed insertion.
 
 ### Request Error Rate — Update
 
@@ -468,7 +503,7 @@ completed replacement.
 **Edge cases and availability:**
 
 No submitted updates gives `null`, with task-free versus incomplete status under
-shared rules. Do not use insertion counts as this denominator.
+the [shared execution-accounting rules](../metrics.md#execution-accounting-and-result-completeness). Do not use insertion counts as this denominator.
 
 ### Request Error Rate — Delete
 
@@ -485,8 +520,8 @@ even if 10,000 searches succeed; there is no global error rate hiding it.
 
 **Edge cases and availability:**
 
-No submitted deletions gives `null`, not proof that deletion works. Shared
-availability and execution-accounting rules apply.
+No submitted deletions gives `null`, not proof that deletion works. [Shared availability](../metrics.md#shared-availability-rules) and
+[shared execution-accounting rules](../metrics.md#execution-accounting-and-result-completeness) apply.
 
 ### Filter Violation Rate
 
@@ -505,6 +540,10 @@ completed checkable filtered responses containing a forbidden record
 **Example:** Two of 100 checkable responses contain forbidden IDs, giving
 `2/100 = 0.02`, even if one response contains five such IDs. Three additional
 timeouts are recorded as search failures, not added as filter violations.
+A valid empty response contributes event `0`, whether eligible neighbours exist
+or not. If the permitted set is empty and a known record is returned, that
+response contributes event `1`. These follow the ordinary forbidden-record
+check; they are not special rate-denominator conventions.
 
 This metric measures observed filter leakage, not complete database security or
 all filter correctness. Positive/compound-filter correctness probes remain separate.
@@ -515,13 +554,14 @@ all filter correctness. Positive/compound-filter correctness probes remain separ
 
 | Edge case | Example | Value/status | Explanation |
 |---|---|---|---|
-| Valid empty response | No returned IDs. | Violation event `0`. | No forbidden record was returned; positive-reference recall can still be poor. |
-| Empty allowed subset but a known record is returned | Predicate permits nothing; output contains A. | Violation event `1`. | Every record is forbidden for this predicate. |
+| No filtering task is deliberately scheduled | An unfiltered-only condition. | `null` (`inapplicable`). | No filter behavior was requested, so there is no violation-rate task. |
 | No completed checkable responses | All submitted filtered requests time out. | `null` (`unavailable`). | There is no observed leakage denominator; failures remain visible separately. |
 
-When no filtering task is scheduled, Filter Violation Rate is `null/inapplicable`.
 Unknown IDs or missing checks are integrity/verification problems, not evidence
 that filtering passed.
+
+The [shared availability rules](../metrics.md#shared-availability-rules) and
+[output-integrity rules](#scoring-inputs-eligibility-and-result-status) also apply.
 
 ## Why the quality metrics are not interchangeable
 
@@ -571,7 +611,8 @@ at comparable quality and load.
 
 **Edge cases and availability:**
 
-Use [shared percentile and availability rules](../metrics.md#latency-percentiles):
+Use [shared percentile rules](../metrics.md#latency-percentiles) and
+[shared availability rules](../metrics.md#shared-availability-rules):
 one completed observation supplies the descriptive point; none gives unavailable
 latency. Do not turn failed elapsed time into successful-completion latency.
 
@@ -590,7 +631,8 @@ sufficient evidence for a precise unseen-workload tail estimate.
 
 **Edge cases and availability:**
 
-Shared percentile rules apply. Weak independent support limits the confidence
+[Shared percentile rules](../metrics.md#latency-percentiles) and
+[shared availability rules](../metrics.md#shared-availability-rules) apply. Weak independent support limits the confidence
 claim, not the existence of a descriptive point. No completed durations is unavailable.
 
 ### Full-Stack Retrieval Latency p50
@@ -609,7 +651,8 @@ generation. The shared estimator matches retrieval–reranking.
 
 **Edge cases and availability:**
 
-Shared completed-stage and percentile rules apply. A completed database search
+[Shared completed-phase rules](../metrics.md#dependent-metrics-and-partial-observations) and
+[shared percentile rules](../metrics.md#latency-percentiles) apply. A completed database search
 followed by reranker failure supplies no successful full-stack duration; its
 independent database timing remains available.
 
@@ -627,7 +670,8 @@ individual model attempt or a sum of stage p95s.
 
 **Edge cases and availability:**
 
-Shared percentile/availability rules apply; contributing queries and independent
+[Shared percentile](../metrics.md#latency-percentiles) and
+[shared availability rules](../metrics.md#shared-availability-rules) apply; contributing queries and independent
 source support determine the reported scope and CI applicability.
 
 ### QPS
@@ -645,6 +689,9 @@ not warmup or setup. Concurrent request durations are not summed.
 **Example:** 1,500 submitted searches, 30 failures and 10 measured seconds give
 `1,470/10 = 147 QPS`. This is successful throughput at the stated concurrency,
 not an automatically discovered server maximum.
+If all 50 submitted requests fail during a completely observed five-second
+window, QPS is `0 / 5 = 0`. No successful work completed, but the measured
+window remains real; this is ordinary arithmetic rather than unavailable speed.
 
 **Range and direction:** non-negative queries/second; higher is better at
 comparable quality, workload and resources.
@@ -653,11 +700,14 @@ comparable quality, workload and resources.
 
 | Edge case | Example | Value/status | Explanation |
 |---|---|---|---|
-| No successes in a completely observed positive window | 50 requests fail over 5 seconds. | `0` (`scored`). | No successful work completed during the measured time. |
-| No positive usable measured interval | Clock evidence is missing or duration is zero. | `null` (`unavailable`). | Do not divide by zero or fabricate an epsilon duration. |
+| Zero measured load-window duration | The retained, unrounded elapsed duration is zero seconds. | `null` (`unavailable`). | The rate denominator is zero; do not fabricate an epsilon duration or report infinity. |
 
+Missing required clock evidence follows
+[shared availability rules](../metrics.md#shared-availability-rules).
 An interrupted window retains completed work/time as partial diagnostics, not a
-completed-window result, under the shared accounting rules. One window has no CI.
+completed-window result, under the
+[shared partial-observation rules](../metrics.md#dependent-metrics-and-partial-observations).
+Throughput aggregation follows the [shared ratio-of-totals rule](../metrics.md#ratio-of-totals-throughput). One window has no CI.
 
 ### Initial Build Time
 
@@ -679,7 +729,7 @@ not merely acknowledgment or an index-only internal timer.
 
 **Edge cases and availability:**
 
-Use shared completed-phase rules: an unfinished build has no completed Build
+Use [shared completed-phase rules](../metrics.md#dependent-metrics-and-partial-observations): an unfinished build has no completed Build
 Time; retain progress and elapsed-to-failure. One build receives no inferred CI.
 
 ### Insert Latency p50
@@ -697,7 +747,8 @@ A 40-chunk document is one operation, regardless of backend batch count.
 
 **Edge cases and availability:**
 
-Shared completed-phase/percentile rules apply. Partial acknowledgment is not a
+[Shared completed-phase rules](../metrics.md#dependent-metrics-and-partial-observations) and
+[shared percentile rules](../metrics.md#latency-percentiles) apply. Partial acknowledgment is not a
 completed insertion; no completed inserts gives unavailable latency.
 
 ### Insert Latency p95
@@ -713,7 +764,8 @@ so this is not mistaken for a per-vector insertion time.
 
 **Edge cases and availability:**
 
-Shared percentile/support rules apply. Do not give zero latency to failed inserts
+[Shared percentile rules](../metrics.md#latency-percentiles) and
+[shared availability rules](../metrics.md#shared-availability-rules) apply. Do not give zero latency to failed inserts
 or infer a precise tail from a small number of operations.
 
 ### Update Latency p50
@@ -732,7 +784,8 @@ removal of the obsolete chunks belong to that operation.
 
 **Edge cases and availability:**
 
-Shared completed-phase/percentile rules apply. An acknowledged but incomplete
+[Shared completed-phase rules](../metrics.md#dependent-metrics-and-partial-observations) and
+[shared percentile rules](../metrics.md#latency-percentiles) apply. An acknowledged but incomplete
 replacement has no completed update latency; retain its partial state and error.
 
 ### Update Latency p95
@@ -748,7 +801,8 @@ and operation sizes, not as a guarantee that every replacement finishes in time.
 
 **Edge cases and availability:**
 
-Shared percentile/support rules apply. No completed replacement durations means
+[Shared percentile rules](../metrics.md#latency-percentiles) and
+[shared availability rules](../metrics.md#shared-availability-rules) apply. No completed replacement durations means
 unavailable latency, not zero.
 
 ### Delete Latency p50
@@ -765,7 +819,8 @@ part of the logical deletion timer.
 
 **Edge cases and availability:**
 
-Shared completed-phase/percentile rules apply. An acknowledgment without verified
+[Shared completed-phase rules](../metrics.md#dependent-metrics-and-partial-observations) and
+[shared percentile rules](../metrics.md#latency-percentiles) apply. An acknowledgment without verified
 absence supplies no completed deletion latency.
 
 ### Delete Latency p95
@@ -781,7 +836,8 @@ not storage compaction or image/container removal.
 
 **Edge cases and availability:**
 
-Shared percentile/support rules apply. A task-free deletion condition is inapplicable;
+[Shared percentile rules](../metrics.md#latency-percentiles) and
+[shared availability rules](../metrics.md#shared-availability-rules) apply. A task-free deletion condition is inapplicable;
 a required task without completed durations is unavailable/incomplete as appropriate.
 
 ### Startup Time
@@ -803,7 +859,7 @@ at 4: Startup Time is `4 seconds`, not 3.
 
 **Edge cases and availability:**
 
-Shared completed-phase rules apply. A server that becomes healthy but never
+[Shared completed-phase rules](../metrics.md#dependent-metrics-and-partial-observations) apply. A server that becomes healthy but never
 serves the required preserved state has no completed Startup Time. One start has no CI.
 
 ### Peak Server RAM
@@ -852,9 +908,14 @@ score; a smaller footprint is advantageous only at comparable functionality.
 |---|---|---|---|
 | No trustworthy completed-build checkpoint | Interrupted loading leaves measurable partial files. | Completed size is `null` (`unavailable`); retain labelled partial footprint. | Partial bytes do not establish the space needed by the complete database. |
 
-Missing telemetry follows shared availability rules. Logical deletion need not
-reduce later physical footprint immediately; those later snapshots do not replace
-the defined post-build measurement. One checkpoint has no inferred CI.
+Missing or incomplete size measurements follow
+[shared availability rules](../metrics.md#shared-availability-rules). A size scan
+that misses a required database directory is not a complete footprint. Keep
+known partial bytes as labelled artifacts, not as the completed-checkpoint
+scalar. Unlike an observed RAM peak, this metric requires the entire declared
+storage scope at that checkpoint. Logical deletion need not reduce later
+physical footprint immediately; those later snapshots do not replace the
+defined post-build measurement. One checkpoint has no inferred CI.
 
 ## Worked result interpretation
 

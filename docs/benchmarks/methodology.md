@@ -80,6 +80,8 @@ belong in the paired metric reference. Identical cross-benchmark rules live in
 these shared guides and are linked locally. Data checks belong in the
 [data-validation guide](data-validation.md), commands in the [runbook](running.md),
 and public screening evidence in [model selection](model-selection.md).
+The [shared basic terms](metrics.md#basic-terms) explain samples, attempts,
+candidates, saved outcome records, and the observation/source counts used below.
 
 ## Benchmark execution profiles
 

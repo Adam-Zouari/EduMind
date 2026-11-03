@@ -220,7 +220,7 @@ Refusal-specific rubric treatment remains pending; do not infer a perfect or
 zero substantive rating from a correct refusal. No rated eligible items gives
 a null mean, not a fabricated score.
 Apply the [review-completeness rules](#review-completeness-and-edge-rules)
-and retain missing ratings separately from observed ratings.
+and the [shared availability rules](../../metrics.md#shared-availability-rules); retain missing ratings separately from observed ratings.
 
 ### Human Answer Correctness
 
@@ -244,7 +244,7 @@ Refusal-specific rubric treatment remains pending; do not infer a perfect or
 zero substantive rating from a correct refusal. No rated eligible items gives
 a null mean, not a fabricated score.
 Apply the [review-completeness rules](#review-completeness-and-edge-rules)
-and retain missing ratings separately from observed ratings.
+and the [shared availability rules](../../metrics.md#shared-availability-rules); retain missing ratings separately from observed ratings.
 
 ### Human Completeness
 
@@ -267,7 +267,7 @@ Refusal-specific rubric treatment remains pending; do not infer a perfect or
 zero substantive rating from a correct refusal. No rated eligible items gives
 a null mean, not a fabricated score.
 Apply the [review-completeness rules](#review-completeness-and-edge-rules)
-and retain missing ratings separately from observed ratings.
+and the [shared availability rules](../../metrics.md#shared-availability-rules); retain missing ratings separately from observed ratings.
 
 ### Human Citation Accuracy
 
@@ -293,7 +293,7 @@ Refusal-specific rubric treatment remains pending; do not infer a perfect or
 zero substantive rating from a correct refusal. No rated eligible items gives
 a null mean, not a fabricated score.
 Apply the [review-completeness rules](#review-completeness-and-edge-rules)
-and retain missing ratings separately from observed ratings.
+and the [shared availability rules](../../metrics.md#shared-availability-rules); retain missing ratings separately from observed ratings.
 
 ### Human Answerability Correctness
 
@@ -316,7 +316,7 @@ invented human-reviewed refusal.
 No rated eligible items gives no mean: report null with its support/reason,
 not zero behavior quality. An absent response is not an observed refusal.
 Apply the [review-completeness rules](#review-completeness-and-edge-rules)
-and retain missing ratings separately from observed ratings.
+and the [shared availability rules](../../metrics.md#shared-availability-rules); retain missing ratings separately from observed ratings.
 
 ### Review completeness and edge rules
 
@@ -375,9 +375,12 @@ not `52 ms` retrieval. Question observations `10,20,30,40,50 ms` give p50
 
 **Edge cases and availability:**
 
-BM25-only execution
-with no server call is null/inapplicable, not zero. A failed call has no successful
-completion time; retain elapsed-to-failure. Server-internal timing is separate.
+BM25-only execution with no server call is null/inapplicable, not zero.
+A failed call has no successful completion time; retain elapsed-to-failure.
+Server-internal timing is separate.
+
+The [shared percentile rules](../../metrics.md#latency-percentiles) and
+[shared availability rules](../../metrics.md#shared-availability-rules) apply.
 
 ### Retrieval Latency p50/p95
 
@@ -398,9 +401,11 @@ give p50 `40 ms` and p95 `90 ms`, exposing the tail hidden by the median.
 
 **Edge cases and availability:**
 
-Failed retrieval
-has no successful-completion value. Completed retrieval remains measured if
-generation later fails, with that outcome retained.
+Failed retrieval has no successful-completion value. Completed retrieval
+remains measured if generation later fails, with that outcome retained.
+
+The [shared percentile rules](../../metrics.md#latency-percentiles) and
+[shared availability rules](../../metrics.md#shared-availability-rules) apply.
 
 ### Generation Latency p50/p95
 
@@ -419,9 +424,11 @@ but not successful generation latency.
 
 **Edge cases and availability:**
 
-No successful
-completions gives null/unavailable. Retain failure/termination times separately.
-Judge and human-review time are excluded.
+No successful completions gives null/unavailable. Retain failure/termination
+times separately. Judge and human-review time are excluded.
+
+The [shared percentile rules](../../metrics.md#latency-percentiles) and
+[shared availability rules](../../metrics.md#shared-availability-rules) apply.
 
 ### Complete End-to-End Latency p50/p95
 
@@ -439,9 +446,11 @@ observations `2,3,4,5,10 s` give p50 `4 s` and p95 `9 s`.
 
 **Edge cases and availability:**
 
-No complete
-successes means null/unavailable. Fast failure is not fast completed answering;
-report successful coverage alongside reliability.
+No complete successes means null/unavailable. Fast failure is not fast
+completed answering; report successful coverage alongside reliability.
+
+The [shared percentile rules](../../metrics.md#latency-percentiles) and
+[shared availability rules](../../metrics.md#shared-availability-rules) apply.
 
 ### Peak Process-Tree RAM
 
@@ -522,6 +531,10 @@ completed stage measurements keep their own contracts; a branch failure does
 not erase them. An unavailable or inapplicable branch value makes that
 metric's difference null/unavailable. Keep exclusions/common support
 and label partial differences diagnostic rather than complete confirmation.
+
+The [shared dependency and partial-observation rules](../../metrics.md#dependent-metrics-and-partial-observations) govern
+unavailable branch values; paired intervals follow the
+[shared confidence-interval procedure](../../metrics.md#confidence-intervals).
 
 ## Worked result interpretation
 

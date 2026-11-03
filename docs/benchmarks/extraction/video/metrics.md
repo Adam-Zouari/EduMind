@@ -391,7 +391,7 @@ quality stays unavailable. Identical error messages do not agree.
 | Profile schedules only one attempt | Smoke | `null` (`inapplicable`), `repeatability_not_measured` | No attempt pair is scheduled; this differs from missing required attempts. |
 
 Missing required attempts follow the
-[shared availability rules](../../metrics.md#shared-availability-rules), not a
+[shared pairwise-repeatability rules](../../metrics.md#pairwise-repeatability), not a
 favorable surviving-pair calculation.
 
 ### Attempt Failure Rate
@@ -414,8 +414,7 @@ failing gives one.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
+See [shared execution-accounting rules](../../metrics.md#execution-accounting-and-result-completeness) and
 [execution prerequisites](#execution-and-measurement-prerequisites).
 
 ## Visual operational performance
@@ -466,8 +465,8 @@ This summarizes a typical complete-video wait, not average frame speed.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
+See [shared availability](../../metrics.md#shared-availability-rules),
+[percentile rules](../../metrics.md#latency-percentiles), and
 [execution prerequisites](#execution-and-measurement-prerequisites).
 
 #### p95 Warm Visual Latency
@@ -487,8 +486,8 @@ sample below it.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
+See [shared availability](../../metrics.md#shared-availability-rules),
+[percentile rules](../../metrics.md#latency-percentiles), and
 [execution prerequisites](#execution-and-measurement-prerequisites).
 
 ### Cold Visual-Pipeline Load Time
@@ -508,8 +507,7 @@ cold load is `5.0 s`. This is initialization cost, not a per-video warm wait.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
+See [shared completed-phase rules](../../metrics.md#dependent-metrics-and-partial-observations) and
 [execution prerequisites](#execution-and-measurement-prerequisites).
 
 ### Peak Visual Process-Tree RAM
@@ -531,8 +529,7 @@ This measures simultaneous host demand of the parser and its media subprocesses.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
+See [shared resource-measurement rules](../../metrics.md#resource-measurements) and
 [execution prerequisites](#execution-and-measurement-prerequisites).
 
 ### Peak Visual Device VRAM
@@ -872,8 +869,7 @@ requests. There is no audio repeatability score: each window is transcribed once
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
+See [shared execution-accounting rules](../../metrics.md#execution-accounting-and-result-completeness) and
 [execution prerequisites](#execution-and-measurement-prerequisites).
 
 ### Shared audio operational measurements
@@ -926,8 +922,8 @@ This describes a typical full preparation, not window latency.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
+See [shared availability](../../metrics.md#shared-availability-rules),
+[percentile rules](../../metrics.md#latency-percentiles), and
 [frozen-audio completion rules](#frozen-audio-completion-and-availability).
 
 ### p95 Warm Audio-Processing Latency
@@ -944,8 +940,8 @@ This is a percentile estimate, not a maximum or a guarantee for unseen videos.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
+See [shared availability](../../metrics.md#shared-availability-rules),
+[percentile rules](../../metrics.md#latency-percentiles), and
 [frozen-audio completion rules](#frozen-audio-completion-and-availability).
 
 ### Cold ASR Model-Load Time
@@ -962,8 +958,7 @@ This is a one-time initialization cost, not per-video preparation latency.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
+See [shared completed-phase rules](../../metrics.md#dependent-metrics-and-partial-observations) and
 [execution prerequisites](#execution-and-measurement-prerequisites).
 
 ### Peak Audio Process-Tree RAM
@@ -981,8 +976,7 @@ This measures simultaneous host demand, including media subprocesses.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
+See [shared resource-measurement rules](../../metrics.md#resource-measurements) and
 [execution prerequisites](#execution-and-measurement-prerequisites).
 
 ### Peak Audio Device VRAM

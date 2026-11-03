@@ -159,7 +159,8 @@ evidence as a relevance-ranking error.
 |---|---|---|---|
 | Zero ideal gain over the complete candidate corpus | Every chunk splits the question's required units, so no chunk covers a complete unit. | `0` (`scored`) | The explicit zero-denominator convention keeps boundary fragmentation in the quality result rather than excluding the pair. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+The [shared retrieval-evidence conventions](../../metrics.md#retrieval-evidence-quality)
+and [availability rules](../../metrics.md#shared-availability-rules) apply.
 Evidence-slice and aggregate status follow
 [this suite's completeness rules](#aggregation-and-completeness).
 
@@ -192,7 +193,8 @@ gives zero under the ordinary calculation.
 
 **Edge cases and availability:**
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+The [shared retrieval-evidence conventions](../../metrics.md#retrieval-evidence-quality)
+and [availability rules](../../metrics.md#shared-availability-rules) apply.
 Evidence-slice and aggregate status follow
 [this suite's completeness rules](#aggregation-and-completeness).
 
@@ -228,7 +230,8 @@ zero under the ordinary calculation.
 
 **Edge cases and availability:**
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+The [shared retrieval-evidence conventions](../../metrics.md#retrieval-evidence-quality)
+and [availability rules](../../metrics.md#shared-availability-rules) apply.
 Evidence-slice and aggregate status follow
 [this suite's completeness rules](#aggregation-and-completeness).
 
@@ -290,7 +293,8 @@ evaluation.
 | Zero greedy-baseline gain over the complete candidate corpus | No chunk covers any complete gold unit for an eligible question. | `0` (`scored`) | Keep fragmentation in the quality result using the explicit zero-denominator convention. |
 | Observed gain exceeds the greedy normalization baseline | The uncapped ratio is `1.02`. | Report `1` (`scored`); retain raw `1.02` and the greedy-baseline-exceeded flag. | The deterministic greedy baseline is approximate. Exceeding it is not itself a failed evaluation; the raw ratio and flag are per-question diagnostics, not another primary metric. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+The [shared retrieval-evidence conventions](../../metrics.md#retrieval-evidence-quality)
+and [availability rules](../../metrics.md#shared-availability-rules) apply.
 Evidence-slice and aggregate status follow
 [this suite's completeness rules](#aggregation-and-completeness).
 
@@ -347,7 +351,8 @@ higher quality.
 |---|---|---|---|
 | No attempt pairs are scheduled | One-attempt smoke | `null` (`inapplicable`) | No repeatability task was measured. |
 
-Missing required execution or records follows the shared pair rule, not a
+Missing required execution or records follows the
+[shared pairwise-repeatability rule](../../metrics.md#pairwise-repeatability), not a
 surviving-pair average. Supported source-document intervals follow
 [this suite's CI table](#which-values-receive-an-interval).
 
@@ -494,7 +499,8 @@ equal quality.
 |---|---|---|---|
 | Completed build has zero measured duration | The retained, unrounded completed duration is `0` seconds. | `null` (`unavailable`) | The throughput denominator is zero. Do not substitute a tiny constant or report infinity. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+[Shared availability](../../metrics.md#shared-availability-rules) and
+[ratio-of-totals throughput rules](../../metrics.md#ratio-of-totals-throughput) apply.
 Incomplete builds and invalid timers follow the
 [operational completion rules](#operational-performance-1).
 
@@ -606,7 +612,8 @@ quality.
 
 **Edge cases and availability:**
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+[Shared availability](../../metrics.md#shared-availability-rules) and
+[percentile rules](../../metrics.md#latency-percentiles) apply.
 See the [successful-observation and percentile rules](#operational-performance-1)
 and [CI support requirements](#aggregation-and-confidence-intervals).
 
@@ -630,7 +637,8 @@ equal quality.
 
 **Edge cases and availability:**
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+[Shared availability](../../metrics.md#shared-availability-rules) and
+[percentile rules](../../metrics.md#latency-percentiles) apply.
 See the [successful-observation and percentile rules](#operational-performance-1)
 and [CI support requirements](#aggregation-and-confidence-intervals).
 
@@ -649,7 +657,7 @@ queries, and ends before offline scoring/bootstrap analysis.
 
 **Edge cases and availability:**
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+[Shared resource-measurement rules](../../metrics.md#resource-measurements) apply.
 See the [resource-sampling and scope rules](#operational-performance-1).
 
 ### Peak Device VRAM
@@ -667,7 +675,8 @@ allocation occurred between samples.
 
 **Edge cases and availability:**
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+[Shared CPU/CUDA availability](../../metrics.md#peak-device-vram) and
+[resource-window rules](../../metrics.md#resource-measurements) apply.
 See the [resource-sampling and scope rules](#operational-performance-1).
 
 ## Workload and storage descriptors

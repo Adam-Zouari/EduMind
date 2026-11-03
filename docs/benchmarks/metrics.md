@@ -28,6 +28,56 @@ The shared rules on this page apply alongside each benchmark's specific contract
 
 ## Shared conventions
 
+### Find a shared rule
+
+Start with the metric in its benchmark reference. Its local edge-case block
+links to the relevant shared rules below; you do not need to read this entire
+page before interpreting one result.
+
+- **Understand a result:** [basic terms](#basic-terms),
+  [availability and result status](#shared-availability-rules),
+  [execution accounting](#execution-accounting-and-result-completeness),
+  [dependent metrics and partial observations](#dependent-metrics-and-partial-observations).
+- **Read or maintain a metric page:** [page and metric structure](#how-to-read-a-metric-reference),
+  [what counts as an edge case](#what-belongs-in-a-metrics-edge-case-block),
+  [calculation and result rules](#calculation-and-result-rules).
+- **Compare outputs:** [prose projection](#prose-scoring-projection),
+  [recognition errors and empty references](#recognition-error-rates-and-empty-references),
+  [spoken timestamps](#spoken-timestamp-alignment),
+  [empty content/detection comparisons](#content-and-detection-empty-comparisons),
+  [repeatability](#pairwise-repeatability),
+  [retrieval evidence](#retrieval-evidence-quality).
+- **Measure execution and workload:** [latency and warm latency](#latency-and-warm-latency),
+  [percentiles](#latency-percentiles), [throughput](#ratio-of-totals-throughput),
+  [resources](#resource-measurements), [retrieved-context tokens](#retrieved-context-workload).
+- **Interpret and retain results:** [reporting slices](#reporting-slices),
+  [aggregation](#aggregation-and-interpretation), [confidence intervals](#confidence-intervals),
+  [prediction evidence and rescoring](#prediction-evidence-and-rescoring).
+
+### Basic terms
+
+- A **sample** is an input such as a document, clip, or question.
+- An **attempt** is one measured execution on that input. Repeated attempts
+  remain attached to their sample; they are not new independent sources.
+- A **candidate** is one complete configuration being evaluated.
+- **Eligible** observations are those to which a metric applies.
+  **Contributing support** is the number of observations actually used in its
+  calculation, in the metric's declared unit. For example, ten eligible
+  questions with eight available scores provide eight contributing question
+  scores; the other two outcomes remain recorded.
+- **Independent-source support** counts the independent sources represented,
+  not their repeated measurements. Ten questions from one paper do not provide
+  ten independent papers for a confidence interval.
+- An **outcome ledger** is the saved record of every scheduled attempt and
+  what happened to it, including failures and work that was not executed.
+- An **artifact** is a saved run file, such as predictions, timings, or a
+  report. It preserves details that a single MLflow metric value cannot show.
+
+The metric's preferred direction applies only to defined comparable values.
+Null is not a score below zero, and a workload descriptor has no automatic
+better direction. Metric roles describe the evidence an engineer reviews;
+they do not assign a weighted winner score.
+
 ### How to read a metric reference
 
 #### Page structure
@@ -77,8 +127,12 @@ All benchmark references use the following order for each locally defined metric
 
 The final block appears directly under the metric, not in one catch-all section
 at the end of the page. When needed, its table uses
-`Edge case | Example | Value/status | Explanation`. A metric without additional
-exceptions links the shared availability rules instead of inventing cases.
+`Edge case | Example | Value/status | Explanation`. Follow the table with a
+short sentence linking directly to the applicable shared sections, such as
+availability, pairwise repeatability, percentiles, or resource measurements.
+When there is no additional metric-specific exception, keep the block and use
+that sentence alone rather than inventing cases. A page-level link does not
+replace this local reference. Link the rule; do not copy its full explanation.
 
 This page owns genuinely identical cross-benchmark rules. A benchmark page
 identifies the adopted rule and keeps its own units, denominator, eligibility,
@@ -87,40 +141,11 @@ table may show an applied value with a link to the shared convention; it must
 not establish a second competing definition. Equal metric names do not imply
 equal aggregation or eligibility.
 
-Shared definitions on this page:
-
-- [Availability and result status](#shared-availability-rules)
-- [Execution accounting and result completeness](#execution-accounting-and-result-completeness)
-- [Dependent metrics and partial observations](#dependent-metrics-and-partial-observations)
-- [Prediction evidence and rescoring](#prediction-evidence-and-rescoring)
-- [Reporting slices](#reporting-slices)
-- [Prose scoring projection](#prose-scoring-projection)
-- [Recognition error rates and empty references](#recognition-error-rates-and-empty-references)
-- [Spoken timestamp alignment](#spoken-timestamp-alignment)
-- [Content and detection empty comparisons](#content-and-detection-empty-comparisons)
-- [Pairwise repeatability](#pairwise-repeatability)
-- [Retrieval evidence quality](#retrieval-evidence-quality)
-- [Retrieved-context workload](#retrieved-context-workload)
-- [Latency percentiles](#latency-percentiles)
-- [Ratio-of-totals throughput](#ratio-of-totals-throughput)
-- [Resource measurements](#resource-measurements)
-- [Confidence intervals](#confidence-intervals)
-
 For example, recovering two of three required evidence units gives Recall
 `2 / 3`. Finding evidence in 240 of 600 returned token occurrences gives
 token Precision `240 / 600`. The first measures completeness; the second
 measures concentration. Their denominators answer different questions even
 when both come from the same ranking.
-
-A **sample** is an input such as a document, clip, or question. An **attempt**
-is one measured execution on that input. A **candidate** is one complete
-configuration being evaluated. Repeated attempts remain attached to their
-sample; they are not new independent sources.
-
-The metric's preferred direction applies only to defined comparable values.
-Null is not a score below zero, and a workload descriptor has no automatic
-better direction. Metric roles describe the evidence an engineer reviews;
-they do not assign a weighted winner score.
 
 ### What belongs in a metric's edge-case block
 
@@ -146,6 +171,29 @@ effect on available evidence follows the shared rules below and the benchmark's
 execution contract.
 
 ### Shared availability rules
+
+`0` is an observed score. `null` means there is no numeric value, so it needs
+a status and reason. **Inapplicable** means the task does not exist for that
+input; **unavailable** means a needed result could not be obtained.
+**Incomplete** means required execution or records are missing.
+
+#### A missing value is not a missing run
+
+| Case | Stored result | What remains visible |
+|---|---|---|
+| A valid result recovers none of the required evidence | A normal numeric zero for recall | The valid ranking and its evidence matches. |
+| The measured request fails before a valid ranking exists | Null/unavailable quality | Scheduled input, attempt failure, error, and any completed independent measurements. |
+| An optional formula slice has no formula questions | Null/inapplicable slice aggregate | Zero eligible support and the slice's reason. |
+| Required attempts were never executed | Incomplete execution | Actual completed outcomes and explicit missing/unexecuted records. |
+
+Artifacts preserve the rows and reasons in every case. A numeric aggregate
+uses only values defined under that metric's contract, while support counts
+still account for all scheduled and eligible work. Partial required quality is
+not a complete selection result merely because its surviving average is high.
+One metric becoming unavailable does not erase another independently completed
+measurement, such as cold loading or sampled RAM.
+
+#### Applying the availability rules
 
 Metric-specific blocks add to these rules; they do not repeat every generic
 failure under every metric:
@@ -469,6 +517,21 @@ make the evidence incomplete, not a favorable surviving-pair statistic or
 invented disagreement. Representation, aggregation, CI eligibility, and metric
 role stay in the benchmark reference.
 
+The three retrieval-related suites use the same pair arithmetic, but compare
+different outputs:
+
+| Suite | Ordered IDs compared | Aggregation |
+|---|---|---|
+| Chunking–Embedding | Selected top five, or all chunks in a legitimately smaller corpus. | Question pair score, then document-macro mean. |
+| Retrieval–Reranking | Complete final ranking after any reranking, normally top 20. | Question pair score, then document-macro mean. |
+| Vector Database | Actual valid database result before reranking, requested top 20. | Question pair score, then query mean within the workload condition. |
+
+These are diagnostic measurements, not directly interchangeable scores. A valid
+short/empty ANN response can repeat even when it cannot supply a valid integration
+pool. In Chunking–Embedding and Retrieval–Reranking, an unexpectedly short/empty
+ranking fails the exact-retrieval contract and cannot supply a successful pair.
+Shared failure handling does not make different output contracts identical.
+
 Generation's status, citation, and semantic agreements adopt the same scheduled
 pair denominator and zero contribution from pairs containing executed failures,
 interrupted outputs, or structurally invalid outputs. Their local comparison
@@ -485,11 +548,21 @@ source-sampling question or create an automatic selection threshold.
 
 ### Retrieval evidence quality
 
-Chunking–Embedding and Retrieval–Reranking share the following definitions.
-Their local pages identify which complete chunk corpus supplies the baseline:
-the corpus produced by a candidate pair or the frozen corpus shared by stacks.
-This is not a pool-local normalization. Other benchmarks reuse this contract
-only when they explicitly declare it.
+Chunking–Embedding, Retrieval–Reranking, and Vector Database application
+evaluation use the same nDCG, Evidence-unit Recall, and Evidence-token Precision
+definitions and edge-case conventions. Their comparison corpora differ:
+
+| Suite | Complete corpus used for the normalization baseline |
+|---|---|
+| Chunking–Embedding | The corpus generated by that chunker/embedding pair. |
+| Retrieval–Reranking | The frozen corpus shared by the compared stacks. |
+| Vector Database application evaluation | The entire eligible frozen corpus, restricted by the request's filter when applicable. |
+
+Never normalize against only the retrieved pool. Alpha-nDCG is reported by
+Chunking–Embedding and Retrieval–Reranking, not Vector Database. Candidate-pool
+Evidence-unit Recall@20 is reported by Retrieval–Reranking and Vector Database,
+not Chunking–Embedding. Metric roles remain in each suite's reference; sharing
+the calculation does not make a secondary metric primary.
 
 **Evidence coverage:** an answerable question has reviewed gold units with
 stable IDs and half-open source intervals. One chunk covers a unit only when
@@ -505,6 +578,13 @@ inputs retain their separate runtime-integrity checks.
 | Evidence-unit Recall@K | Distinct gold units completely covered by at least one selected chunk, divided by required units. Each unit counts once, regardless of rank or repetition inside K. |
 | Evidence-token Precision@K | Returned source-token occurrences overlapping verified evidence, divided by all returned source-token occurrences. Use canonical text and `tiktoken:cl100k_base`, not the prose projection or a model's native tokenizer. Count an occurrence once despite overlapping gold intervals; returned occurrences in different chunks count again. Native inference prefixes/special tokens do not count. |
 | alpha-nDCG@K | Sum discounted novelty gains through K: each complete unit earns `0.5` raised to its earlier coverage count, followed by the same rank discount. Normalize by a deterministic greedy baseline over the complete corpus; at each step choose the unused chunk with maximum remaining novelty gain, breaking ties by frozen corpus order. |
+| Candidate-pool Evidence-unit Recall@20 | Apply the same unit-recall calculation to the verified designated-first pool before reranking, after fusion when present. It measures available evidence, not exact-neighbour ID overlap. |
+
+Use each cutoff on the same valid designated-first ranking. A legitimately
+smaller corpus uses its available chunks at the unchanged cutoff, without
+padding; it does not reduce the number of required gold units in recall's
+denominator. Missing ranks add no gain to nDCG or alpha-nDCG. Unexpectedly short
+rankings instead follow the suite's output-integrity contract.
 
 The greedy alpha baseline is approximate, not a guaranteed maximum. Cap the
 reported alpha-nDCG ratio at one; retain any exceeded uncapped ratio and flag.
@@ -518,9 +598,24 @@ remains in the [data-review checklist](pending-data-review.md).
 
 Recall has a positive reference denominator and token precision has a positive
 valid-output denominator. A token-free or invalid ranking is unavailable
-under the integrity contract, not a scored empty comparison. Valid rankings
-recovering no evidence receive ordinary zero scores. Each local page keeps
-its @3/@5 examples, metric roles, pool diagnostics, and aggregation/CI rules.
+under the integrity contract, not a scored empty comparison. For a valid ranking,
+no completely recovered units means zero unit recall and nDCG/alpha-nDCG;
+no evidence-overlapping tokens means zero token precision. These are different
+conditions: chunks containing only part of a required unit can have positive
+token precision while unit recall and nDCG are zero.
+
+All reported normalized quality scores must be finite and in `[0,1]`.
+A substantive nDCG above one is a scoring-integrity error, not a value to clamp;
+the retained uncapped alpha ratio is the explicitly permitted exception above.
+Missing annotations remain data-validation failures, not zero-ideal gain.
+
+A verified first pool remains scoreable for pool recall if downstream reranking
+fails. Final-ranking quality is then unavailable, but the independent pool
+observation survives under the [dependency rules](#dependent-metrics-and-partial-observations).
+This does not make an invalid or incomplete pool scoreable, or allow a later
+attempt's pool to replace the first. All these evidence scores use question-then-
+document macro aggregation; partial required quality and confidence intervals
+follow the shared completeness rules and each suite's support requirements.
 
 ### Retrieved-context workload
 
@@ -698,19 +793,3 @@ statuses, fixed identifiers, and single operational observations do not have
 authoritative intervals. An engineer reviews the complete evidence; EduMind
 does not combine unrelated metrics into a weighted overall score or promote a
 candidate automatically.
-
-### A missing value is not a missing run
-
-| Case | Stored result | What remains visible |
-|---|---|---|
-| A valid result recovers none of the required evidence | A normal numeric zero for recall | The valid ranking and its evidence matches. |
-| The measured request fails before a valid ranking exists | Null/unavailable quality | Scheduled input, attempt failure, error, and any completed independent measurements. |
-| An optional formula slice has no formula questions | Null/inapplicable slice aggregate | Zero eligible support and the slice's reason. |
-| Required attempts were never executed | Incomplete execution | Actual completed outcomes and explicit missing/unexecuted records. |
-
-Artifacts preserve the rows and reasons in every case. A numeric aggregate
-uses only values defined under that metric's contract, while support counts
-still account for all scheduled and eligible work. Partial required quality is
-not a complete selection result merely because its surviving average is high.
-One metric becoming unavailable does not erase another independently completed
-measurement, such as cold loading or sampled RAM.

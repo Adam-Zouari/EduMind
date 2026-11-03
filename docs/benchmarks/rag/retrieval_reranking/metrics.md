@@ -204,7 +204,8 @@ nDCG above one is a scoring-integrity error, not a value to clamp.
 |---|---|---|---|
 | Zero ideal gain in a valid frozen corpus | Gold evidence exists, but every chunk fragments it and contains no complete unit. | `0` (`scored`), with the shared upstream-fragmentation limitation recorded. | Apply the [shared zero-ideal convention](../../metrics.md#retrieval-evidence-quality). |
 
-[Shared availability rules](../../metrics.md#shared-availability-rules) apply.
+The [shared retrieval-evidence conventions](../../metrics.md#retrieval-evidence-quality)
+and [availability rules](../../metrics.md#shared-availability-rules) apply.
 
 ### Evidence-unit Recall@3/@5
 
@@ -231,8 +232,8 @@ needed for a complete answer. No recovered units gives zero normally.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
+See the [shared retrieval-evidence conventions](../../metrics.md#retrieval-evidence-quality),
+[availability rules](../../metrics.md#shared-availability-rules), and
 [retrieval eligibility and integrity](#scoring-inputs-eligibility-and-result-status).
 
 ### Evidence-token Precision@3/@5
@@ -265,8 +266,8 @@ returned-token denominator follows the page-wide
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
+See the [shared retrieval-evidence conventions](../../metrics.md#retrieval-evidence-quality),
+[availability rules](../../metrics.md#shared-availability-rules), and
 [retrieval eligibility and integrity](#scoring-inputs-eligibility-and-result-status).
 
 ### alpha-nDCG@3/@5
@@ -309,7 +310,7 @@ The development-only exact-normalization review is in
 | Zero greedy-baseline gain in a valid corpus | No corpus chunk contains any complete required unit. | `0` (`scored`), under the zero-baseline convention. | Follow the shared upstream-fragmentation convention rather than dividing by zero. |
 | A valid ranking exceeds the greedy baseline | The uncapped novelty-gain ratio is `1.02`. | Report `1` (`scored`); retain `1.02` and the greedy-baseline-exceeded flag. | The deterministic greedy denominator is not a guaranteed maximum; exceeding it is not itself evaluation failure. |
 
-These conventions match [chunking/embedding](../chunking_embedding/metrics.md#retrieval-quality-1).
+These are the [shared retrieval-evidence conventions](../../metrics.md#retrieval-evidence-quality).
 [Shared availability rules](../../metrics.md#shared-availability-rules) apply
 to failed rankings or evaluations.
 
@@ -319,6 +320,9 @@ to failed rankings or evaluations.
 its rerankers?
 
 Apply Evidence-unit Recall to the verified pool before learned reranking.
+For RRF, use the fused pool, not the union of both source lists. A verified
+designated-first pool remains scoreable if reranking later fails, under the
+[shared pool-recall dependency rule](../../metrics.md#retrieval-evidence-quality).
 
 In plain language:
 
@@ -344,8 +348,8 @@ its complete available pool; record requested depth and actual size separately.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
+See the [shared retrieval-evidence conventions](../../metrics.md#retrieval-evidence-quality),
+[availability rules](../../metrics.md#shared-availability-rules), and
 [pool verification and result status](#attempts-failures-and-integrity).
 
 ## Ranking consistency
@@ -450,8 +454,8 @@ quality.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
+See [shared availability rules](../../metrics.md#shared-availability-rules),
+[shared percentile rules](../../metrics.md#latency-percentiles), and
 [warm-latency observation rules](#operational-performance-1).
 
 ### Full-Stack Warm Latency p95
@@ -468,8 +472,8 @@ quality.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
+See [shared availability rules](../../metrics.md#shared-availability-rules),
+[shared percentile rules](../../metrics.md#latency-percentiles), and
 [warm-latency observation rules](#operational-performance-1).
 
 ### Retrieval Warm Latency p50
@@ -494,8 +498,8 @@ quality.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
+See [shared availability rules](../../metrics.md#shared-availability-rules),
+[shared percentile rules](../../metrics.md#latency-percentiles), and
 [warm-latency observation rules](#operational-performance-1).
 
 ### Retrieval Warm Latency p95
@@ -513,8 +517,8 @@ quality.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
+See [shared availability rules](../../metrics.md#shared-availability-rules),
+[shared percentile rules](../../metrics.md#latency-percentiles), and
 [warm-latency observation rules](#operational-performance-1).
 
 ### Reranker Warm Latency p50
@@ -541,7 +545,8 @@ quality.
 |---|---|---|---|
 | No learned reranker | `dense\|none`. | `null` (`inapplicable`); omit the scalar. | The stack has no learned-reranking task; its cost is not a measured zero. |
 
-[Shared availability rules](../../metrics.md#shared-availability-rules) and
+The [shared availability rules](../../metrics.md#shared-availability-rules),
+[shared percentile rules](../../metrics.md#latency-percentiles), and
 [warm-latency observation rules](#operational-performance-1) apply when a
 reranker exists but completed timings are unavailable.
 
@@ -564,7 +569,8 @@ quality.
 |---|---|---|---|
 | No learned reranker | `bm25\|none`. | `null` (`inapplicable`); omit the scalar. | There is no learned-reranking latency distribution to summarize. |
 
-[Shared availability rules](../../metrics.md#shared-availability-rules) and
+The [shared availability rules](../../metrics.md#shared-availability-rules),
+[shared percentile rules](../../metrics.md#latency-percentiles), and
 [warm-latency observation rules](#operational-performance-1) apply when a
 reranker exists but completed timings are unavailable.
 
@@ -603,8 +609,7 @@ not a value to clamp to zero.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
+See [shared dependency and partial-observation rules](../../metrics.md#dependent-metrics-and-partial-observations) and
 [completed-measurement status rules](#attempts-failures-and-integrity).
 
 ### Peak Process-Tree RAM
@@ -621,8 +626,7 @@ excluding offline scoring/bootstrap calculations.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
+See [shared resource-measurement rules](../../metrics.md#resource-measurements) and
 [resource-window status rules](#attempts-failures-and-integrity).
 
 ### Peak Device VRAM
@@ -642,7 +646,7 @@ lifecycle as this stack's RAM measurement.
 |---|---|---|---|
 | CPU-only execution | CPU smoke without an assigned GPU. | `null` (`inapplicable`). | No GPU-memory task exists; this differs from a missing CUDA measurement. |
 
-[Shared availability rules](../../metrics.md#shared-availability-rules) govern
+[Shared CPU/CUDA availability rules](../../metrics.md#peak-device-vram) govern
 missing required CUDA telemetry (`null/unavailable`) and
 [partial resource windows](#attempts-failures-and-integrity).
 
@@ -667,8 +671,7 @@ owns the observation; no baseline run is invented.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
+See [shared dependency and partial-observation rules](../../metrics.md#dependent-metrics-and-partial-observations) and
 [completed-build status rules](#attempts-failures-and-integrity).
 
 ### Index Build Time — BM25
@@ -695,8 +698,7 @@ copy component build scalars or invent a combined third build time.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
+See [shared dependency and partial-observation rules](../../metrics.md#dependent-metrics-and-partial-observations) and
 [completed-build status rules](#attempts-failures-and-integrity).
 
 ## Workload descriptors
@@ -889,8 +891,7 @@ query; p95 separately describes larger contexts.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
+See [shared context-count availability](../../metrics.md#retrieved-context-workload) and
 [token-count status rules](#workload-descriptors-1).
 
 ### p95 Retrieved Context Tokens@3/@5
@@ -909,8 +910,7 @@ statistics rather than latency or correctness.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
+See [shared context-count availability](../../metrics.md#retrieved-context-workload) and
 [token-count status rules](#workload-descriptors-1).
 
 ### Candidate-Pool Tokens@20
@@ -992,7 +992,8 @@ tail of prepared per-query workload, not the largest individual pair length.
 |---|---|---|---|
 | No learned reranker | `dense\|none`. | `null` (`inapplicable`); omit the scalar. | No native reranker-input distribution exists to summarize. |
 
-[Shared availability rules](../../metrics.md#shared-availability-rules) and
+The [shared availability rules](../../metrics.md#shared-availability-rules),
+[shared percentile rules](../../metrics.md#latency-percentiles), and
 [prepared-input status rules](#workload-descriptors-1) apply when a reranker
 exists but complete token totals are unavailable.
 
