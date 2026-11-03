@@ -4,22 +4,26 @@
 
 On this page:
 
-- [Implementation boundary](#implementation-boundary)
-- [Models and modes](#models-and-modes)
+- [Purpose and scope](#purpose-and-scope)
+- [Candidates and configurations](#candidates-and-configurations)
 - [Data](#data)
-- [Observation and aggregation](#observation-and-aggregation)
-- [Frozen decoding and output contract](#frozen-decoding-and-output-contract)
-- [Response schema](#response-schema)
-- [Semantic judge contract](#semantic-judge-contract)
-- [Execution profiles and selection](#execution-profiles-and-selection)
-- [Per-candidate execution](#per-candidate-execution)
-- [Metrics and why they are used](#metrics-and-why-they-are-used)
-- [MLflow result structure](#mlflow-result-structure)
+- [Metrics and their purpose](#metrics-and-their-purpose)
+- [Evaluation setup](#evaluation-setup)
+- [Benchmark workflow and selection](#benchmark-workflow-and-selection)
+- [Execution and measurements](#execution-and-measurements)
+- [Results and MLflow structure](#results-and-mlflow-structure)
 
 Which local Hugging Face generator produces the best grounded, cited answer when
 every model receives exactly the same verified evidence?
 
-## Implementation boundary
+## Purpose and scope
+
+The candidate is one generator model-mode configuration. This benchmark isolates
+generation on verified evidence; it does not measure retrieval or the complete
+RAG system. A question supplies repeated response observations, while the
+source document is the independent unit for uncertainty estimation.
+
+### Implementation status
 
 The protocol and runner implement the seven model-mode roster, complete
 question-set execution, one warmup, three measured seeds, structured response
@@ -36,7 +40,7 @@ or calibration result is selected automatically. CPU/CUDA smoke without a judge
 checks runtime and deterministic scoring only, retaining unavailable semantic
 values rather than fabricating labels.
 
-## Models and modes
+## Candidates and configurations
 
 | Model/profile | Modes evaluated | Why it is included |
 |---|---|---|
@@ -87,26 +91,36 @@ This gate does not shorten evidence, change the context capacity, or omit
 questions for an individual candidate. Its report and MLflow status are
 separate from data-validation reports, hardware qualification, and quality.
 
-## Observation and aggregation
+## Metrics and their purpose
 
-Development, validation, and locked execution use three sequential sampled
-responses per question, with aligned seeds `42`, `43`, and `44`. Score each
-evaluable output, average within its question, then within its source document,
-then macro-average documents. All three responses contribute quality evidence;
-none is selected as the best response or used to replace a failed observation.
-The repeated draws reduce dependence on a single sampled response, while
-repeatability separately measures agreement of status, citations, and meaning.
+| Role | Metrics | Why they are needed |
+|---|---|---|
+| Primary quality | **Faithfulness**, **Factual Correctness F1**, **Answer Relevancy**, **Citation F1** | Separates support by supplied context, correctness and completeness against required facts, relevance to the question, and explicit evidence selection. |
+| Quality diagnostic | Factual Correctness Precision/Recall, Citation Precision/Recall | Explains whether an F1 loss comes from incorrect/unverified claims, omitted required facts, or incorrect/missing citations. |
+| Behavioral validity | **Response Validity Rate**, **Refusal Validity Rate**, **Malformed Output Rate** | Measures valid answer behavior on answerable questions, the exact refusal contract on unanswerable questions, and general schema integrity. |
+| Reliability | Runtime Error Rate, Timeout Rate, Context-Limit-Reached Rate | Distinguishes measured inference errors, deadline stops, and output-context exhaustion. |
+| Repeatability diagnostic | Repeat Status Agreement, Repeat Citation Agreement, Repeat Semantic Agreement | Measures stability of answer/refusal decisions, selected evidence, and meaning across seeds without requiring identical wording. |
+| Operational | Cold Model-Load Time, Time to First Token p50/p95, End-to-End Latency p50/p95, Decode Throughput, peak process-tree RAM, peak device VRAM | Separates startup, initial responsiveness, complete warm-request latency, decoding rate, and memory. |
+| Workload descriptor | Prompt, context, reasoning, visible-answer, and total output tokens | Records how much native-tokenizer work produced the observed quality and latency. |
 
-Generation uses this all-seed quality policy because the frozen decoder samples
-responses. It does not change the designated-first-quality policy of extraction,
-chunking–embedding, or retrieval–reranking. The shared
-[partial-evidence](../../metrics.md#dependent-metrics-and-partial-observations)
-and [confidence-interval](../../metrics.md#confidence-intervals) rules apply to
-the observation set declared here. The independent unit is the source document,
-not a generation seed. Detailed denominators, conditional observations, and CI
-applicability belong to the [metric reference](metrics.md#eligibility-aggregation-and-confidence-intervals).
+Malformed Output Rate is minimized; Response and Refusal Validity Rates are
+maximized. Malformed Output Rate is conditional on normally completed outputs;
+the behavior and reliability rates retain their own scheduled denominators.
+Citation metrics are deterministic: a correct citation is a supplied
+evidence-block ID covering required gold evidence. The judge supplies semantic
+claim labels, while code calculates ratios, F1, aggregates, and intervals.
+Citation/claim counts and a compact finish-reason inventory remain per-response
+or run artifacts, not extra MLflow summary metrics.
 
-## Frozen decoding and output contract
+The engineer selects validation finalists, then one validation winner, after
+inspecting the primary metrics, validity and reliability metrics, repeatability, latency,
+workload, and resources.
+Exact metric eligibility, failure behavior, and aggregation are defined in
+[generation metrics](metrics.md).
+
+## Evaluation setup
+
+### Frozen decoding and output contract
 
 Every generator uses its exact pinned local snapshot, official chat template,
 official mode switch, and documented mode-specific decoding:
@@ -137,7 +151,7 @@ capacity. Generation stops at EOS, the context boundary, or the frozen timeout.
 Every attempt records prompt, reasoning, visible-answer, and total output token
 counts when the runtime exposes them, plus the exact finish reason.
 
-## Response schema
+### Response schema
 
 Every visible model response contains exactly three fields:
 
@@ -194,7 +208,7 @@ for behavior and meaning, not classified as malformed by wording. Accepted
 answers and evaluator-only verification material never become extra model-visible
 evidence blocks.
 
-## Semantic judge contract
+### Semantic judge contract
 
 Authoritative generation will use one pinned LLM judge after its identity has
 passed calibration and been frozen. That judge supplies every semantic label
@@ -256,7 +270,7 @@ errors make evaluation incomplete after the frozen retry policy is exhausted.
 Its latency, cost, and resources are excluded from generator operational
 measurements.
 
-## Execution profiles and selection
+## Benchmark workflow and selection
 
 ```text
 smoke:
@@ -306,7 +320,28 @@ does not make earlier selection evidence comparable. Rescore retained outputs
 under a new versioned run and author a new decision when intentionally changing
 the evaluator; do not rewrite the source run.
 
-## Per-candidate execution
+## Execution and measurements
+
+### Observation and aggregation
+
+Development, validation, and locked execution use three sequential sampled
+responses per question, with aligned seeds `42`, `43`, and `44`. Score each
+evaluable output, average within its question, then within its source document,
+then macro-average documents. All three responses contribute quality evidence;
+none is selected as the best response or used to replace a failed observation.
+The repeated draws reduce dependence on a single sampled response, while
+repeatability separately measures agreement of status, citations, and meaning.
+
+Generation uses this all-seed quality policy because the frozen decoder samples
+responses. It does not change the designated-first-quality policy of extraction,
+chunking–embedding, or retrieval–reranking. The shared
+[partial-evidence](../../metrics.md#dependent-metrics-and-partial-observations)
+and [confidence-interval](../../metrics.md#confidence-intervals) rules apply to
+the observation set declared here. The independent unit is the source document,
+not a generation seed. Detailed denominators, conditional observations, and CI
+applicability belong to the [metric reference](metrics.md#aggregation-and-confidence-intervals).
+
+### Measured worker lifecycle
 
 Development, validation, and locked profiles follow the sequence below. Smoke
 uses one measured seed per device, and preflight uses the shared qualification
@@ -348,34 +383,7 @@ throughput pools completed-stream work/time, and memory records the largest
 valid lifecycle sample even if it came from a failed attempt. Raw counts and
 monitoring coverage remain in artifacts; they do not change quality weighting.
 
-## Metrics and why they are used
-
-| Role | Metrics | Why they are needed |
-|---|---|---|
-| Primary quality | **Faithfulness**, **Factual Correctness F1**, **Answer Relevancy**, **Citation F1** | Separates support by supplied context, correctness and completeness against required facts, relevance to the question, and explicit evidence selection. |
-| Quality diagnostic | Factual Correctness Precision/Recall, Citation Precision/Recall | Explains whether an F1 loss comes from incorrect/unverified claims, omitted required facts, or incorrect/missing citations. |
-| Behavioral validity | **Response Validity Rate**, **Refusal Validity Rate**, **Malformed Output Rate** | Measures valid answer behavior on answerable questions, the exact refusal contract on unanswerable questions, and general schema integrity. |
-| Reliability | Runtime Error Rate, Timeout Rate, Context-Limit-Reached Rate | Distinguishes measured inference errors, deadline stops, and output-context exhaustion. |
-| Repeatability diagnostic | Repeat Status Agreement, Repeat Citation Agreement, Repeat Semantic Agreement | Measures stability of answer/refusal decisions, selected evidence, and meaning across seeds without requiring identical wording. |
-| Operational | Cold Model-Load Time, Time to First Token p50/p95, End-to-End Latency p50/p95, Decode Throughput, peak process-tree RAM, peak device VRAM | Separates startup, initial responsiveness, complete warm-request latency, decoding rate, and memory. |
-| Workload descriptor | Prompt, context, reasoning, visible-answer, and total output tokens | Records how much native-tokenizer work produced the observed quality and latency. |
-
-Malformed Output Rate is minimized; Response and Refusal Validity Rates are
-maximized. Malformed Output Rate is conditional on normally completed outputs;
-the behavior and reliability rates retain their own scheduled denominators.
-Citation metrics are deterministic: a correct citation is a supplied
-evidence-block ID covering required gold evidence. The judge supplies semantic
-claim labels, while code calculates ratios, F1, aggregates, and intervals.
-Citation/claim counts and a compact finish-reason inventory remain per-response
-or run artifacts, not extra MLflow summary metrics.
-
-The engineer selects validation finalists, then one validation winner, after
-inspecting the primary metrics, validity and reliability metrics, repeatability, latency,
-workload, and resources.
-Exact metric eligibility, failure behavior, and aggregation are defined in
-[generation metrics](metrics.md).
-
-## MLflow result structure
+## Results and MLflow structure
 
 Generation uses `EduMind / Generation`:
 

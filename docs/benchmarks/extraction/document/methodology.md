@@ -4,14 +4,14 @@
 
 On this page:
 
-- [Terminology and unit of comparison](#terminology-and-unit-of-comparison)
-- [Which metrics apply to which inputs](#which-metrics-apply-to-which-inputs)
+- [Purpose and scope](#purpose-and-scope)
+- [Candidates and configurations](#candidates-and-configurations)
 - [Data](#data)
-- [Phase A: Docling Standard configuration screen](#phase-a-docling-standard-configuration-screen)
-- [Phase B: scoring and result slices](#phase-b-scoring-and-result-slices)
-- [Phase C: parser architecture comparison](#phase-c-parser-architecture-comparison)
-- [Development, validation, and locked test](#development-validation-and-locked-test)
-- [MLflow result structure](#mlflow-result-structure)
+- [Metrics and their purpose](#metrics-and-their-purpose)
+- [Evaluation setup](#evaluation-setup)
+- [Benchmark workflow and selection](#benchmark-workflow-and-selection)
+- [Execution and measurements](#execution-and-measurements)
+- [Results and MLflow structure](#results-and-mlflow-structure)
 
 Which complete parser profile best converts educational images, PDFs, and DOCX
 files into accurate text and useful structure, including pages, reading order,
@@ -20,6 +20,158 @@ tables, and formulas?
 OCR is not tested as an isolated product. It is tested inside the complete
 document pipeline because OCR text and boxes influence layout, reading order,
 page attribution, tables, and formulas.
+
+## Purpose and scope
+
+An **extraction profile** is one complete executable parser configuration. The
+benchmark runner currently calls this value a `candidate`, but the word means a
+configuration run, not an individual model. For example:
+
+```text
+Docling Standard
++ RapidOCR
++ PDF-aware OCR
++ TableFormer accurate
++ formula enrichment on
+```
+
+One source document is the scoring unit. Pages and reference objects are
+observations within that document, not independent benchmark samples.
+Native DOCX follows its own route; visual parsers are compared on images and PDFs.
+
+## Candidates and configurations
+
+### Docling Standard configuration screen
+
+The declared PDF screen contains 24 configurations. Development runs every
+configuration qualified by preflight on the same PDF set:
+
+```text
+OCR engine:          RapidOCR, Tesseract, EasyOCR                 (3)
+OCR mode:            PDF-aware regions, full page                 (2)
+TableFormer mode:    fast, accurate                               (2)
+Formula enrichment: off, on                                      (2)
+                                                                  ───
+Total:               3 × 2 × 2 × 2 = 24 configurations
+```
+
+Each factor answers a production question:
+
+| Setting | Question answered by changing it |
+|---|---|
+| OCR engine | When Docling genuinely needs OCR, which backend gives the best final text, boxes, reading order, table content, speed, and resource use? |
+| PDF-aware versus full-page OCR | When should EduMind preserve usable native PDF text, and when should it reconstruct the complete page through OCR? |
+| TableFormer fast versus accurate | Does better row, column, header, merged-cell, and span reconstruction justify the additional execution cost? |
+| Formula enrichment off versus on | Does CodeFormulaV2 improve mathematical-expression recovery enough to justify its model load, latency, memory, and false detections? |
+
+The applicability rules prevent meaningless duplicate work:
+
+| Source | Configurations executed | Reason |
+|---|---|---|
+| PDF | Up to 24 qualified configurations | Every factor can affect digital, scanned, mixed, or broken PDFs. |
+| Image | Up to 12 qualified engine × table × formula profiles | Images always use full-page OCR, so the two PDF OCR modes would duplicate work. |
+| DOCX | One qualified native Docling profile | OCR engine and PDF OCR mode do not apply to native DOCX parsing; one profile still receives all scheduled attempts. |
+
+### Parser architectures
+
+The architecture comparison uses the selected Standard profiles and the other
+qualified architectures below; preflight exclusions remain visible:
+
+| Parser profile | Question answered |
+|---|---|
+| Selected Docling Standard profile | How well does the conventional OCR, layout, table, and formula pipeline perform? |
+| Granite Docling 258M | Does Docling's compact full-page VLM improve complete document parsing? |
+| PaddleOCR-VL-1.6 | Does an independent visual parser outperform the two Docling architectures? |
+
+The common architecture comparison uses images and PDFs. DOCX is evaluated
+through native Docling and reported as format coverage; it is not rasterized to
+give visual parsers artificial DOCX support.
+
+## Data
+
+Smoke uses two committed images, two PDFs, and two DOCX files. The authoritative
+corpus target is:
+
+| Modality | Total | Development | Validation | Locked |
+|---|---:|---:|---:|---:|
+| Images/pages | 120 | 72 | 24 | 24 |
+| PDFs | 60 | 36 | 12 | 12 |
+| DOCX | 45 | 27 | 9 | 9 |
+
+The reviewed source pool is OmniDocBench v1.6 for structured pages, OHR-Bench v2
+for real multi-page PDFs, PureDocBench v1.0 for matched clean/degraded images,
+DocPTBench for photographed documents, and EduMind-specific native DOCX and
+held-out samples. The frozen manifests—not the source-pool
+names—define the actual cases and record every selected ID, source revision,
+license, checksum, document family, source type, and available annotations. An
+authoritative run cannot be claimed until those manifests and references are
+complete.
+
+The committed smoke fixtures demonstrate the implemented workflow, not a
+completed authoritative corpus or a selected parser. The protocol's
+`minimum_ci_sources` and `minimum_latency_ci_sources` are currently null pending
+review of independent-source support. Freeze them through the
+[pending-data-review checklist](../../pending-data-review.md#document-extraction)
+before authoritative evaluation; a null minimum is not permission to publish
+unsupported intervals. The target split sizes above do not establish that
+enough independent sources exist for every annotation subset or latency tail.
+
+The [shared data-validation contract](../../data-validation.md) defines checks
+for claimed capabilities, reviewed blanks/negative objects, complete page
+inventories, geometry, hierarchy, and split isolation. Explicit empty text or
+element sequences must not be rejected merely for being empty, nor inserted as
+defaults for missing fields. These checks finish before candidate loading and
+measurement; they do not change document metric eligibility or scoring.
+Run `python -m experiments.benchmarks.validate document --profile <profile>`
+after data preparation. Before candidate execution, the runner verifies the
+matching sealed report against actual input bytes and applicable requirements;
+it does not repeat full validation. Legitimate reviewed empty references remain
+valid.
+
+OmniDocBench is one annotated source within this combined corpus, not the whole
+EduMind experiment. Its selected English pages provide verified text, reading
+order, element, table, and formula references. EduMind then evaluates its own
+Docling configuration matrix, exact parser revisions, canonical-output
+integration, reliability, and local operational cost across OmniDocBench and the
+other sources above. The public OmniDocBench leaderboard is candidate-screening
+evidence; it is not reused as an EduMind result.
+
+The corpus covers clean and degraded images; digital, scanned, mixed, and
+broken-text PDFs; phone photos; low-resolution and skewed pages; multiple
+columns; headings, lists, and captions; tables and formulas; and native DOCX
+documents. Every sample has verified text. Page, layout, table, and formula
+metrics are calculated only when the required annotations exist. Every
+reference-eligible aggregate records how many documents were eligible and how
+many independent sources support its interval. Verified blank sources and
+table/formula negatives are labelled explicitly; they are not inferred from
+missing reference fields.
+
+## Metrics and their purpose
+
+The result groups are:
+
+| Category | Main metrics | Why they are needed |
+|---|---|---|
+| Text | Content F1, Reading Order NED; precision/recall and recognition diagnostics | Separates recovery of the right text from its correct ordering. |
+| Pages | Page Content F1; coverage, attribution, and duplication | Checks recovery on the correct pages without duplication. |
+| Layout | Layout Element F1, Element Type Recall, Hierarchy Preservation Rate; detection and localization diagnostics | Checks elements, semantic types, relationships, and locations separately. |
+| Tables | Table Detection F1, Table Content F1, TEDS; precision/recall and TEDS-S | Separates finding tables from recovering their content and structure. |
+| Formulas | Formula Detection F1, Formula Exact Match; detection diagnostics and CDM similarity | Separates finding mathematical expressions from recognizing them correctly. |
+| Reliability | Unexpected Empty Output Rate, Duplicate Content Rate, Repeatability Success Rate, Attempt Failure Rate | Distinguishes output defects from execution failures and repeatable delivery. |
+| Operational | Cold load, first-item and warm latencies, throughput, RAM, VRAM, temporary disk | Measures initialization, steady-state work, and resource requirements. |
+
+Metric applicability depends on source format and explicit reference capabilities.
+Images are one-page inputs; native DOCX has no fixed visual pagination or
+bounding-box task. Tables and formulas distinguish detection on verified
+negatives from reconstruction of actual reference objects. See the
+[format applicability and detailed metric definitions](metrics.md#format-applicability).
+
+## Evaluation setup
+
+Docling 2.117.0, English, OCR scale 3.0, table-cell matching enabled,
+code enrichment disabled, canonical structured output, and native DOCX
+ingestion remain fixed. They define the common evaluation environment rather
+than useful strategy questions.
 
 Document extraction runs as an isolated workload without an artificial VRAM
 cap in any profile, including preflight. GPU-backed parser components must
@@ -37,19 +189,167 @@ CPU retry is disabled. Graph verification is part of cold initialization,
 requires no extra inference, and records its graph checksum and permitted CPU
 nodes in placement evidence. Unverifiable graphs fail closed.
 
-## Terminology and unit of comparison
+Every applicable execution is converted to the same canonical document
+representation containing text, pages, ordered elements, types, hierarchy,
+bounding boxes, tables, formulas, provenance, warnings, and timing. The
+benchmark scores that representation without an EduMind cleanup profile. Raw
+outputs remain unchanged. Prose comparison uses the
+[shared symmetric projection and its exclusions](../../metrics.md#prose-scoring-projection),
+not a parser-specific repair step; formulas, code, layout trees, and table trees
+retain their own scoring representations.
 
-An **extraction profile** is one complete executable parser configuration. The
-benchmark runner currently calls this value a `candidate`, but the word means a
-configuration run, not an individual model. For example:
+Every authoritative reference declares a `reference_capabilities` list drawn
+from `text`, `pages`, `reading_order`, `layout_boxes`, `element_types`,
+`hierarchy`, `tables`, and `formulas`. Validation and metric eligibility follow
+that declaration instead of assuming that every source has every annotation.
+Full data validation also checks that claimed table and formula references
+score perfectly against themselves in the pinned official Docker evaluators.
+This reference check happens outside candidate measurements; profile startup
+only verifies the sealed validation report and current input identity.
+Smoke fixtures may infer capabilities from their inline annotations. Table and
+formula capability declarations also carry explicit `has_table` and
+`has_formula` booleans so invented objects on verified negatives count as false
+detections. Unclaimed tasks are inapplicable; missing annotations for a claimed
+capability are invalid inputs and must be rejected before candidate execution.
+
+OmniDocBench annotations act as ground truth for every applicable metric on its
+samples. EduMind calculates the common text, page, layout, detection,
+reliability, and operational metrics so their definitions remain identical for
+OHR-Bench, PureDocBench, DocPTBench, native DOCX, and EduMind-specific samples.
+Only the specialized table-tree and formula scorers—TEDS, TEDS-S, and CDM—come
+from the pinned official evaluator; ExpRate@CDM is derived from those CDM
+results.
+
+The execution boundary is explicit:
 
 ```text
-Docling Standard
-+ RapidOCR
-+ PDF-aware OCR
-+ TableFormer accurate
-+ formula enrichment on
+Python 3.12: Docling/Granite/Paddle extraction -> canonical prediction
+             -> common EduMind metrics
+Python 3.10 Docker: all table HTML pairs -> TEDS and TEDS-S
+                    all formula LaTeX pairs -> CDM
 ```
+
+The table and formula pairs for one extraction profile are scored in one
+container call after extraction finishes. Container startup and scoring time are
+evaluation overhead, not extraction latency. MLflow provenance records both the
+pinned OmniDocBench source revision and the immutable Docker image digest.
+
+## Benchmark workflow and selection
+
+```text
+smoke:
+separate CPU and CUDA fixture runs
+→ verify loading, extraction, scoring, artifacts, and MLflow; no selection evidence
+
+preflight:
+fresh CUDA worker per declared configuration → demanding valid development/stress input
+→ hardware qualification report; no warmup or quality ranking
+
+development:
+Docling configuration screen → document-group breakdowns
+→ engineer selects one PDF configuration and one image configuration
+→ selected Standard configurations + Granite Docling + PaddleOCR-VL
+  are compared on the same development split
+→ engineer records architecture finalists
+
+validation:
+only the engineer-selected architecture finalists
+on unseen image/PDF inputs; native Docling on DOCX
+→ engineer selects the complete parser profiles without adding candidates
+
+locked:
+one PDF validation winner + one image validation winner + native DOCX
+on untouched locked-test inputs -> reporting only, with no further selection
+```
+
+Development determines both the Standard settings and the parser-architecture
+finalists. Validation confirms only those finalists; it is not the first local
+comparison of Granite Docling or PaddleOCR-VL. After validation, the engineer
+records exactly one PDF winner and one image winner. Locked evaluation applies
+those frozen routes to the untouched locked-test split; native DOCX remains the
+only valid DOCX route. The locked result is reporting-only and cannot reopen
+configuration or architecture selection.
+
+## Execution and measurements
+
+Within a development, validation, or locked comparison, every candidate receives
+the same deterministically shuffled reference-eligible documents, a fresh-worker
+cold measurement, one complete representative warmup, and three measured attempts
+for every document. Repeatability uses all documents in that profile's split,
+not a candidate-dependent subset. Smoke uses one measured attempt per fixture
+and does not estimate repeatability. Preflight uses no warmup and terminates its
+worker; it does not warm a later comparison.
+
+Document preflight currently selects the largest source file in each supported
+format from the reviewed development manifest. File size is a deterministic
+stress-selection proxy, not a proven page-count or image-resolution boundary.
+Review its coverage against the supported workloads before authoritative use;
+normal runtime OOM, placement, and telemetry gates still apply to every profile.
+
+| Measured attempt | Evidence retained |
+|---|---|
+| 1 | The sole quality output, timing, validity/failure state, and canonical output for repeatability. |
+| 2 and 3 | Output validation, timing, validity/failure state, and canonical outputs for repeatability; no additional quality scoring. |
+
+All attempts use the same settings and inference seed. First-output quality,
+completed-output coverage, recoverable failures, and incomplete execution follow
+the [shared availability rules](../../metrics.md#shared-availability-rules),
+with [document-specific execution accounting](metrics.md#scoring-inputs-eligibility-and-result-status).
+
+Repeatability Success Rate applies
+[shared pairwise repeatability](../../metrics.md#pairwise-repeatability) to each
+document's three scheduled pairs and its
+[canonical structured output](metrics.md#repeatability-success-rate). Attempt Failure Rate records
+the fraction of failed measured attempts. For `A, A, failure`, both rates are
+`1/3` and quality comes from the first `A`. For `failure, A, A`, the rates are
+unchanged but quality is null/unavailable. No cached previous
+extraction may substitute for a measured request. All output and canonicalization
+settings, including normalized-box precision and stable parent-ID mapping, are
+frozen and recorded.
+
+Warm latency uses successful measured attempts with completion coverage;
+failure durations remain separate and enter measured batch time. Throughput
+counts physical input pages of successful measured attempts and divides by the
+actual measured batch interval, including failures. Loading, warmup, and offline
+scoring are outside warm latency and batch throughput. Loading and warmup are
+inside resource monitoring; offline scoring is outside extraction resource
+measurements, which stop after the final measured request.
+
+Apply [shared confidence intervals](../../metrics.md#confidence-intervals)
+using complete independent source documents, with pages, objects, capture
+variants, and attempts kept together. Quality uses first-attempt scores;
+repeatability uses each document's three-attempt pair score; failure uses its
+attempt-failure fraction. For example, 100 documents with three attempts remain
+100 independent units if their source families are independent. The
+[document CI applications](metrics.md#aggregation-and-confidence-intervals)
+specify conditional cohorts, support, and operational eligibility.
+
+### Scoring and result slices
+
+The exact formulas, eligibility rules, ranges, and directions are defined in
+[document metrics](metrics.md). Eligibility is determined from the reference, not
+the candidate's recovered matches or supported features. Missing expected
+elements contribute zero to attribute/reconstruction scores, while a genuinely
+absent reference task is inapplicable. Valid empty comparisons use explicit
+best/worst conventions under the
+[shared empty-comparison rules](../../metrics.md#content-and-detection-empty-comparisons).
+Status and failure treatment follow the
+[shared availability rules](../../metrics.md#shared-availability-rules). Evaluator failures
+are repaired or rescored from saved predictions rather than labelled poor
+extractions. Quality failures do not automatically select or disqualify candidates.
+
+Each quality metric is calculated from the first measured output and aggregated
+as a document-macro average across its reference-eligible documents and,
+separately, relevant document groups. Reference-object and page scores first
+average within their document; detection F1 is calculated per document before
+averaging. Do not pool detection counts across documents or average different
+categories into an overall score. This permits conclusions such as "high text
+quality across all documents but weak table structure on scanned PDFs" instead
+of hiding the weakness inside one mean.
+
+## Results and MLflow structure
+
+### Metric and document groups
 
 An extraction profile produces one canonical structured document for every
 applicable input. Results use only two organizing concepts.
@@ -117,378 +417,7 @@ Metrics from different categories are never averaged together. `text.content_f1`
 does not combine text, pages, layout, tables, formulas, latency, or memory. It is
 only the total Content F1 across documents eligible for Content F1.
 
-## Which metrics apply to which inputs
-
-The following matrix defines applicability. `Yes` means the metric group is
-expected for that input when its required reference annotation exists.
-`Conditional` means only the relevant annotated subset is scored. `No` means
-the metric would not represent the native input: retain an inapplicable status
-and reason, and omit its numeric aggregate rather than recording zero.
-
-| Metric category | Images/photos | Digital PDF | Scanned PDF | Mixed PDF | Broken-text PDF | Native DOCX |
-|---|---:|---:|---:|---:|---:|---:|
-| Text content and recognition | Yes | Yes | Yes | Yes | Yes | Yes |
-| Page metrics | Yes, as one page | Yes | Yes | Yes | Yes | No |
-| Reading order | Yes | Yes | Yes | Yes | Yes | Yes |
-| Visual layout and bounding boxes | Yes | Yes | Yes | Yes | Yes | No |
-| Semantic element types and hierarchy | Conditional | Yes | Yes | Yes | Yes | Yes |
-| Tables | Conditional | Conditional | Conditional | Conditional | Conditional | Conditional |
-| Formulas | Conditional | Conditional | Conditional | Conditional | Conditional | Conditional |
-| Reliability | Yes | Yes | Yes | Yes | Yes | Yes |
-| Operational | Yes | Yes | Yes | Yes | Yes | Yes |
-
-### Text
-
-Content Precision, Content Recall, Content F1, CER, and WER apply to every input
-with verified reference text, including explicitly verified empty text: images,
-every PDF family, and DOCX. Reading Order NED applies when complete element-order
-annotations exist, including a single element or an explicitly empty sequence;
-it does not require a pair of successfully matched elements.
-
-### Pages
-
-Page Coverage, Page Content F1, Page Attribution Recall, and Duplicate Page
-Rate apply to PDFs and to images treated as one-page documents. They do not
-apply to native DOCX. DOCX page boundaries depend on a renderer, fonts, margins,
-and page settings; native ingestion deliberately avoids inventing a fixed visual
-pagination.
-
-### Layout
-
-Visual layout detection and Mean Bounding-Box IoU apply to images and PDFs with
-layout boxes. Native DOCX does not receive bounding-box metrics. Semantic
-Element Type Recall and Hierarchy Preservation Rate can apply to DOCX because
-headings, paragraphs, lists, captions, nesting, and parent-child relationships
-exist in the authored structure without rendering. Reading order is kept in the
-text group even though it evaluates complete element sequences after matching.
-
-### Tables
-
-Table metrics can apply to images, every PDF family, and DOCX. Detection
-precision, recall, and F1 use table-presence annotations, including verified
-negative cases needed to expose false detections. Table Content Precision/Recall/F1,
-TEDS, and TEDS-S apply only to reference tables that the parser is expected to
-recover. No reference tables makes those reconstruction tasks inapplicable;
-verified-negative detection still distinguishes correct absence from invented
-tables. A missed real table, including one with blank cells, receives zero.
-
-### Formulas
-
-Formula metrics can apply to images, every PDF family, and DOCX. Detection
-metrics use annotated positive and verified-negative cases. Formula Recognition
-Similarity and Formula Exact Match apply only to reference formulas. A
-formula-free document does not receive a zero recognition score.
-
-### Difficult layouts
-
-`layout_difficulty` is a per-sample diagnostic label, not another metric
-category or required MLflow namespace. If the general layout result needs
-investigation, the per-sample artifact can be filtered to documents with
-columns, unusual reading order, dense pages, or overlapping elements.
-
-### Reliability and operations
-
-Reliability records account for every scheduled supported input, including
-extraction failures. Duplication diagnostics require a valid completed first
-output; smoke does not measure repeatability. Complete-document latency,
-first-item latency, RAM, VRAM, temporary disk, and appropriate throughput
-measurements apply to every processed
-format. Per-page latency and pages per minute apply to PDFs and one-page images,
-not to native DOCX with no fixed rendering.
-
-In short:
-
-```text
-text                          -> images + all PDFs + DOCX
-pages                         -> images + all PDFs
-visual layout and boxes       -> images + all PDFs
-semantic structure            -> annotated images + all PDFs + DOCX
-tables                        -> table-evaluation inputs of any supported format
-formulas                      -> formula-evaluation inputs of any supported format
-reliability                   -> every scheduled supported input
-operational                   -> every processed input; page rates exclude native DOCX
-```
-
-## Data
-
-Smoke uses two committed images, two PDFs, and two DOCX files. The authoritative
-corpus target is:
-
-| Modality | Total | Development | Validation | Locked |
-|---|---:|---:|---:|---:|
-| Images/pages | 120 | 72 | 24 | 24 |
-| PDFs | 60 | 36 | 12 | 12 |
-| DOCX | 45 | 27 | 9 | 9 |
-
-The reviewed source pool is OmniDocBench v1.6 for structured pages, OHR-Bench v2
-for real multi-page PDFs, PureDocBench v1.0 for matched clean/degraded images,
-DocPTBench for photographed documents, and EduMind-specific native DOCX and
-held-out samples. The frozen manifests—not the source-pool
-names—define the actual cases and record every selected ID, source revision,
-license, checksum, document family, source type, and available annotations. An
-authoritative run cannot be claimed until those manifests and references are
-complete.
-
-The committed smoke fixtures demonstrate the implemented workflow, not a
-completed authoritative corpus or a selected parser. The protocol's
-`minimum_ci_sources` and `minimum_latency_ci_sources` are currently null pending
-review of independent-source support. Freeze them through the
-[pending-data-review checklist](../../pending-data-review.md#document-extraction)
-before authoritative evaluation; a null minimum is not permission to publish
-unsupported intervals. The target split sizes above do not establish that
-enough independent sources exist for every annotation subset or latency tail.
-
-The [shared data-validation contract](../../data-validation.md) defines checks
-for claimed capabilities, reviewed blanks/negative objects, complete page
-inventories, geometry, hierarchy, and split isolation. Explicit empty text or
-element sequences must not be rejected merely for being empty, nor inserted as
-defaults for missing fields. These checks finish before candidate loading and
-measurement; they do not change document metric eligibility or scoring.
-Run `python -m experiments.benchmarks.validate document --profile <profile>`
-after data preparation. Before candidate execution, the runner verifies the
-matching sealed report against actual input bytes and applicable requirements;
-it does not repeat full validation. Legitimate reviewed empty references remain
-valid.
-
-OmniDocBench is one annotated source within this combined corpus, not the whole
-EduMind experiment. Its selected English pages provide verified text, reading
-order, element, table, and formula references. EduMind then evaluates its own
-Docling configuration matrix, exact parser revisions, canonical-output
-integration, reliability, and local operational cost across OmniDocBench and the
-other sources above. The public OmniDocBench leaderboard is candidate-screening
-evidence; it is not reused as an EduMind result.
-
-The corpus covers clean and degraded images; digital, scanned, mixed, and
-broken-text PDFs; phone photos; low-resolution and skewed pages; multiple
-columns; headings, lists, and captions; tables and formulas; and native DOCX
-documents. Every sample has verified text. Page, layout, table, and formula
-metrics are calculated only when the required annotations exist. Every
-reference-eligible aggregate records how many documents were eligible and how
-many independent sources support its interval. Verified blank sources and
-table/formula negatives are labelled explicitly; they are not inferred from
-missing reference fields.
-
-## Phase A: Docling Standard configuration screen
-
-The declared PDF screen contains 24 configurations. Development runs every
-configuration qualified by preflight on the same PDF set:
-
-```text
-OCR engine:          RapidOCR, Tesseract, EasyOCR                 (3)
-OCR mode:            PDF-aware regions, full page                 (2)
-TableFormer mode:    fast, accurate                               (2)
-Formula enrichment: off, on                                      (2)
-                                                                  ───
-Total:               3 × 2 × 2 × 2 = 24 configurations
-```
-
-Each factor answers a production question:
-
-| Setting | Question answered by changing it |
-|---|---|
-| OCR engine | When Docling genuinely needs OCR, which backend gives the best final text, boxes, reading order, table content, speed, and resource use? |
-| PDF-aware versus full-page OCR | When should EduMind preserve usable native PDF text, and when should it reconstruct the complete page through OCR? |
-| TableFormer fast versus accurate | Does better row, column, header, merged-cell, and span reconstruction justify the additional execution cost? |
-| Formula enrichment off versus on | Does CodeFormulaV2 improve mathematical-expression recovery enough to justify its model load, latency, memory, and false detections? |
-
-The applicability rules prevent meaningless duplicate work:
-
-| Source | Configurations executed | Reason |
-|---|---|---|
-| PDF | Up to 24 qualified configurations | Every factor can affect digital, scanned, mixed, or broken PDFs. |
-| Image | Up to 12 qualified engine × table × formula profiles | Images always use full-page OCR, so the two PDF OCR modes would duplicate work. |
-| DOCX | One qualified native Docling profile | OCR engine and PDF OCR mode do not apply to native DOCX parsing; one profile still receives all scheduled attempts. |
-
-Docling 2.117.0, English, OCR scale 3.0, table-cell matching enabled,
-code enrichment disabled, canonical structured output, and native DOCX
-ingestion remain fixed. They define the common evaluation environment rather
-than useful strategy questions.
-
-## Phase B: scoring and result slices
-
-Every applicable execution is converted to the same canonical document
-representation containing text, pages, ordered elements, types, hierarchy,
-bounding boxes, tables, formulas, provenance, warnings, and timing. The
-benchmark scores that representation without an EduMind cleanup profile. Raw
-outputs remain unchanged. Prose comparison uses the
-[shared symmetric projection and its exclusions](../../metrics.md#prose-scoring-projection),
-not a parser-specific repair step; formulas, code, layout trees, and table trees
-retain their own scoring representations.
-
-Every authoritative reference declares a `reference_capabilities` list drawn
-from `text`, `pages`, `reading_order`, `layout_boxes`, `element_types`,
-`hierarchy`, `tables`, and `formulas`. Validation and metric eligibility follow
-that declaration instead of assuming that every source has every annotation.
-Full data validation also checks that claimed table and formula references
-score perfectly against themselves in the pinned official Docker evaluators.
-This reference check happens outside candidate measurements; profile startup
-only verifies the sealed validation report and current input identity.
-Smoke fixtures may infer capabilities from their inline annotations. Table and
-formula capability declarations also carry explicit `has_table` and
-`has_formula` booleans so invented objects on verified negatives count as false
-detections. Unclaimed tasks are inapplicable; missing annotations for a claimed
-capability are invalid inputs and must be rejected before candidate execution.
-
-OmniDocBench annotations act as ground truth for every applicable metric on its
-samples. EduMind calculates the common text, page, layout, detection,
-reliability, and operational metrics so their definitions remain identical for
-OHR-Bench, PureDocBench, DocPTBench, native DOCX, and EduMind-specific samples.
-Only the specialized table-tree and formula scorers—TEDS, TEDS-S, and CDM—come
-from the pinned official evaluator; ExpRate@CDM is derived from those CDM
-results.
-
-The execution boundary is explicit:
-
-```text
-Python 3.12: Docling/Granite/Paddle extraction -> canonical prediction
-             -> common EduMind metrics
-Python 3.10 Docker: all table HTML pairs -> TEDS and TEDS-S
-                    all formula LaTeX pairs -> CDM
-```
-
-The table and formula pairs for one extraction profile are scored in one
-container call after extraction finishes. Container startup and scoring time are
-evaluation overhead, not extraction latency. MLflow provenance records both the
-pinned OmniDocBench source revision and the immutable Docker image digest.
-
-The result groups are:
-
-| Group | What it establishes |
-|---|---|
-| Text | Whether required text was recovered accurately and in the correct order. |
-| Pages | Whether content was recovered from, and attributed to, the correct pages without duplication. |
-| Layout | Whether elements, semantic types, hierarchy, and locations were preserved. |
-| Tables | Whether tables were detected and their content and structure reconstructed. |
-| Formulas | Whether formulas were detected and recognized correctly. |
-| Reliability | Whether valid outputs are unexpectedly empty or duplicated, repeat successfully, and avoid attempt failures. |
-| Operations | Cold loading, first-request cost, warm latency, throughput, RAM, VRAM, and temporary disk. |
-
-The exact formulas, eligibility rules, ranges, and directions are defined in
-[document metrics](metrics.md). Eligibility is determined from the reference, not
-the candidate's recovered matches or supported features. Missing expected
-elements contribute zero to attribute/reconstruction scores, while a genuinely
-absent reference task is inapplicable. Valid empty comparisons use explicit
-best/worst conventions under the
-[shared empty-comparison rules](../../metrics.md#content-and-detection-empty-comparisons).
-Status and failure treatment follow the
-[shared availability rules](../../metrics.md#shared-availability-rules). Evaluator failures
-are repaired or rescored from saved predictions rather than labelled poor
-extractions. Quality failures do not automatically select or disqualify candidates.
-
-Each quality metric is calculated from the first measured output and aggregated
-as a document-macro average across its reference-eligible documents and,
-separately, relevant document groups. Reference-object and page scores first
-average within their document; detection F1 is calculated per document before
-averaging. Do not pool detection counts across documents or average different
-categories into an overall score. This permits conclusions such as "high text
-quality across all documents but weak table structure on scanned PDFs" instead
-of hiding the weakness inside one mean.
-
-## Phase C: parser architecture comparison
-
-After reviewing the Standard-pipeline screen, the engineer records the selected
-Docling profiles. The architecture comparison uses those complete profiles and
-the other qualified architectures below; preflight exclusions remain visible:
-
-| Parser profile | Question answered |
-|---|---|
-| Selected Docling Standard profile | How well does the conventional OCR, layout, table, and formula pipeline perform? |
-| Granite Docling 258M | Does Docling's compact full-page VLM improve complete document parsing? |
-| PaddleOCR-VL-1.6 | Does an independent visual parser outperform the two Docling architectures? |
-
-The common architecture comparison uses images and PDFs. DOCX is evaluated
-through native Docling and reported as format coverage; it is not rasterized to
-give visual parsers artificial DOCX support.
-
-## Development, validation, and locked test
-
-```text
-smoke:
-separate CPU and CUDA fixture runs
-→ verify loading, extraction, scoring, artifacts, and MLflow; no selection evidence
-
-preflight:
-fresh CUDA worker per declared configuration → demanding valid development/stress input
-→ hardware qualification report; no warmup or quality ranking
-
-development:
-Docling configuration screen → document-group breakdowns
-→ engineer selects one PDF configuration and one image configuration
-→ selected Standard configurations + Granite Docling + PaddleOCR-VL
-  are compared on the same development split
-→ engineer records architecture finalists
-
-validation:
-only the engineer-selected architecture finalists
-on unseen image/PDF inputs; native Docling on DOCX
-→ engineer selects the complete parser profiles without adding candidates
-
-locked:
-one PDF validation winner + one image validation winner + native DOCX
-on untouched locked-test inputs -> reporting only, with no further selection
-```
-
-Within a development, validation, or locked comparison, every candidate receives
-the same deterministically shuffled reference-eligible documents, a fresh-worker
-cold measurement, one complete representative warmup, and three measured attempts
-for every document. Repeatability uses all documents in that profile's split,
-not a candidate-dependent subset. Smoke uses one measured attempt per fixture
-and does not estimate repeatability. Preflight uses no warmup and terminates its
-worker; it does not warm a later comparison.
-
-Document preflight currently selects the largest source file in each supported
-format from the reviewed development manifest. File size is a deterministic
-stress-selection proxy, not a proven page-count or image-resolution boundary.
-Review its coverage against the supported workloads before authoritative use;
-normal runtime OOM, placement, and telemetry gates still apply to every profile.
-
-| Measured attempt | Evidence retained |
-|---|---|
-| 1 | The sole quality output, timing, validity/failure state, and canonical output for repeatability. |
-| 2 and 3 | Output validation, timing, validity/failure state, and canonical outputs for repeatability; no additional quality scoring. |
-
-All attempts use the same settings and inference seed. First-output quality,
-completed-output coverage, recoverable failures, and incomplete execution follow
-the [shared availability rules](../../metrics.md#shared-availability-rules),
-with [document-specific execution accounting](metrics.md#empty-comparisons-eligibility-and-result-status).
-
-Repeatability Success Rate applies
-[shared pairwise repeatability](../../metrics.md#pairwise-repeatability) to each
-document's three scheduled pairs and its
-[canonical structured output](metrics.md#repeatability-success-rate). Attempt Failure Rate records
-the fraction of failed measured attempts. For `A, A, failure`, both rates are
-`1/3` and quality comes from the first `A`. For `failure, A, A`, the rates are
-unchanged but quality is null/unavailable. No cached previous
-extraction may substitute for a measured request. All output and canonicalization
-settings, including normalized-box precision and stable parent-ID mapping, are
-frozen and recorded.
-
-Warm latency uses successful measured attempts with completion coverage;
-failure durations remain separate and enter measured batch time. Throughput
-counts physical input pages of successful measured attempts and divides by the
-actual measured batch interval, including failures. Loading, warmup, and offline
-scoring are outside warm latency and batch throughput. Loading and warmup are
-inside resource monitoring; offline scoring is outside extraction resource
-measurements, which stop after the final measured request.
-
-Apply [shared confidence intervals](../../metrics.md#confidence-intervals)
-using complete independent source documents, with pages, objects, capture
-variants, and attempts kept together. Quality uses first-attempt scores;
-repeatability uses each document's three-attempt pair score; failure uses its
-attempt-failure fraction. For example, 100 documents with three attempts remain
-100 independent units if their source families are independent. The
-[document CI applications](metrics.md#document-extraction-confidence-intervals)
-specify conditional cohorts, support, and operational eligibility.
-
-Development determines both the Standard settings and the parser-architecture
-finalists. Validation confirms only those finalists; it is not the first local
-comparison of Granite Docling or PaddleOCR-VL. After validation, the engineer
-records exactly one PDF winner and one image winner. Locked evaluation applies
-those frozen routes to the untouched locked-test split; native DOCX remains the
-only valid DOCX route. The locked result is reporting-only and cannot reopen
-configuration or architecture selection.
-
-## MLflow result structure
+### Run hierarchy and artifacts
 
 Document runs use `EduMind / Document`. CPU/CUDA smoke parents and one
 all-candidate preflight parent precede the comparisons below. Human-readable

@@ -5,8 +5,7 @@
 On this page:
 
 - [Metric summary](#metric-summary)
-- [Empty comparisons, eligibility, and result status](#empty-comparisons-eligibility-and-result-status)
-- [Prose scoring projection](#prose-scoring-projection)
+- [Scoring inputs, eligibility, and result status](#scoring-inputs-eligibility-and-result-status)
 - [Text content and recognition](#text-content-and-recognition-1)
 - [Pages](#pages-1)
 - [Layout and document structure](#layout-and-document-structure-1)
@@ -14,8 +13,8 @@ On this page:
 - [Mathematical formulas](#mathematical-formulas-1)
 - [Reliability and failure behavior](#reliability-and-failure-behavior-1)
 - [Operational performance](#operational-performance-1)
-- [Worked candidate interpretation](#worked-candidate-interpretation)
-- [Document-extraction confidence intervals](#document-extraction-confidence-intervals)
+- [Worked result interpretation](#worked-result-interpretation)
+- [Aggregation and confidence intervals](#aggregation-and-confidence-intervals)
 
 The document experiment evaluates complete image, PDF, and DOCX parsing. It does
 not reduce a parser to one overall score. Each retained metric answers a distinct
@@ -56,79 +55,81 @@ examples, and confidence-interval rules follow the summary.
 
 ### Text content and recognition
 
-| Metric | Question answered |
-|---|---|
-| Content Precision | How much extracted content is supported by the reference? |
-| Content Recall | How much required content was recovered? |
-| Content F1 | Does the extractor balance correct output and complete output? |
-| Character Error Rate (CER) | How severe are character-recognition errors? |
-| Word Error Rate (WER) | How severe are complete-word errors? |
-| Reading Order NED | How much editing is needed to recover the complete expected element sequence? |
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Content Precision | Secondary | How much extracted content is supported by the reference? | Higher |
+| Content Recall | Secondary | How much required content was recovered? | Higher |
+| Content F1 | Primary | Does the extractor balance correct output and complete output? | Higher |
+| Character Error Rate (CER) | Secondary | How severe are character-recognition errors? | Lower |
+| Word Error Rate (WER) | Secondary | How severe are complete-word errors? | Lower |
+| Reading Order NED | Primary | How much editing is needed to recover the complete expected element sequence? | Lower |
 
 ### Pages
 
-| Metric | Question answered |
-|---|---|
-| Page Coverage | Did every expected page produce relevant content? |
-| Page Content F1 | Was the correct text recovered within the correct page? |
-| Page Attribution Recall | How many expected content-bearing elements were recovered on the correct page? |
-| Duplicate Page Rate | How often did the parser repeat a page? |
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Page Coverage | Secondary | Did every expected page produce relevant content? | Higher |
+| Page Content F1 | Primary | Was the correct text recovered within the correct page? | Higher |
+| Page Attribution Recall | Secondary | How many expected content-bearing elements were recovered on the correct page? | Higher |
+| Duplicate Page Rate | Secondary | How often did the parser repeat a page? | Lower |
 
 ### Layout and document structure
 
-| Metric | Question answered |
-|---|---|
-| Layout Element Precision | How many predicted document elements are real? |
-| Layout Element Recall | How many required document elements were detected? |
-| Layout Element F1 | Does layout detection balance false and missed elements? |
-| Element Type Recall | How many expected elements were recovered with the correct type? |
-| Hierarchy Preservation Rate | How many expected annotated elements retained their required parent and level? |
-| Mean Bounding-Box IoU | How accurately were expected elements localized, including missed elements? |
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Layout Element Precision | Secondary | How many predicted document elements are real? | Higher |
+| Layout Element Recall | Secondary | How many required document elements were detected? | Higher |
+| Layout Element F1 | Primary | Does layout detection balance false and missed elements? | Higher |
+| Element Type Recall | Primary | How many expected elements were recovered with the correct type? | Higher |
+| Hierarchy Preservation Rate | Primary | How many expected annotated elements retained their required parent and level? | Higher |
+| Mean Bounding-Box IoU | Secondary | How accurately were expected elements localized, including missed elements? | Higher |
 
 ### Tables
 
-| Metric | Question answered |
-|---|---|
-| Table Detection Precision | How many predicted tables are real tables? |
-| Table Detection Recall | How many reference tables were found? |
-| Table Detection F1 | Does table detection balance extra and missed tables? |
-| Table Content Precision | How much text inside expected tables is supported by the reference? |
-| Table Content Recall | How much text inside expected tables was recovered? |
-| Table Content F1 | Was the text inside expected tables recovered without unsupported additions? |
-| TEDS | How similar is the complete predicted table tree, including structure and cell text, to the reference? |
-| TEDS-S | Was the table's row/cell structure and its merged-cell spans reconstructed correctly, ignoring cell text? |
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Table Detection Precision | Secondary | How many predicted tables are real tables? | Higher |
+| Table Detection Recall | Secondary | How many reference tables were found? | Higher |
+| Table Detection F1 | Primary | Does table detection balance extra and missed tables? | Higher |
+| Table Content Precision | Secondary | How much text inside expected tables is supported by the reference? | Higher |
+| Table Content Recall | Secondary | How much text inside expected tables was recovered? | Higher |
+| Table Content F1 | Primary | Was the text inside expected tables recovered without unsupported additions? | Higher |
+| TEDS | Primary | How similar is the complete predicted table tree, including structure and cell text, to the reference? | Higher |
+| TEDS-S | Secondary | Was the table's row/cell structure and its merged-cell spans reconstructed correctly, ignoring cell text? | Higher |
 
 ### Mathematical formulas
 
-| Metric | Question answered |
-|---|---|
-| Formula Detection Precision | How many predicted formula regions are real formulas? |
-| Formula Detection Recall | How many reference formulas were found? |
-| Formula Detection F1 | Does formula detection balance extra and missed formulas? |
-| Formula Recognition Similarity (CDM) | How visually and structurally close is each recognized formula to its reference? |
-| Formula Exact Match (ExpRate@CDM) | How often was a formula reconstructed perfectly? |
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Formula Detection Precision | Secondary | How many predicted formula regions are real formulas? | Higher |
+| Formula Detection Recall | Secondary | How many reference formulas were found? | Higher |
+| Formula Detection F1 | Primary | Does formula detection balance extra and missed formulas? | Higher |
+| Formula Recognition Similarity (CDM) | Secondary | How visually and structurally close is each recognized formula to its reference? | Higher |
+| Formula Exact Match (ExpRate@CDM) | Primary | How often was a formula reconstructed perfectly? | Higher |
 
 ### Reliability and failure behavior
 
-| Metric | Question answered |
-|---|---|
-| Unexpected Empty Output Rate | How often does extraction complete empty when the source requires usable content? |
-| Duplicate Content Rate | How much repeated token content did the parser add without source support? |
-| Repeatability Success Rate | How often do two scheduled attempts both deliver the same valid structured output? |
-| Attempt Failure Rate | How often does a measured extraction attempt fail to deliver a valid output? |
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Unexpected Empty Output Rate | Diagnostic | How often does extraction complete empty when the source requires usable content? | Lower |
+| Duplicate Content Rate | Diagnostic | How much repeated token content did the parser add without source support? | Lower |
+| Repeatability Success Rate | Diagnostic | How often do two scheduled attempts both deliver the same valid structured output? | Higher |
+| Attempt Failure Rate | Diagnostic | How often does a measured extraction attempt fail to deliver a valid output? | Lower |
 
 ### Operational performance
 
-| Metric | Question answered |
-|---|---|
-| Cold Model-Load Time | How long does the fresh worker take to initialize the candidate before warmup? |
-| First-item Latency | How long does loading plus the first complete request take in a fresh worker? |
-| p50/p95 Warm Latency per Page | What are the typical and slow-tail steady-state page speeds? |
-| Complete Document Latency | How long does a user wait for a complete source? |
-| Batch Pages per Minute | What sustained batch capacity does the parser provide? |
-| Peak Process-Tree RAM | How much system memory does the complete extractor require? |
-| Peak Device VRAM | How much total memory is occupied on the assigned GPU during extraction? |
-| Peak Temporary Disk | How much additional working-disk space does extraction require? |
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Cold Model-Load Time | Operational | How long does the fresh worker take to initialize the candidate before warmup? | Lower |
+| First-item Latency | Operational | How long does loading plus the first complete request take in a fresh worker? | Lower |
+| p50/p95 Warm Latency per Page | Operational | What are the typical and slow-tail steady-state page speeds? | Lower |
+| Complete Document Latency | Operational | How long does a user wait for a complete source? | Lower |
+| Batch Pages per Minute | Operational | What sustained batch capacity does the parser provide? | Higher |
+| Peak Process-Tree RAM | Operational | How much system memory does the complete extractor require? | Lower at equal quality and scope |
+| Peak Device VRAM | Operational | How much total memory is occupied on the assigned GPU during extraction? | Lower at equal quality and scope |
+| Peak Temporary Disk | Operational | How much additional working-disk space does extraction require? | Lower at equal quality and scope |
+
+## Scoring inputs, eligibility, and result status
 
 All candidates receive the same canonical reference and output conversion.
 The [shared prose projection](../../metrics.md#prose-scoring-projection) handles harmless representation differences;
@@ -158,8 +159,6 @@ fixtures may infer this list from inline annotations. A missing capability marks
 the metric inapplicable, retaining its reason rather than fabricating a zero.
 Table/formula capabilities use explicit
 `has_table:false` and `has_formula:false` negatives in detection counts.
-
-## Empty comparisons, eligibility, and result status
 
 Eligibility is fixed from the reference before candidate execution and is the
 same for every candidate. A parser that does not support an expected feature
@@ -212,7 +211,99 @@ available required evaluations is labelled incomplete, not a normal comparable
 result. Report scheduled, eligible, scored, failed,
 inapplicable, unavailable, and positive/verified-negative reference counts.
 
-## Prose scoring projection
+### Format applicability
+
+The following matrix defines applicability. `Yes` means the metric group is
+expected for that input when its required reference annotation exists.
+`Conditional` means only the relevant annotated subset is scored. `No` means
+the metric would not represent the native input: retain an inapplicable status
+and reason, and omit its numeric aggregate rather than recording zero.
+
+| Metric category | Images/photos | Digital PDF | Scanned PDF | Mixed PDF | Broken-text PDF | Native DOCX |
+|---|---:|---:|---:|---:|---:|---:|
+| Text content and recognition | Yes | Yes | Yes | Yes | Yes | Yes |
+| Page metrics | Yes, as one page | Yes | Yes | Yes | Yes | No |
+| Reading order | Yes | Yes | Yes | Yes | Yes | Yes |
+| Visual layout and bounding boxes | Yes | Yes | Yes | Yes | Yes | No |
+| Semantic element types and hierarchy | Conditional | Yes | Yes | Yes | Yes | Yes |
+| Tables | Conditional | Conditional | Conditional | Conditional | Conditional | Conditional |
+| Formulas | Conditional | Conditional | Conditional | Conditional | Conditional | Conditional |
+| Reliability | Yes | Yes | Yes | Yes | Yes | Yes |
+| Operational | Yes | Yes | Yes | Yes | Yes | Yes |
+
+#### Text applicability
+
+Content Precision, Content Recall, Content F1, CER, and WER apply to every input
+with verified reference text, including explicitly verified empty text: images,
+every PDF family, and DOCX. Reading Order NED applies when complete element-order
+annotations exist, including a single element or an explicitly empty sequence;
+it does not require a pair of successfully matched elements.
+
+#### Page applicability
+
+Page Coverage, Page Content F1, Page Attribution Recall, and Duplicate Page
+Rate apply to PDFs and to images treated as one-page documents. They do not
+apply to native DOCX. DOCX page boundaries depend on a renderer, fonts, margins,
+and page settings; native ingestion deliberately avoids inventing a fixed visual
+pagination.
+
+#### Layout applicability
+
+Visual layout detection and Mean Bounding-Box IoU apply to images and PDFs with
+layout boxes. Native DOCX does not receive bounding-box metrics. Semantic
+Element Type Recall and Hierarchy Preservation Rate can apply to DOCX because
+headings, paragraphs, lists, captions, nesting, and parent-child relationships
+exist in the authored structure without rendering. Reading order is kept in the
+text group even though it evaluates complete element sequences after matching.
+
+#### Table applicability
+
+Table metrics can apply to images, every PDF family, and DOCX. Detection
+precision, recall, and F1 use table-presence annotations, including verified
+negative cases needed to expose false detections. Table Content Precision/Recall/F1,
+TEDS, and TEDS-S apply only to reference tables that the parser is expected to
+recover. No reference tables makes those reconstruction tasks inapplicable;
+verified-negative detection still distinguishes correct absence from invented
+tables. A missed real table, including one with blank cells, receives zero.
+
+#### Formula applicability
+
+Formula metrics can apply to images, every PDF family, and DOCX. Detection
+metrics use annotated positive and verified-negative cases. Formula Recognition
+Similarity and Formula Exact Match apply only to reference formulas. A
+formula-free document does not receive a zero recognition score.
+
+#### Difficult-layout labels
+
+`layout_difficulty` is a per-sample diagnostic label, not another metric
+category or required MLflow namespace. If the general layout result needs
+investigation, the per-sample artifact can be filtered to documents with
+columns, unusual reading order, dense pages, or overlapping elements.
+
+#### Reliability and operational applicability
+
+Reliability records account for every scheduled supported input, including
+extraction failures. Duplication diagnostics require a valid completed first
+output; smoke does not measure repeatability. Complete-document latency,
+first-item latency, RAM, VRAM, temporary disk, and appropriate throughput
+measurements apply to every processed
+format. Per-page latency and pages per minute apply to PDFs and one-page images,
+not to native DOCX with no fixed rendering.
+
+In short:
+
+```text
+text                          -> images + all PDFs + DOCX
+pages                         -> images + all PDFs
+visual layout and boxes       -> images + all PDFs
+semantic structure            -> annotated images + all PDFs + DOCX
+tables                        -> table-evaluation inputs of any supported format
+formulas                      -> formula-evaluation inputs of any supported format
+reliability                   -> every scheduled supported input
+operational                   -> every processed input; page rates exclude native DOCX
+```
+
+### Prose scoring projection
 
 Apply the [shared symmetric prose projection](../../metrics.md#prose-scoring-projection)
 to document prose before Content, CER, and WER scoring. For example:
@@ -1251,7 +1342,7 @@ eligible documents. Unmatched extra tables are handled by detection precision.
 | Known invalid predicted table tree within an otherwise valid output | A recovered table has a malformed reconstruction | Table contribution `0` (`scored`) | This is the established reconstruction-evaluator convention, not an official evaluator crash or a failed extraction attempt. |
 
 [Shared availability rules apply.](../../metrics.md#shared-availability-rules);
-official evaluator availability follows the [page-wide result rules](#empty-comparisons-eligibility-and-result-status).
+official evaluator availability follows the [page-wide result rules](#scoring-inputs-eligibility-and-result-status).
 
 ### TEDS-S
 
@@ -1297,7 +1388,7 @@ TEDS-S with low Table Content Recall means the shape is right but text is missin
 | Known invalid predicted table tree within an otherwise valid output | A recovered table has a malformed reconstruction | Table contribution `0` (`scored`) | This is the established reconstruction-evaluator convention, not an official evaluator crash or a failed extraction attempt. |
 
 [Shared availability rules apply.](../../metrics.md#shared-availability-rules);
-official evaluator availability follows the [page-wide result rules](#empty-comparisons-eligibility-and-result-status).
+official evaluator availability follows the [page-wide result rules](#scoring-inputs-eligibility-and-result-status).
 
 The benchmark uses the pinned official scorer rather than a custom
 approximation. OmniDocBench documents TEDS and TEDS-S in its
@@ -1470,7 +1561,7 @@ penalized merely for using different LaTeX source.
 | Known invalid predicted expression within an otherwise valid output | A recovered formula has a malformed reconstruction | Formula contribution `0` (`scored`) | Apply the established reconstruction convention rather than confusing it with an official renderer/evaluator failure. |
 
 [Shared availability rules apply.](../../metrics.md#shared-availability-rules);
-official evaluator availability follows the [page-wide result rules](#empty-comparisons-eligibility-and-result-status).
+official evaluator availability follows the [page-wide result rules](#scoring-inputs-eligibility-and-result-status).
 
 ### Formula Exact Match (ExpRate@CDM)
 
@@ -1507,7 +1598,7 @@ document exact-match fractions equally; a missed formula contributes zero.
 | Known invalid predicted expression within an otherwise valid output | A recovered formula has a malformed reconstruction | Formula contribution `0` (`scored`) | It cannot be a perfect reconstruction under the established evaluator convention. |
 
 [Shared availability rules apply.](../../metrics.md#shared-availability-rules);
-official evaluator availability follows the [page-wide result rules](#empty-comparisons-eligibility-and-result-status).
+official evaluator availability follows the [page-wide result rules](#scoring-inputs-eligibility-and-result-status).
 
 The evaluator and its exact revision are pinned from the [official OmniDocBench evaluation
 code](https://github.com/opendatalab/OmniDocBench); EduMind does not substitute a
@@ -1560,7 +1651,7 @@ unexpected empty successes.
 **Edge cases and availability:**
 
 [Shared availability rules apply.](../../metrics.md#shared-availability-rules)
-The [page-wide execution rules](#empty-comparisons-eligibility-and-result-status)
+The [page-wide execution rules](#scoring-inputs-eligibility-and-result-status)
 preserve the scheduled-document denominator.
 
 ### Duplicate Content Rate
@@ -1659,7 +1750,7 @@ observed failures.
 | Profile schedules only one measured attempt | Smoke's one attempt per fixture | `null` (`inapplicable`) (`repeatability_not_measured`) | No pair-comparison task is scheduled. This differs from missing one of three required attempts. |
 
 [Shared availability rules apply.](../../metrics.md#shared-availability-rules)
-Required-attempt completeness follows the [page-wide execution rules](#empty-comparisons-eligibility-and-result-status).
+Required-attempt completeness follows the [page-wide execution rules](#scoring-inputs-eligibility-and-result-status).
 
 ### Attempt Failure Rate
 
@@ -1693,7 +1784,7 @@ attempts divided by total scheduled attempts.
 
 [Shared availability rules apply.](../../metrics.md#shared-availability-rules)
 Scheduled-attempt accounting, recoverable retries, and setup failures follow the
-[page-wide execution rules](#empty-comparisons-eligibility-and-result-status).
+[page-wide execution rules](#scoring-inputs-eligibility-and-result-status).
 
 ## Operational performance
 
@@ -1726,7 +1817,7 @@ non-positive duration make throughput null/unavailable, not zero.
 
 Do not infer an unrecorded temporary-disk peak from RAM/VRAM samples.
 Interval eligibility for every operational value follows the
-[confidence-interval rules](#document-extraction-confidence-intervals).
+[confidence-interval rules](#aggregation-and-confidence-intervals).
 
 ### Cold Model-Load Time
 
@@ -1993,7 +2084,7 @@ the sum of all sampled totals.
 [Shared availability rules apply.](../../metrics.md#shared-availability-rules)
 Resource-window reporting follows [operational measurement availability](#operational-measurement-availability).
 
-## Worked candidate interpretation
+## Worked result interpretation
 
 Suppose one extraction profile produces:
 
@@ -2030,7 +2121,7 @@ These quality values are document-macro averages. This means:
 No single number communicates all of these facts. That is why the benchmark
 reports the metrics separately instead of calculating a weighted overall score.
 
-## Document-extraction confidence intervals
+## Aggregation and confidence intervals
 
 Use the [shared confidence-interval procedure](../../metrics.md#confidence-intervals)
 with source documents as independent units. The table and applications below

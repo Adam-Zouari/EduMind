@@ -5,14 +5,14 @@
 On this page:
 
 - [Metric summary](#metric-summary)
-- [Scoring inputs and result status](#scoring-inputs-and-result-status)
+- [Scoring inputs, eligibility, and result status](#scoring-inputs-eligibility-and-result-status)
 - [Recognition quality](#recognition-quality-1)
 - [WER diagnostics](#wer-diagnostics-1)
 - [Timestamp quality](#timestamp-quality-1)
 - [Reliability and failure behavior](#reliability-and-failure-behavior-1)
 - [Operational performance](#operational-performance-1)
-- [Worked candidate interpretation](#worked-candidate-interpretation)
-- [Audio confidence intervals](#audio-confidence-intervals)
+- [Worked result interpretation](#worked-result-interpretation)
+- [Aggregation and confidence intervals](#aggregation-and-confidence-intervals)
 
 The ASR benchmark evaluates the complete ordered transcript, its timestamps,
 catastrophic output behavior, and the cost of the recorded runtime profile. It
@@ -69,7 +69,7 @@ These 17 metrics define the implemented ASR evaluation contract.
 Diarization metrics remain out of scope until speaker identification becomes a
 product requirement.
 
-## Scoring inputs and result status
+## Scoring inputs, eligibility, and result status
 
 Apply the [shared first-output and availability rules](../../metrics.md#shared-availability-rules)
 to the designated first measured attempt after warmup. Later attempts supply
@@ -348,7 +348,7 @@ Read it with Alignment Coverage to expose a small easy matched subset.
 
 Shared availability rules apply: [first-output and aggregate availability](../../metrics.md#shared-availability-rules).
 Keep matched-boundary and independent-source support for the
-[conditional confidence interval](#audio-confidence-intervals).
+[conditional confidence interval](#aggregation-and-confidence-intervals).
 
 ### Timestamp Alignment Coverage
 
@@ -394,7 +394,7 @@ Divide valid empty first outputs by valid completed first outputs for speech
 clips with nonempty projected references. A completed output need not be correct:
 empty text plus empty timestamps is valid execution and counts as an event.
 Read this conditional rate with Attempt Failure Rate and the
-[output-validity rules](#scoring-inputs-and-result-status).
+[output-validity rules](#scoring-inputs-eligibility-and-result-status).
 
 **Example:** Of 100 eligible first speech attempts, 10 fail and 90 return valid
 outputs; four of those are empty. The rate is `4 / 90`, approximately `0.044`.
@@ -507,7 +507,7 @@ All scheduled attempts succeeding gives `0`; all executing and failing gives
 **Edge cases and availability:**
 
 Shared availability rules apply. See [shared availability](../../metrics.md#shared-availability-rules)
-and the [audio execution-status rules](#scoring-inputs-and-result-status).
+and the [audio execution-status rules](#scoring-inputs-eligibility-and-result-status).
 
 ## Operational performance
 
@@ -517,11 +517,11 @@ RAM/VRAM instrumentation and partial-window scope follow
 [shared resource measurements](../../metrics.md#resource-measurements).
 The ASR monitoring window includes loading, warmup, and measured inference;
 it excludes data preparation/validation and offline scoring. Interval eligibility
-and warm-latency support follow [audio confidence intervals](#audio-confidence-intervals).
+and warm-latency support follow [audio confidence intervals](#aggregation-and-confidence-intervals).
 
 Every result records its explicit CPU/GPU profile; silent fallback is invalid.
 Extraction has no artificial VRAM cap, and observed memory use alone does not
-exclude a profile. The [execution prerequisites](methodology.md#per-candidate-execution)
+exclude a profile. The [execution prerequisites](methodology.md#execution-and-measurements)
 remain separate from metric edge cases.
 
 ### Complete-Pipeline Real-Time Factor
@@ -590,7 +590,7 @@ The median is a typical wait, not an arithmetic mean or duration-normalized spee
 Shared availability rules apply. See [shared availability](../../metrics.md#shared-availability-rules)
 and [operational measurement availability](#operational-performance-1).
 No completed timed clips gives `null/unavailable`, not a zero-second median.
-Independent-source interval support follows [audio confidence intervals](#audio-confidence-intervals).
+Independent-source interval support follows [audio confidence intervals](#aggregation-and-confidence-intervals).
 
 #### p95 Warm Clip Latency
 
@@ -611,7 +611,7 @@ below `9.8 s`.
 Shared availability rules apply. See [shared availability](../../metrics.md#shared-availability-rules)
 and [operational measurement availability](#operational-performance-1).
 No completed timed clips gives `null/unavailable`, not a zero-second tail latency.
-Independent-source interval support follows [audio confidence intervals](#audio-confidence-intervals).
+Independent-source interval support follows [audio confidence intervals](#aggregation-and-confidence-intervals).
 
 ### Cold Model-Load Time
 
@@ -672,7 +672,7 @@ baseline-subtracted `1,400 MiB`. This is observed device demand, not model size.
 Shared availability rules apply: [CUDA telemetry availability](../../metrics.md#shared-availability-rules)
 and [resource-window measurement scope](#operational-performance-1).
 
-## Worked candidate interpretation
+## Worked result interpretation
 
 Suppose one ASR profile produces:
 
@@ -693,7 +693,7 @@ failure counts before interpreting those conditional quality values. Those
 failure modes remain visible even though the total
 WER is relatively low. No weighted overall score combines these values.
 
-## Audio confidence intervals
+## Aggregation and confidence intervals
 
 ### Which values receive an interval
 
@@ -738,7 +738,7 @@ Conditional availability follows the individual
 [Boundary MAE](#timestamp-boundary-mae) and
 [Alignment Coverage](#timestamp-alignment-coverage) blocks. A fully recorded
 execution with an undefined conditional value is not a missing-record failure;
-retain it under the [result-status rules](#scoring-inputs-and-result-status).
+retain it under the [result-status rules](#scoring-inputs-eligibility-and-result-status).
 
 ### Interpretation
 

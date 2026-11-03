@@ -28,7 +28,37 @@ The shared rules on this page apply alongside each benchmark's specific contract
 
 ## Shared conventions
 
-### Reading an individual metric
+### How to read a metric reference
+
+#### Page structure
+
+Every benchmark metric page follows this overall structure:
+
+1. **Metric summary:** use the consistent columns
+   `Metric | Role | Question answered | Direction`.
+2. **Scoring inputs, eligibility, and result status:** explain benchmark-specific
+   requirements and link to the [shared availability rules](#shared-availability-rules).
+3. **Metric definitions:** group them meaningfully into quality, diagnostics,
+   reliability/repeatability, operational performance, and workload/storage
+   descriptors where applicable. Related metrics stay together; metric role is
+   not a reason to separate a score from the diagnostics that explain it.
+4. **Worked result interpretation:** place this after the complete metric
+   catalogue so the example can explain quality, reliability, speed, and
+   resource trade-offs together.
+5. **Aggregation and confidence intervals:** explain observation weighting,
+   contributing support, completeness, and interval applicability. Link to the
+   [shared confidence-interval and bootstrap procedure](#confidence-intervals)
+   rather than redefining it.
+
+This is the structure of the complete page. The
+[individual-metric template](#reading-an-individual-metric) below defines the
+structure within each metric explanation.
+
+Final RAG reuses component definitions and explains only its integrated and
+human-review measurements locally. Shared reference pages remain rule indexes,
+not additional benchmark comparisons.
+
+#### Reading an individual metric
 
 Each benchmark's metric reference gives the question, counted or timed units,
 calculation, a worked example, interpretation, range/direction, and
@@ -36,8 +66,7 @@ availability rules. A word formula names its actual denominator: reference
 objects, generated claims, returned tokens, completed requests, and scheduled
 attempts are not interchangeable.
 
-The Document, ASR, Video, Chunking–Embedding, Retrieval–Reranking, Generation,
-and Vector Database references use the following order for each individual metric:
+All benchmark references use the following order for each locally defined metric:
 
 1. **Question:** what the metric answers.
 2. **Calculation:** exactly what is counted, timed, compared, or averaged.

@@ -4,31 +4,33 @@
 
 On this page:
 
-- [Candidates](#candidates)
+- [Purpose and scope](#purpose-and-scope)
+- [Candidates and configurations](#candidates-and-configurations)
 - [Data](#data)
-- [Execution](#execution)
-- [Metrics and why they are used](#metrics-and-why-they-are-used)
-- [MLflow result structure](#mlflow-result-structure)
+- [Metrics and their purpose](#metrics-and-their-purpose)
+- [Evaluation setup](#evaluation-setup)
+- [Benchmark workflow and selection](#benchmark-workflow-and-selection)
+- [Execution and measurements](#execution-and-measurements)
+- [Results and MLflow structure](#results-and-mlflow-structure)
 
 With the image parser and ASR fixed, which keyframe policy recovers useful
 on-screen text at useful times without unnecessary processing and duplicate output?
 
-Visual extraction and frozen ASR execute sequentially in separate workers on
-the isolated GPU. Neither has an artificial VRAM cap in any phase, including
-preflight. GPU-backed model weights cannot offload or silently fall back to CPU.
-Peak VRAM is still measured; actual OOM, placement violations, and unavailable
-required telemetry remain failures. CPU smoke and CUDA telemetry statuses follow
-[shared Peak Device VRAM](../../metrics.md#peak-device-vram).
+## Purpose and scope
 
-RapidOCR visual parsing uses the document backend's verified CPU shape-only
-exception. Shape bookkeeping does not qualify CPU model computation or weight
-offloading; its optimized-graph evidence is retained with visual placement.
+A candidate is one visual keyframe policy with the selected image parser fixed.
+One video supplies a visual quality observation; related videos from the same
+source remain grouped for uncertainty estimation. The selected ASR is prepared
+once per unique video and shared across visual candidates, not compared as a
+second candidate dimension.
+
+### Implementation status
 
 The runner implements the metric contract, grouped run structure, and execution
 flow below. Reviewed authoritative datasets and data-derived protocol selections
 remain separate prerequisites.
 
-## Candidates
+## Candidates and configurations
 
 Development compares nine configurations of three strategies:
 
@@ -95,13 +97,81 @@ Run `python -m experiments.benchmarks.validate video --profile <profile>` after
 preparing the inputs. Frozen-artifact identity checks are separate runtime
 integrity gates.
 
-## Execution
+## Metrics and their purpose
+
+| Role | Metrics | Why they are needed |
+|---|---|---|
+| Primary | Visual Content F1; Timed Visual Occurrence Coverage; Mean Visual First-Detection Delay | Separates useful-content recovery, recovery while visible, and capture delay. Interpret delay with coverage. |
+| Secondary | Visual Content Precision/Recall | Separates unsupported visible text from omissions. |
+| Diagnostic | Duplicate Visual Text Rate | Counts identical repeated output within one visibility occurrence, not genuine reappearance. |
+| Diagnostic | Repeatability Success Rate; Attempt Failure Rate | Separates output agreement and successful delivery from first-output correctness. |
+| Frozen-input diagnostic | WER/CER, word-error rates, spoken timestamps, empty/nonspeech behavior, and ASR failures | Describes the shared audio result; does not compare visual policies. |
+| Operational | Separate visual and audio RTF, p50/p95 latency, cold load, RAM, and VRAM | Keeps audio preparation cost separate from candidate-dependent visual cost. |
+| Descriptor | Mean Selected Frames per Video | Counts actual selected frames even when later parsing fails. |
+
+The [metric definitions](metrics.md) give calculations, examples, edge cases,
+and interval eligibility. Visual quality uses video-macro aggregation; audio
+recognition pools valid complete-video edit counts. Latency/RTF/resource metrics
+retain their own definitions. Null output-dependent quality after failure is read
+with retained failure and support counts, not mistaken for zero error.
+
+Spoken and visible content are separate. Combined audio/visual usefulness is
+checked through the non-locked
+[extraction-to-RAG confirmation](../../rag/final/methodology.md#extraction-to-rag-confirmation),
+not a transcript-dominated combined recall score. Confirmation reports the
+actual full-path latency defined in its metric list, rather than a sum of
+component percentiles. Any additional integrated RTF or resource observation
+would need its own explicit boundary; component ratios or peaks cannot be
+added to invent such a measurement.
+
+## Evaluation setup
 
 The video protocol owns frame-selection ranges, frame-zero/VFR rules, windows,
 overlap/stitching, text unitization, matching, dataset requirements, and execution
 profiles. Frozen audio composes the video and ASR protocols; visual execution
 composes the video and document protocols and the selected image-parser decision.
 Workers verify their resolved identities before loading models.
+
+Visual extraction and frozen ASR execute sequentially in separate workers on
+the isolated GPU. Neither has an artificial VRAM cap in any phase, including
+preflight. GPU-backed model weights cannot offload or silently fall back to CPU.
+Peak VRAM is still measured; actual OOM, placement violations, and unavailable
+required telemetry remain failures. CPU smoke and CUDA telemetry statuses follow
+[shared Peak Device VRAM](../../metrics.md#peak-device-vram).
+
+RapidOCR visual parsing uses the document backend's verified CPU shape-only
+exception. Shape bookkeeping does not qualify CPU model computation or weight
+offloading; its optimized-graph evidence is retained with visual placement.
+
+## Benchmark workflow and selection
+
+1. Run smoke on CPU and CUDA separately, then qualify the selected frozen ASR
+   and executable fixed/scene policies using reviewed development/stress inputs.
+2. Run `development-scene-selection`: the shared audio preparation and qualified
+   scene thresholds 0.30, 0.40, and 0.50 on development videos.
+3. Review that comparison. Write one declared threshold and its source run ID
+   into `selected_scene_threshold` and `selected_scene_source_run_id` in video
+   `protocol.yaml`, then increment the version. The runner never writes them.
+4. Refresh preflight and regenerate frozen ASR because the checksum changed.
+   Run the main `development` comparison with all qualified members of the final
+   nine-policy roster. Fixed/scene results are fresh under the same checksum as
+   hybrid results; do not mix preliminary scores into this comparison.
+5. Record finalists in `data/benchmarks/decisions/video-validation.json`.
+   Evaluate only those finalists on unseen validation videos, with validation's
+   own shared audio preparation.
+6. Record exactly one winner in `video-locked.json`. Run one reporting-only
+   locked invocation on unseen locked videos, including its own audio preparation
+   and the configured three visual attempts per video. Locked evidence does not
+   reopen selection.
+
+Until threshold freezing, the authoritative threshold/source run ID are null
+and hybrids cannot execute. Smoke's 0.40 threshold is fixture-only evidence.
+Qualification before freezing covers the executable roster; afterward it covers
+the final declared roster under the new checksum. Definitive hardware exclusions
+stay visible. Missing preparation/readiness evidence blocks execution rather than
+silently changing the selected ASR or parser.
+
+### Preflight input envelope
 
 Preflight selects reviewed development videos that collectively cover the largest
 durations and frame dimensions. It retains each input not covered by another
@@ -112,6 +182,8 @@ envelope; otherwise review larger development stress inputs and rerun preflight.
 The fingerprint binds these inputs, FFmpeg, model identities, all composed
 protocols, and actual ASR dtype. Relative manifest paths and resolved worker paths
 identify the same assets.
+
+## Execution and measurements
 
 ### Shared audio preparation
 
@@ -179,62 +251,7 @@ outputs across the three scheduled pairs. Numeric precision, normalization,
 ordering, and stable ID mapping are frozen. Every attempt executes extraction,
 not a cached previous result.
 
-### Development, validation, and locked
-
-1. Run smoke on CPU and CUDA separately, then qualify the selected frozen ASR
-   and executable fixed/scene policies using reviewed development/stress inputs.
-2. Run `development-scene-selection`: the shared audio preparation and qualified
-   scene thresholds 0.30, 0.40, and 0.50 on development videos.
-3. Review that comparison. Write one declared threshold and its source run ID
-   into `selected_scene_threshold` and `selected_scene_source_run_id` in video
-   `protocol.yaml`, then increment the version. The runner never writes them.
-4. Refresh preflight and regenerate frozen ASR because the checksum changed.
-   Run the main `development` comparison with all qualified members of the final
-   nine-policy roster. Fixed/scene results are fresh under the same checksum as
-   hybrid results; do not mix preliminary scores into this comparison.
-5. Record finalists in `data/benchmarks/decisions/video-validation.json`.
-   Evaluate only those finalists on unseen validation videos, with validation's
-   own shared audio preparation.
-6. Record exactly one winner in `video-locked.json`. Run one reporting-only
-   locked invocation on unseen locked videos, including its own audio preparation
-   and the configured three visual attempts per video. Locked evidence does not
-   reopen selection.
-
-Until threshold freezing, the authoritative threshold/source run ID are null
-and hybrids cannot execute. Smoke's 0.40 threshold is fixture-only evidence.
-Qualification before freezing covers the executable roster; afterward it covers
-the final declared roster under the new checksum. Definitive hardware exclusions
-stay visible. Missing preparation/readiness evidence blocks execution rather than
-silently changing the selected ASR or parser.
-
-## Metrics and why they are used
-
-| Role | Metrics | Why they are needed |
-|---|---|---|
-| Primary | Visual Content F1; Timed Visual Occurrence Coverage; Mean Visual First-Detection Delay | Separates useful-content recovery, recovery while visible, and capture delay. Interpret delay with coverage. |
-| Secondary | Visual Content Precision/Recall | Separates unsupported visible text from omissions. |
-| Diagnostic | Duplicate Visual Text Rate | Counts identical repeated output within one visibility occurrence, not genuine reappearance. |
-| Diagnostic | Repeatability Success Rate; Attempt Failure Rate | Separates output agreement and successful delivery from first-output correctness. |
-| Frozen-input diagnostic | WER/CER, word-error rates, spoken timestamps, empty/nonspeech behavior, and ASR failures | Describes the shared audio result; does not compare visual policies. |
-| Operational | Separate visual and audio RTF, p50/p95 latency, cold load, RAM, and VRAM | Keeps audio preparation cost separate from candidate-dependent visual cost. |
-| Descriptor | Mean Selected Frames per Video | Counts actual selected frames even when later parsing fails. |
-
-The [metric definitions](metrics.md) give calculations, examples, edge cases,
-and interval eligibility. Visual quality uses video-macro aggregation; audio
-recognition pools valid complete-video edit counts. Latency/RTF/resource metrics
-retain their own definitions. Null output-dependent quality after failure is read
-with retained failure and support counts, not mistaken for zero error.
-
-Spoken and visible content are separate. Combined audio/visual usefulness is
-checked through the non-locked
-[extraction-to-RAG confirmation](../../rag/final/methodology.md#extraction-to-rag-confirmation),
-not a transcript-dominated combined recall score. Confirmation reports the
-actual full-path latency defined in its metric list, rather than a sum of
-component percentiles. Any additional integrated RTF or resource observation
-would need its own explicit boundary; component ratios or peaks cannot be
-added to invent such a measurement.
-
-## MLflow result structure
+## Results and MLflow structure
 
 Video uses `EduMind / Video`. One parent groups audio preparation and the visual
 comparison. Display names omit timestamps and benchmark prefixes; unique run IDs,
@@ -356,7 +373,7 @@ Do not create a separate child run for each video, window, metric, or repetition
 Applicable sample-based aggregates use the
 [shared metric suffix convention](../../methodology.md#shared-mlflow-metric-convention).
 Use [shared confidence intervals](../../metrics.md#confidence-intervals)
-with the [video-specific eligibility and source-group rules](metrics.md#video-confidence-intervals).
+with the [video-specific eligibility and source-group rules](metrics.md#aggregation-and-confidence-intervals).
 ASR windows and repeated visual attempts remain dependent parts of source videos,
 not extra independent samples. Artifact nulls and MLflow scalar omission follow
 the [shared availability rules](../../metrics.md#shared-availability-rules).

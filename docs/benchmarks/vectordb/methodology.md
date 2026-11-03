@@ -4,40 +4,20 @@
 
 On this page:
 
-- [Implementation boundary](#implementation-boundary)
-- [Terminology and unit of comparison](#terminology-and-unit-of-comparison)
-- [Candidate configurations](#candidate-configurations)
+- [Purpose and scope](#purpose-and-scope)
+- [Candidates and configurations](#candidates-and-configurations)
 - [Data](#data)
-- [Common input and output rules](#common-input-and-output-rules)
-- [Per-candidate execution](#per-candidate-execution)
-- [Result completeness and advancement](#result-completeness-and-advancement)
-- [Development, validation, and locked test](#development-validation-and-locked-test)
-- [Metrics and why they are used](#metrics-and-why-they-are-used)
-- [MLflow result structure](#mlflow-result-structure)
+- [Metrics and their purpose](#metrics-and-their-purpose)
+- [Evaluation setup](#evaluation-setup)
+- [Benchmark workflow and selection](#benchmark-workflow-and-selection)
+- [Execution and measurements](#execution-and-measurements)
+- [Results and MLflow structure](#results-and-mlflow-structure)
 
 Which database and configuration preserve vector-search accuracy and useful
 educational evidence while providing suitable search, document-maintenance,
 startup, memory, and storage performance?
 
-## Implementation boundary
-
-This page defines the revised benchmark contract. The existing vector drivers
-have not yet been migrated to it. Their synthetic workloads, configuration
-tuning, metric keys, agreement checks, and separate retrieval-validation entry
-point must not be presented as execution of this revision. In particular, the
-current driver does not implement the complete frozen-configuration validation
-and locked workflow, tie-aware @20 scoring, or the reporting structure below.
-The standalone validated-input/report interface also remains planned for this
-suite. [The runbook](../running.md#9-vector-databases) distinguishes existing
-diagnostic commands from the target lifecycle.
-
-Reviewed data, configuration ranges, load conditions, and independent-support
-requirements remain in [pending data review](../pending-data-review.md#vector-databases).
-Historical runs retain their original protocols; they are not relabeled with
-the revised metrics. A successful old driver exit does not establish conformance
-with this contract.
-
-## Terminology and unit of comparison
+## Purpose and scope
 
 One candidate is a **database–configuration pair**. The database identity alone
 does not determine search accuracy, build cost, or memory use. One child run
@@ -64,7 +44,25 @@ even when its adapter needs several API batches. A document with 40 chunks is
 not counted as 40 insert operations. Chunk counts and payload bytes explain
 the work in the operation artifact.
 
-## Candidate configurations
+### Implementation status
+
+This page defines the revised benchmark contract. The existing vector drivers
+have not yet been migrated to it. Their synthetic workloads, configuration
+tuning, metric keys, agreement checks, and separate retrieval-validation entry
+point must not be presented as execution of this revision. In particular, the
+current driver does not implement the complete frozen-configuration validation
+and locked workflow, tie-aware @20 scoring, or the reporting structure below.
+The standalone validated-input/report interface also remains planned for this
+suite. [The runbook](../running.md#9-vector-databases) distinguishes existing
+diagnostic commands from the target lifecycle.
+
+Reviewed data, configuration ranges, load conditions, and independent-support
+requirements remain in [pending data review](../pending-data-review.md#vector-databases).
+Historical runs retain their original protocols; they are not relabeled with
+the revised metrics. A successful old driver exit does not establish conformance
+with this contract.
+
+## Candidates and configurations
 
 | Database | Why it is included |
 |---|---|
@@ -138,7 +136,21 @@ its inputs against that report before resource/timing windows. Database health,
 generated output validity, index readiness, and write visibility remain runtime
 checks, not claims made by the data validator.
 
-## Common input and output rules
+## Metrics and their purpose
+
+| Role | Metrics | Why they are needed |
+|---|---|---|
+| Primary | ANN Recall@20; Filtered ANN Recall@20 | Measures exact-neighbour preservation in each search condition. |
+| Secondary | nDCG, Evidence-unit Recall, Evidence-token Precision at @3/@5 | Checks the frozen stack's useful evidence and ordering. |
+| Diagnostic | Candidate-pool Evidence-unit Recall@20; Ranking Repeatability; per-operation Request Error Rates; Filter Violation Rate | Explains available evidence, database output stability, execution failures, and forbidden returns. |
+| Operational | Database Search and Full-Stack Retrieval Latency p50/p95; QPS; Initial Build Time; Insert/Update/Delete Latency p50/p95; Startup Time; Peak Server RAM | Separates search/load, application wait, maintenance, readiness and memory costs. |
+| Descriptor | Persistent Storage Size | Records persistent footprint at a comparable checkpoint. |
+
+The [metric reference](metrics.md) owns questions, calculations, examples,
+directions and genuine edge cases. Probe outcomes and workload inventories remain
+validation evidence/parameters, not additional quality metrics.
+
+## Evaluation setup
 
 ### Frozen upstream stack and exact reference
 
@@ -183,7 +195,7 @@ usable response with known forbidden records supplies a Filter Violation Rate
 event and retains its execution-success timing/QPS observation, but cannot
 supply accepted ANN or downstream evidence quality. Malformed, duplicate-ID,
 unknown-ID and nonfinite-score responses are execution errors instead. The
-[search-outcome table](metrics.md#scoring-inputs-and-result-status) fixes these
+[search-outcome table](metrics.md#scoring-inputs-eligibility-and-result-status) fixes these
 cohorts; operational observations do not excuse a failed correctness requirement.
 
 A well-formed eligible response may contain fewer than the requested neighbours.
@@ -209,7 +221,49 @@ Do not add a perfect Ranking Repeatability or zero Request Error Rate selection
 gate. Required correctness and verification remain necessary for trustworthy
 evidence; performance trade-offs cannot excuse invalid results.
 
-## Per-candidate execution
+## Benchmark workflow and selection
+
+| Profile | Candidate scope | Purpose and output |
+|---|---|---|
+| Smoke | Declared small fixtures for database paths | Wiring/conformance checks; no selection or authoritative CI. |
+| Development | All declared database–configuration pairs | Compare the search space and review trade-offs; write the finalist decision. |
+| Validation | Selected development pairs with exactly their recorded settings | Rebuild on the validation corpus without retuning; write one winner decision. |
+| Locked | Exactly one selected validation pair | Report on held-out inputs without configuration search or reselection. |
+
+Both database and applicable full-stack evidence belong to the pair's comparison.
+Early server smoke/stress preparation may precede upstream selection; authoritative
+application-impact measurements require the frozen stack. Changed upstream choices
+require a new identified comparison, not mixed results. The two execution paths
+are not independent ways to select conflicting winners. The database-only suite
+has no CUDA smoke or GPU preflight; integration models retain their upstream checks.
+
+Engineer decisions live in `data/benchmarks/decisions/`.
+`vector-database-validation.json` references complete development candidate IDs,
+exact configurations and source runs; `vector-database-locked.json` references
+exactly one complete validation pair. Both retain reviewer, date, rationale, and
+input/protocol provenance under the shared decision contract. Final RAG consumes
+the same selected database configuration without new selection.
+
+### Result completeness and advancement
+
+Apply [shared execution, quality and integrity accounting](../metrics.md#execution-accounting-and-result-completeness).
+Retain every scheduled outcome, including not-executed work. A failed first
+request leaves dependent quality unavailable; independent timings/resources
+survive. Later failures do not erase completed first quality. Ordinary ANN misses
+are scored search outcomes, not request errors.
+
+Submitted-operation error rates and completed-response filter violations have
+different denominators. An execution failure is not a checkable filter response.
+Missing checks mean unverified, not pass. Partial required quality remains a
+labelled diagnostic, not a complete comparison obtained by dropping failed queries.
+Conditional successful latency still retains its failure coverage.
+
+The engineer reviews complete applicable evidence and records finalists; no
+weighted score, automatic winner, or extra zero-request-error rule is implied.
+Protocol violations and missing required evidence block authoritative use of
+affected results. No runner promotes application settings automatically.
+
+## Execution and measurements
 
 Run candidate servers sequentially with controlled CPU/RAM allocations, client
 resources, connection reuse, request payloads, and pinned software. Unrelated
@@ -326,63 +380,7 @@ an apparent-size/allocated-block fallback. Exclude image layers, model snapshots
 and benchmark artifacts. Later/partial footprints retain their checkpoint labels
 but do not replace the completed-build scalar.
 
-## Result completeness and advancement
-
-Apply [shared execution, quality and integrity accounting](../metrics.md#execution-accounting-and-result-completeness).
-Retain every scheduled outcome, including not-executed work. A failed first
-request leaves dependent quality unavailable; independent timings/resources
-survive. Later failures do not erase completed first quality. Ordinary ANN misses
-are scored search outcomes, not request errors.
-
-Submitted-operation error rates and completed-response filter violations have
-different denominators. An execution failure is not a checkable filter response.
-Missing checks mean unverified, not pass. Partial required quality remains a
-labelled diagnostic, not a complete comparison obtained by dropping failed queries.
-Conditional successful latency still retains its failure coverage.
-
-The engineer reviews complete applicable evidence and records finalists; no
-weighted score, automatic winner, or extra zero-request-error rule is implied.
-Protocol violations and missing required evidence block authoritative use of
-affected results. No runner promotes application settings automatically.
-
-## Development, validation, and locked test
-
-| Profile | Candidate scope | Purpose and output |
-|---|---|---|
-| Smoke | Declared small fixtures for database paths | Wiring/conformance checks; no selection or authoritative CI. |
-| Development | All declared database–configuration pairs | Compare the search space and review trade-offs; write the finalist decision. |
-| Validation | Selected development pairs with exactly their recorded settings | Rebuild on the validation corpus without retuning; write one winner decision. |
-| Locked | Exactly one selected validation pair | Report on held-out inputs without configuration search or reselection. |
-
-Both database and applicable full-stack evidence belong to the pair's comparison.
-Early server smoke/stress preparation may precede upstream selection; authoritative
-application-impact measurements require the frozen stack. Changed upstream choices
-require a new identified comparison, not mixed results. The two execution paths
-are not independent ways to select conflicting winners. The database-only suite
-has no CUDA smoke or GPU preflight; integration models retain their upstream checks.
-
-Engineer decisions live in `data/benchmarks/decisions/`.
-`vector-database-validation.json` references complete development candidate IDs,
-exact configurations and source runs; `vector-database-locked.json` references
-exactly one complete validation pair. Both retain reviewer, date, rationale, and
-input/protocol provenance under the shared decision contract. Final RAG consumes
-the same selected database configuration without new selection.
-
-## Metrics and why they are used
-
-| Role | Metrics | Why they are needed |
-|---|---|---|
-| Primary | ANN Recall@20; Filtered ANN Recall@20 | Measures exact-neighbour preservation in each search condition. |
-| Secondary | nDCG, Evidence-unit Recall, Evidence-token Precision at @3/@5 | Checks the frozen stack's useful evidence and ordering. |
-| Diagnostic | Candidate-pool Evidence-unit Recall@20; Ranking Repeatability; per-operation Request Error Rates; Filter Violation Rate | Explains available evidence, database output stability, execution failures, and forbidden returns. |
-| Operational | Database Search and Full-Stack Retrieval Latency p50/p95; QPS; Initial Build Time; Insert/Update/Delete Latency p50/p95; Startup Time; Peak Server RAM | Separates search/load, application wait, maintenance, readiness and memory costs. |
-| Descriptor | Persistent Storage Size | Records persistent footprint at a comparable checkpoint. |
-
-The [metric reference](metrics.md) owns questions, calculations, examples,
-directions and genuine edge cases. Probe outcomes and workload inventories remain
-validation evidence/parameters, not additional quality metrics.
-
-## MLflow result structure
+## Results and MLflow structure
 
 Use `EduMind / Vector Database`, one parent per comparison and flat children per
 database–configuration pair. Names omit dates and timestamps. These aliases
@@ -470,6 +468,6 @@ artifacts and metric-specific support fields.
 
 Parent comparison tables preserve conditions and upstream identities. Paired
 differences use aligned queries/source groups or independent load windows as
-defined in [confidence intervals](metrics.md#vector-database-confidence-intervals).
+defined in [confidence intervals](metrics.md#aggregation-and-confidence-intervals).
 Counts, configurations and descriptive storage facts do not acquire fabricated
 winner directions or CIs. This reporting contract does not certify old artifacts.

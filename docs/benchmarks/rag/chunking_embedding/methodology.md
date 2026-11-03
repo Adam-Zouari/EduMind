@@ -4,33 +4,19 @@
 
 On this page:
 
-- [Implementation boundary](#implementation-boundary)
-- [Terminology and unit of comparison](#terminology-and-unit-of-comparison)
-- [Candidate pairs](#candidate-pairs)
+- [Purpose and scope](#purpose-and-scope)
+- [Candidates and configurations](#candidates-and-configurations)
 - [Data](#data)
-- [Common input and output rules](#common-input-and-output-rules)
-- [Per-candidate execution](#per-candidate-execution)
-- [Result completeness and advancement](#result-completeness-and-advancement)
-- [Development, validation, and locked test](#development-validation-and-locked-test)
-- [Metrics and why they are used](#metrics-and-why-they-are-used)
-- [MLflow result structure](#mlflow-result-structure)
+- [Metrics and their purpose](#metrics-and-their-purpose)
+- [Evaluation setup](#evaluation-setup)
+- [Benchmark workflow and selection](#benchmark-workflow-and-selection)
+- [Execution and measurements](#execution-and-measurements)
+- [Results and MLflow structure](#results-and-mlflow-structure)
 
 Which complete chunker/embedding pair retrieves verified educational evidence
 best?
 
-## Implementation boundary
-
-The runner implements the reporting contract below: separate load/build/query
-measurements, first-ranking quality and context descriptors, retained per-attempt
-rankings, diagnostic all-pairs Ranking Repeatability, and explicit execution,
-quality, and integrity coverage. Valid ranking changes are not a failure gate.
-
-Independent-source CI support requirements still need data review. Unfrozen
-support retains descriptive points with null bounds and an exploratory-readiness
-record; it cannot support authoritative advancement. Historical runs are not
-rewritten or reinterpreted as results under this protocol.
-
-## Terminology and unit of comparison
+## Purpose and scope
 
 Chunking and embedding are evaluated together. The candidate is the complete
 `chunker|embedding` pair: a chunker cannot be scored until its chunks are
@@ -64,7 +50,19 @@ question mean `2 / 3`. The same weighting is applied separately to each
 quality metric and evidence slice. Warm-latency percentiles instead use the
 per-query observations defined below; they are not document-macro latency means.
 
-## Candidate pairs
+### Implementation status
+
+The runner implements the reporting contract below: separate load/build/query
+measurements, first-ranking quality and context descriptors, retained per-attempt
+rankings, diagnostic all-pairs Ranking Repeatability, and explicit execution,
+quality, and integrity coverage. Valid ranking changes are not a failure gate.
+
+Independent-source CI support requirements still need data review. Unfrozen
+support retains descriptive points with null bounds and an exploratory-readiness
+record; it cannot support authoritative advancement. Historical runs are not
+rewritten or reinterpreted as results under this protocol.
+
+## Candidates and configurations
 
 The declared matrix crosses every chunking strategy with every embedding model.
 Development evaluates its preflight-qualified members. The result belongs to
@@ -126,7 +124,38 @@ execution device.
 Generated chunks and native model lengths remain runtime checks: valid source
 data cannot guarantee every candidate's boundaries, vectors, or inference inputs.
 
-## Common input and output rules
+## Metrics and their purpose
+
+| Category | Metrics | Why they are needed |
+|---|---|---|
+| Retrieval quality | **nDCG@3/@5**, **Evidence-unit Recall@3/@5**, **Evidence-token Precision@3/@5**; alpha-nDCG@3/@5 diagnostic | Measures evidence-richness ordering, evidence completeness, and context concentration; alpha-nDCG diagnoses novelty on the same answerable questions. |
+| Evidence slices | Retrieval metrics repeated for text, table, formula, and mixed questions | Reveals a pair that performs well only on the majority evidence type. |
+| Diagnostic | Ranking Repeatability | Describes valid top-five ordering stability and delivery across all scheduled attempt pairs without requiring a perfect score. |
+| Operational | Cold load; chunking, chunk embedding, total corpus-build time and source-token throughput; query-embedding, vector-search, and complete warm p50/p95; peak RAM/VRAM | Measures complete costs and explains their non-overlapping components without double-counting them as independent quality benefits. |
+| Workload and storage | Corpus counts, source/indexed tokens, chunk count/lengths, mean/p95 retrieved-context tokens at @3/@5, vector dimension/dtype, matrix bytes | Describes preparation, returned context, and storage; descriptors have no automatic better direction. |
+
+The three bold metric families are primary and reviewed separately at both
+cutoffs. Apply the [shared retrieval-quality definitions](../../metrics.md#retrieval-evidence-quality)
+to each pair's complete corpus. nDCG measures relevance ranking; Recall measures
+distinct recovery, and token Precision measures context concentration.
+Alpha-nDCG diagnoses novelty rather than a relevance failure or demonstrated
+harm from repeated evidence. The
+[data-review checklist](../../pending-data-review.md) tracks whether exact
+normalization is practical; any change is frozen before held-out evaluation.
+First-hit metrics and chunk-level precision/recall are omitted because they add
+little coverage information or use denominators changed by the chunker. Exact
+definitions, examples, directions, and confidence-interval rules are in
+[chunking and embedding metrics](metrics.md).
+
+The four retrieval metric families are reported overall and for mutually
+exclusive `text`, `table`, `formula`, and `mixed` slices. A mixed question
+requires at least two evidence types. Each slice reports reference-eligible
+question and document counts shared by all four metrics, plus metric-specific
+contributing and unavailable support. Unanswerable questions
+remain a workload count and do not enter inference, timing, or retrieval-quality
+aggregates.
+
+## Evaluation setup
 
 Every pair receives the same frozen documents, answerable questions, and
 evidence annotations. Candidate-specific text repair, query rewriting, reranking,
@@ -178,7 +207,76 @@ again for one model. An oversized input is reported as `input_length_exceeded`:
 a preflight input-contract failure blocks development until resolved, while an
 evaluation child with that failure makes its parent comparison incomplete.
 
-## Per-candidate execution
+## Benchmark workflow and selection
+
+```text
+smoke:
+separate CPU/CUDA runs of declared chunking and embedding paths on tiny committed fixtures
+-> verify compatibility checks, embedding, ranking, scoring, and artifacts
+
+preflight:
+qualify all 8 chunkers × 6 embeddings = 48 declared pairs on reviewed development/stress inputs
+
+development:
+evaluate exactly the qualified subset on 100 QASPER papers plus the structured supplement
+-> retain all hardware exclusions in qualification provenance
+-> engineer selects up to three complete finalist pairs
+
+validation:
+selected finalists on 40 unseen QASPER papers plus their structured supplement
+-> engineer records exactly one selected chunker/embedding pair
+
+locked test:
+the selected pair on 40 locked QASPER papers plus their structured supplement
+-> reporting only, with no further component tuning
+```
+
+Smoke validates wiring only. Development compares the qualified matrix members, and
+validation checks the finalists on unseen papers. Parent reporting distinguishes
+recorded failures from missing execution, partial quality, and invalid evidence.
+The component locked report evaluates the selected pair
+in isolation and is not another chunking/embedding selection round.
+
+Validation and locked decisions must reference complete source comparisons
+with the same protocol checksum and current qualification fingerprint. Changed
+model snapshots, execution settings, software, or hardware require fresh
+qualification and selection evidence rather than reuse of an older decision.
+
+### Result completeness and advancement
+
+Each answerable question retains its first-ranking metric values, status/reason,
+and planned evidence support even after failure. Quality averages defined
+question scores within each source document and then macro-averages documents.
+Keep scheduled, eligible, scored, failed, and unavailable counts per metric/slice;
+successful-latency counts are separate because a later request may succeed when
+first-ranking quality is unavailable.
+
+Result statuses and slice availability use the
+[shared availability rules](../../metrics.md#shared-availability-rules).
+
+Partial quality aggregates remain labelled diagnostics in artifacts, not normal
+`quality.*` aggregates, complete-result leaderboard entries, or paired selection
+comparisons. For example, `0.90` on 8/10 queries cannot establish superiority
+over `0.85` on 10/10. Advancement requires complete required quality observations
+and successful run-level validity, not merely a high surviving-output average.
+The engineer still chooses among valid complete alternatives; no weighted score
+or automatic quality winner is introduced.
+
+A completed build component and valid resource observations survive later
+failures. Incomplete matrix preparation has no final matrix-byte or completed
+total-build value, even if chunking completed. Retain known progress and
+elapsed-to-failure without adding a partial-matrix-bytes metric. Scope labels
+do not turn missing quality, execution, or integrity into complete evidence.
+
+Mean/p95 Retrieved Context Tokens at @3/@5 follow the
+[shared context-workload rule](../../metrics.md#retrieved-context-workload).
+Count each query's valid designated-first ranking prefix with the fixed tokenizer,
+then average/query-percentile the totals. This descriptor is query-weighted, not
+document-macro quality. Later rankings never replace a failed first observation;
+partial required totals stay labelled workload diagnostics. No token budget or
+new descriptor CI is introduced.
+
+## Execution and measurements
 
 One child run executes one planned pair in a fresh operating-system process.
 The requested device, dtype, model and tokenizer revisions, query/document
@@ -286,106 +384,7 @@ prevents a complete quality comparison. Definitive hardware exclusions recorded
 by preflight are different: those candidates never enter development, and their
 reasons remain in its qualification provenance.
 
-## Result completeness and advancement
-
-Each answerable question retains its first-ranking metric values, status/reason,
-and planned evidence support even after failure. Quality averages defined
-question scores within each source document and then macro-averages documents.
-Keep scheduled, eligible, scored, failed, and unavailable counts per metric/slice;
-successful-latency counts are separate because a later request may succeed when
-first-ranking quality is unavailable.
-
-Result statuses and slice availability use the
-[shared availability rules](../../metrics.md#shared-availability-rules).
-
-Partial quality aggregates remain labelled diagnostics in artifacts, not normal
-`quality.*` aggregates, complete-result leaderboard entries, or paired selection
-comparisons. For example, `0.90` on 8/10 queries cannot establish superiority
-over `0.85` on 10/10. Advancement requires complete required quality observations
-and successful run-level validity, not merely a high surviving-output average.
-The engineer still chooses among valid complete alternatives; no weighted score
-or automatic quality winner is introduced.
-
-A completed build component and valid resource observations survive later
-failures. Incomplete matrix preparation has no final matrix-byte or completed
-total-build value, even if chunking completed. Retain known progress and
-elapsed-to-failure without adding a partial-matrix-bytes metric. Scope labels
-do not turn missing quality, execution, or integrity into complete evidence.
-
-Mean/p95 Retrieved Context Tokens at @3/@5 follow the
-[shared context-workload rule](../../metrics.md#retrieved-context-workload).
-Count each query's valid designated-first ranking prefix with the fixed tokenizer,
-then average/query-percentile the totals. This descriptor is query-weighted, not
-document-macro quality. Later rankings never replace a failed first observation;
-partial required totals stay labelled workload diagnostics. No token budget or
-new descriptor CI is introduced.
-
-## Development, validation, and locked test
-
-```text
-smoke:
-declared chunking and embedding paths on tiny committed fixtures
--> verify compatibility checks, embedding, ranking, scoring, and artifacts
-
-development:
-8 chunkers × 6 embeddings = 48 declared pairs
--> qualify all 48 using reviewed development/stress inputs
--> evaluate exactly the qualified subset on 100 QASPER papers plus the structured supplement
--> retain all hardware exclusions in qualification provenance
--> engineer selects up to three complete finalist pairs
-
-validation:
-selected finalists on 40 unseen QASPER papers plus their structured supplement
--> engineer records exactly one selected chunker/embedding pair
-
-locked test:
-the selected pair on 40 locked QASPER papers plus their structured supplement
--> reporting only, with no further component tuning
-```
-
-Smoke validates wiring only. Development compares the qualified matrix members, and
-validation checks the finalists on unseen papers. Parent reporting distinguishes
-recorded failures from missing execution, partial quality, and invalid evidence.
-The component locked report evaluates the selected pair
-in isolation and is not another chunking/embedding selection round.
-
-Validation and locked decisions must reference complete source comparisons
-with the same protocol checksum and current qualification fingerprint. Changed
-model snapshots, execution settings, software, or hardware require fresh
-qualification and selection evidence rather than reuse of an older decision.
-
-## Metrics and why they are used
-
-| Category | Metrics | Why they are needed |
-|---|---|---|
-| Retrieval quality | **nDCG@3/@5**, **Evidence-unit Recall@3/@5**, **Evidence-token Precision@3/@5**; alpha-nDCG@3/@5 diagnostic | Measures evidence-richness ordering, evidence completeness, and context concentration; alpha-nDCG diagnoses novelty on the same answerable questions. |
-| Evidence slices | Retrieval metrics repeated for text, table, formula, and mixed questions | Reveals a pair that performs well only on the majority evidence type. |
-| Diagnostic | Ranking Repeatability | Describes valid top-five ordering stability and delivery across all scheduled attempt pairs without requiring a perfect score. |
-| Operational | Cold load; chunking, chunk embedding, total corpus-build time and source-token throughput; query-embedding, vector-search, and complete warm p50/p95; peak RAM/VRAM | Measures complete costs and explains their non-overlapping components without double-counting them as independent quality benefits. |
-| Workload and storage | Corpus counts, source/indexed tokens, chunk count/lengths, mean/p95 retrieved-context tokens at @3/@5, vector dimension/dtype, matrix bytes | Describes preparation, returned context, and storage; descriptors have no automatic better direction. |
-
-The three bold metric families are primary and reviewed separately at both
-cutoffs. Apply the [shared retrieval-quality definitions](../../metrics.md#retrieval-evidence-quality)
-to each pair's complete corpus. nDCG measures relevance ranking; Recall measures
-distinct recovery, and token Precision measures context concentration.
-Alpha-nDCG diagnoses novelty rather than a relevance failure or demonstrated
-harm from repeated evidence. The
-[data-review checklist](../../pending-data-review.md) tracks whether exact
-normalization is practical; any change is frozen before held-out evaluation.
-First-hit metrics and chunk-level precision/recall are omitted because they add
-little coverage information or use denominators changed by the chunker. Exact
-definitions, examples, directions, and confidence-interval rules are in
-[chunking and embedding metrics](metrics.md).
-
-The four retrieval metric families are reported overall and for mutually
-exclusive `text`, `table`, `formula`, and `mixed` slices. A mixed question
-requires at least two evidence types. Each slice reports reference-eligible
-question and document counts shared by all four metrics, plus metric-specific
-contributing and unavailable support. Unanswerable questions
-remain a workload count and do not enter inference, timing, or retrieval-quality
-aggregates.
-
-## MLflow result structure
+## Results and MLflow structure
 
 Chunking/embedding uses `EduMind / Chunking–Embedding` and one parent per fair
 comparison. Independent CPU/CUDA smoke parents precede preflight; the final
@@ -539,7 +538,7 @@ does not imply complete execution or quality. Report each candidate's coverage
 and integrity without a blanket parent-failure rule for every measured error.
 
 Aggregation and uncertainty follow the
-[chunking and embedding confidence-interval contract](metrics.md#chunking-and-embedding-confidence-intervals).
+[chunking and embedding confidence-interval contract](metrics.md#aggregation-and-confidence-intervals).
 Evidence slices use the classifications above and report their contributing
 question and document counts.
 

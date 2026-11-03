@@ -50,6 +50,37 @@ The shared rules on this page apply alongside each benchmark's specific contract
 | Vector databases | [Methodology](vectordb/methodology.md) | [Metrics](vectordb/metrics.md) |
 | Final RAG and human review | [Methodology](rag/final/methodology.md) | [Metrics](rag/final/metrics.md) |
 
+## How to read the benchmark guides
+
+Every benchmark methodology follows the same reading order:
+
+1. **Purpose and scope:** the question being tested, exclusions, candidate unit,
+   and observation unit.
+2. **Candidates and configurations:** what is compared; Final RAG instead
+   describes its one **Frozen system**.
+3. **Data:** inputs, annotations, splits, and validation prerequisites.
+4. **Metrics and their purpose:** a brief account of what constitutes useful
+   quality, reliability, performance, and resource evidence.
+5. **Evaluation setup:** fixed conditions, permitted candidate differences,
+   output requirements, and evaluator setup.
+6. **Benchmark workflow and selection:** applicable profiles, their sequence,
+   completeness requirements, and engineer-authored decisions.
+7. **Execution and measurements:** what happens inside a run, including
+   initialization, warmup, measured attempts, scoring, monitoring, and cleanup.
+8. **Results and MLflow structure:** where the recorded evidence can be inspected.
+
+Domain-specific phases belong beneath those headings. Document configuration
+screens, video's shared ASR preparation, and Final RAG's locked-only workflow
+remain distinct procedures; a common reading order does not make their
+scientific contracts identical. Implementation-status notes identify remaining
+work without redefining the approved procedure.
+
+Detailed metric calculations, examples, edge cases, aggregation, and intervals
+belong in the paired metric reference. Identical cross-benchmark rules live in
+these shared guides and are linked locally. Data checks belong in the
+[data-validation guide](data-validation.md), commands in the [runbook](running.md),
+and public screening evidence in [model selection](model-selection.md).
+
 ## Benchmark execution profiles
 
 Each profile consumes reviewed inputs. The shared
@@ -64,9 +95,10 @@ inputs; a development report does not certify a different validation dataset.
 Those checks are outside model loading, warmup, measured latency, and candidate
 resource monitoring. Valid inputs do not make every metric applicable to every
 row; task eligibility and prediction failures follow the metric contracts.
-Document, ASR, video, and chunking–embedding implement standalone validation and report verification.
-The remaining suites retain inline checks until their validator/report-reuse
-interface is implemented.
+Document, ASR, video, chunking–embedding, retrieval–reranking, and generation
+implement standalone validation and report verification. Vector Database and
+Final RAG retain inline checks until their validator/report-reuse interface is
+implemented; the [data-validation guide](data-validation.md) records that boundary.
 The benchmark `validation` profile means evaluating finalists on unseen data,
 not either of these data checks.
 
@@ -245,7 +277,7 @@ can run. First-use work during that build remains in its build-time measurement.
 It then runs the one query warmup and measures queries on the fixed corpus;
 query repetitions never rebuild the matrix. Offline scoring and bootstrap work
 begin after the candidate resource window ends. See the
-[suite lifecycle](rag/chunking_embedding/methodology.md#per-candidate-execution).
+[suite lifecycle](rag/chunking_embedding/methodology.md#execution-and-measurements).
 
 The [shared execution-accounting rules](metrics.md#execution-accounting-and-result-completeness)
 distinguish a recorded request failure, explicitly unexecuted required work, and
@@ -479,13 +511,13 @@ EduMind / <Benchmark>
 
 Only applicable phases appear. Vector Database omits CUDA smoke and preflight;
 its own locked report remains part of the target contract, subject to the
-[vector implementation boundary](vectordb/methodology.md#implementation-boundary).
+[vector implementation boundary](vectordb/methodology.md#implementation-status).
 Its flat children are database–configuration pairs, not hidden configuration
 trials beneath one database winner. Final RAG has only a locked parent with one
 frozen complete-system child. Document uses source-specific parents: its locked
 invocation reports the selected PDF route, selected image route, and fixed DOCX
 route as one frozen routing policy, not three competing winners. See the
-[Document run structure](extraction/document/methodology.md#mlflow-result-structure).
+[Document run structure](extraction/document/methodology.md#results-and-mlflow-structure).
 Video groups its frozen-ASR preparation child and visual candidates under one
 comparison parent. The preliminary scene-selection comparison has its own
 `development-scene-selection` parent; the main `development` parent compares the

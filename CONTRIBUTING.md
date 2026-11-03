@@ -47,11 +47,17 @@ python -m pytest tests/test_benchmark_metrics.py tests/test_benchmark_datasets.p
 - Put shared lifecycle and decision rules in the
   [shared methodology](docs/benchmarks/methodology.md). Keep each benchmark's
   candidates, data, procedures, metric rationale, and limitations in its linked
-  methodology page.
+  methodology page. Follow the
+  [common reading order](docs/benchmarks/methodology.md#how-to-read-the-benchmark-guides),
+  including metric purpose before detailed setup and the overall workflow before
+  individual-run execution. Use domain-specific subsections rather than inventing
+  inapplicable profiles or duplicating shared contracts.
 - Put shared measurement conventions in the
   [shared metric reference](docs/benchmarks/metrics.md). Keep individual metric
   definitions, calculations, examples, and edge cases in the linked benchmark
-  metric pages. Define genuinely identical cross-benchmark rules once in the
+  metric pages, following the
+  [metric-reference structure](docs/benchmarks/metrics.md#how-to-read-a-metric-reference).
+  Define genuinely identical cross-benchmark rules once in the
   shared reference, then link local applications to them. Preserve differences
   in denominator, eligibility, aggregation, and lifecycle windows; equal names
   alone do not justify merging definitions.

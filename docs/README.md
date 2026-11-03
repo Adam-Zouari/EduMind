@@ -49,7 +49,11 @@ The shared methodology explains the lifecycle and decision files; shared metric
 conventions own identical cross-benchmark measurement and reporting rules.
 Individual metric pages link those rules and retain their local denominators,
 eligibility, examples, and exceptions. The runbook
-records commands and current implementation limitations.
+records commands and current implementation limitations. The
+[methodology reading order](benchmarks/methodology.md#how-to-read-the-benchmark-guides)
+and [metric-reference structure](benchmarks/metrics.md#how-to-read-a-metric-reference)
+make the same information easy to locate across benchmarks without copying
+their shared rules.
 
 | Question | Document |
 |---|---|
@@ -79,10 +83,10 @@ inputs:
 - Each benchmark's `protocol.yaml` defines its settings and, where needed, its
   candidate roster; fixed adapter support is defined in code.
 - Frozen dataset manifests define samples, splits, checksums, and provenance.
-- Generated data-validation reports identify checked inputs and requirements;
-  Document, ASR, Video, and Chunking–Embedding implement standalone validation
-  and report verification;
-  the remaining suites retain inline checks pending that migration.
+- Generated data-validation reports identify checked inputs and requirements.
+  Standalone validation and report verification are implemented for extraction,
+  Chunking–Embedding, Retrieval–Reranking, and Generation; Vector Database and
+  Final RAG retain inline checks pending that migration.
 - `data/benchmarks/models/selected.json` records model revisions, prepared local
   snapshot paths, checksums, and preparation-time `snapshot_size_bytes` metadata.
 - Engineer-reviewed files under `data/benchmarks/decisions/` record selections

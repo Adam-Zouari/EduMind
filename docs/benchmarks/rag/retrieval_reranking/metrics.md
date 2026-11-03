@@ -5,14 +5,14 @@
 On this page:
 
 - [Metric summary](#metric-summary)
-- [Scoring inputs and result status](#scoring-inputs-and-result-status)
+- [Scoring inputs, eligibility, and result status](#scoring-inputs-eligibility-and-result-status)
 - [Retrieval quality](#retrieval-quality-1)
 - [Ranking consistency](#ranking-consistency-1)
 - [Why the quality metrics are not interchangeable](#why-the-quality-metrics-are-not-interchangeable)
 - [Operational performance](#operational-performance-1)
 - [Workload descriptors](#workload-descriptors-1)
-- [Storage descriptors](#storage-descriptors)
-- [Worked candidate interpretation](#worked-candidate-interpretation)
+- [Storage descriptors](#storage-descriptors-1)
+- [Worked result interpretation](#worked-result-interpretation)
 - [Aggregation and confidence intervals](#aggregation-and-confidence-intervals)
 
 This benchmark compares complete retriever/reranker stacks on one frozen
@@ -30,11 +30,11 @@ interpretation, range/direction, and availability rules. The
 [methodology](methodology.md) defines pool ownership, advancement, MLflow
 artifacts, and paired comparisons.
 
-These definitions are the approved reporting contract, not a claim that every
-current output already satisfies it. The
-[implementation boundary](methodology.md#implementation-boundary) identifies
-pending runner/protocol alignment. Worked examples are illustrative, not
-measured results.
+These definitions are the approved reporting contract. The
+[implementation status](methodology.md#implementation-status) distinguishes
+implemented reporting from remaining data-review requirements. Historical runs
+retain their original contracts. Worked examples are illustrative, not measured
+results.
 
 ## Metric summary
 
@@ -73,7 +73,7 @@ reranker's input and a diagnostic depth, not another final context cutoff.
 Each latency family has separate p50 and p95 scalars on the complete-stack
 child. The retriever's identity comes from that child; Dense, BM25, and RRF do
 not need three differently named retrieval-latency metrics. Units are explicit
-in the [MLflow keys](methodology.md#mlflow-result-structure).
+in the [MLflow keys](methodology.md#results-and-mlflow-structure).
 
 ### Workload descriptors
 
@@ -98,7 +98,7 @@ workload without becoming mandatory leaderboard metrics.
 Descriptors explain operational differences. A smaller value is not
 automatically better and cannot compensate for worse quality.
 
-## Scoring inputs and result status
+## Scoring inputs, eligibility, and result status
 
 ### Evidence and cutoffs
 
@@ -233,7 +233,7 @@ needed for a complete answer. No recovered units gives zero normally.
 
 Shared availability rules apply. See the
 [shared rules](../../metrics.md#shared-availability-rules) and
-[retrieval eligibility and integrity](#scoring-inputs-and-result-status).
+[retrieval eligibility and integrity](#scoring-inputs-eligibility-and-result-status).
 
 ### Evidence-token Precision@3/@5
 
@@ -267,7 +267,7 @@ returned-token denominator follows the page-wide
 
 Shared availability rules apply. See the
 [shared rules](../../metrics.md#shared-availability-rules) and
-[retrieval eligibility and integrity](#scoring-inputs-and-result-status).
+[retrieval eligibility and integrity](#scoring-inputs-eligibility-and-result-status).
 
 ### alpha-nDCG@3/@5
 
@@ -1131,7 +1131,7 @@ Model snapshot size is preparation metadata (`snapshot_size_bytes`) in the model
 lock, not a per-candidate benchmark metric. See the
 [installation guide](../../../setup/installation.md#snapshot-size-metadata).
 
-## Worked candidate interpretation
+## Worked result interpretation
 
 Suppose a valid stack reports:
 

@@ -20,7 +20,7 @@ retrieved-context descriptors, diagnostic top-five pair score, and execution,
 quality, and integrity accounting. CI support requirements remain subject to data
 review; unfrozen support gives descriptive points and null bounds, not
 authoritative advancement evidence. See its
-[implementation boundary](rag/chunking_embedding/methodology.md#implementation-boundary).
+[implementation boundary](rag/chunking_embedding/methodology.md#implementation-status).
 Retrieval–reranking implements the corresponding complete-ranking diagnostic,
 one authoritative warmup, single-unit alpha-nDCG eligibility, index ownership,
 and reporting contract. Generation implements the seven model-mode runtime and
@@ -123,7 +123,7 @@ smoke-cpu + smoke-cuda -> preflight -> development -> validation -> locked
 
 Vector Database server execution is CPU-only and has no CUDA preflight. Its own
 locked report is specified but not yet executable; see the
-[implementation boundary](vectordb/methodology.md#implementation-boundary).
+[implementation boundary](vectordb/methodology.md#implementation-status).
 Final RAG has only one locked evaluation of the already-selected system;
 it does not run another smoke, preflight, development, or validation comparison.
 
@@ -415,7 +415,7 @@ so audio repeatability is not measured. Confidence intervals use supported
 independent video/source groups, not windows or additional inference. Limited
 p95 support retains a descriptive value with null bounds/reason. See
 [video metrics](extraction/video/metrics.md) and
-[the run hierarchy](extraction/video/methodology.md#mlflow-result-structure).
+[the run hierarchy](extraction/video/methodology.md#results-and-mlflow-structure).
 
 ## 7. Chunking–embedding
 
@@ -494,7 +494,7 @@ locked result is reporting-only.
   descriptors do not receive invented intervals.
 
 See [metric definitions](rag/chunking_embedding/metrics.md) and the
-[artifact/MLflow contract](rag/chunking_embedding/methodology.md#mlflow-result-structure)
+[artifact/MLflow contract](rag/chunking_embedding/methodology.md#results-and-mlflow-structure)
 for status, measurement-boundary, and advancement rules.
 
 ## 8. Retrieval–reranking
@@ -527,7 +527,7 @@ controls, not production indexes.
 The [metric reference](rag/retrieval_reranking/metrics.md) explains each quality,
 latency, pool-size diagnostic, token-workload, and storage value separately.
 The following reporting layout is the approved contract; consult the
-[implementation boundary](rag/retrieval_reranking/methodology.md#implementation-boundary)
+[implementation boundary](rag/retrieval_reranking/methodology.md#implementation-status)
 before interpreting current runner output. Retrieval Warm Latency uses target
 keys `operational.retrieval_latency_ms_p50/p95`; Full-Stack Warm Latency also
 includes learned reranking when present. No-reranker latency/input fields are
@@ -569,7 +569,7 @@ do not interpret their keys or a successful exit as the revised report.
 The current Compose command starts the legacy driver services. These entry
 points exist, but neither validation path establishes the complete revised
 contract. In particular, dense validation still retunes settings. Follow the
-[implementation boundary](vectordb/methodology.md#implementation-boundary).
+[implementation boundary](vectordb/methodology.md#implementation-status).
 
 ```powershell
 docker compose -f experiments/benchmarks/vectordb/compose.yml up -d
@@ -605,13 +605,13 @@ uses decisions, not edits to the protocol roster.
 Metric names include units for bytes and durations. Rates remain separate for
 search/insert/update/delete; there is no global error-rate scalar. Execution
 counts belong to `validity.*` support and the request ledger. See the complete
-[MLflow hierarchy, keys and artifacts](vectordb/methodology.md#mlflow-result-structure).
+[MLflow hierarchy, keys and artifacts](vectordb/methodology.md#results-and-mlflow-structure).
 
 ## 10. Generation and Final RAG
 
 Generation uses frozen evidence contexts. Its implemented model-mode/seed/judge
 contract and external readiness requirements are described in the
-[generation implementation boundary](rag/generation/methodology.md#implementation-boundary)
+[generation implementation boundary](rag/generation/methodology.md#implementation-status)
 and apply before authoritative execution.
 
 ```powershell

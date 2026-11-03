@@ -5,7 +5,7 @@
 On this page:
 
 - [Metric summary](#metric-summary)
-- [Implementation boundary and result status](#implementation-boundary-and-result-status)
+- [Scoring inputs, eligibility, and result status](#scoring-inputs-eligibility-and-result-status)
 - [Semantic quality and judge responsibilities](#semantic-quality-and-judge-responsibilities)
 - [Citation quality](#citation-quality)
 - [Response, refusal, and output validity](#response-refusal-and-output-validity)
@@ -14,45 +14,14 @@ On this page:
 - [Operational measurement](#operational-measurement)
 - [Workload descriptors](#workload-descriptors)
 - [Per-response diagnostic artifacts](#per-response-diagnostic-artifacts)
-- [Worked candidate interpretation](#worked-candidate-interpretation)
-- [Eligibility, aggregation, and confidence intervals](#eligibility-aggregation-and-confidence-intervals)
+- [Worked result interpretation](#worked-result-interpretation)
+- [Aggregation and confidence intervals](#aggregation-and-confidence-intervals)
 
 This page covers generation on frozen evidence and the same automated metrics
 when generation is embedded in Final RAG. Once selected, calibrated, and frozen,
 one pinned LLM judge supplies structured semantic labels; deterministic
 benchmark code calculates the metric values and aggregates. Blinded human review
 provides separate reporting-only evidence about the selected complete system.
-
-## Implementation boundary and result status
-
-This is the approved metric contract, not a claim that the current runner
-implements it. The existing generation evaluator still exposes lexical scores
-and a local sequence-classification faithfulness scorer; neither substitutes
-for the claim-level calibrated judge defined here. Judge identity, calibration
-acceptance evidence, prompts, and retry policy must be frozen before an
-authoritative semantic report. No judge or authoritative result is designated
-by these examples. See the [methodology's implementation boundary](methodology.md#implementation-boundary).
-
-Apply the [shared availability and support rules](../../metrics.md#shared-availability-rules)
-to every measured seed. Generation quality uses all three scheduled seed
-outputs, not only attempt 1; this observation policy does not turn failed
-requests into numeric quality scores.
-
-| Case | Treatment |
-|---|---|
-| Normally completed, schema-valid answered response | Score each applicable metric; incorrect content is not a structural failure. |
-| Well-formed refusal on an answerable question | Apply the evaluated claim-free, missed-fact, citation, and behavioral rules rather than treating refusal as an inference crash. |
-| Schema-valid response cites an unknown string ID | Apply citation-ID scoring and Response Validity separately; the ID does not make the JSON malformed or overwrite semantic scores. |
-| Successful claim extraction finds no factual claims | Apply the explicit claim-free conventions below. This is an evaluated empty denominator, not missing judging. |
-
-Only normally completed, structurally evaluable responses supply answer quality.
-An interrupted fragment is not a completed response merely because it parses.
-The [shared dependency and partial-observation rules](../../metrics.md#dependent-metrics-and-partial-observations)
-govern derived scores and partial aggregates. Retain per-question/seed outcome,
-reference eligibility, contributing support, schema/ID checks, and evaluator
-status separately. A defined null convention, such as `no_generated_claims`,
-does not itself make completed evaluation incomplete; missing required labels
-or execution does.
 
 ## Metric summary
 
@@ -111,6 +80,34 @@ engineer review; the required execution and measurement gates are separate.
 Citation counts, generated-claim counts, and finish-reason inventories remain
 [diagnostic artifacts](#per-response-diagnostic-artifacts), not additional
 MLflow summary metrics.
+
+## Scoring inputs, eligibility, and result status
+
+The [implementation status](methodology.md#implementation-status) distinguishes
+implemented scoring from the pending judge calibration. Judge identity,
+calibration evidence, prompts, and retry policy must be frozen before an
+authoritative semantic report; the examples do not select a judge.
+
+Apply the [shared availability and support rules](../../metrics.md#shared-availability-rules)
+to every measured seed. Generation quality uses all three scheduled seed
+outputs, not only attempt 1; this observation policy does not turn failed
+requests into numeric quality scores.
+
+| Case | Treatment |
+|---|---|
+| Normally completed, schema-valid answered response | Score each applicable metric; incorrect content is not a structural failure. |
+| Well-formed refusal on an answerable question | Apply the evaluated claim-free, missed-fact, citation, and behavioral rules rather than treating refusal as an inference crash. |
+| Schema-valid response cites an unknown string ID | Apply citation-ID scoring and Response Validity separately; the ID does not make the JSON malformed or overwrite semantic scores. |
+| Successful claim extraction finds no factual claims | Apply the explicit claim-free conventions below. This is an evaluated empty denominator, not missing judging. |
+
+Only normally completed, structurally evaluable responses supply answer quality.
+An interrupted fragment is not a completed response merely because it parses.
+The [shared dependency and partial-observation rules](../../metrics.md#dependent-metrics-and-partial-observations)
+govern derived scores and partial aggregates. Retain per-question/seed outcome,
+reference eligibility, contributing support, schema/ID checks, and evaluator
+status separately. A defined null convention, such as `no_generated_claims`,
+does not itself make completed evaluation incomplete; missing required labels
+or execution does.
 
 ## Semantic quality and judge responsibilities
 
@@ -1083,7 +1080,7 @@ finish reason, schema validity, and ID validity in separate fields. For example,
 EOS with malformed JSON is normal decoding completion but structural failure;
 an input-context rejection has no decoding finish reason because it never began.
 
-## Worked candidate interpretation
+## Worked result interpretation
 
 Suppose one generator configuration produces:
 
@@ -1116,8 +1113,7 @@ Rate describes normally completed outputs, not all scheduled attempts. Judge
 coverage, defined claim ratios, completion counts, and every metric's support
 remain necessary to interpret the displayed estimates.
 
-
-## Eligibility, aggregation, and confidence intervals
+## Aggregation and confidence intervals
 
 Quality is evaluated on each of the three scheduled outputs. For each metric,
 average defined output scores within a question, then contributing question

@@ -4,18 +4,110 @@
 
 On this page:
 
-- [Automated metric map](#automated-metric-map)
-- [Eligibility and result status](#eligibility-and-result-status)
-- [Complete-system operations](#complete-system-operations)
+- [Metric summary](#metric-summary)
+- [Scoring inputs, eligibility, and result status](#scoring-inputs-eligibility-and-result-status)
 - [Human review metrics](#human-review-metrics)
+- [Complete-system operations](#complete-system-operations)
 - [Extraction-to-RAG paired differences](#extraction-to-rag-paired-differences)
-- [Support and confidence intervals](#support-and-confidence-intervals)
+- [Worked result interpretation](#worked-result-interpretation)
+- [Aggregation and confidence intervals](#aggregation-and-confidence-intervals)
 
 Final RAG reports one frozen complete system, not another candidate comparison.
-These are the approved definitions; the [implementation boundary](methodology.md#implementation-boundary)
+These are the approved definitions; the [implementation boundary](methodology.md#implementation-status)
 identifies runner/review gaps. Examples are illustrative, not measured results.
 
-## Automated metric map
+## Metric summary
+
+### Retrieval quality
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| nDCG@3/@5 | Primary | Does the selected system rank evidence-rich chunks early? | Higher |
+| Evidence-unit Recall@3/@5 | Primary | How much required evidence reaches the selected context? | Higher |
+| Evidence-token Precision@3/@5 | Primary | How concentrated is that context in verified evidence? | Higher |
+| Alpha-nDCG@3/@5 | Diagnostic | How early does the ranking provide distinct evidence? | Higher |
+
+Report only the cutoffs supported by the frozen top-K. Detailed definitions are
+in the component references linked below; they are not redefined here.
+
+### Generation quality
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Faithfulness | Primary | Are the generated factual claims supported by the supplied evidence? | Higher |
+| Factual Correctness F1 | Primary | Does the answer include the required facts without introducing incorrect ones? | Higher |
+| Answer Relevancy | Primary | Does the response directly address the question that was asked? | Higher |
+| Citation F1 | Primary | Are the explicit citations both correct and complete? | Higher |
+| Factual Correctness Precision | Diagnostic | What share of the generated factual claims are correct? | Higher |
+| Factual Correctness Recall | Diagnostic | What share of the required gold claims are correctly included? | Higher |
+| Citation Precision | Diagnostic | What share of the produced citations identify required evidence? | Higher |
+| Citation Recall | Diagnostic | What share of the required gold evidence is covered by valid citations? | Higher |
+
+### Behavioral validity and reliability
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Response Validity Rate | Diagnostic | How often does an answerable question receive the required valid answer behavior? | Higher |
+| Refusal Validity Rate | Diagnostic | How often does an unanswerable question receive the exact required refusal behavior? | Higher |
+| Malformed Output Rate | Diagnostic | How often does a normally completed generation produce structurally invalid output? | Lower |
+| Runtime Error Rate | Diagnostic | How often does measured inference encounter a runtime execution error? | Lower |
+| Timeout Rate | Diagnostic | How often does generation reach the frozen wall-clock timeout? | Lower |
+| Context-Limit-Reached Rate | Diagnostic | How often does generation exhaust the available model context before EOS? | Lower |
+
+Behavioral validity and reliability are metric families, not automatic
+qualification gates. Their diagnostic rates remain selection evidence for
+engineer review; the required execution and measurement gates are separate.
+
+### Repeatability
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Repeat Status Agreement | Diagnostic | Across fixed sampling seeds, does the model consistently answer or refuse? | Higher |
+| Repeat Citation Agreement | Diagnostic | Across fixed sampling seeds, does the model select the same evidence? | Higher |
+| Repeat Semantic Agreement | Diagnostic | Across fixed sampling seeds, do the visible answers preserve the same meaning? | Higher |
+
+### Generation operations and workload
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Time to First Token p50/p95 | Operational | How long does a warm request wait before generation begins? | Lower |
+| Decode Throughput | Operational | How many native-tokenizer output tokens are produced per measured decoding second? | Higher |
+| Cold Model-Load Time | Operational | How long does a fresh worker need to make the generator ready? | Lower |
+| Prompt Tokens | Workload descriptor | How much input does the complete rendered request consume? | Descriptive |
+| Context Tokens | Workload descriptor | How much supplied evidence text accompanies the question? | Descriptive |
+| Reasoning Tokens | Workload descriptor | How much exposed reasoning did the model generate? | Descriptive |
+| Visible-Answer Tokens | Workload descriptor | How long is the visible answer string? | Descriptive |
+| Total Output Tokens | Workload descriptor | How many generated-token events did the request produce? | Descriptive |
+
+### Integrated operations
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Server-Call Latency p50/p95 | Operational | How long does the caller wait for the selected vector server? | Lower |
+| Retrieval Latency p50/p95 | Operational | How long does the complete selected retrieval/reranking path take? | Lower |
+| Generation Latency p50/p95 | Operational | How long does generation take once evidence is ready? | Lower |
+| Complete End-to-End Latency p50/p95 | Operational | How long does the user wait for the complete answer? | Lower |
+| Peak Process-Tree RAM | Operational | What peak host memory does the integrated lifecycle use? | Lower at equal quality and scope |
+| Peak Device VRAM | Operational | What peak assigned-device memory does the integrated lifecycle use? | Lower at equal quality and scope |
+
+The integrated resource windows are defined locally. They are not sums of
+component peaks or additional copies of isolated generation resource metrics.
+
+### Human review and extraction confirmation
+
+| Metric | Role | Question answered | Direction |
+|---|---|---|---|
+| Human Faithfulness | Reporting-only | Are material claims supported by the supplied evidence? | Higher |
+| Human Answer Correctness | Reporting-only | Is the answer correct against frozen verification material? | Higher |
+| Human Completeness | Reporting-only | Are all essential parts of the question answered? | Higher |
+| Human Citation Accuracy | Reporting-only | Do the cited blocks support the answer's claims? | Higher |
+| Human Answerability Correctness | Reporting-only | Did the system answer or refuse as required? | Higher |
+| Extraction-to-RAG paired differences | Reporting-only | How does extracted text change each existing metric? | Depends on the underlying metric |
+
+Paired differences are separate values for existing metrics, not a combined
+extraction-impact score.
+
+### Inherited metric definitions
 
 Reuse the component definitions, examples, and edge rules, rather than
 implementing a second version of the same metrics.
@@ -55,7 +147,7 @@ rounds. Generation receives only the frozen top-K blocks; a three-block system
 has no unexecuted `@5` result. The primary retrieval and generation dimensions
 remain separate, with no weighted universal score.
 
-## Eligibility and result status
+## Scoring inputs, eligibility, and result status
 
 Retrieval quality, semantic answer quality, citation quality, and Repeat Citation
 Agreement use reference-answerable questions. The complete path also executes
@@ -87,127 +179,6 @@ generation is not an observed generator crash or refusal. Valid earlier answers,
 completed build/load times, observed TTFT, and scoped resource samples survive
 later failure under the shared retention rules. Required semantic labels, review
 ratings, and integrated instrumentation are not optional reporting fields.
-
-## Complete-system operations
-
-Warm request timing begins with the searchable corpus ready. Ingestion,
-corpus/index preparation, loading, warmup, offline scoring, and human review
-are separate costs, not hidden warm latency. An additional source-ingestion-to-answer
-timer must identify its different boundary explicitly.
-
-For each latency family, take each question's median successful measured stage
-duration, then p50 and p95 across contributing questions using the
-[shared percentile calculation](../../metrics.md#latency-percentiles).
-Keep stage support: a completed stage duration can survive a later stage's
-failure, while complete-system latency requires complete-system success.
-Component p95 values must not be added to obtain system p95.
-
-Resource monitoring starts before selected-component loading and includes
-initialization, warmup, and measured requests, ending before offline judging
-and bootstrap work. Record all participating processes and complete/partial
-lifecycle scope, including preparation work executed inside that window.
-Resource availability and partial-window reporting follow the
-[shared resource rules](../../metrics.md#resource-measurements).
-
-### Server-Call Latency p50/p95
-
-**Question:** How long does the caller wait for the approved vector server?
-
-Time dispatch through receipt/validation of the vector-search response, including
-transport/serialization, but not query embedding or later reranking. This is
-inside retrieval, not a cost to add again. Retain call-level traces if several
-calls are required; their request-level scope must be explicit before aggregation.
-
-**Example:** A `12 ms` server call within a `40 ms` retrieval remains `12 ms`,
-not `52 ms` retrieval. Question observations `10,20,30,40,50 ms` give p50
-`30 ms` and p95 `40 + 0.8 × (50 - 40) = 48 ms`.
-
-**Range and direction:** Non-negative time; lower is better. BM25-only execution
-with no server call is null/inapplicable, not zero. A failed call has no successful
-completion time; retain elapsed-to-failure. Server-internal timing is separate.
-
-### Retrieval Latency p50/p95
-
-**Question:** How long does the live selected stack take to return its ranking?
-
-Time required query preparation/embedding, Dense and/or BM25 requests, RRF when
-selected, learned reranking when selected, and validated top-K selection. Server
-time is included; cached quality pools cannot replace the live operational path.
-This is the complete retrieval stack: the retrieval–reranking component page
-calls the corresponding boundary Full-Stack Warm Latency, while its shorter
-Retrieval Warm Latency isolates only the first-stage retriever.
-
-**Example:** Sequential `8 ms` preparation, `12 ms` server call, `5 ms` ranking,
-and `15 ms` reranking give `40 ms`. Question observations `20,30,40,50,100 ms`
-give p50 `40 ms` and p95 `90 ms`, exposing the tail hidden by the median.
-
-**Range and direction:** Non-negative time; lower is better. Failed retrieval
-has no successful-completion value. Completed retrieval remains measured if
-generation later fails, with that outcome retained.
-
-### Generation Latency p50/p95
-
-**Question:** After evidence is ready, how long does a complete generator request take?
-
-Use the [generation warm-request boundary](../generation/metrics.md#end-to-end-latency-p50p95):
-prompt preparation, tokenization/prefill, reasoning and visible decoding, parsing,
-and citation validation. Account for context packing/numbering in the complete
-trace rather than losing it between stage timers.
-
-**Example:** Question observations `2,3,4,5,10 s` give p50 `4 s` and p95
-`5 + 0.8 × (10 - 5) = 9 s`. A timeout after emitting tokens can supply TTFT
-but not successful generation latency.
-
-**Range and direction:** Non-negative seconds; lower is better. No successful
-completions gives null/unavailable. Retain failure/termination times separately.
-Judge and human-review time are excluded.
-
-### Complete End-to-End Latency p50/p95
-
-**Question:** How long does the caller wait for a complete answer to a warm question?
-
-Use an outer wall timer from question-request entry through retrieval, context
-packing/numbering, generation, parsing, and citation validation, including dispatch
-overhead and required synchronization. This is not a sum of stage percentiles.
-
-**Example:** `0.04 s` retrieval, `0.01 s` packing, `4.00 s` generation, and
-`0.02 s` other dispatch work give `4.07 s` for one request. Complete question
-observations `2,3,4,5,10 s` give p50 `4 s` and p95 `9 s`.
-
-**Range and direction:** Non-negative seconds; lower is better. No complete
-successes means null/unavailable. Fast failure is not fast completed answering;
-report successful coverage alongside reliability.
-
-### Peak Process-Tree RAM
-
-**Question:** What peak host memory is observed for integrated execution?
-
-Use the [shared process-tree RSS peak](../../metrics.md#peak-process-tree-ram)
-for the worker and its children. Identify separately managed vector-server
-processes and their memory scope rather than silently excluding them or
-double-counting them as children.
-
-**Example:** Simultaneous process-tree totals `2,000,3,500,3,000 MiB` report
-`3,500 MiB`. Adding a separately managed server's independent peak would not
-measure a simultaneous system peak.
-
-**Range and direction:** Non-negative MiB; lower is better at equal quality.
-Apply the shared resource rules to the integrated monitoring window above.
-
-### Peak Device VRAM
-
-**Question:** How much total assigned-GPU memory is occupied at the integrated peak?
-
-Use the [shared NVML device-total peak](../../metrics.md#peak-device-vram) across
-the recorded integrated lifecycle with resident selected components. Do not sum
-isolated component peaks. Placement is checked separately.
-
-**Example:** Samples `700,3,200,2,900 MiB` report `3,200 MiB`. Independent
-component qualification does not prove that concurrent residency fits.
-
-**Range and direction:** Non-negative MiB; lower is better at equal quality.
-Applicable runtime gates still apply; this creates neither Final RAG preflight
-nor an extraction VRAM cap. Single-peak uncertainty follows the shared resource rules.
 
 ## Human review metrics
 
@@ -243,6 +214,14 @@ for a complete answer.
 This ordinal rating is not an automated supported-claim fraction. Refusal and
 missing-review cases follow the common rules below.
 
+**Edge cases and availability:**
+
+Refusal-specific rubric treatment remains pending; do not infer a perfect or
+zero substantive rating from a correct refusal. No rated eligible items gives
+a null mean, not a fabricated score.
+Apply the [review-completeness rules](#review-completeness-and-edge-rules)
+and retain missing ratings separately from observed ratings.
+
 ### Human Answer Correctness
 
 **Question:** Is the answer factually correct against the accepted answer and
@@ -259,6 +238,14 @@ meets neither required fact (`0`).
 Missing verification material is a review-data problem, not an invented rating
 or permission for unrecorded lookup.
 
+**Edge cases and availability:**
+
+Refusal-specific rubric treatment remains pending; do not infer a perfect or
+zero substantive rating from a correct refusal. No rated eligible items gives
+a null mean, not a fabricated score.
+Apply the [review-completeness rules](#review-completeness-and-edge-rules)
+and retain missing ratings separately from observed ratings.
+
 ### Human Completeness
 
 **Question:** Does the answer cover every essential part of the question?
@@ -273,6 +260,14 @@ short answer can still be incomplete.
 **Range and direction:** Item ratings `{0,1,2}`, mean `[0,2]`; higher is better.
 Missing required-fact annotations prevent complete review; they do not make
 every answer complete by default.
+
+**Edge cases and availability:**
+
+Refusal-specific rubric treatment remains pending; do not infer a perfect or
+zero substantive rating from a correct refusal. No rated eligible items gives
+a null mean, not a fabricated score.
+Apply the [review-completeness rules](#review-completeness-and-edge-rules)
+and retain missing ratings separately from observed ratings.
 
 ### Human Citation Accuracy
 
@@ -292,6 +287,14 @@ establish support.
 No citations cannot establish citation support for a substantive answer requiring
 evidence. An empty refusal citation list is not automatically a perfect rating.
 
+**Edge cases and availability:**
+
+Refusal-specific rubric treatment remains pending; do not infer a perfect or
+zero substantive rating from a correct refusal. No rated eligible items gives
+a null mean, not a fabricated score.
+Apply the [review-completeness rules](#review-completeness-and-edge-rules)
+and retain missing ratings separately from observed ratings.
+
 ### Human Answerability Correctness
 
 **Question:** Did the system answer or refuse according to frozen answerability?
@@ -307,6 +310,13 @@ valid refusal on an unanswerable question earns `1`. Correct behavior on 16 of
 **Range and direction:** Item ratings `{0,1}`, mean `[0,1]`; higher is better.
 A retrieval miss does not change source answerability. No response is not an
 invented human-reviewed refusal.
+
+**Edge cases and availability:**
+
+No rated eligible items gives no mean: report null with its support/reason,
+not zero behavior quality. An absent response is not an observed refusal.
+Apply the [review-completeness rules](#review-completeness-and-edge-rules)
+and retain missing ratings separately from observed ratings.
 
 ### Review completeness and edge rules
 
@@ -326,6 +336,153 @@ on 18 of 20 items describes those 18 only. No items in an optional slice means
 inapplicable, not zero quality. One reviewer supports no inter-reviewer agreement
 claim. Human means are descriptive; 20 items alone do not establish a calibrated
 judge, universal score, or human confidence interval.
+
+## Complete-system operations
+
+Warm request timing begins with the searchable corpus ready. Ingestion,
+corpus/index preparation, loading, warmup, offline scoring, and human review
+are separate costs, not hidden warm latency. An additional source-ingestion-to-answer
+timer must identify its different boundary explicitly.
+
+For each latency family, take each question's median successful measured stage
+duration, then p50 and p95 across contributing questions using the
+[shared percentile calculation](../../metrics.md#latency-percentiles).
+Keep stage support: a completed stage duration can survive a later stage's
+failure, while complete-system latency requires complete-system success.
+Component p95 values must not be added to obtain system p95.
+
+Resource monitoring starts before selected-component loading and includes
+initialization, warmup, and measured requests, ending before offline judging
+and bootstrap work. Record all participating processes and complete/partial
+lifecycle scope, including preparation work executed inside that window.
+Resource availability and partial-window reporting follow the
+[shared resource rules](../../metrics.md#resource-measurements).
+
+### Server-Call Latency p50/p95
+
+**Question:** How long does the caller wait for the approved vector server?
+
+Time dispatch through receipt/validation of the vector-search response, including
+transport/serialization, but not query embedding or later reranking. This is
+inside retrieval, not a cost to add again. Retain call-level traces if several
+calls are required; their request-level scope must be explicit before aggregation.
+
+**Example:** A `12 ms` server call within a `40 ms` retrieval remains `12 ms`,
+not `52 ms` retrieval. Question observations `10,20,30,40,50 ms` give p50
+`30 ms` and p95 `40 + 0.8 × (50 - 40) = 48 ms`.
+
+**Range and direction:** Non-negative time; lower is better.
+
+**Edge cases and availability:**
+
+BM25-only execution
+with no server call is null/inapplicable, not zero. A failed call has no successful
+completion time; retain elapsed-to-failure. Server-internal timing is separate.
+
+### Retrieval Latency p50/p95
+
+**Question:** How long does the live selected stack take to return its ranking?
+
+Time required query preparation/embedding, Dense and/or BM25 requests, RRF when
+selected, learned reranking when selected, and validated top-K selection. Server
+time is included; cached quality pools cannot replace the live operational path.
+This is the complete retrieval stack: the retrieval–reranking component page
+calls the corresponding boundary Full-Stack Warm Latency, while its shorter
+Retrieval Warm Latency isolates only the first-stage retriever.
+
+**Example:** Sequential `8 ms` preparation, `12 ms` server call, `5 ms` ranking,
+and `15 ms` reranking give `40 ms`. Question observations `20,30,40,50,100 ms`
+give p50 `40 ms` and p95 `90 ms`, exposing the tail hidden by the median.
+
+**Range and direction:** Non-negative time; lower is better.
+
+**Edge cases and availability:**
+
+Failed retrieval
+has no successful-completion value. Completed retrieval remains measured if
+generation later fails, with that outcome retained.
+
+### Generation Latency p50/p95
+
+**Question:** After evidence is ready, how long does a complete generator request take?
+
+Use the [generation warm-request boundary](../generation/metrics.md#end-to-end-latency-p50p95):
+prompt preparation, tokenization/prefill, reasoning and visible decoding, parsing,
+and citation validation. Account for context packing/numbering in the complete
+trace rather than losing it between stage timers.
+
+**Example:** Question observations `2,3,4,5,10 s` give p50 `4 s` and p95
+`5 + 0.8 × (10 - 5) = 9 s`. A timeout after emitting tokens can supply TTFT
+but not successful generation latency.
+
+**Range and direction:** Non-negative seconds; lower is better.
+
+**Edge cases and availability:**
+
+No successful
+completions gives null/unavailable. Retain failure/termination times separately.
+Judge and human-review time are excluded.
+
+### Complete End-to-End Latency p50/p95
+
+**Question:** How long does the caller wait for a complete answer to a warm question?
+
+Use an outer wall timer from question-request entry through retrieval, context
+packing/numbering, generation, parsing, and citation validation, including dispatch
+overhead and required synchronization. This is not a sum of stage percentiles.
+
+**Example:** `0.04 s` retrieval, `0.01 s` packing, `4.00 s` generation, and
+`0.02 s` other dispatch work give `4.07 s` for one request. Complete question
+observations `2,3,4,5,10 s` give p50 `4 s` and p95 `9 s`.
+
+**Range and direction:** Non-negative seconds; lower is better.
+
+**Edge cases and availability:**
+
+No complete
+successes means null/unavailable. Fast failure is not fast completed answering;
+report successful coverage alongside reliability.
+
+### Peak Process-Tree RAM
+
+**Question:** What peak host memory is observed for integrated execution?
+
+Use the [shared process-tree RSS peak](../../metrics.md#peak-process-tree-ram)
+for the worker and its children. Identify separately managed vector-server
+processes and their memory scope rather than silently excluding them or
+double-counting them as children.
+
+**Example:** Simultaneous process-tree totals `2,000,3,500,3,000 MiB` report
+`3,500 MiB`. Adding a separately managed server's independent peak would not
+measure a simultaneous system peak.
+
+**Range and direction:** Non-negative MiB; lower is better at equal quality.
+
+**Edge cases and availability:**
+
+Apply the [shared resource rules](../../metrics.md#resource-measurements) to the integrated monitoring window above.
+
+### Peak Device VRAM
+
+**Question:** How much total assigned-GPU memory is occupied at the integrated peak?
+
+Use the [shared NVML device-total peak](../../metrics.md#peak-device-vram) across
+the recorded integrated lifecycle with resident selected components. Do not sum
+isolated component peaks. Placement is checked separately.
+
+**Example:** Samples `700,3,200,2,900 MiB` report `3,200 MiB`. Independent
+component qualification does not prove that concurrent residency fits.
+
+**Range and direction:** Non-negative MiB; lower is better at equal quality.
+Applicable runtime gates still apply; this creates neither Final RAG preflight
+nor an extraction VRAM cap. Single-peak uncertainty follows the shared resource rules.
+
+**Edge cases and availability:**
+
+CPU-only execution is null/inapplicable, not zero VRAM. Missing required CUDA
+telemetry is null/unavailable. Complete and partial monitoring windows follow
+the [shared resource rules](../../metrics.md#resource-measurements); retain
+measured peaks without representing a partial window as a complete one.
 
 ## Extraction-to-RAG paired differences
 
@@ -354,6 +511,8 @@ extraction only for higher-is-better metrics; negative favors it for errors/time
 Zero means no measured change in that metric, not identical outputs or proven
 absence of extraction harm.
 
+**Edge cases and availability:**
+
 Both branches retain the same required evidence IDs/claims and seeds. A lost
 unit remains required, with an explicit unrecoverable source mapping, not an
 invented empty span. A completed branch missing a unit can score zero recovery;
@@ -364,7 +523,26 @@ not erase them. An unavailable or inapplicable branch value makes that
 metric's difference null/unavailable. Keep exclusions/common support
 and label partial differences diagnostic rather than complete confirmation.
 
-## Support and confidence intervals
+## Worked result interpretation
+
+A frozen system can retrieve most required evidence yet generate an incomplete
+answer. For example, Evidence-unit Recall `0.90` means most required evidence
+units were recovered; Factual Correctness Recall `0.60` means only 60% of required
+answer facts were included correctly. Their denominators differ, so the gap
+alone does not attribute the loss to generation: inspect the missed evidence
+and how the generator used recovered evidence. Faithfulness `1.00` would mean
+the generated claims are supported, not that every required fact was included.
+
+A `40 ms` retrieval stage inside a `4.07 s` complete request is already part
+of that request's latency. It is not added to the total again. Inspect
+failure/support records before interpreting conditional quality or latency.
+
+Human-review means remain on their own rubric scales, and extraction
+confirmation remains a paired non-locked report. None of these results
+selects a replacement system after the locked evaluation. These values
+illustrate interpretation, not measured results.
+
+## Aggregation and confidence intervals
 
 Automated quality/rates inherit question-then-document macro weighting,
 generation's scheduled-seed/pair means, and each stage's latency observation

@@ -5,15 +5,14 @@
 On this page:
 
 - [Metric summary](#metric-summary)
-- [Eligibility and result status](#eligibility-and-result-status)
+- [Scoring inputs, eligibility, and result status](#scoring-inputs-eligibility-and-result-status)
 - [Retrieval quality](#retrieval-quality-1)
 - [Why the metrics are not interchangeable](#why-the-metrics-are-not-interchangeable)
-- [Worked candidate interpretation](#worked-candidate-interpretation)
 - [Ranking consistency](#ranking-consistency-1)
 - [Operational performance](#operational-performance-1)
 - [Workload and storage descriptors](#workload-and-storage-descriptors-1)
-- [Aggregation and comparison completeness](#aggregation-and-comparison-completeness)
-- [Chunking and embedding confidence intervals](#chunking-and-embedding-confidence-intervals)
+- [Worked result interpretation](#worked-result-interpretation)
+- [Aggregation and confidence intervals](#aggregation-and-confidence-intervals)
 
 The chunking/embedding experiment evaluates one complete
 `chunker|embedding` pair at a time with exact cosine search. Three primary metric
@@ -25,9 +24,9 @@ The four quality families adopt the
 The applications below use each candidate pair's complete generated corpus,
 not another pair's corpus or the retrieved top-20 pool.
 
-The [implementation boundary](methodology.md#implementation-boundary) identifies
-pending operational-breakdown, repeatability, and reporting changes. Definitions
-below are the approved contract, not aliases for unmodified older output keys.
+The [implementation status](methodology.md#implementation-status) identifies
+implemented reporting and remaining data-review requirements. Definitions below
+apply to this protocol; historical outputs keep their original definitions.
 
 ## Metric summary
 
@@ -79,7 +78,7 @@ at the two candidate context counts before the final system's top-K is frozen.
 | Embedding Dimension and Dtype | Storage descriptor | What shape and numeric representation did each vector use? | Descriptive |
 | Embedding-Matrix Bytes | Storage descriptor | How large is the complete matrix's raw vector payload? | Descriptive |
 
-## Eligibility and result status
+## Scoring inputs, eligibility, and result status
 
 Only answerable questions with reviewed gold evidence are executed and scored.
 Unanswerable questions retained in a shared manifest are input counts for later
@@ -96,7 +95,7 @@ Missing evidence in valid retrieved chunks receives the normal poor numeric
 score. Failures and missing records follow the
 [shared availability rules](../../metrics.md#shared-availability-rules);
 slice eligibility and partial results follow
-[aggregation and comparison completeness](#aggregation-and-comparison-completeness).
+[aggregation and comparison completeness](#aggregation-and-completeness).
 
 Generated chunks, vectors, and rankings have separate integrity checks. Exact
 search on a valid nonempty index returns `min(20, chunk_count)` unique corpus
@@ -162,7 +161,7 @@ evidence as a relevance-ranking error.
 
 [Shared availability rules apply.](../../metrics.md#shared-availability-rules)
 Evidence-slice and aggregate status follow
-[this suite's completeness rules](#aggregation-and-comparison-completeness).
+[this suite's completeness rules](#aggregation-and-completeness).
 
 ### Evidence-unit Recall@3/@5
 
@@ -195,7 +194,7 @@ gives zero under the ordinary calculation.
 
 [Shared availability rules apply.](../../metrics.md#shared-availability-rules)
 Evidence-slice and aggregate status follow
-[this suite's completeness rules](#aggregation-and-comparison-completeness).
+[this suite's completeness rules](#aggregation-and-completeness).
 
 ### Evidence-token Precision@3/@5
 
@@ -209,7 +208,7 @@ overlap it. All returned source-token occurrences form the denominator; text
 repeated in different chunks counts each time in both numerator and denominator.
 Native model prefixes and special inference tokens are not source content.
 The valid nonempty ranking and token-bearing chunks make the denominator
-positive; see the [output-integrity prerequisites](#eligibility-and-result-status).
+positive; see the [output-integrity prerequisites](#scoring-inputs-eligibility-and-result-status).
 
 ```text
 Evidence-token Precision@K = evidence-bearing returned token occurrences
@@ -231,7 +230,7 @@ zero under the ordinary calculation.
 
 [Shared availability rules apply.](../../metrics.md#shared-availability-rules)
 Evidence-slice and aggregate status follow
-[this suite's completeness rules](#aggregation-and-comparison-completeness).
+[this suite's completeness rules](#aggregation-and-completeness).
 
 ### Alpha-nDCG@3/@5
 
@@ -293,7 +292,7 @@ evaluation.
 
 [Shared availability rules apply.](../../metrics.md#shared-availability-rules)
 Evidence-slice and aggregate status follow
-[this suite's completeness rules](#aggregation-and-comparison-completeness).
+[this suite's completeness rules](#aggregation-and-completeness).
 
 ## Why the metrics are not interchangeable
 
@@ -310,29 +309,6 @@ can lower token precision without changing relevance order or recovered units.
 Missing one required unit lowers recall even when the remaining relevant chunks
 are ranked early. Alpha-nDCG deliberately overlaps with nDCG, but adds a
 repeated-evidence discount as a diagnostic, not a primary relevance criterion.
-
-## Worked candidate interpretation
-
-Suppose a valid pair reports:
-
-```text
-Evidence-unit Recall@5       = 0.82
-Evidence-token Precision@5  = 0.44
-nDCG@5                       = 0.81
-alpha-nDCG@5                 = 0.74
-```
-
-The nDCG result summarizes how early evidence-rich chunks appear. After question
-scores are averaged within documents and then across documents, average
-evidence recovery is `0.82` and average evidence-token precision is `0.44`.
-These describe completeness and concentration, not pooled percentages of all
-corpus evidence units or returned tokens. Alpha-nDCG uses the same answerable
-questions and describes novelty under its repeated-evidence discount. Its
-value is not directly comparable with nDCG because the gains and normalization
-differ. Inspect the evidence matches to
-identify repeated coverage; neither the score nor the gap establishes that
-repetition harms answers. The same interpretation is performed separately at
-`@3`. No formula combines these values.
 
 ## Ranking consistency
 
@@ -391,7 +367,7 @@ Apply the shared
 [percentile](../../metrics.md#latency-percentiles) and
 [resource](../../metrics.md#resource-measurements) definitions with the lifecycle
 windows below. Partial-resource scope is recorded as specified by the
-[run structure](methodology.md#mlflow-result-structure); CI applicability remains
+[run structure](methodology.md#results-and-mlflow-structure); CI applicability remains
 in this page's [interval table](#which-values-receive-an-interval).
 
 Use the [shared timing boundaries and naming convention](../../metrics.md#latency-and-warm-latency).
@@ -632,7 +608,7 @@ quality.
 
 [Shared availability rules apply.](../../metrics.md#shared-availability-rules)
 See the [successful-observation and percentile rules](#operational-performance-1)
-and [CI support requirements](#chunking-and-embedding-confidence-intervals).
+and [CI support requirements](#aggregation-and-confidence-intervals).
 
 ### p95 Warm Query Latency
 
@@ -656,7 +632,7 @@ equal quality.
 
 [Shared availability rules apply.](../../metrics.md#shared-availability-rules)
 See the [successful-observation and percentile rules](#operational-performance-1)
-and [CI support requirements](#chunking-and-embedding-confidence-intervals).
+and [CI support requirements](#aggregation-and-confidence-intervals).
 
 ### Peak Process-Tree RAM
 
@@ -982,7 +958,32 @@ file-size checks to a serialized or compressed artifact.
 Only a complete matrix has a final payload-size observation; see the
 [storage-availability rules](#workload-and-storage-descriptors-1).
 
-## Aggregation and comparison completeness
+## Worked result interpretation
+
+Suppose a valid pair reports:
+
+```text
+Evidence-unit Recall@5       = 0.82
+Evidence-token Precision@5  = 0.44
+nDCG@5                       = 0.81
+alpha-nDCG@5                 = 0.74
+```
+
+The nDCG result summarizes how early evidence-rich chunks appear. After question
+scores are averaged within documents and then across documents, average
+evidence recovery is `0.82` and average evidence-token precision is `0.44`.
+These describe completeness and concentration, not pooled percentages of all
+corpus evidence units or returned tokens. Alpha-nDCG uses the same answerable
+questions and describes novelty under its repeated-evidence discount. Its
+value is not directly comparable with nDCG because the gains and normalization
+differ. Inspect the evidence matches to
+identify repeated coverage; neither the score nor the gap establishes that
+repetition harms answers. The same interpretation is performed separately at
+`@3`. No formula combines these values.
+
+## Aggregation and confidence intervals
+
+### Aggregation and completeness
 
 For each quality metric, first average defined first-ranking question scores
 within a source document, then macro-average those document values. Calculate
@@ -1009,8 +1010,6 @@ does not automatically invalidate complete first-ranking quality or a fully
 accounted invocation. Missing required first scores remain partial; declared
 hardware/integrity violations remain enforced. Normal quality comparisons need
 complete valid quality, and the engineer reviews recorded failures separately.
-
-## Chunking and embedding confidence intervals
 
 ### Which values receive an interval
 

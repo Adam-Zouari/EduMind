@@ -5,15 +5,15 @@
 On this page:
 
 - [Metric summary](#metric-summary)
-- [Scoring inputs and result status](#scoring-inputs-and-result-status)
+- [Scoring inputs, eligibility, and result status](#scoring-inputs-eligibility-and-result-status)
 - [Visual-content quality](#visual-content-quality-1)
 - [Visual timestamp quality](#visual-timestamp-quality-1)
 - [Reliability and failure behavior](#reliability-and-failure-behavior-1)
 - [Visual operational performance](#visual-operational-performance-1)
 - [Workload descriptor](#workload-descriptor-1)
 - [Frozen-ASR diagnostics](#frozen-asr-diagnostics-1)
-- [Worked candidate interpretation](#worked-candidate-interpretation)
-- [Video confidence intervals](#video-confidence-intervals)
+- [Worked result interpretation](#worked-result-interpretation)
+- [Aggregation and confidence intervals](#aggregation-and-confidence-intervals)
 
 The video experiment compares keyframe configurations while holding the image
 parser and ASR fixed. Visual quality measures useful on-screen text and its
@@ -91,7 +91,7 @@ the same calculation as a primary metric.
 | Peak Audio Process-Tree RAM | Operational | How much system memory does the audio worker and its children require? | Lower |
 | Peak Audio Device VRAM | Operational | What peak total GPU memory is occupied during the audio lifecycle? | Lower |
 
-## Scoring inputs and result status
+## Scoring inputs, eligibility, and result status
 
 Visual quality and duplication use the designated first measured attempt only.
 Development, validation, and locked schedule three measured attempts per video
@@ -449,7 +449,7 @@ Calculate p50/p95 across these video medians using the
 [shared percentile calculation](../../metrics.md#latency-percentiles).
 The timer covers exactly the complete visual request listed under RTF.
 Report completion counts. Independent-source support and descriptive-only
-percentiles follow the [video confidence-interval rules](#video-confidence-intervals).
+percentiles follow the [video confidence-interval rules](#aggregation-and-confidence-intervals).
 
 #### p50 Warm Visual Latency
 
@@ -615,7 +615,7 @@ visual execution; see the [frozen-audio prerequisites](methodology.md#shared-aud
 An applicable aggregate with no completed contributing comparisons is unavailable
 under the [shared availability rules](../../metrics.md#shared-availability-rules),
 not a perfect empty comparison. Recognition CIs resample complete source videos
-and recalculate pooled counts under the [video CI rules](#video-confidence-intervals).
+and recalculate pooled counts under the [video CI rules](#aggregation-and-confidence-intervals).
 
 ### Transcript WER
 
@@ -1002,7 +1002,7 @@ CPU applicability and CUDA telemetry follow
 [shared Peak Device VRAM](../../metrics.md#peak-device-vram)
 and [execution prerequisites](#execution-and-measurement-prerequisites).
 
-## Worked candidate interpretation
+## Worked result interpretation
 
 Suppose a completed development child with 18 videos reports these rounded
 values (quality/repeatability use video-macro aggregation):
@@ -1029,7 +1029,7 @@ delivery separately from first-output correctness. Frame count and RTF show cost
 Inspect support counts before comparing conditional scores. Frozen-ASR values
 appear on its own child, not in this visual result.
 
-## Video confidence intervals
+## Aggregation and confidence intervals
 
 ### Which values receive an interval
 

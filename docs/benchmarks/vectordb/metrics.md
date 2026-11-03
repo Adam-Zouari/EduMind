@@ -5,8 +5,7 @@
 On this page:
 
 - [Metric summary](#metric-summary)
-- [Scoring inputs and result status](#scoring-inputs-and-result-status)
-- [Exact neighbours and boundary ties](#exact-neighbours-and-boundary-ties)
+- [Scoring inputs, eligibility, and result status](#scoring-inputs-eligibility-and-result-status)
 - [Search quality](#search-quality-1)
 - [Application retrieval quality](#application-retrieval-quality-1)
 - [Diagnostics](#diagnostics-1)
@@ -14,8 +13,8 @@ On this page:
 - [Why the quality metrics are not interchangeable](#why-the-quality-metrics-are-not-interchangeable)
 - [Operational performance](#operational-performance-1)
 - [Storage descriptors](#storage-descriptors-1)
-- [Worked candidate interpretation](#worked-candidate-interpretation)
-- [Vector-database confidence intervals](#vector-database-confidence-intervals)
+- [Worked result interpretation](#worked-result-interpretation)
+- [Aggregation and confidence intervals](#aggregation-and-confidence-intervals)
 
 This benchmark evaluates database–configuration pairs. ANN quality measures
 preservation of exact nearest neighbours; evidence quality checks the frozen
@@ -30,7 +29,7 @@ failures, missing records and partial observations. Local blocks add only genuin
 metric-specific exceptions, not bad-data cases or repeated general rules.
 All numbers below illustrate arithmetic, not measured database results.
 
-The [implementation boundary](methodology.md#implementation-boundary) applies to
+The [implementation boundary](methodology.md#implementation-status) applies to
 this entire reporting contract. Old keys/measurements must not be renamed to imply
 the revised calculations already execute.
 
@@ -93,9 +92,9 @@ the revised calculations already execute.
 Workload counts, dimensions, concurrency, filters, requested/actual result counts,
 and document operation sizes remain parameters or artifact fields. Actual
 execution-support counters use the shared `validity.*` reporting convention; they
-are not extra selection metrics. See [MLflow structure](methodology.md#mlflow-result-structure).
+are not extra selection metrics. See [MLflow structure](methodology.md#results-and-mlflow-structure).
 
-## Scoring inputs and result status
+## Scoring inputs, eligibility, and result status
 
 Quality uses the designated first measured response for each query/condition.
 Later attempts supply timing and diagnostic database-ranking comparisons, not
@@ -142,7 +141,7 @@ token occurrences. The nDCG ideal uses the entire eligible frozen corpus, never
 only the retrieved pool. A reranker must permute its actual verified pool; the
 exact-retrieval suite's repeated-live-pool equality gate does not apply here.
 
-## Exact neighbours and boundary ties
+### Exact neighbours and boundary ties
 
 For each query, calculate exhaustive distances from the frozen vectors with the
 common evaluator. Filter before selecting neighbours. Let the effective result
@@ -281,7 +280,7 @@ their ordinary linear gain.
 |---|---|---|---|
 | Zero ideal gain in an otherwise valid frozen corpus | Every chunk fragments the required evidence. | `0` (`scored`), with upstream-fragmentation limitation. | Inherit the shared zero-ideal convention; the database cannot repair those boundaries. |
 
-Shared availability and [integration integrity](#scoring-inputs-and-result-status)
+Shared availability and [integration integrity](#scoring-inputs-eligibility-and-result-status)
 apply. Missing evidence annotations are not this zero-ideal case.
 
 ### Evidence-unit Recall@3/@5
@@ -307,7 +306,7 @@ of ANN recall. Eligible answerable questions have a positive gold denominator.
 
 No additional empty-reference convention is needed for the eligible task.
 [Shared availability](../metrics.md#shared-availability-rules) and
-[integration integrity](#scoring-inputs-and-result-status) apply.
+[integration integrity](#scoring-inputs-eligibility-and-result-status) apply.
 
 ### Evidence-token Precision@3/@5
 
@@ -336,7 +335,7 @@ without containing an entire evidence unit.
 **Edge cases and availability:**
 
 The valid integration task has a positive source-token denominator. Token-free
-or invalid rankings follow [output integrity](#scoring-inputs-and-result-status),
+or invalid rankings follow [output integrity](#scoring-inputs-eligibility-and-result-status),
 not an artificial zero-denominator score. Shared availability rules apply.
 
 ## Diagnostics
@@ -366,7 +365,7 @@ available in a useful alternative chunk outside the exact nearest-neighbour set.
 
 Eligible questions have a positive gold denominator. A legitimately smaller
 corpus uses its available pool; unexpected short integration pools follow
-[integrity rules](#scoring-inputs-and-result-status). Shared availability applies.
+[integrity rules](#scoring-inputs-eligibility-and-result-status). Shared availability applies.
 
 ### Ranking Repeatability
 
@@ -545,7 +544,7 @@ Database request timers include adapter preparation, serialization, communicatio
 server work and decoded response. Upstream model inference, offline reference
 calculation and quality scoring are excluded. Full-stack timers include the
 frozen model-backed retrieval path. Build/startup/visibility boundaries are in
-[execution methodology](methodology.md#per-candidate-execution).
+[execution methodology](methodology.md#execution-and-measurements).
 
 Server-load and document-operation percentiles use individual completed logical
 operations within their condition. Full-stack percentiles use each question's
@@ -554,7 +553,7 @@ median successful measured attempt. Apply the same
 different observation sets. Never average workload-cell percentiles or sum
 component percentiles to invent a total. Failed elapsed times remain separate.
 Here completed database observations mean the execution-success cohort defined
-in [scoring inputs and result status](#scoring-inputs-and-result-status), including
+in [scoring inputs and result status](#scoring-inputs-eligibility-and-result-status), including
 separately flagged checkable filter violations, not every decoded invalid response.
 
 ### Database Search Latency p50
@@ -857,7 +856,7 @@ Missing telemetry follows shared availability rules. Logical deletion need not
 reduce later physical footprint immediately; those later snapshots do not replace
 the defined post-build measurement. One checkpoint has no inferred CI.
 
-## Worked candidate interpretation
+## Worked result interpretation
 
 For one illustrative pair on aligned workloads:
 
@@ -884,7 +883,7 @@ cannot be subtracted to calculate reranker p95. Zero observed filter violations
 is conditional on completed checkable responses; the 1% search failure rate
 remains visible. None of these values alone selects the database winner.
 
-## Vector-database confidence intervals
+## Aggregation and confidence intervals
 
 Use [shared uncertainty conventions](../metrics.md#confidence-intervals), preserving
 metric-specific observations rather than applying quality's macro mean everywhere.

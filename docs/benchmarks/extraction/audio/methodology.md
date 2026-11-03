@@ -4,19 +4,19 @@
 
 On this page:
 
-- [Terminology and unit of comparison](#terminology-and-unit-of-comparison)
-- [ASR profiles](#asr-profiles)
+- [Purpose and scope](#purpose-and-scope)
+- [Candidates and configurations](#candidates-and-configurations)
 - [Data](#data)
-- [Common input and output rules](#common-input-and-output-rules)
-- [Per-candidate execution](#per-candidate-execution)
-- [Development, validation, and locked test](#development-validation-and-locked-test)
-- [Metrics and why they are used](#metrics-and-why-they-are-used)
-- [MLflow result structure](#mlflow-result-structure)
+- [Metrics and their purpose](#metrics-and-their-purpose)
+- [Evaluation setup](#evaluation-setup)
+- [Benchmark workflow and selection](#benchmark-workflow-and-selection)
+- [Execution and measurements](#execution-and-measurements)
+- [Results and MLflow structure](#results-and-mlflow-structure)
 
 Which English speech-to-text profile produces the most accurate educational
 transcript with timestamps suitable for navigation and citations?
 
-## Terminology and unit of comparison
+## Purpose and scope
 
 An **ASR profile** is one complete executable transcription configuration. It
 includes the model revision, decoder settings, device, numeric precision,
@@ -43,7 +43,7 @@ diagnosis but never become three independent quality samples.
 The runner implements the failure and repeatability contract below. See the
 [runbook](../../running.md#1-prepare-the-environment) for execution prerequisites.
 
-## ASR profiles
+## Candidates and configurations
 
 | Model/profile | Why it is included |
 |---|---|
@@ -114,7 +114,37 @@ transcription or candidate resource monitoring. Run
 `python -m experiments.benchmarks.validate audio --profile <profile>` after
 preparing the inputs; execution automatically verifies its matching sealed report.
 
-## Common input and output rules
+## Metrics and their purpose
+
+| Category | Metrics | Why they are needed |
+|---|---|---|
+| Recognition | **Corpus WER** (primary), Corpus CER | WER measures the complete ordered word transcript; CER exposes character-level spelling, name, and number errors. |
+| WER diagnostics | Word Substitution Rate, Word Deletion Rate, Word Insertion Rate | Shows whether WER comes mainly from confused, omitted, or unsupported words. These explain WER but do not replace it. |
+| Timestamps | **Timestamp Boundary MAE**, **Timestamp Alignment Coverage** | MAE measures the accuracy of aligned start/end boundaries; coverage prevents a candidate from looking accurate after aligning only easy segments. |
+| Reliability | Unexpected Empty Transcript Rate, Nonspeech False-Transcription Rate, Transcript Repeatability Success Rate, Attempt Failure Rate | Distinguishes valid empty/invented first outputs from execution failures and measures repeatable delivery across scheduled speech attempts. |
+| Operational | **Complete-Pipeline Real-Time Factor**, p50/p95 warm clip latency, cold model-load time, peak process-tree RAM, peak device VRAM | Measures the complete transcription and alignment cost of the frozen CUDA profile. |
+
+Content F1 and document Reading Order NED are not ASR metrics in this benchmark.
+Audio already supplies chronological order, so Corpus WER evaluates the required
+ordered transcript. Diarization is not scored unless
+speaker identification becomes a product requirement.
+
+The exact calculations, examples, ranges, directions, and confidence-interval
+rules are defined in [audio metrics](metrics.md). Corpus WER, CER, and the three
+WER components pool valid completed first-output edit counts before division; they are
+not averages of independently calculated clip error rates. Timestamp Boundary
+MAE and Alignment Coverage are interpreted together. Reliability controls are
+excluded from speech Corpus WER/CER and evaluated by their own false-transcription
+rate. Every authoritative split requires reviewed controls from all four
+nonspeech categories; absent required controls fail data preparation. The two
+output-event rates use successful eligible first outputs, with Attempt Failure
+Rate and contributing counts beside them. Recognition diagnostics exclude
+failed first outputs rather than inventing deletions; both timestamp metrics
+are unavailable for those failed outputs. Planned reference counts stay in
+artifacts, while scored timestamp coverage uses valid completed first outputs. These denominators answer different
+questions and are frozen explicitly in [audio metrics](metrics.md).
+
+## Evaluation setup
 
 Every candidate receives the same canonical audio: mono, 16 kHz, signed 16-bit
 PCM before model-native feature extraction, with no
@@ -143,7 +173,41 @@ lexical text without required timestamps,
 empty text with lexical timestamp segments, or invalid required boundaries/schema
 are failed attempts. Recoverable failures do not cancel later scheduled attempts.
 
-## Per-candidate execution
+## Benchmark workflow and selection
+
+```text
+smoke:
+separate CPU and CUDA runs on tiny committed speech and nonspeech fixtures
+→ verify loading, transcription, timestamps, scoring, artifacts, and cleanup
+
+preflight:
+fresh CUDA worker per declared ASR profile → reviewed demanding development/stress input
+→ exact hardware qualification, with no warmup or quality ranking
+
+development:
+all hardware-qualified members of the four-profile ASR roster on 54 speech clips
+and development reliability controls
+→ engineer reviews MLflow and records finalists
+
+validation:
+engineer-selected finalists on 18 unseen speech clips and validation controls
+→ engineer records exactly one selected ASR profile
+
+locked test:
+one benchmark invocation for the selected profile on 18 locked speech clips
+and locked controls, using the configured measured repetitions
+→ final unbiased ASR report; no further tuning in this benchmark version
+```
+
+Smoke validates wiring only. Development is where all candidates that passed
+the exact matching preflight are compared; exclusions remain recorded in the
+parent provenance.
+Validation checks whether the chosen finalists retain their behavior on unseen
+recordings. The locked split is used only after the engineer has selected one
+profile. MLflow records evidence throughout but never advances a candidate or
+changes application configuration.
+
+## Execution and measurements
 
 One child run executes one ASR profile in a fresh operating-system process. A
 CPU process has CUDA hidden before any model runtime is imported; a CUDA process
@@ -205,71 +269,7 @@ timestamp level; and MOSS `max_new_tokens=2048` with `do_sample=false`. Runtime
 versions, model paths, revisions, cache-manifest checksums, dtype, and device are
 recorded with them.
 
-## Development, validation, and locked test
-
-```text
-smoke:
-separate CPU and CUDA runs on tiny committed speech and nonspeech fixtures
-→ verify loading, transcription, timestamps, scoring, artifacts, and cleanup
-
-preflight:
-fresh CUDA worker per declared ASR profile → reviewed demanding development/stress input
-→ exact hardware qualification, with no warmup or quality ranking
-
-development:
-all hardware-qualified members of the four-profile ASR roster on 54 speech clips
-and development reliability controls
-→ engineer reviews MLflow and records finalists
-
-validation:
-engineer-selected finalists on 18 unseen speech clips and validation controls
-→ engineer records exactly one selected ASR profile
-
-locked test:
-one benchmark invocation for the selected profile on 18 locked speech clips
-and locked controls, using the configured measured repetitions
-→ final unbiased ASR report; no further tuning in this benchmark version
-```
-
-Smoke validates wiring only. Development is where all candidates that passed
-the exact matching preflight are compared; exclusions remain recorded in the
-parent provenance.
-Validation checks whether the chosen finalists retain their behavior on unseen
-recordings. The locked split is used only after the engineer has selected one
-profile. MLflow records evidence throughout but never advances a candidate or
-changes application configuration.
-
-## Metrics and why they are used
-
-| Category | Metrics | Why they are needed |
-|---|---|---|
-| Recognition | **Corpus WER** (primary), Corpus CER | WER measures the complete ordered word transcript; CER exposes character-level spelling, name, and number errors. |
-| WER diagnostics | Word Substitution Rate, Word Deletion Rate, Word Insertion Rate | Shows whether WER comes mainly from confused, omitted, or unsupported words. These explain WER but do not replace it. |
-| Timestamps | **Timestamp Boundary MAE**, **Timestamp Alignment Coverage** | MAE measures the accuracy of aligned start/end boundaries; coverage prevents a candidate from looking accurate after aligning only easy segments. |
-| Reliability | Unexpected Empty Transcript Rate, Nonspeech False-Transcription Rate, Transcript Repeatability Success Rate, Attempt Failure Rate | Distinguishes valid empty/invented first outputs from execution failures and measures repeatable delivery across scheduled speech attempts. |
-| Operational | **Complete-Pipeline Real-Time Factor**, p50/p95 warm clip latency, cold model-load time, peak process-tree RAM, peak device VRAM | Measures the complete transcription and alignment cost of the frozen CUDA profile. |
-
-Content F1 and document Reading Order NED are not ASR metrics in this benchmark.
-Audio already supplies chronological order, so Corpus WER evaluates the required
-ordered transcript. Diarization is not scored unless
-speaker identification becomes a product requirement.
-
-The exact calculations, examples, ranges, directions, and confidence-interval
-rules are defined in [audio metrics](metrics.md). Corpus WER, CER, and the three
-WER components pool valid completed first-output edit counts before division; they are
-not averages of independently calculated clip error rates. Timestamp Boundary
-MAE and Alignment Coverage are interpreted together. Reliability controls are
-excluded from speech Corpus WER/CER and evaluated by their own false-transcription
-rate. Every authoritative split requires reviewed controls from all four
-nonspeech categories; absent required controls fail data preparation. The two
-output-event rates use successful eligible first outputs, with Attempt Failure
-Rate and contributing counts beside them. Recognition diagnostics exclude
-failed first outputs rather than inventing deletions; both timestamp metrics
-are unavailable for those failed outputs. Planned reference counts stay in
-artifacts, while scored timestamp coverage uses valid completed first outputs. These denominators answer different
-questions and are frozen explicitly in [audio metrics](metrics.md).
-
-## MLflow result structure
+## Results and MLflow structure
 
 Audio uses its own MLflow experiment. Display names omit timestamps and redundant
 benchmark prefixes; MLflow run IDs and recorded timestamps identify individual
@@ -339,7 +339,7 @@ Applicable development, validation, and locked uncertainty bounds use the shared
 [metric convention](../../methodology.md#shared-mlflow-metric-convention).
 
 Apply [shared confidence intervals](../../metrics.md#confidence-intervals)
-with the [audio-specific eligibility and resampling units](metrics.md#audio-confidence-intervals).
+with the [audio-specific eligibility and resampling units](metrics.md#aggregation-and-confidence-intervals).
 Clip/source groups keep all their attempts; controls are resampled separately,
 and each draw recalculates the same pooled/conditional statistic. The three
 attempts do not become independent source observations.

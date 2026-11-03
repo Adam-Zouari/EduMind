@@ -4,19 +4,29 @@
 
 On this page:
 
-- [Implementation boundary](#implementation-boundary)
-- [Candidate matrix](#candidate-matrix)
-- [Frozen candidate pools and execution](#frozen-candidate-pools-and-execution)
-- [Execution profiles and selection](#execution-profiles-and-selection)
-- [Metrics and why they are used](#metrics-and-why-they-are-used)
-- [MLflow result structure](#mlflow-result-structure)
-- [Paired comparisons and advancement](#paired-comparisons-and-advancement)
+- [Purpose and scope](#purpose-and-scope)
+- [Candidates and configurations](#candidates-and-configurations)
+- [Data](#data)
+- [Metrics and their purpose](#metrics-and-their-purpose)
+- [Evaluation setup](#evaluation-setup)
+- [Benchmark workflow and selection](#benchmark-workflow-and-selection)
+- [Execution and measurements](#execution-and-measurements)
+- [Results and MLflow structure](#results-and-mlflow-structure)
 
 Which complete first-stage retriever and reranker gives the best evidence
 ordering for the selected chunker/embedding pair, and is any quality improvement
 worth its latency and resource cost?
 
-## Implementation boundary
+## Purpose and scope
+
+A candidate is one complete retriever/reranker stack operating on an already
+selected chunking–embedding pair. Only answerable questions enter this
+retrieval evaluation. Each question supplies a ranking observation; source
+documents and their independent-source groups govern quality aggregation
+and resampling. This benchmark does not evaluate approximate database search
+or generated answers.
+
+### Implementation status
 
 The runner implements the reporting contract below: one warmup, designated-first
 quality, all-pairs complete-order Ranking Repeatability, separate live retrieval
@@ -30,7 +40,7 @@ Unfrozen requirements cannot establish authoritative uncertainty or advancement;
 descriptive points retain their support and unavailable-bound reasons. Historical
 artifacts retain their own protocol definitions rather than being relabelled.
 
-## Candidate matrix
+## Candidates and configurations
 
 The selected chunker/embedding pair, corpus, questions, and evidence annotations
 are frozen before this phase. A candidate is one complete
@@ -58,7 +68,7 @@ and BM25 remain independent when selected directly. RRF reads their ranked
 top-20 source lists, combines them using the frozen fusion settings, and returns
 one deterministic top-20 list.
 
-## Frozen candidate pools and execution
+## Data
 
 Each profile uses its own reviewed manifest and source split under the selected
 chunker/embedding contract, with canonical chunks, evidence-unit IDs, and source
@@ -76,6 +86,41 @@ leaves ten chunks outside each top-20 pool, so smoke execution can exercise pool
 selection, exclusion, fusion, and permutation checks. The count is a smoke
 fixture control; authoritative chunking strategies are not forced to produce
 exactly 30 chunks because their natural chunk counts are benchmark outputs.
+
+## Metrics and their purpose
+
+| Role | Metrics | Why they are needed |
+|---|---|---|
+| Primary | **nDCG@3/@5**, **Evidence-unit Recall@3/@5**, **Evidence-token Precision@3/@5** | Separates evidence-richness ordering, evidence completeness, and concentration of retrieved text. |
+| Diagnostic | alpha-nDCG@3/@5, candidate-pool Evidence-unit Recall@20, Ranking Repeatability | Diagnoses repeated evidence, first-stage pool limits, and stability of complete ordered outputs. |
+| Operational | Full-stack warm p50/p95 latency, retrieval (first-stage) warm p50/p95 latency, reranker warm p50/p95 latency when applicable, cold initialization, peak process-tree RAM, peak device VRAM, separate Dense/BM25 index-build times | Separates retriever cost, incremental reranker cost, startup, memory, and one-time index preparation. |
+| Workload descriptor | Mean/p95 Retrieved Context Tokens@3/@5, mean/p95 Reranker Input Tokens when applicable | Explains final context volume and native model input workload. |
+| Storage descriptor | Index Size on each owner, RRF total with separate Dense/BM25 sizes | Describes searchable state without inventing a third RRF index. |
+
+The three bold quality families are primary and are reviewed separately at both
+cutoffs. Linear nDCG credits each chunk independently; repeated relevant evidence
+does not reduce its gain. Alpha-nDCG adds a novelty preference and remains
+diagnostic rather than treating repetition as a relevance-ranking error. It uses
+`alpha=0.5` and uses the same answerable questions as the primary metrics,
+including those with one gold evidence unit. Greedy-versus-exact normalization
+is reviewed on development data as described in
+[pending-data-review.md](../../pending-data-review.md).
+Candidate-pool Recall@20 is recorded once on
+each no-reranker pool owner because its four learned-reranker children receive
+the same pool. Reranker-only latency and input-token metrics are omitted, not set to zero,
+for the no-reranker option.
+
+Eligible quality metrics are also reported separately for text, table, formula,
+and mixed questions. These evidence types are reporting slices, not additional
+metric roles.
+
+The evidence-unit definitions, `tiktoken:cl100k_base` evaluation tokenizer,
+answerable-question eligibility, document-macro aggregation, confidence
+intervals, and text/table/formula/mixed slices are the same as in the
+chunking/embedding phase. Exact definitions and comparison rules are in
+[retrieval and reranking metrics](metrics.md).
+
+## Evaluation setup
 
 Quality comparisons use one checksummed top-20 pool per question and first-stage
 retriever. During a full development comparison, the no-reranker candidates own
@@ -104,28 +149,9 @@ metric failure. The collection records its actual preparation provenance.
 The same rule applies when preflight excludes a development baseline but leaves
 another stack using that retriever qualified.
 
-```text
-load this profile's inputs and selected chunker/embedding contract
-→ prepare the Dense/BM25 indexes required by the evaluated stacks
-→ create each required retriever's top-20 query pool per question
-→ checksum each collection and retain its owner/input-artifact provenance
-→ score any evaluated no-reranker candidates at @3 and @5
-→ execute the selected learned-reranker candidates on their verified pools
-→ score every resulting order at @3 and @5
-```
-
 The top-20 pool supports reranking and diagnosis; it is not another quality
 cutoff. No token-budget packing policy is applied in this phase. The first three
 and first five canonical chunk texts are scored exactly as ranked.
-
-Operational measurements do not reuse cached retrieval timings. Every reranked
-candidate executes its first-stage method and reranker together so full-stack
-latency and memory describe the deployable path. The frozen query pool is reused
-only to guarantee a fair quality comparison: before reranking, the live ordered
-IDs must match that question's frozen reference. A passing learned-reranker
-execution therefore already establishes first-stage ordering consistency.
-The no-reranker child measures the
-same live first stage without a learned reranker.
 
 The versioned `experiments/benchmarks/rag/retrieval_reranking/protocol.yaml` file is the
 single source of truth for benchmark hyperparameters. Its strict schema rejects
@@ -189,11 +215,14 @@ to the complete frozen corpus. Every stack therefore shares the same
 normalization baseline for each metric on a given question, independent of
 its retrieved pool.
 
-## Execution profiles and selection
+## Benchmark workflow and selection
 
 ```text
 smoke:
-minimal deterministic fixtures → wiring and artifact checks only
+separate CPU/CUDA runs on minimal deterministic fixtures → wiring and artifact checks only
+
+preflight:
+all declared stacks on reviewed development/stress inputs → hardware qualification only
 
 development:
 all hardware-qualified members of the 15-candidate roster on the development manifest
@@ -208,6 +237,75 @@ exactly one validation winner on the locked component split
 → no further retrieval or reranker tuning
 ```
 
+A complete stack decision includes the frozen chunker, embedding, first-stage
+retriever, and reranker. When a selected reranker needs its no-reranker owner's
+pool, the runner prepares and verifies that pool as an input; the owner is not
+added as another validation or locked candidate. No weighted score or automatic
+winner rule is used.
+
+### Paired comparisons and advancement
+
+Paired comparisons are analysis rows under the parent, not MLflow runs. They
+are separated by the intervention being studied:
+
+- **Reranker effects:** up to 12 comparisons, each evaluated learned reranker against the matching
+  `<retriever>|none` candidate over the same checksummed pool collection;
+- **Retriever effects:** Dense versus BM25, Dense versus RRF, and BM25 versus RRF using the three
+  evaluated no-reranker candidates (up to three comparisons); and
+- **Finalist effects:** explicitly declared cross-stack comparisons on validation.
+
+The [result artifacts](#paired-comparison-artifacts) retain these analyses
+separately without creating extra candidate runs.
+
+A comparison requires both candidates to have completed the same evaluation.
+Missing hardware-excluded candidates do not receive fabricated comparison rows;
+qualification provenance explains their absence. An internally prepared pool is
+not a substitute for a measured no-reranker baseline.
+
+Reranker-effect rows compare all primary quality metrics, diagnostic alpha-nDCG,
+full-stack latency, cold initialization, RAM, VRAM, and retrieved-token workload.
+They do not pretend that shared pool Recall@20, shared index build, retrieval
+latency, or reranker-only fields are reranker improvements. Retriever-effect rows
+may compare quality, pool Recall@20, full-stack and retrieval latency, cold
+initialization, RAM, VRAM, retrieved-context tokens, Index Build Time, and Index Size.
+Index-build point differences require two defined independent-index observations,
+such as Dense versus BM25. Do not invent a zero RRF build-time observation or
+substitute an unmeasured sum; its required dependency storage is reported separately.
+Ranking Repeatability remains diagnostic; its observed pair outcomes do not
+replace integrity checks or quality comparisons.
+Its supported document-bootstrap interval estimates source-sampling uncertainty
+under the [metric CI contract](metrics.md#which-values-receive-an-interval).
+Outcome counts and validity counters receive no winner-comparison rows.
+Required integrity checks remain gates; an observed failure count alone is not
+an automatic zero-error gate.
+
+Quality and supported warm-latency differences apply the
+[shared paired-bootstrap procedure](../../metrics.md#confidence-intervals)
+to aligned source groups. Quality keeps document-macro weights even when an
+independent group contains several documents. Latency differences recalculate
+each candidate's percentile from its contributing query observations on the
+same source draws; they are not the mean of per-query latency differences.
+Retain query, document, and independent-source support separately.
+Point-only observations retain point-only
+differences under the metric's CI contract. The engineer selects up
+to three complete finalists for validation after jointly reviewing primary
+quality, uncertainty, evidence slices, diagnostics, and operational feasibility,
+then records exactly one validation winner. That stack receives its own locked
+component report and is used unchanged by Final RAG. The versioned decision file
+references the parent and child run IDs and all governing checksums.
+
+## Execution and measurements
+
+```text
+load this profile's inputs and selected chunker/embedding contract
+→ prepare the Dense/BM25 indexes required by the evaluated stacks
+→ create each required retriever's top-20 query pool per question
+→ checksum each collection and retain its owner/input-artifact provenance
+→ score any evaluated no-reranker candidates at @3 and @5
+→ execute the selected learned-reranker candidates on their verified pools
+→ score every resulting order at @3 and @5
+```
+
 Measured workers use one representative warmup before recorded requests.
 Smoke uses one measured attempt; development, validation, and locked use three
 measured attempts with seed 42. Preflight has no warmup and supplies hardware
@@ -215,44 +313,14 @@ qualification, not quality evidence. Loading, warmup, and measured attempts
 follow the [shared lifecycle](../../methodology.md#preflight-and-measured-run-lifecycles).
 The protocol records those execution settings and the worker verifies them.
 
-A complete stack decision includes the frozen chunker, embedding, first-stage
-retriever, and reranker. When a selected reranker needs its no-reranker owner's
-pool, the runner prepares and verifies that pool as an input; the owner is not
-added as another validation or locked candidate. No weighted score or automatic
-winner rule is used.
-
-## Metrics and why they are used
-
-| Role | Metrics | Why they are needed |
-|---|---|---|
-| Primary | **nDCG@3/@5**, **Evidence-unit Recall@3/@5**, **Evidence-token Precision@3/@5** | Separates evidence-richness ordering, evidence completeness, and concentration of retrieved text. |
-| Diagnostic | alpha-nDCG@3/@5, candidate-pool Evidence-unit Recall@20, Ranking Repeatability | Diagnoses repeated evidence, first-stage pool limits, and stability of complete ordered outputs. |
-| Operational | Full-stack warm p50/p95 latency, retrieval (first-stage) warm p50/p95 latency, reranker warm p50/p95 latency when applicable, cold initialization, peak process-tree RAM, peak device VRAM, separate Dense/BM25 index-build times | Separates retriever cost, incremental reranker cost, startup, memory, and one-time index preparation. |
-| Workload descriptor | Mean/p95 Retrieved Context Tokens@3/@5, mean/p95 Reranker Input Tokens when applicable | Explains final context volume and native model input workload. |
-| Storage descriptor | Index Size on each owner, RRF total with separate Dense/BM25 sizes | Describes searchable state without inventing a third RRF index. |
-
-The three bold quality families are primary and are reviewed separately at both
-cutoffs. Linear nDCG credits each chunk independently; repeated relevant evidence
-does not reduce its gain. Alpha-nDCG adds a novelty preference and remains
-diagnostic rather than treating repetition as a relevance-ranking error. It uses
-`alpha=0.5` and uses the same answerable questions as the primary metrics,
-including those with one gold evidence unit. Greedy-versus-exact normalization
-is reviewed on development data as described in
-[pending-data-review.md](../../pending-data-review.md).
-Candidate-pool Recall@20 is recorded once on
-each no-reranker pool owner because its four learned-reranker children receive
-the same pool. Reranker-only latency and input-token metrics are omitted, not set to zero,
-for the no-reranker option.
-
-Eligible quality metrics are also reported separately for text, table, formula,
-and mixed questions. These evidence types are reporting slices, not additional
-metric roles.
-
-The evidence-unit definitions, `tiktoken:cl100k_base` evaluation tokenizer,
-answerable-question eligibility, document-macro aggregation, confidence
-intervals, and text/table/formula/mixed slices are the same as in the
-chunking/embedding phase. Exact definitions and comparison rules are in
-[retrieval and reranking metrics](metrics.md).
+Operational measurements do not reuse cached retrieval timings. Every reranked
+candidate executes its first-stage method and reranker together so full-stack
+latency and memory describe the deployable path. The frozen query pool is reused
+only to guarantee a fair quality comparison: before reranking, the live ordered
+IDs must match that question's frozen reference. A passing learned-reranker
+execution therefore already establishes first-stage ordering consistency.
+The no-reranker child measures the
+same live first stage without a learned reranker.
 
 Retrieval Warm Latency times Dense, BM25, or both source retrievals plus RRF fusion,
 before learned reranking. Full-stack latency additionally includes the
@@ -281,7 +349,7 @@ artifacts rather than mandatory workload scalars. Optional Candidate-Pool
 Tokens@20 is a per-query pool-artifact field; it does not duplicate final-context
 token metrics.
 
-## MLflow result structure
+## Results and MLflow structure
 
 Retrieval/reranking uses `EduMind / Retrieval–Reranking` and one parent for each
 fair comparison. Every planned
@@ -459,25 +527,7 @@ owner-child `pool_collection.parquet` stores ranked query rows. An RRF
 fusion index. Internally prepared collections retain input-artifact provenance
 without an invented owner child.
 
-## Paired comparisons and advancement
-
-Paired comparisons are analysis rows under the parent, not MLflow runs. They
-are separated by the intervention being studied:
-
-- `reranker_comparisons.parquet` and `reranker_comparisons.csv` contain up to 12
-  reranker-effect comparisons, each evaluated learned reranker against the matching
-  `<retriever>|none` candidate over the same checksummed pool collection;
-- `retriever_comparisons.parquet` and `retriever_comparisons.csv` contain Dense
-  versus BM25, Dense versus RRF, and BM25 versus RRF using the three
-  evaluated no-reranker candidates (up to three comparisons); and
-- validation uses `finalist_comparisons.parquet` and
-  `finalist_comparisons.csv` only for explicitly declared cross-stack finalist
-  comparisons.
-
-A comparison requires both candidates to have completed the same evaluation.
-Missing hardware-excluded candidates do not receive fabricated comparison rows;
-qualification provenance explains their absence. An internally prepared pool is
-not a substitute for a measured no-reranker baseline.
+### Paired-comparison artifacts
 
 Parquet is authoritative and typed; CSV is the human-readable mirror. Each pair
 is generated from one in-memory typed table. The writer reads both files back
@@ -523,35 +573,3 @@ Confidence bounds, `confidence_level`, bootstrap resamples, and seed are
 populated only when a paired interval is available. Otherwise they are null and
 `ci_status` states why, such as `smoke`, `insufficient_documents`, or
 `not_supported`.
-
-Reranker-effect rows compare all primary quality metrics, diagnostic alpha-nDCG,
-full-stack latency, cold initialization, RAM, VRAM, and retrieved-token workload.
-They do not pretend that shared pool Recall@20, shared index build, retrieval
-latency, or reranker-only fields are reranker improvements. Retriever-effect rows
-may compare quality, pool Recall@20, full-stack and retrieval latency, cold
-initialization, RAM, VRAM, retrieved-context tokens, Index Build Time, and Index Size.
-Index-build point differences require two defined independent-index observations,
-such as Dense versus BM25. Do not invent a zero RRF build-time observation or
-substitute an unmeasured sum; its required dependency storage is reported separately.
-Ranking Repeatability remains diagnostic; its observed pair outcomes do not
-replace integrity checks or quality comparisons.
-Its supported document-bootstrap interval estimates source-sampling uncertainty
-under the [metric CI contract](metrics.md#which-values-receive-an-interval).
-Outcome counts and validity counters receive no winner-comparison rows.
-Required integrity checks remain gates; an observed failure count alone is not
-an automatic zero-error gate.
-
-Quality and supported warm-latency differences apply the
-[shared paired-bootstrap procedure](../../metrics.md#confidence-intervals)
-to aligned source groups. Quality keeps document-macro weights even when an
-independent group contains several documents. Latency differences recalculate
-each candidate's percentile from its contributing query observations on the
-same source draws; they are not the mean of per-query latency differences.
-Retain query, document, and independent-source support separately.
-Point-only observations retain point-only
-differences under the metric's CI contract. The engineer selects up
-to three complete finalists for validation after jointly reviewing primary
-quality, uncertainty, evidence slices, diagnostics, and operational feasibility,
-then records exactly one validation winner. That stack receives its own locked
-component report and is used unchanged by Final RAG. The versioned decision file
-references the parent and child run IDs and all governing checksums.
