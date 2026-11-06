@@ -45,7 +45,7 @@ component is claimed yet.
 
 The diagram is the target lifecycle, not a claim that every stage is executable.
 In particular, vector-database locked execution and some Final RAG integration
-remain pending; the [runbook's implementation status](docs/benchmarks/running.md)
+remain pending; the [runbook's implementation status](docs/benchmarks/running.md#implementation-status)
 identifies the available entry points and remaining gaps. Vector-server checks
 are CPU workloads and do not use CUDA preflight.
 

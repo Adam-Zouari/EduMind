@@ -21,6 +21,12 @@ report verification; Final RAG and vector-database migration remain separate.
 Dataset annotation rules live here; prediction scoring lives in each metric
 reference, not in the validator.
 
+Use the [dataset plan](#1-final-dataset-plan) to understand each source's role.
+For downloads, go to [RAG](#3-install-the-rag-datasets),
+[documents](#4-install-the-document-datasets), [audio](#5-install-the-audio-datasets),
+or [video](#6-install-the-video-datasets). Then follow
+[manifest construction](#7-build-the-frozen-edumind-manifests) before validation.
+
 ## 1. Final dataset plan
 
 ### Document extraction
@@ -152,10 +158,9 @@ from reviewed development material. It contains representative faithful,
 unsupported, partially correct, irrelevant, and refusal outputs with human
 labels for atomic claim extraction, full-context support, cited-passage support,
 source-verified correctness, gold-claim matching, answer relevancy, and semantic
-equivalence. Include compound
-claims, paraphrases, repeated claims, factual qualifiers, verified extra facts,
-unverified additions, and incomplete answers. It is used only to qualify and
-freeze the semantic judge; it is not
+equivalence. Include compound claims, paraphrases, repeated claims, factual
+qualifiers, verified extra facts, unverified additions, and incomplete answers.
+This artifact is used only to qualify and freeze the semantic judge. It is not
 added to candidate quality results and never contains validation or locked-test
 questions.
 
@@ -192,7 +197,8 @@ from filenames is required. Synthetic stress corpora are separate conditions,
 not replacements for real-data evidence. Exact counts, dimensions, configuration
 ranges and load support remain in [pending data review](pending-data-review.md#vector-databases).
 The [vector methodology](vectordb/methodology.md) defines the target lifecycle;
-its input-validator and revised runner migration remain pending.
+its standalone input validator and migration to that runner contract remain
+pending.
 
 ## 2. Prerequisites and storage layout
 
@@ -283,9 +289,8 @@ split seed. IDs must be globally unique, source-document families must remain
 isolated, and the locked-test manifest must not be inspected during component
 selection.
 
-Each component benchmark has its own locked execution. A locked manifest may
-also be used for the Final RAG report only when every affected component and
-complete-system choice was frozen before the first locked result was inspected.
+Each component benchmark has its own locked execution. Sharing a locked manifest
+with Final RAG follows the [shared locked-data isolation rule](methodology.md#locked-data-isolation).
 If component locked results inform further choices, reserve a separate untouched
 Final RAG holdout instead. Reviewed manifests must record the intended uses;
 locked reports never authorize reselection on the same data.
@@ -887,8 +892,13 @@ from the first measured attempt, use all three attempts for repeatability and
 failure rates, and average quality within documents before averaging documents.
 Smoke uses one measured attempt and supplies no repeatability evidence. These
 execution results are run artifacts, not annotations added to the dataset
-manifest. The complete empty, missing, failed, and unavailable rules are in
-[the document metric contract](extraction/document/metrics.md).
+manifest. A failed first attempt leaves quality unavailable, while a later
+failure does not erase valid first-attempt quality: see
+[first and later attempt failures](metrics.md#first-and-later-attempt-failures).
+For valid empty content or detection comparisons, see
+[the shared empty-comparison convention](metrics.md#content-and-detection-empty-comparisons).
+The [document metric contract](extraction/document/metrics.md) defines each
+metric's eligibility and local exceptions.
 
 Speech samples additionally contain:
 
@@ -921,7 +931,8 @@ transcript/visual fields are valid negatives, not missing annotations. Claimed
 spoken timing metrics require reviewed spoken segments; visual intervals do not
 supply those boundaries. Reviewed nonspeech units use the single video-protocol
 unit type and actual input boundaries, including overlap. Their allocation and
-CI support are resolved in [pending-data-review](pending-data-review.md#video-extraction). The video protocol is a separate versioned input: its checksum
+CI support remain subject to [video data review](pending-data-review.md#video-extraction).
+The video protocol is a separate versioned input: its checksum
 and the manifest checksum are recorded together in normal run provenance, but
 the protocol is not stored in or bound into the manifest. The transcript is
 retained for the frozen-ASR diagnostic, but spoken and visible

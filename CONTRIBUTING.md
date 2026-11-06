@@ -67,8 +67,12 @@ python -m pytest tests/test_benchmark_metrics.py tests/test_benchmark_datasets.p
   calculation, accurate worked example, interpretation, range/direction, and
   a directly following **Edge cases and availability** block. Use
   `Edge case | Example | Value/status | Explanation` only for genuine
-  metric-specific exceptions. Link shared failure/support rules rather than
-  copying them into every table; do not disguise invalid references, runtime
+  metric-specific exceptions. For a shared rule, name the local case and its
+  effect, then link directly to that rule's heading. For example, when attempt 1
+  is designated for quality, its failure leaves quality unavailable even if a
+  later attempt succeeds;
+  link to [first and later attempt failures](docs/benchmarks/metrics.md#first-and-later-attempt-failures).
+  Do not copy whole shared policy tables or disguise invalid references, runtime
   integrity violations, or ordinary poor scores as metric edge cases. Put
   interval calculations in the page's aggregation section. Keep setup and
   architecture pages concise rather than giving them metric templates.

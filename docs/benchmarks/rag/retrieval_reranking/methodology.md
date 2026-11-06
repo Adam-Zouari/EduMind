@@ -34,7 +34,7 @@ and reranker timings, owned index measurements, and retained per-attempt evidenc
 Standalone validation and sealed-report verification run before candidate loading.
 Pool/index provenance, permutation, input, placement, and numerical integrity
 remain separate from diagnostic ranking changes and measured failure counts.
-Alpha-nDCG already uses the same answerable-question and source-document
+Alpha-nDCG uses the same answerable-question and source-document
 eligibility as primary retrieval quality, including single-unit questions.
 
 Two reporting details still require migration. The current no-reranker owner
@@ -116,7 +116,7 @@ diagnostic rather than treating repetition as a relevance-ranking error. It uses
 `alpha=0.5` and uses the same answerable questions as the primary metrics,
 including those with one gold evidence unit. Greedy-versus-exact normalization
 is reviewed on development data as described in
-[pending-data-review.md](../../pending-data-review.md).
+[the retrieval and generation data-review checklist](../../pending-data-review.md#chunking-embedding-retrieval-and-generation).
 Candidate-pool Recall@20 is recorded once on
 each no-reranker pool owner because its four learned-reranker children receive
 the same pool. Reranker-only latency and input-token metrics are omitted, not set to zero,
@@ -132,7 +132,7 @@ intervals, and text/table/formula/mixed slices are the same as in the
 chunking/embedding phase. Exact definitions and comparison rules are in
 [retrieval and reranking metrics](metrics.md).
 Canonical source-offset units and UTF-8 token-to-source mapping follow the
-[shared retrieval-evidence contract](../../metrics.md#retrieval-evidence-quality);
+[evidence coverage and source-mapping contract](../../metrics.md#retrieval-quality-eligibility);
 this phase does not introduce a second mapping or tokenizer convention.
 
 ## Evaluation setup
@@ -225,7 +225,7 @@ pool. Its required storage is the unique sum of those dependencies, while its
 component sizes remain separately inspectable. There is no incremental
 fusion-index-size metric.
 
-Apply the [shared retrieval-quality normalization](../../metrics.md#retrieval-evidence-quality)
+Apply the [retrieval gains and normalization denominators](../../metrics.md#retrieval-gains-and-denominators)
 to the complete frozen corpus. Every stack therefore shares the same
 normalization baseline for each metric on a given question, independent of
 its retrieved pool.
@@ -351,8 +351,11 @@ as the full elapsed readiness wait including corpus construction.
 
 Quality uses the designated first measured ranking at both cutoffs. Later
 measured attempts supply timing and diagnostic Ranking Repeatability, not
-additional quality scores. The [shared availability rules](../../metrics.md#shared-availability-rules)
-govern failed attempts and partial required evidence.
+additional quality scores. A failed first attempt leaves quality unavailable;
+later success cannot replace it. A later failure does not erase valid first-ranking
+quality. See [first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+Missing required scores leave surviving quality partial/diagnostic; see
+[partial work and complete measurements](../../metrics.md#partial-work-and-complete-measurements).
 
 Request failures are retained outcomes; prohibited truncation and invalid
 artifacts remain integrity conditions. Use the
@@ -490,7 +493,8 @@ progress and elapsed-to-failure in artifacts, not fabricated completed scalars.
 Observed partial resource peaks remain in `resources.parquet` and
 `candidate.json` with partial lifecycle scope. If logged as an observed peak,
 that scalar must retain the same scope/status in artifacts; it is not proof
-that a full workload fits. Missing telemetry remains unavailable.
+that a full workload fits. Missing telemetry remains unavailable; see
+[missing or partial resource measurements](../../metrics.md#missing-or-partial-resource-measurements).
 
 Eligibility counts and validity counters are logged under `validity.*`.
 They are observed counts or integrity gates, not additional quality families:

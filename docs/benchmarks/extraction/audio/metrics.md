@@ -15,9 +15,9 @@ On this page:
 - [Aggregation and confidence intervals](#aggregation-and-confidence-intervals)
 
 The ASR benchmark evaluates the complete ordered transcript, its timestamps,
-catastrophic output behavior, and the cost of the recorded runtime profile. It
-does not report Content F1 or document Reading Order NED as transcript-quality
-metrics: unlike a two-dimensional page, audio already defines one chronological
+empty or invented output, execution failures, and the cost of the recorded
+runtime profile. It does not report Content F1 or document Reading Order NED as
+transcript-quality metrics: unlike a two-dimensional page, audio already defines one chronological
 sequence. Content F1 is used internally to match timestamp spans, as described
 under [Timestamp quality](#timestamp-quality-1).
 
@@ -71,9 +71,12 @@ product requirement.
 
 ## Scoring inputs, eligibility, and result status
 
-Apply the [shared first-output and availability rules](../../metrics.md#shared-availability-rules)
-to the designated first measured attempt after warmup. Later attempts supply
-timing, repeatability, and failure evidence, not additional quality scores.
+Quality uses the designated first measured attempt after warmup. A failed first
+attempt stays unavailable even if a later attempt succeeds; later failures do not
+erase valid first-output quality. See
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+Later attempts supply timing, repeatability, and failure evidence, not additional
+quality scores.
 
 Corpus WER/CER and the three word-error rates pool counts from valid completed
 first speech outputs. A recorded failed first attempt has unavailable edit
@@ -84,8 +87,8 @@ Always report scheduled and contributing clips/source groups, failed first
 attempts, and planned versus contributing reference words/characters. The
 conditional recognition result cannot stand in for workload-wide reliability.
 
-Result statuses, retained rows/reasons, and omitted MLflow null scalars follow
-the [shared availability rules](../../metrics.md#shared-availability-rules).
+Artifacts retain nulls, statuses, reasons, and support; MLflow omits null
+scalars under [metric status and MLflow storage](../../metrics.md#metric-status-and-mlflow-storage).
 ASR artifacts include null values and reasons in `candidate.json` and
 `summary.json`; matched-boundary availability is specified under Timestamp
 Boundary MAE. Invalid references follow
@@ -106,14 +109,16 @@ individual empty projections and deliberately task-free diagnostic slices do
 not waive those authoritative corpus requirements. Bootstrap draws are not new
 manifests subject to the corpus quota.
 
-Attempt Failure Rate uses the scheduled speech/control requests defined below,
-not setup outcomes. Its completeness and fully recorded failure evidence follow
-the shared rules, as does speech-repeatability availability.
+Attempt Failure Rate uses scheduled speech/control requests, not setup
+outcomes. Missing or unexecuted required attempts leave failure-rate and
+repeatability evidence incomplete; recorded request failures remain usable
+reliability evidence. See
+[execution accounting](../../metrics.md#execution-accounting-and-result-completeness)
+and [repeatability with failed or missing attempts](../../metrics.md#repeatability-with-failed-or-missing-attempts).
 
-All individual availability blocks also use the
-[shared availability rules](../../metrics.md#shared-availability-rules).
-The [edge-case classification](../../metrics.md#what-belongs-in-a-metrics-edge-case-block)
-separates metric conventions from input rejection and runtime integrity.
+Local edge-case blocks distinguish valid empty comparisons and absent tasks
+from failed outputs. Input rejection and runtime integrity remain separate from
+those scoring conventions.
 
 ## Recognition quality
 
@@ -125,6 +130,8 @@ not to nonspeech controls or failed requests.
 ### Corpus Word Error Rate
 
 **Question:** How wrong is the complete ordered word transcript?
+
+**Calculation:**
 
 Corpus WER uses the [shared projected words](../../metrics.md#prose-scoring-projection),
 not model-tokenizer subwords.
@@ -162,12 +169,17 @@ reference content.
 | Zero reference words and no predicted words in valid contributing pairs | Projected reference and prediction are both empty | `0` (`scored`) | No required or invented lexical words; this is a valid empty comparison. |
 | Zero reference words with predicted words in valid contributing pairs | Empty reference, prediction `go now` | Total word insertions (`2` here) (`scored`) | Use the total word insertion count, not division by zero. The same rule applies to a pooled zero-reference subset. |
 
-Shared availability rules apply: [first-output and aggregate availability](../../metrics.md#shared-availability-rules).
+A failed first attempt leaves this metric unavailable for that clip; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+An applicable aggregate with no contributing values is unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Corpus Character Error Rate
 
 **Question:** How severe are character-level transcription errors that may be
 hidden by whole-word scoring?
+
+**Calculation:**
 
 Corpus CER uses the same valid first-output pairs and pooled calculation over
 characters of the projected strings, including their remaining spaces:
@@ -199,7 +211,10 @@ the zero-reference convention rather than averaging clip rates.
 | Zero reference characters and no predicted characters in valid contributing pairs | Projected reference and prediction are both empty | `0` (`scored`) | No required or invented lexical characters; this is a valid empty comparison. |
 | Zero reference characters with predicted characters in valid contributing pairs | Empty reference, prediction `go now` | Total character insertions (`6` here) (`scored`) | Use the total character insertion count, including the space. The same rule applies to a pooled zero-reference subset. |
 
-Shared availability rules apply: [first-output and aggregate availability](../../metrics.md#shared-availability-rules).
+A failed first attempt leaves this metric unavailable for that clip; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+An applicable aggregate with no contributing values is unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ## WER diagnostics
 
@@ -218,6 +233,8 @@ below apply it to the same pooled speech pairs.
 
 **Question:** How often is a spoken reference word replaced by a different
 predicted word?
+
+**Calculation:**
 
 ```text
 Word Substitution Rate =
@@ -239,11 +256,16 @@ because each reference word can be substituted at most once.
 |---|---|---|---|
 | Zero reference words in valid contributing pairs | Empty reference with either an empty prediction or `go now` | `0` (`scored`) | With no reference word to substitute, the benchmark defines the rate as zero. Added words are insertions. |
 
-Shared availability rules apply: [first-output and aggregate availability](../../metrics.md#shared-availability-rules).
+A failed first attempt leaves this metric unavailable for that clip; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+An applicable aggregate with no contributing values is unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Word Deletion Rate
 
 **Question:** How much spoken reference content is missing from the transcript?
+
+**Calculation:**
 
 ```text
 Word Deletion Rate =
@@ -267,11 +289,16 @@ is deleted and the rate is `1`.
 |---|---|---|---|
 | Zero reference words in valid contributing pairs | Empty reference with either an empty prediction or `go now` | `0` (`scored`) | With no reference word to delete, the benchmark defines the rate as zero. |
 
-Shared availability rules apply: [first-output and aggregate availability](../../metrics.md#shared-availability-rules).
+A failed first attempt leaves this metric unavailable for that clip; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+An applicable aggregate with no contributing values is unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Word Insertion Rate
 
 **Question:** How much unsupported word content did the model add?
+
+**Calculation:**
 
 ```text
 Word Insertion Rate =
@@ -294,7 +321,10 @@ when the model inserts more words than the entire reference contains.
 | Zero reference words and no insertions in valid contributing pairs | Empty reference and empty prediction | `0` (`scored`) | The benchmark's zero-reference insertion-count convention gives zero. |
 | Zero reference words with insertions in valid contributing pairs | Empty reference, prediction `go now` | Total insertions (`2` here) (`scored`) | Use the total insertion count, preserving the component sum as WER without dividing by zero. |
 
-Shared availability rules apply: [first-output and aggregate availability](../../metrics.md#shared-availability-rules).
+A failed first attempt leaves this metric unavailable for that clip; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+An applicable aggregate with no contributing values is unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ## Timestamp quality
 
@@ -324,6 +354,8 @@ outputs; Attempt Failure Rate diagnoses execution failures.
 **Question:** How far are aligned spoken start/end boundaries from their
 reviewed times?
 
+**Calculation:**
+
 ```text
 Timestamp Boundary MAE = sum of absolute start and end errors / matched boundaries
 ```
@@ -348,13 +380,18 @@ Read it with Alignment Coverage to expose a small easy matched subset.
 | No reference timing task | A reviewed empty projected clip has an explicit empty reference-segment list | `null` (`inapplicable`) | No spoken boundaries are required, so there is no timing-error task. |
 | A valid completed timing task has no matched boundaries | Twenty reference segments, zero aligned spans, including a valid empty output | `null` (`unavailable`) | The matched-boundary denominator is zero; do not invent perfect or infinitely bad boundary errors. |
 
-Shared availability rules apply: [first-output and aggregate availability](../../metrics.md#shared-availability-rules).
+A failed first attempt leaves this metric unavailable for that clip; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+An applicable aggregate with no contributing values is unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 Keep matched-boundary and independent-source support for the
 [conditional confidence interval](#aggregation-and-confidence-intervals).
 
 ### Timestamp Alignment Coverage
 
 **Question:** How much of the required spoken timing task received an alignment?
+
+**Calculation:**
 
 ```text
 Timestamp Alignment Coverage = matched reference segments / required reference segments
@@ -382,7 +419,10 @@ those complementary views.
 |---|---|---|---|
 | No reference timing task | A reviewed empty projected clip has an explicit empty reference-segment list | `null` (`inapplicable`) | With no required segments, there is no alignment task; this is not zero recovery of real speech. |
 
-Shared availability rules apply: [first-output and aggregate availability](../../metrics.md#shared-availability-rules).
+A failed first attempt leaves this metric unavailable for that clip; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+An applicable aggregate with no contributing values is unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 Planned and contributing segment support remains visible.
 
 ## Reliability and failure behavior
@@ -391,6 +431,8 @@ Planned and contributing segment support remains visible.
 
 **Question:** Among completed first speech attempts that require lexical text,
 how often does transcription return empty?
+
+**Calculation:**
 
 Divide valid empty first outputs by valid completed first outputs for speech
 clips with nonempty projected references. A completed output need not be correct:
@@ -404,9 +446,10 @@ The 10 failures remain in failure and support artifacts, not hidden as empties.
 No empty completed outputs gives `0`; all eligible completed outputs empty
 gives `1`.
 
-This denominator intentionally differs from document Unexpected Empty Output
-Rate, whose denominator is all scheduled documents. They answer different
-questions; neither rate silently changes to the other's denominator.
+Unlike this completed-output rate,
+[document Unexpected Empty Output Rate](../document/metrics.md#unexpected-empty-output-rate)
+uses all scheduled documents. Keep the two denominators distinct when comparing
+their interpretations.
 
 **Range and direction:** `[0, 1]`; lower is better.
 
@@ -417,12 +460,16 @@ questions; neither rate silently changes to the other's denominator.
 | No expected lexical task in a diagnostic slice | All reviewed projected speech references in the slice are empty | `null` (`inapplicable`) | No clip is eligible to return an unexpectedly empty lexical transcript. |
 | Eligible lexical tasks but no valid completed first outputs | Positive eligible count, zero completed first-output denominator | `null` (`unavailable`); `no_successful_first_outputs` | No completed-output event rate can be measured; this is not an observed zero-empty rate. |
 
-Shared availability rules apply: [execution and record completeness](../../metrics.md#shared-availability-rules).
+Missing required execution or records leave the affected evidence incomplete;
+recorded failures are not empty or invented-text events. See
+[execution accounting](../../metrics.md#execution-accounting-and-result-completeness).
 
 ### Nonspeech False-Transcription Rate
 
 **Question:** How often does the model invent lexical speech on verified
 nonspeech audio?
+
+**Calculation:**
 
 For the fixed silence, music-without-lyrics, background-noise, and environmental
 sound controls:
@@ -454,12 +501,16 @@ it is `1`.
 | A deliberately control-free diagnostic slice | A speech-only diagnostic slice declares no nonspeech controls | `null` (`inapplicable`) | No false-transcription control task was scheduled; authoritative control requirements still apply. |
 | Eligible controls but no valid completed first outputs | Positive eligible count, zero completed first-control-output denominator | `null` (`unavailable`); `no_successful_first_outputs` | The conditional event denominator is empty, not evidence of no invented speech. |
 
-Shared availability rules apply: [execution and record completeness](../../metrics.md#shared-availability-rules).
+Missing required execution or records leave the affected evidence incomplete;
+recorded failures are not empty or invented-text events. See
+[execution accounting](../../metrics.md#execution-accounting-and-result-completeness).
 
 ### Transcript Repeatability Success Rate
 
 **Question:** How often does the same model profile return the same transcript
 in two scheduled attempts on the same clip?
+
+**Calculation:**
 
 Apply [shared pairwise repeatability](../../metrics.md#pairwise-repeatability)
 to each speech clip's three measured attempts. Agreement means identical
@@ -487,11 +538,15 @@ the same seed/settings, and adds no inference or quality rescoring.
 |---|---|---|---|
 | Repeatability is not measured | Smoke schedules one measured attempt per clip | `null` (`inapplicable`); `repeatability_not_measured` | The profile deliberately supplies no attempt pairs; this is not disagreement. |
 
-[Shared pairwise-repeatability rules](../../metrics.md#pairwise-repeatability) apply.
+Executed failures contribute no successful pair; missing required attempts
+leave repeatability incomplete. See
+[repeatability with failed or missing attempts](../../metrics.md#repeatability-with-failed-or-missing-attempts).
 
 ### Attempt Failure Rate
 
 **Question:** How often does a measured request fail to deliver a valid output?
+
+**Calculation:**
 
 Divide recorded failed measured attempts by all scheduled measured attempts,
 including speech and nonspeech controls. Authoritative speech clips have three
@@ -508,15 +563,20 @@ All scheduled attempts succeeding gives `0`; all executing and failing gives
 
 **Edge cases and availability:**
 
-See [shared execution-accounting rules](../../metrics.md#execution-accounting-and-result-completeness)
-and the [audio execution-status rules](#scoring-inputs-eligibility-and-result-status).
+Missing or unexecuted required attempts make the rate incomplete, not a rate
+over surviving requests; see
+[execution accounting](../../metrics.md#execution-accounting-and-result-completeness).
+Setup failures are not measured request failures; see
+[audio execution status](#scoring-inputs-eligibility-and-result-status).
 
 ## Operational performance
 
-Timing validity, completed-phase availability, and failure diagnostics follow
-the [shared availability rules](../../metrics.md#shared-availability-rules).
-RAM/VRAM instrumentation and partial-window scope follow
-[shared resource measurements](../../metrics.md#resource-measurements).
+A completed timed phase retains its observation after a later failure.
+An unfinished phase has elapsed-to-failure, not successful latency; see
+[completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests).
+Missing RAM/VRAM samples make the measurement unavailable; interrupted monitoring
+retains only an observed partial-window peak. See
+[missing or partial resource measurements](../../metrics.md#missing-or-partial-resource-measurements).
 The ASR monitoring window includes loading, warmup, and measured inference;
 it excludes data preparation/validation and offline scoring. Interval eligibility
 and warm-latency support follow [audio confidence intervals](#aggregation-and-confidence-intervals).
@@ -530,6 +590,8 @@ remain separate from metric edge cases.
 
 **Question:** How much complete processing time is required relative to audio
 duration?
+
+**Calculation:**
 
 ```text
 Complete-Pipeline Real-Time Factor =
@@ -559,11 +621,12 @@ validation, and offline scoring are outside this RTF.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See [shared availability](../../metrics.md#shared-availability-rules)
-and [operational measurement availability](#operational-performance-1).
-Use the [shared ratio-of-totals rule](../../metrics.md#ratio-of-totals-throughput),
+No completed timed speech attempt makes RTF `null/unavailable`, not zero;
+see [no contributing observations](../../metrics.md#no-contributing-observations).
+Missing required time or duration leaves the ratio unavailable under
+[undefined inputs to derived metrics](../../metrics.md#undefined-inputs-to-derived-metrics).
+For defined inputs, use the [ratio-of-totals rule](../../metrics.md#ratio-of-totals-throughput)
 with processing time in the numerator and audio duration in the denominator.
-No completed timed speech attempt gives `null/unavailable`, not zero RTF.
 
 ### p50 and p95 Warm Clip Latency
 
@@ -580,6 +643,8 @@ authoritative tail estimate follows the local interval rules.
 
 **Question:** What is the typical successful warm transcription wait per clip?
 
+**Calculation:**
+
 Take the median of the clip-level successful-attempt medians.
 
 **Example:** Clip observations `2, 3, 4, 5, 11 s` have p50 `4 s`.
@@ -591,15 +656,17 @@ The median is a typical wait, not an arithmetic mean or duration-normalized spee
 
 **Edge cases and availability:**
 
-See [shared availability](../../metrics.md#shared-availability-rules),
-[percentile rules](../../metrics.md#latency-percentiles),
-and [operational measurement availability](#operational-performance-1).
-No completed timed clips gives `null/unavailable`, not a zero-second median.
-Independent-source interval support follows [audio confidence intervals](#aggregation-and-confidence-intervals).
+No completed timed clip makes the percentile unavailable; one clip observation
+makes both p50 and p95 equal that value. See
+[zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
+Insufficient independent-source support leaves confidence bounds null; see
+[insufficient confidence-interval support](../../metrics.md#insufficient-confidence-interval-support).
 
 #### p95 Warm Clip Latency
 
 **Question:** What is the slow-tail successful warm transcription wait per clip?
+
+**Calculation:**
 
 Take the linearly interpolated 95th percentile of the same clip observations.
 
@@ -613,15 +680,17 @@ below `9.8 s`.
 
 **Edge cases and availability:**
 
-See [shared availability](../../metrics.md#shared-availability-rules),
-[percentile rules](../../metrics.md#latency-percentiles),
-and [operational measurement availability](#operational-performance-1).
-No completed timed clips gives `null/unavailable`, not a zero-second tail latency.
-Independent-source interval support follows [audio confidence intervals](#aggregation-and-confidence-intervals).
+No completed timed clip makes the percentile unavailable; one clip observation
+makes both p50 and p95 equal that value. See
+[zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
+Insufficient independent-source support leaves confidence bounds null; see
+[insufficient confidence-interval support](../../metrics.md#insufficient-confidence-interval-support).
 
 ### Cold Model-Load Time
 
 **Question:** How long does a fresh worker need to make the ASR model ready?
+
+**Calculation:**
 
 Measure from the start of model construction until the complete ASR profile is
 ready, before warmups or transcription. Any component needed before the first
@@ -636,12 +705,15 @@ or first-request latency including warmup.
 
 **Edge cases and availability:**
 
-See [shared completed-phase rules](../../metrics.md#dependent-metrics-and-partial-observations)
-and [operational measurement availability](#operational-performance-1).
+Initialization that never completes has no cold-load latency; retain
+elapsed-to-failure separately. A completed cold load survives later failures;
+see [completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests).
 
 ### Peak Process-Tree RAM
 
 **Question:** How much host memory does the complete ASR worker require?
+
+**Calculation:**
 
 Apply [shared Peak Process-Tree RAM](../../metrics.md#peak-process-tree-ram)
 to the ASR worker and its descendants over the monitoring window above.
@@ -654,12 +726,15 @@ processes' separate peaks (`3,600 MiB`). This estimates simultaneous host demand
 
 **Edge cases and availability:**
 
-See [shared resource-measurement rules](../../metrics.md#resource-measurements)
-and [resource-window and measurement availability](#operational-performance-1).
+Missing usable RAM samples make the peak unavailable. An interrupted monitoring
+window retains its observed peak as partial, not a complete-lifecycle peak; see
+[missing or partial resource measurements](../../metrics.md#missing-or-partial-resource-measurements).
 
 ### Peak Device VRAM
 
 **Question:** How much total GPU memory is occupied during the ASR lifecycle?
+
+**Calculation:**
 
 Apply [shared Peak Device VRAM](../../metrics.md#peak-device-vram)
 over the ASR monitoring window, including loading and first-use allocations.
@@ -675,8 +750,10 @@ baseline-subtracted `1,400 MiB`. This is observed device demand, not model size.
 |---|---|---|---|
 | CPU-only profile | An explicitly requested CPU smoke run | `null` (`inapplicable`) | No GPU-memory measurement task exists; this is not zero observed CUDA use. |
 
-See [shared CPU/CUDA telemetry availability](../../metrics.md#peak-device-vram)
-and [resource-window measurement scope](#operational-performance-1).
+Missing required CUDA telemetry makes VRAM unavailable; see
+[Peak Device VRAM](../../metrics.md#peak-device-vram).
+An interrupted monitoring window retains a partial peak under
+[missing or partial resource measurements](../../metrics.md#missing-or-partial-resource-measurements).
 
 ## Worked result interpretation
 
@@ -736,9 +813,13 @@ but still contributes defined failure/repeatability evidence. Legitimate
 zero-reference contributing subsets use the empty-reference conventions;
 bootstrap draws do not rerun the corpus-validation quota.
 
-Both support minima are currently null in the protocol pending data review;
-the calculation is implemented, but this does not supply an authoritative
-support threshold. See [pending data review](../../pending-data-review.md#audio-extraction).
+Both support minima remain null pending
+[data review](../../pending-data-review.md#audio-extraction). The calculation is
+implemented, but authoritative support thresholds still require review.
+A defined point with insufficient support retains null bounds and a reason;
+see [insufficient confidence-interval support](../../metrics.md#insufficient-confidence-interval-support).
+Undefined draws and equal bounds follow
+[undefined bootstrap draws and equal bounds](../../metrics.md#undefined-bootstrap-draws-and-equal-bounds).
 
 Conditional availability follows the individual
 [Boundary MAE](#timestamp-boundary-mae) and

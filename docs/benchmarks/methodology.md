@@ -3,12 +3,23 @@
 [Benchmark program](../README.md#experiments) · [Metric definitions](metrics.md) ·
 [Run commands](running.md) · [Candidate rationale](model-selection.md)
 
-The experiments form a sequence. First compare extraction components. Separately,
-compare chunker/embedding pairs, then retrieval methods and vector servers.
-Generation is tested on fixed evidence so retrieval cannot influence it. Each
-component benchmark reports its selected configuration on its own locked test.
-Final RAG then reports one already-selected complete system, rather than running
-another candidate comparison.
+The benchmarks evaluate components separately, then report the performance of
+their selected RAG combination. Extraction compares document, audio, and video
+components. The RAG sequence compares chunker/embedding pairs, retrieval methods,
+and vector servers. Generation is tested on fixed evidence so retrieval cannot
+influence it. Each component reports its selected configuration on its own locked
+test; Final RAG then evaluates the complete frozen system.
+
+On this page:
+
+- [Benchmark guides](#benchmark-methodologies) and [their reading order](#how-to-read-the-benchmark-guides)
+- [Execution profiles](#benchmark-execution-profiles)
+- [Preflight, cold loading, warmup, and measured attempts](#preflight-and-measured-run-lifecycles)
+- [Advancement and decision files](#how-candidates-advance-between-stages)
+- [Protocols and reproducibility](#protocol-ownership-and-reproducibility)
+- [MLflow structure](#shared-mlflow-lifecycle)
+- [Uncertainty](#shared-uncertainty-procedure) and [metric naming](#shared-mlflow-metric-convention)
+- [Locked reporting](#locked-test)
 
 ```text
 1. Document extraction: configuration and architecture comparisons on development,
@@ -84,6 +95,8 @@ these shared guides and are linked locally. Data checks belong in the
 and public screening evidence in [model selection](model-selection.md).
 The [shared basic terms](metrics.md#basic-terms) explain samples, attempts,
 candidates, saved outcome records, and the observation/source counts used below.
+Throughout these guides, **frozen** means fixed before the relevant evaluation;
+**contract** means the declared rules for inputs, execution, and scoring.
 
 ## Benchmark execution profiles
 
@@ -130,10 +143,14 @@ evaluation. It has no development or validation candidate comparison. This
 single-system path remains subject to its
 [implementation boundary](rag/final/methodology.md#implementation-status).
 
+### Locked-data isolation
+
 All choices affecting a shared locked manifest must be frozen before its first
 use by any benchmark. Component locked results cannot inform later system
 selection. If further selection is needed after those results are inspected,
 Final RAG requires a separate untouched holdout.
+
+### Profile purposes
 
 | Phase or profile | Data | Candidates | Purpose | Result may be used for |
 |---|---|---|---|---|
@@ -143,22 +160,23 @@ Final RAG requires a separate untouched holdout.
 | `validation` | Unseen validation manifest | Only finalists recorded from a completed development run | Test whether the development conclusion holds on unseen data without reopening the search. | An engineer-reviewed final component decision. |
 | `locked` | Untouched locked-test manifest | Exactly one fully frozen selection | Produce a held-out estimate under the frozen protocol after every model, setting, and policy decision is fixed. | Reporting only; never further tuning or reselection. |
 
-The profiles answer different questions, so a later profile does not merely mean
-"a bigger run." `development` asks what should advance; `validation` asks
-whether that choice generalizes; `locked` estimates the performance of the one
-system that will be reported. If validation exposes a problem, the work returns
+`development` identifies candidates to advance, `validation` checks those
+choices on unseen data, and `locked` estimates the performance of the one
+selected system. If validation exposes a problem, the work returns
 to development and starts a new benchmark version; a newly held-out validation
 set is required before another validation claim. The observed validation result
-must not be used to quietly tune and rerun the same evaluation. Any post-lock
+must not be used to tune and rerun the same evaluation. Any post-lock
 change to data, models, settings, metrics, or protocol requires a new benchmark
 version and a new untouched locked-test set.
 
 For applicable model-backed suites, one `--profile smoke` command launches
-independent `smoke-cpu` and `smoke-cuda` parents. Neither path may fall back to the other device. The
+independent `smoke-cpu` and `smoke-cuda` parents. Neither path may fall back to
+the other device. The
 optional `--device cpu|cuda|both` argument only narrows smoke for debugging;
 model-backed development, validation, and locked use their frozen backend-specific
-device and dtype rules and reject overrides that violate that contract. When CPU and CUDA require different numeric
-types, the smoke profile records an explicit dtype for each device; the current
+device and dtype rules and reject overrides that violate that contract. When CPU
+and CUDA require different numeric types, the smoke profile records an explicit
+dtype for each device; the current
 embedding, retrieval, and generation CUDA smoke paths use the same
 FP16 contract as their authoritative CUDA execution.
 
@@ -173,6 +191,14 @@ before its locked evaluation. These suite-specific contracts take
 precedence over the generic lifecycle above.
 
 ## Preflight and measured-run lifecycles
+
+Preflight tests whether a candidate can execute its demanding supported inputs.
+Measured model-backed workers separately record cold loading and perform one
+warmup per materially distinct execution path before measured requests. The two
+lifecycles use fresh workers; preflight does not warm the worker used by a later
+profile. Vector-server startup follows its own lifecycle described below.
+
+### Preflight: hardware qualification
 
 Preflight answers one question: can the exact candidate execute the supported
 workload on the target CUDA hardware without exceeding its resource contract or
@@ -212,6 +238,8 @@ optimized graph, prove the CPU values derive from dimensions and feed only shape
 arguments, and retain the permitted nodes and graph checksum in placement
 evidence. CPU learned/feature computation and automatic CPU runtime retry remain
 prohibited. This check runs during initialization without extra inference.
+
+### Measured runs: loading and warmup
 
 A measured model-backed `smoke`, `development`, `validation`, or `locked` worker
 uses a different lifecycle:
@@ -273,11 +301,11 @@ seed outputs instead all belong to its declared quality evaluation. These
 are different output-sampling contracts; equal repetition counts do not make
 the contracts identical.
 
-The [shared availability and dependency rules](metrics.md#dependent-metrics-and-partial-observations)
-govern which observations can contribute. A failed measured request is not a
-zero-quality prediction; a partial peak is still an observed resource quantity.
-Each suite owns its outcome/metric eligibility rather than treating every null
-as the same event or assigning every metric the same denominator.
+Quality [dependent on a failed output](metrics.md#failed-or-invalid-outputs) is
+unavailable; independently completed stages retain their valid observations.
+A [partial memory peak](metrics.md#missing-or-partial-resource-measurements) is
+still an observed resource value. Each metric's eligibility and denominator
+determine which records contribute.
 
 Chunking–embedding first measures one complete corpus build after model/tokenizer
 loading, because the searchable matrix is needed before a representative query
@@ -298,6 +326,8 @@ Preserve [prediction evidence for rescoring](metrics.md#prediction-evidence-and-
 with the existing run artifacts and immutable input references. Candidate
 provenance identifies its durable local and uploaded evidence, not only hashes.
 
+### Qualification outcomes and reuse
+
 `gpu_oom` and `offload_detected` are definitive hardware exclusions;
 `vram_limit_exceeded` additionally applies only to benchmark families with an
 explicit protocol cap, not extraction. Missing measurement, unverifiable placement, and infrastructure or
@@ -316,6 +346,8 @@ requires at least one viable route for PDF, image, and DOCX. Every preflight
 child stores `preflight_candidate.json` with its placement, telemetry, input
 validation, and failure evidence. The parent `preflight_report.json` stores the
 complete roster and group-readiness decision.
+
+### Seeds and held-out reporting
 
 Development, validation, and locked runs use protocol-frozen seeds, retain
 per-sample results, and report 95% confidence intervals for eligible
@@ -433,7 +465,7 @@ identity.
 
 ## Protocol ownership and reproducibility
 
-Each executable benchmark owns one strict, versioned `protocol.yaml` beside its
+Each executable benchmark has one strict, versioned `protocol.yaml` beside its
 implementation:
 
 | Benchmark | Protocol |
@@ -447,7 +479,7 @@ implementation:
 | Final RAG | `experiments/benchmarks/rag/final/protocol.yaml` |
 | Vector database | `experiments/benchmarks/vectordb/protocol.yaml` |
 
-These files own the editable benchmark settings that can change outputs,
+These files define the editable benchmark settings that can change outputs,
 eligibility, latency, memory, or failure status: search ranges, parser and decoder
 options, cutoffs,
 the shared one-warmup rule for measured profiles, repetitions, batch sizes,
@@ -470,7 +502,7 @@ decision provenance, protocol settings, and MLflow artifacts use one vocabulary.
 
 Configuration files have separate responsibilities:
 
-- benchmark `protocol.yaml` files own executable settings and any candidate
+- benchmark `protocol.yaml` files define executable settings and any candidate
   roster that is genuinely configurable; code defines supported adapters and
   generated candidate combinations. There are no separate candidate registries.
 - `data/benchmarks/models/selected.json` stores pinned revisions, snapshot
@@ -534,6 +566,8 @@ comparison parent. The preliminary scene-selection comparison has its own
 final fixed/scene/hybrid roster. Document keeps source-format-specific and
 configuration/parser comparison parents rather than an extra phase wrapper.
 
+### Run names and recorded identities
+
 Human-readable run names omit timestamps and redundant experiment names.
 MLflow run IDs, recorded execution timestamps, protocol checksums, and local
 artifact identifiers still distinguish invocations. Repeated parent display
@@ -546,6 +580,8 @@ dataset checksum, protocol checksums, exact qualification identity, and a
 fingerprint of any engineer decisions. The parent stores the complete plan and
 comparison artifacts; a child stores one candidate's executed settings,
 metrics, resources, and per-sample evidence.
+
+### Device and resource requirements
 
 Until hardware qualification is complete, every model-backed benchmark
 processes one inference input at a time. Runtimes that expose a batch setting
@@ -597,6 +633,8 @@ Video's frozen ASR is measured separately and unloaded
 before a fresh visual worker. Qualification evidence from a process-attributed
 or baseline-delta memory policy is not reusable under the device-total contract.
 
+### Paired comparisons
+
 When a stage declares paired candidate comparisons, they are analysis artifacts
 rather than new metrics. They are calculated from aligned per-sample results;
 bootstrap comparisons resample the same independent units and aligned records
@@ -618,7 +656,7 @@ resampling procedure, with the independent unit appropriate to its benchmark:
 | Vector-database server load | Independent complete load windows, or a reviewed dependence-aware design; retain concurrent requests and wall time together. |
 | Vector-database standalone document operations | Independent operation/source groups, retaining related documents and repeated mutations. |
 
-The [shared metric reference](metrics.md#confidence-intervals) owns the bootstrap
+The [shared metric reference](metrics.md#confidence-intervals) defines the bootstrap
 algorithm, parameters, paired-draw rules, support requirements, and reporting of
 undefined or degenerate intervals. This table identifies the independent unit;
 each benchmark's metric page specifies its own aggregate and CI applicability.

@@ -24,7 +24,7 @@ benchmark selection, or server lifecycle management into either subsystem.
 `query()`:
 
 1. embeds the question;
-2. retrieves and token-budget-packs ranked evidence;
+2. retrieves ranked evidence and packs it within the token budget;
 3. optionally invokes the pinned local generator;
 4. returns retrieval hits, an optional cited answer, and stage timings.
 
@@ -46,7 +46,7 @@ answering does not rerun extraction.
 This allows an isolated extraction stage to use the available GPU memory without
 reserving a fixed allowance for another model. It does not coordinate separate
 application processes, external GPU applications, or Windows driver paging.
-Run one application process on this laptop and keep unrelated GPU workloads
+Run one application process on the host and keep unrelated GPU workloads
 closed. Provisionally configured CPU execution and explicit request profiles
 remain unchanged; benchmark runners do not promote application models/devices.
 Resolved application video defaults and request-level overrides are included in

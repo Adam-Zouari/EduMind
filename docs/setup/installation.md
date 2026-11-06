@@ -4,10 +4,19 @@
 [Run only the application](running.md) ·
 [Benchmark program](../README.md#experiments)
 
-This guide prepares the provisional application and every approved benchmark candidate. The authoritative shortlist is described in [model selection](../benchmarks/model-selection.md); exact executable revisions are read from [selection evidence](../../experiments/benchmarks/selection_evidence.csv). Excluded rows are historical evidence and are never downloaded.
+This guide prepares the provisional application and every approved benchmark
+candidate. The authoritative shortlist is described in
+[model selection](../benchmarks/model-selection.md); exact executable revisions
+are read from [selection evidence](../../experiments/benchmarks/selection_evidence.csv).
+Excluded rows are historical evidence and are never downloaded.
 
 Run the commands below from the repository root. Benchmark commands use Python
 module names (`python -m experiments.benchmarks...`).
+
+For application setup, complete the system and environment steps, prepare
+`app-models`, and follow [Running the application](running.md). For benchmarks,
+continue with the relevant model, evaluator, dataset, and server preparation
+sections, then use the [benchmark runbook](../benchmarks/running.md).
 
 ## 1. System requirements
 
@@ -81,8 +90,9 @@ python -m pip check
 The version numbers must stay aligned with `requirements/app.lock`. A CUDA
 benchmark is valid only when the requested model remains on `cuda` and the run
 records a non-zero measured VRAM peak; there is no CPU fallback.
-Report CPU versus missing-CUDA observations under the
-[shared availability rules](../benchmarks/metrics.md#shared-availability-rules).
+CPU VRAM is `null/inapplicable`; missing required CUDA telemetry is
+`null/unavailable`. See [Peak Device VRAM](../benchmarks/metrics.md#peak-device-vram)
+for these distinct cases.
 Missing required CUDA telemetry still blocks hardware qualification.
 
 The Windows Python 3.12 benchmark lock installs PaddlePaddle GPU 3.3.1 from
@@ -260,7 +270,7 @@ protocol or MLflow artifact.
 Judge preparation includes the response rubric's separate full-context and
 cited-passage support labels, correctness/relevancy labels, and the separate
 semantic-pair rubric. Credentials alone do not complete this setup: the
-[runbook](../benchmarks/running.md#10-generation-and-final-rag) distinguishes
+[judge setup instructions](../benchmarks/running.md#generation-execution-and-judge-setup) distinguish
 current replay support from the pending automatic first-run and saved-output
 recovery workflow.
 
@@ -326,7 +336,7 @@ only the table HTML and formula LaTeX reference/prediction pairs to the isolated
 official scorer. The scoring time is evaluation overhead and is not included in
 parser latency.
 
-Preparing the pinned evaluator does not itself implement the newly specified
+Preparing the pinned evaluator does not itself implement the specified
 symmetric TEDS header normalization or count-based ExpRate decision. Those
 adapter changes remain pending under the
 [document implementation boundary](../benchmarks/extraction/document/methodology.md#evaluation-setup);

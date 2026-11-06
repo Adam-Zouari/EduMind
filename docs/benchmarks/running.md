@@ -13,8 +13,13 @@ for dependencies, model snapshots, data preparation, evaluator images, and
 vector-server images. A benchmark does not download missing models while it is
 running.
 
-The revised Vector Database configuration/metric/reporting contract and the
-single-system Final RAG workflow below retain their implementation boundaries.
+### Implementation status
+
+The Vector Database configuration, metric, and reporting contract and the
+single-system Final RAG workflow are not yet fully implemented. Their
+[Vector Database](vectordb/methodology.md#implementation-status) and
+[Final RAG](rag/final/methodology.md#implementation-status) implementation notes
+identify the remaining work.
 
 Chunking–embedding implements its separate load/build/query-component timings,
 retrieved-context descriptors, diagnostic top-five pair score, and execution,
@@ -22,15 +27,15 @@ quality, and integrity accounting. CI support requirements remain subject to dat
 review; unfrozen support gives descriptive points and null bounds, not
 authoritative advancement evidence. See its
 [implementation boundary](rag/chunking_embedding/methodology.md#implementation-status).
-Its fixed-workload metadata and artifact-only build-throughput reporting cleanup
-are documented targets, not yet a migrated logging contract.
+Its fixed-workload metadata and artifact-only build-throughput reporting are
+documented targets; those logging changes are not yet implemented.
 
 Retrieval–reranking implements the corresponding complete-ranking diagnostic,
 one authoritative warmup, single-unit alpha-nDCG eligibility, and index ownership.
-Its first-attempt pool-recall gap and duplicate eligibility-counter cleanup are
-listed in its [implementation boundary](rag/retrieval_reranking/methodology.md#implementation-status).
+Its first-attempt pool-recall gap and duplicate eligibility counters remain
+documented in its [implementation boundary](rag/retrieval_reranking/methodology.md#implementation-status).
 
-Generation implements the seven model-mode runtime and
+Generation implements the runtime for seven model-mode configurations and
 an initial judge/scoring interface. The automatic first-run judge workflow,
 saved-output scoring resume, and Citation Support contract require migration,
 as well as a calibrated judge, reviewed source support, and prepared model
@@ -48,6 +53,8 @@ Verify the [required retained prediction evidence](metrics.md#prediction-evidenc
 before claiming independent rescoring from a run; summary counts/fingerprints
 alone are insufficient. Historical outputs are not migrated to the current
 protocol or made rescorable by adding a summary reference.
+
+### Start MLflow
 
 Start MLflow in a separate terminal:
 
@@ -88,8 +95,7 @@ Both steps are outside latency and candidate resource measurement. See the
 exact checks, example, and module layout. Full validation is available for the
 three extraction benchmarks, chunking–embedding, retrieval–reranking, and
 generation; the deferred suites retain their current input checks.
-Human annotation review remains
-necessary.
+Human annotation review remains necessary.
 
 Available preparation commands:
 
@@ -105,9 +111,9 @@ python -m experiments.benchmarks.validate all --profile all
 ```
 
 One domain validator serves its applicable profiles; the coordinator uses the
-same domain checks across the implemented benchmarks. Missing required inputs make a validation batch
-incomplete, not successful. `all --profile smoke` checks only applicable smoke
-fixtures when authoritative data is unavailable. Preflight uses validated
+same domain checks across the implemented benchmarks. Missing required inputs
+make a validation batch incomplete, not successful. `all --profile smoke` checks
+only applicable smoke fixtures when authoritative data is unavailable. Preflight uses validated
 development/stress inputs and never inspects held-out answers. Generated reports
 live under `artifacts/benchmarks/data-validation/<benchmark>/<fingerprint>.json`.
 
@@ -308,14 +314,17 @@ attempt per fixture; preflight has no warmup and does not measure repeatability.
 - Attempt 1 is the only quality-scored output. Attempts 2 and 3 are validated,
   timed, and compared for repeatability, not quality-scored again.
 - Never substitute a later success for a failed first attempt or erase valid
-  first-attempt quality because another attempt failed.
+  first-attempt quality because another attempt failed. See
+  [first and later attempt failures](metrics.md#first-and-later-attempt-failures).
 - Repeatability Success Rate compares all three scheduled output pairs;
   Attempt Failure Rate counts failed attempts. `A, A, failure` gives `1/3` for
-  both rates while keeping the first `A` as the quality output.
+  both rates while keeping the first `A` as the quality output. See
+  [repeatability with failed or missing attempts](metrics.md#repeatability-with-failed-or-missing-attempts).
 - Quality is document-macro averaged from valid completed first outputs, including
   missed expected objects in those outputs. Failed first attempts have unavailable
   quality; report them and contributing counts beside every aggregate. No reference
-  tables/formulas means no reconstruction task; verified-negative detection applies.
+  tables/formulas means no reconstruction task, while verified-negative detection
+  still applies; see [no applicable task](metrics.md#no-applicable-task).
 - Apply the [shared CI procedure](metrics.md#confidence-intervals) to independent
   documents. Quality uses first-attempt scores; repeatability/failure intervals
   use each document's three-attempt values.
@@ -326,7 +335,11 @@ for all attempts, including failures and unexecuted requests. A valid empty
 output, a failed extraction, an unavailable evaluator, and interrupted execution
 are distinct outcomes. Resolve unavailable required evaluator results before
 publishing a complete comparison; quality scoring may be rerun on saved outputs.
-Missing telemetry is not zero memory. The full rules and score directions are
+An unavailable evaluator does not produce a zero score: see
+[missing measurements or evaluations](metrics.md#missing-measurements-or-evaluations).
+Missing required telemetry is unavailable, not zero memory: see
+[missing or partial resource measurements](metrics.md#missing-or-partial-resource-measurements).
+The full rules and score directions are
 in the [document metric reference](extraction/document/metrics.md).
 
 ## 5. ASR
@@ -345,7 +358,8 @@ audio manifests and their matching reliability-control splits are validated as
 one leakage-free dataset contract.
 
 The [approved ASR metric contract](extraction/audio/metrics.md) uses only the
-designated first measured output for quality, with no replacement after failure.
+designated first measured output for quality, with
+[no replacement after first-attempt failure](metrics.md#first-and-later-attempt-failures).
 Development, validation, and locked use three measured speech attempts with the
 same seed/settings and one measured attempt per control after the one warmup.
 All speech attempts supply pairwise Transcript Repeatability Success Rate;
@@ -353,14 +367,18 @@ speech and control attempts supply Attempt Failure Rate. These are evidence
 inside each candidate run, not separate candidate-selection rounds. Confidence
 intervals resample independent sources, not the three attempts.
 
-Unexpected Empty Transcript Rate and Nonspeech False-Transcription Rate use
-valid completed eligible first outputs; crashes remain failure records, not
-empty transcripts. WER/CER/components pool completed first-output edit counts;
-their raw counts remain artifacts. Both timestamp metrics are unavailable after
-first-attempt failure; valid empty timed outputs give coverage zero and unavailable
-MAE. Keep planned/contributing reference counts and failures beside these values.
-Null fields retain reasons and support counts in artifacts even when MLflow
-omits their scalar keys.
+- Unexpected Empty Transcript Rate and Nonspeech False-Transcription Rate use
+  valid completed eligible first outputs. Crashes remain failure records, not
+  empty transcripts; see [failed or invalid outputs](metrics.md#failed-or-invalid-outputs).
+- WER/CER/components pool completed first-output edit counts; their raw counts
+  remain artifacts. Valid empty references follow the
+  [recognition error-rate convention](metrics.md#recognition-error-rates-and-empty-references).
+- Both timestamp metrics are unavailable after first-attempt failure. Valid
+  empty timed outputs give coverage zero and unavailable MAE; see
+  [spoken timestamp alignment](metrics.md#spoken-timestamp-alignment).
+  Keep planned/contributing reference counts and failures beside these values.
+- Null fields retain reasons and support counts in artifacts even when MLflow
+  omits their scalar keys; see [metric status and MLflow storage](metrics.md#metric-status-and-mlflow-storage).
 
 ## 6. Video extraction
 
@@ -419,7 +437,8 @@ No visual child invokes ASR or copies its aggregate metrics.
 
 Visual development/validation/locked use one warmup and three measured attempts
 per video, with quality only from attempt 1. Failed first outputs have unavailable
-quality; later success cannot replace them. Repeatability and failure rates use
+quality; [later success cannot replace them](metrics.md#first-and-later-attempt-failures).
+Repeatability and failure rates use
 scheduled outcomes. Warm visual timing includes the full selector/frame/parser
 path but excludes audio, loading, warmup, input verification, and offline scoring.
 Selected-frame counts record selection, not parser acceptance.
@@ -429,7 +448,8 @@ timestamps, empty/nonspeech behavior, window failures, audio RTF, p50/p95 comple
 audio-processing latency, cold load, and RAM/VRAM. Each window is executed once,
 so audio repeatability is not measured. Confidence intervals use supported
 independent video/source groups, not windows or additional inference. Limited
-p95 support retains a descriptive value with null bounds/reason. See
+p95 support retains a descriptive value with null bounds/reason under the
+[insufficient confidence-interval support rule](metrics.md#insufficient-confidence-interval-support). See
 [video metrics](extraction/video/metrics.md) and
 [the run hierarchy](extraction/video/methodology.md#results-and-mlflow-structure).
 
@@ -474,26 +494,36 @@ locked result is reporting-only.
   assembly/validation. Do not count semantic inference in two components.
 - Score only the first measured ranking at both `@3` and `@5`; retain top-20
   artifacts. First-request failure leaves unavailable quality even after later
-  success. Later failure does not erase valid first-ranking quality.
+  success. Later failure does not erase valid first-ranking quality; see
+  [first and later attempt failures](metrics.md#first-and-later-attempt-failures).
 - Construct complete-query and embedding/search-component p50/p95 from each
   query's own median completed duration under that timer's boundary,
   excluding failed elapsed times. Preserve all outcomes and failed elapsed times
   in `timings.parquet`. A query with no completed measured request has null
   complete-query latency, not zero; its completed earlier component may remain
-  available. Component percentiles are not additive.
+  available under [completed stages and failed requests](metrics.md#completed-stages-and-failed-requests).
+  Component percentiles are not additive.
 - Diagnostic Ranking Repeatability compares all three attempt pairs on ordered
   top-five IDs. Valid ordering changes are not an integrity failure. Keep all
-  attempt rankings, not just agreement hashes or first-quality scores.
+  attempt rankings, not just agreement hashes or first-quality scores. Executed
+  failures and missing outcomes remain distinct under
+  [repeatability with failed or missing attempts](metrics.md#repeatability-with-failed-or-missing-attempts).
 - Mean/p95 Retrieved Context Tokens@3/@5 use complete first-ranking prefix
   counts with `cl100k_base`, including repeated source occurrences. These describe
   returned volume, not corpus-wide chunk sizes, native limits, or a token budget.
+  Missing first-ranking totals are not observed zeros; see
+  [retrieved-context token availability](metrics.md#retrieved-context-token-availability).
 - Read linear evidence-count nDCG with Recall and token Precision. Zero complete
   evidence in the candidate corpus gives nDCG/alpha-nDCG zero. Invalid empty
-  rankings give unavailable quality. Alpha-nDCG includes single-unit questions
-  and retains raw greedy-baseline exceedances as artifact diagnostics.
+  rankings give unavailable quality; see
+  [zero gain and short rankings](metrics.md#zero-gain-and-short-rankings).
+  Alpha-nDCG includes single-unit questions and retains raw greedy-baseline
+  exceedances as artifact diagnostics under the
+  [retrieval score bounds](metrics.md#retrieval-score-bounds).
 - Partial quality estimates stay labelled in artifacts and do not enter normal
   quality scalars, successful leaderboards, or paired selection comparisons.
-  Inspect planned/scored/failed/unavailable support, not just surviving scores.
+  Inspect planned/scored/failed/unavailable support, not just surviving scores;
+  see [partial work and complete measurements](metrics.md#partial-work-and-complete-measurements).
 - Distinguish a complete outcome ledger from executed workload coverage and
   complete quality. Explicit unexecuted rows account for missing execution;
   they are neither successes nor observed model failures. Do not infer a blanket
@@ -501,6 +531,8 @@ locked result is reporting-only.
 - A failed child can retain completed build measurements and observed resource
   peaks. `measurement.resource_scope=partial` labels interrupted windows on the
   existing child; missing CUDA telemetry is unavailable and CPU VRAM inapplicable.
+  See [missing or partial resource measurements](metrics.md#missing-or-partial-resource-measurements)
+  and [CPU versus CUDA VRAM](metrics.md#peak-device-vram).
   An unfinished matrix has no final matrix-byte value or partial-bytes metric.
 - Apply the [shared CI procedure](metrics.md#confidence-intervals) to whole source
   documents with their dependent queries/attempts; review the suite's
@@ -547,7 +579,8 @@ The following reporting layout is the approved contract; consult the
 before interpreting current runner output. Retrieval Warm Latency uses target
 keys `operational.retrieval_latency_ms_p50/p95`; Full-Stack Warm Latency also
 includes learned reranking when present. No-reranker latency/input fields are
-inapplicable rather than measured zeros. Index build and storage are owned by
+inapplicable rather than measured zeros; see [no applicable task](metrics.md#no-applicable-task).
+Index build and storage are owned by
 Dense and BM25; RRF references both indexes instead of constructing a third.
 
 Every profile prepares fresh query pools for its own inputs. Ranking
@@ -558,7 +591,8 @@ checks. No separate pool-match scalar is required.
 Its supported Ranking Repeatability interval uses whole-source resampling of
 saved pair records, not extra inference. A failed-query count is an observed
 outcome count; required execution, quality coverage, and actual integrity gates
-determine evidence completeness under the shared accounting rule.
+determine evidence completeness under the
+[execution accounting rule](metrics.md#execution-accounting-and-result-completeness).
 
 Index owners use `storage.index_size_bytes` and
 `operational.index_build_seconds`. RRF uses the same size key for its dependency
@@ -572,11 +606,11 @@ model lock, not candidate-run metrics.
 
 ## 9. Vector databases
 
-The [revised vector methodology](vectordb/methodology.md) and
+The [vector methodology](vectordb/methodology.md) and
 [metric contract](vectordb/metrics.md) specify one database–configuration child
 per candidate, tie-aware ANN/Filtered ANN Recall@20, evidence quality, database
 Ranking Repeatability, operation-specific error rates, p50/p95/QPS, and verified
-write/startup boundaries. This documentation revision does not implement them.
+write/startup boundaries. The runner migration to this contract is pending.
 Existing commands below remain diagnostic under their recorded older protocol;
 do not interpret their keys or a successful exit as the revised report.
 
@@ -630,6 +664,8 @@ current implementation boundary, and external readiness requirements are in the
 [generation implementation boundary](rag/generation/methodology.md#implementation-status)
 and apply before authoritative execution.
 
+### Generation execution and judge setup
+
 ```powershell
 python -m experiments.benchmarks.rag.generation.run --profile smoke
 python -m experiments.benchmarks.rag.generation.run --profile preflight
@@ -675,9 +711,12 @@ attach judge replies. A Python judge transport interface exists, but automatic
 CLI transport orchestration and scoring-only resume are not implemented; an
 authoritative first-run command will be documented after that migration.
 Replay misses or exhausted judge retries leave evaluation incomplete, never a
-candidate-quality zero. Generation's tiny
-committed fixture is `data/benchmarks/rag/generation-smoke.json`; it is separate
+candidate-quality zero; see
+[missing measurements or evaluations](metrics.md#missing-measurements-or-evaluations).
+Generation's tiny committed fixture is `data/benchmarks/rag/generation-smoke.json`; it is separate
 from retrieval's corpus fixture and supplies no selection evidence.
+
+### Reading generation results
 
 When reading a generation child, inspect `input_compatibility` and its
 `input_compatibility.json` artifact first. A failed gate is visible incomplete
@@ -690,10 +729,16 @@ seed outputs' quality aggregation, completed-output Malformed Output Rate,
 `reliability.runtime_error_rate`, and completed-stream Decode Throughput.
 Check eligible/contributing support and evaluator status before treating a
 quality value as complete. Inspect partial execution and monitoring coverage
-alongside observed memory peaks; failed-attempt peaks are not discarded.
+alongside observed memory peaks; failed-attempt peaks are not discarded. See
+[missing or partial resource measurements](metrics.md#missing-or-partial-resource-measurements)
+for the distinction between observed peaks and monitoring coverage.
 Citation/claim counts and finish-reason inventories are artifacts, not extra
-summary metrics. Shared null, dependency, and CI interpretation belongs to the
-[general metric guide](metrics.md#dependent-metrics-and-partial-observations).
+summary metrics. Missing required evaluations leave surviving quality estimates
+partial under [partial work and complete measurements](metrics.md#partial-work-and-complete-measurements).
+Insufficient independent-source support leaves defined points with null interval
+bounds under [insufficient confidence-interval support](metrics.md#insufficient-confidence-interval-support).
+
+### Final RAG frozen-system workflow
 
 Freeze one complete system in `final-rag-locked.json`, referencing the selected
 RAG component decisions and the chosen top-K, prompt, context, and residency

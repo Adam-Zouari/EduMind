@@ -23,9 +23,9 @@ page attribution, tables, and formulas.
 
 ## Purpose and scope
 
-An **extraction profile** is one complete executable parser configuration. The
-benchmark runner currently calls this value a `candidate`, but the word means a
-configuration run, not an individual model. For example:
+An **extraction profile** is one complete executable parser configuration,
+called a `candidate` by the runner. Results describe that complete configuration,
+not an individual model. For example:
 
 ```text
 Docling Standard
@@ -64,7 +64,7 @@ Each factor answers a production question:
 | TableFormer fast versus accurate | Does better row, column, header, merged-cell, and span reconstruction justify the additional execution cost? |
 | Formula enrichment off versus on | Does CodeFormulaV2 improve mathematical-expression recovery enough to justify its model load, latency, memory, and false detections? |
 
-The applicability rules prevent meaningless duplicate work:
+The source format determines which configurations apply:
 
 | Source | Configurations executed | Reason |
 |---|---|---|
@@ -101,20 +101,20 @@ corpus target is:
 The reviewed source pool is OmniDocBench v1.6 for structured pages, OHR-Bench v2
 for real multi-page PDFs, PureDocBench v1.0 for matched clean/degraded images,
 DocPTBench for photographed documents, and EduMind-specific native DOCX and
-held-out samples. The frozen manifests—not the source-pool
-names—define the actual cases and record every selected ID, source revision,
-license, checksum, document family, source type, and available annotations. An
-authoritative run cannot be claimed until those manifests and references are
-complete.
+held-out samples. The frozen manifests define the actual cases selected from
+these pools. They record every selected ID, source revision, license, checksum,
+document family, source type, and available annotations. Authoritative evaluation
+requires complete manifests and references.
 
 The committed smoke fixtures demonstrate the implemented workflow, not a
 completed authoritative corpus or a selected parser. The protocol's
 `minimum_ci_sources` and `minimum_latency_ci_sources` are currently null pending
 review of independent-source support. Freeze them through the
 [pending-data-review checklist](../../pending-data-review.md#document-extraction)
-before authoritative evaluation; a null minimum is not permission to publish
-unsupported intervals. The target split sizes above do not establish that
-enough independent sources exist for every annotation subset or latency tail.
+before authoritative evaluation. Until support is reviewed, intervals remain
+unsupported; target split sizes alone do not establish independent-source
+support for every annotation subset or latency tail. See
+[insufficient confidence-interval support](../../metrics.md#insufficient-confidence-interval-support).
 
 The [shared data-validation contract](../../data-validation.md) defines checks
 for claimed capabilities, reviewed blanks/negative objects, complete page
@@ -170,8 +170,8 @@ negatives from reconstruction of actual reference objects. See the
 
 Docling 2.117.0, English, OCR scale 3.0, table-cell matching enabled,
 code enrichment disabled, canonical structured output, and native DOCX
-ingestion remain fixed. They define the common evaluation environment rather
-than useful strategy questions.
+ingestion remain fixed. These settings define the common evaluation environment;
+they are not factors in the configuration screen.
 
 Document extraction runs as an isolated workload without an artificial VRAM
 cap in any profile, including preflight. GPU-backed parser components must
@@ -229,9 +229,9 @@ after adding an HTML/body envelope; it bypasses the required official HTML
 normalization. It also returns only rounded CDM F1, which the project currently
 tests for equality to one. Symmetric table normalization, raw-count transport,
 exact-count scoring, and their acceptance checks remain unimplemented changes.
-These approved contracts do not certify the current scorer path or reinterpret
-historical results. Authoritative results under the updated definitions require
-the corresponding wrapper migration and versioned evaluation provenance.
+Authoritative results under these approved definitions require the wrapper
+migration and versioned evaluation provenance. The current scorer path remains
+outside that contract, and historical results retain their original definitions.
 
 The execution boundary is explicit:
 
@@ -247,12 +247,12 @@ Python 3.12: raw CDM counts -> exact-count ExpRate@CDM
 The table and formula pairs for one extraction profile are scored in one
 container call after extraction finishes. Container startup and scoring time are
 evaluation overhead, not extraction latency. In addition to the pinned
-OmniDocBench revision and immutable Docker image digest, the updated contract
+OmniDocBench revision and immutable Docker image digest, the approved scorer contract
 requires the normalization identity, project wrapper revision, and exact-count
 policy version. Retain raw and scorer-facing table HTML and per-formula counts
 with the existing prediction/evaluation artifacts; a scalar or checksum alone
-cannot reconstruct those comparisons. This added provenance is part of the
-pending migration, not a claim that the current wrapper already retains it.
+cannot reconstruct those comparisons. The current wrapper does not yet retain
+this added provenance; it is part of the pending migration.
 
 ## Benchmark workflow and selection
 
@@ -311,10 +311,13 @@ normal runtime OOM, placement, and telemetry gates still apply to every profile.
 | 1 | The sole quality output, timing, validity/failure state, and canonical output for repeatability. |
 | 2 and 3 | Output validation, timing, validity/failure state, and canonical outputs for repeatability; no additional quality scoring. |
 
-All attempts use the same settings and inference seed. First-output quality,
-completed-output coverage, recoverable failures, and incomplete execution follow
-the [shared availability rules](../../metrics.md#shared-availability-rules),
-with [document-specific execution accounting](metrics.md#scoring-inputs-eligibility-and-result-status).
+All attempts use the same settings and inference seed. A failed first attempt
+leaves quality unavailable; a later failure does not erase valid first-output
+quality. See [first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+Recoverable failures do not cancel scheduled work; missing execution or records
+leave the affected evidence incomplete. See
+[execution accounting](../../metrics.md#execution-accounting-and-result-completeness)
+and [document-specific output coverage](metrics.md#scoring-inputs-eligibility-and-result-status).
 
 Repeatability Success Rate applies
 [shared pairwise repeatability](../../metrics.md#pairwise-repeatability) to each
@@ -354,10 +357,12 @@ elements contribute zero to attribute/reconstruction scores, while a genuinely
 absent reference task is inapplicable. Valid empty comparisons use explicit
 best/worst conventions under the
 [shared empty-comparison rules](../../metrics.md#content-and-detection-empty-comparisons).
-Status and failure treatment follow the
-[shared availability rules](../../metrics.md#shared-availability-rules). Evaluator failures
-are repaired or rescored from saved predictions rather than labelled poor
-extractions. Quality failures do not automatically select or disqualify candidates.
+A failed or invalid complete output has unavailable dependent quality, not a
+fabricated empty score: see [failed or invalid outputs](../../metrics.md#failed-or-invalid-outputs).
+An evaluator failure also leaves its required evaluation unavailable; repair the
+evaluator or rescore saved predictions under
+[missing measurements or evaluations](../../metrics.md#missing-measurements-or-evaluations).
+Quality failures do not automatically select or disqualify candidates.
 
 Each quality metric is calculated from the first measured output and aggregated
 as a document-macro average across its reference-eligible documents and,
@@ -373,7 +378,7 @@ of hiding the weakness inside one mean.
 ### Metric and document groups
 
 An extraction profile produces one canonical structured document for every
-applicable input. Results use only two organizing concepts.
+applicable input. Results are organized by metric group and document group.
 
 **Metric groups say what is measured:**
 
@@ -681,8 +686,10 @@ Operational latency is additionally aggregated by document group, for example
 and temporary disk describe the complete profile execution and remain top-level
 operational metrics rather than being misleadingly attributed to one slice.
 
-Each development, validation, or locked sample-based quality or reliability base key follows the
-shared suffix convention. This applies equally to a total such as
+Each development, validation, or locked sample-based quality or reliability
+base key follows the
+[shared suffix convention](../../methodology.md#shared-mlflow-metric-convention).
+This applies equally to a total such as
 `tables.teds` and a document-group result such as
 `tables.pdf_scanned.teds`. Its `sample_count` makes clear when, for
 example, a table result is based on fewer annotated documents than a text

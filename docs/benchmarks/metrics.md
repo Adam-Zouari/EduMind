@@ -34,6 +34,21 @@ Start with the metric in its benchmark reference. Its local edge-case block
 links to the relevant shared rules below; you do not need to read this entire
 page before interpreting one result.
 
+For a missing or unusual value, choose the situation that actually occurred:
+
+| What happened? | Rule to read |
+|---|---|
+| The request failed or its output was invalid | [Failed or invalid outputs](#failed-or-invalid-outputs) |
+| Attempt 1 failed but a later attempt succeeded | [First and later attempt failures](#first-and-later-attempt-failures) |
+| The metric has no task on this input | [No applicable task](#no-applicable-task) |
+| A required judge result, timer, or measurement is missing | [Missing measurements or evaluations](#missing-measurements-or-evaluations) |
+| The aggregate has eligible inputs but no usable values | [No contributing observations](#no-contributing-observations) |
+| Some scheduled work never ran | [Execution accounting and result completeness](#execution-accounting-and-result-completeness) |
+| A peak was observed before interruption | [Missing or partial resource measurements](#missing-or-partial-resource-measurements) |
+| A point estimate exists but its interval cannot be reported | [Insufficient confidence-interval support](#insufficient-confidence-interval-support) |
+
+For definitions and measurement procedures:
+
 - **Understand a result:** [basic terms](#basic-terms),
   [availability and result status](#shared-availability-rules),
   [execution accounting](#execution-accounting-and-result-completeness),
@@ -57,9 +72,14 @@ page before interpreting one result.
 ### Basic terms
 
 - A **sample** is an input such as a document, clip, or question.
+- A **reference** is the reviewed expected content or annotation used for scoring.
 - An **attempt** is one measured execution on that input. Repeated attempts
   remain attached to their sample; they are not new independent sources.
 - A **candidate** is one complete configuration being evaluated.
+- An **observation** is one value entering a metric calculation. The benchmark
+  defines its unit, such as a document score or a successful request duration.
+  An **aggregate** summarizes those observations using the declared mean, ratio,
+  or percentile. A **cohort** is the set of records included in that calculation.
 - **Eligible** observations are those to which a metric applies.
   **Contributing support** is the number of observations actually used in its
   calculation, in the metric's declared unit. For example, ten eligible
@@ -128,13 +148,16 @@ All benchmark references use the following order for each locally defined metric
 The final block appears directly under the metric, not in one catch-all section
 at the end of the page. When needed, its table uses
 `Edge case | Example | Value/status | Explanation`. Follow the table with a
-short sentence linking directly to the applicable shared sections, such as
-availability, pairwise repeatability, percentiles, or resource measurements.
+short sentence that names the situation and links directly to its rule. For
+example: "If no successful duration is available, the percentile is unavailable;
+see [zero or one latency observation](#zero-or-one-latency-observation)."
+Prefer a specific rule heading to a broad "shared rules apply" link. Heading
+links stay useful when edits change line numbers.
 When there is no additional metric-specific exception, keep the block and use
 that sentence alone rather than inventing cases. A page-level link does not
 replace this local reference. Link the rule; do not copy its full explanation.
 
-This page owns genuinely identical cross-benchmark rules. A benchmark page
+This page defines the rules that are identical across benchmarks. A benchmark page
 identifies the adopted rule and keeps its own units, denominator, eligibility,
 measurement window, aggregation, examples, and exceptions. A local edge-case
 table may show an applied value with a link to the shared convention; it must
@@ -177,11 +200,17 @@ a status and reason. **Inapplicable** means the task does not exist for that
 input; **unavailable** means a needed result could not be obtained.
 **Incomplete** means required execution or records are missing.
 
+First ask whether the metric applies, then whether its required evidence is
+available. If both answers are yes, use its calculation, including any explicit
+empty-comparison convention. A genuine zero, perfect empty-comparison score,
+and missing result therefore mean different things; they are not alternative
+ways to encode the same outcome.
+
 #### A missing value is not a missing run
 
 | Case | Stored result | What remains visible |
 |---|---|---|
-| A valid result recovers none of the required evidence | A normal numeric zero for recall | The valid ranking and its evidence matches. |
+| A valid ranking recovers none of the required complete evidence units | Recall is `0` under its normal calculation | The valid ranking and its evidence matches; other metrics use their own calculations. |
 | The measured request fails before a valid ranking exists | Null/unavailable quality | Scheduled input, attempt failure, error, and any completed independent measurements. |
 | An optional formula slice has no formula questions | Null/inapplicable slice aggregate | Zero eligible support and the slice's reason. |
 | Required attempts were never executed | Incomplete execution | Actual completed outcomes and explicit missing/unexecuted records. |
@@ -195,20 +224,97 @@ measurement, such as cold loading or sampled RAM.
 
 #### Applying the availability rules
 
-Metric-specific blocks add to these rules; they do not repeat every generic
-failure under every metric:
+The following rules distinguish missing results from observed scores. Local
+metric blocks link to the relevant case instead of repeating the whole policy.
 
-| Condition | Value/status and treatment |
-|---|---|
-| A measured request fails or violates its required output-integrity contract | Dependent quality is `null/unavailable`; retain the actual outcome and any raw output. Do not score a fabricated empty prediction. |
-| A designated-first-quality suite has a failed first request | Do not replace it with a later successful output; the request-failure rule above applies. |
-| A later attempt fails | Preserve independently valid first-attempt quality and completed measurements. Record the failed outcome for the suite's reliability/consistency rules. |
-| Required execution or records are missing | Mark affected evidence `incomplete`; never assume missing attempts succeeded or failed. |
-| No applicable task exists | Record `null/inapplicable` with zero applicable task-unit support, retaining the source inventory. A missing required annotation is invalid input, not this case. |
-| A required measurement or evaluation cannot be obtained | Record `null/unavailable` and its reason; do not report zero or infinity. A nonfinite or impossible measured value is a measurement-integrity problem. |
-| An independent operation completed before another failed | Preserve its defined observation. Mark interrupted resource windows as partial; partial peaks or progress do not establish a completed workload. |
-| There are no contributing values for an applicable aggregate | Record `null/unavailable`, retaining eligible and failed/unavailable support. |
-| A defined point lacks sufficient independent support for a confidence interval | Retain the point, with null bounds and a reason. This is uncertainty support, not a new candidate-quality score. |
+#### Failed or invalid outputs
+
+When a measured request fails or its required output is invalid, quality metrics
+that need that output are `null/unavailable`. Retain the outcome and any raw
+output; do not invent an empty prediction to obtain a score. For example, a
+retrieval crash produces no valid ranking, whereas a valid irrelevant ranking
+can be scored normally.
+
+This rule concerns dependent quality. Reliability and
+[repeatability](#repeatability-with-failed-or-missing-attempts) count executed
+failures according to their own definitions. A valid extraction containing a
+wrong table or formula instead receives the metric's object-level penalty; it
+is not automatically a failed whole request.
+
+#### First and later attempt failures
+
+In a suite that designates attempt 1 for quality, a failed first request leaves
+that quality unavailable. A later success does not replace it. Conversely, a
+later failure does not erase independently valid first-attempt quality or
+completed measurements. Record every attempt for reliability and repeatability.
+
+Generation uses all its scheduled outputs for quality rather than this
+designated-first rule. Each suite's
+[attempt contract](methodology.md#what-the-measured-attempts-contribute) states
+which outputs supply which measurements.
+
+#### No applicable task
+
+Use `null/inapplicable` when the metric has no task on the input, with zero
+applicable task-unit support and the source inventory retained. For example,
+table reconstruction has no reference table to assess on a verified table-free
+document. A missing required table annotation is invalid input, not verified
+absence. A metric that explicitly compares empty sets follows its
+[own empty-comparison convention](#content-and-detection-empty-comparisons).
+
+#### Missing measurements or evaluations
+
+Use `null/unavailable` when the task applies but a required measurement or
+evaluation cannot be obtained. Record the reason rather than zero or infinity.
+An evaluator timeout is missing evidence, not a zero-quality judgment. Nonfinite
+or impossible measured values are measurement-integrity problems.
+
+#### No contributing observations
+
+When a metric has eligible inputs but none supplies a usable value, its aggregate
+is `null/unavailable`. Keep the eligible count and failed/unavailable outcomes.
+For example, no successful request durations means no successful-latency
+percentile. If there was no eligible task at all, use
+[inapplicable](#no-applicable-task) instead. A defined point without enough
+sources for an interval follows the
+[confidence-interval support rule](#insufficient-confidence-interval-support).
+
+#### Missing execution and separate failure stages
+
+Missing required attempts or outcome records make the affected evidence
+`incomplete`. Never assume that unexecuted work succeeded or failed; follow
+[execution accounting](#execution-accounting-and-result-completeness).
+
+Loading, warmup, input-validation, infrastructure, and offline evaluator failures
+are separate from measured-request failures. Continue scheduled work after
+recoverable request errors; if execution cannot continue, retain explicit
+unexecuted outcomes. Do not manufacture a failed request for every input that
+was never executed. A complete set of executed failures can still supply the
+suite's failure/repeatability observations.
+
+For a multi-stage request, distinguish the request outcome from each stage's
+outcome. A retrieval error can fail an executed end-to-end request while
+generation is explicitly `not_started` because of that error. The downstream
+skip is accounted for, not a generator crash and not a lost outcome record.
+Each stage metric uses its declared eligible/executed population; retain the
+upstream cause and downstream status in the existing attempt ledger. A task
+that should have executed but has no justified upstream skip still represents
+missing execution. Do not mix end-to-end and stage-level denominators.
+
+#### Completed stages and failed requests
+
+An independently completed operation keeps its measurement when another stage
+fails. A completed cold load, for example, remains measurable after a request
+error. A phase that never completes has no successful-completion latency;
+retain its elapsed-to-failure time separately. Label aggregates over successful
+operations with their contributing support.
+
+Interrupted monitoring can still supply an observed
+[partial-window peak](#missing-or-partial-resource-measurements). Partial progress
+does not establish a completed workload; derived values follow the
+[partial-observation rule](#partial-work-and-complete-measurements).
+
+#### Metric status and MLflow storage
 
 Result artifacts use these shared status meanings:
 
@@ -229,31 +335,6 @@ Undefined values are excluded only from the affected numeric calculation, not
 from saved rows or other defined metrics. MLflow omits null scalar keys; local
 and uploaded artifacts preserve the status. Partial required quality is a
 diagnostic, not complete authoritative selection evidence.
-
-Loading, warmup, input-validation, infrastructure, and offline evaluator failures
-are separate from measured-request failures. Continue scheduled work after
-recoverable request errors; if execution cannot continue, retain explicit
-unexecuted outcomes. Do not manufacture a failed request for every input that
-was never executed. A complete set of executed failures can still supply the
-suite's failure/repeatability observations.
-
-For a multi-stage request, distinguish the request outcome from each stage's
-outcome. A retrieval error can fail an executed end-to-end request while
-generation is explicitly `not_started` because of that error. The downstream
-skip is accounted for, not a generator crash and not a lost outcome record.
-Each stage metric uses its declared eligible/executed population; retain the
-upstream cause and downstream status in the existing attempt ledger. A task
-that should have executed but has no justified upstream skip still represents
-missing execution. Do not silently mix end-to-end and stage-level denominators.
-
-A completed timed phase retains its observation after an independent later
-failure. A phase that never completes has no successful-completion latency;
-retain elapsed-to-failure separately. Partial successful cohorts remain
-labelled with their support. A valid empty comparison follows its explicit
-metric convention, not the execution-failure rule.
-Likewise, a valid output may contain an incorrect or unreconstructed object:
-apply the metric's object-level penalty rather than treating every wrong table
-or formula as a failed whole request.
 
 ### Execution accounting and result completeness
 
@@ -286,6 +367,8 @@ status or an unavailable scalar.
 
 ### Dependent metrics and partial observations
 
+#### Undefined inputs to derived metrics
+
 A derived value requires valid inputs from the same declared observation and
 scope. Do not combine precision from one response with recall from another,
 or complete-workload output with an interrupted operation's duration. If a
@@ -298,6 +381,8 @@ Calculate nonlinear scores, such as F1, at their declared observation level
 before applying the benchmark's aggregation. F1 from averaged precision and
 recall is not the average of individual F1 scores. A metric explicitly defined
 from pooled counts retains that different estimator.
+
+#### Partial work and complete measurements
 
 An observed partial quantity remains real evidence, with its scope. A derived
 calculation using it cannot establish a complete-workload result. Preserve
@@ -403,15 +488,15 @@ outcomes, including elapsed-to-failure separately from completed durations.
   with independent units and applicability declared by each benchmark.
 - Normalized precision, recall, F1, accuracy, coverage, nDCG, and correctness
   values lie in `[0, 1]`. CER and WER are non-negative and can exceed 1 when
-  insertions outnumber reference units. Human rubric scores use their stated
-  `0–2` or `0–1` scales. Time, memory, storage, and throughput are non-negative
-  and have no fixed upper bound.
+  insertions outnumber reference units. Time, memory, storage, and throughput
+  are non-negative and have no fixed upper bound.
 
 ### Prose scoring projection
 
-Prose comparisons use one symmetric, evaluation-only projection: Unicode NFC,
-case-folding, replacement of Unicode punctuation with spaces, and whitespace
-collapse. Prose Content metrics use the resulting whitespace-separated tokens;
+Before scoring prose, apply the same text-cleaning steps to the reference and
+prediction: Unicode NFC normalization, case-folding, replacement of Unicode
+punctuation with spaces, and whitespace collapse. This scoring copy is called
+the **prose projection**. Prose Content metrics use its whitespace-separated tokens;
 WER uses those words and CER uses characters of the same projected strings,
 including remaining spaces. These lexical units are not model-tokenizer IDs.
 
@@ -518,6 +603,8 @@ Generation keeps its local semantic/citation comparison functions. Deferred
 Vector Database and Final RAG runners retain their explicitly documented
 implementation boundaries; a shared definition does not certify those runners.
 
+#### Repeatability with failed or missing attempts
+
 Compare every unordered pair of scheduled measured attempts. A pair succeeds
 only when both outputs are valid and identical in the benchmark's chosen
 representation. Divide successful pairs by scheduled pairs. Three attempts
@@ -584,7 +671,9 @@ and reused diagnostically in Final RAG, not Chunking–Embedding. Metric roles
 remain in each suite's reference; sharing
 the calculation does not make a secondary metric primary.
 
-**Evidence coverage:** an answerable question has reviewed gold units with
+#### Retrieval quality eligibility
+
+An answerable question has reviewed gold units with
 stable IDs and half-open source intervals. One chunk covers a unit only when
 it contains all that unit's required intervals in the same canonical document.
 Partial overlap can contribute evidence tokens without recovering a whole unit.
@@ -605,6 +694,8 @@ not be mistaken for empty tokens. Count each token occurrence once, even when
 several gold intervals overlap it. Preserve the tokenizer/mapping identity with
 the scoring provenance.
 
+#### Retrieval gains and denominators
+
 | Metric | Shared calculation |
 |---|---|
 | nDCG@K | A chunk's gain is its count of distinct completely covered gold units, used linearly. Sum `gain / log2(rank + 1)` through K and divide by the exact ideal obtained by sorting gains over the complete candidate corpus. Repeated evidence keeps its gain in distinct chunks. |
@@ -613,21 +704,18 @@ the scoring provenance.
 | alpha-nDCG@K | Sum discounted novelty gains through K: each complete unit earns `0.5` raised to its earlier coverage count, followed by the same rank discount. Normalize by a deterministic greedy baseline over the complete corpus; at each step choose the unused chunk with maximum remaining novelty gain, breaking ties by frozen corpus order. |
 | Candidate-pool Evidence-unit Recall@20 | Apply the same unit-recall calculation to the verified designated-first pool before reranking, after fusion when present. It measures available evidence, not exact-neighbour ID overlap. |
 
+#### Zero gain and short rankings
+
 Use each cutoff on the same valid designated-first ranking. A legitimately
 smaller corpus uses its available chunks at the unchanged cutoff, without
 padding; it does not reduce the number of required gold units in recall's
 denominator. Missing ranks add no gain to nDCG or alpha-nDCG. Unexpectedly short
 rankings instead follow the suite's output-integrity contract.
 
-The greedy alpha baseline is approximate, not a guaranteed maximum. Cap the
-reported alpha-nDCG ratio at one; retain any exceeded uncapped ratio and flag.
-An exceedance is not itself a scoring failure. For nDCG and alpha-nDCG, a valid
-corpus with no chunk covering any complete required unit receives zero when
-the normalization gain is zero, retaining its fragmentation limitation.
+For nDCG and alpha-nDCG, a valid corpus with no chunk covering any complete
+required unit receives zero when the normalization gain is zero. Retain the
+coverage records showing that no complete required unit occurs in a chunk.
 All answerable questions, including single-unit questions, are alpha eligible.
-The [original alpha-nDCG paper](https://plg.uwaterloo.ca/~gvcormac/novelty.pdf)
-describes this practical greedy approximation; exact-normalization review
-remains in the [data-review checklist](pending-data-review.md).
 
 Recall has a positive reference denominator and token precision has a positive
 valid-output denominator. A token-free or invalid ranking is unavailable
@@ -637,14 +725,25 @@ no evidence-overlapping tokens means zero token precision. These are different
 conditions: chunks containing only part of a required unit can have positive
 token precision while unit recall and nDCG are zero.
 
+#### Retrieval score bounds
+
+The greedy alpha baseline is approximate, not a guaranteed maximum. Cap the
+reported alpha-nDCG ratio at one; retain any exceeded uncapped ratio and flag.
+An exceedance is not itself a scoring failure. The
+[original alpha-nDCG paper](https://plg.uwaterloo.ca/~gvcormac/novelty.pdf)
+describes this practical greedy approximation; exact-normalization review
+remains in the [data-review checklist](pending-data-review.md).
+
 All reported normalized quality scores must be finite and in `[0,1]`.
 A substantive nDCG above one is a scoring-integrity error, not a value to clamp;
 the retained uncapped alpha ratio is the explicitly permitted exception above.
 Missing annotations remain data-validation failures, not zero-ideal gain.
 
+#### Retrieval quality after downstream failure
+
 A verified first pool remains scoreable for pool recall if downstream reranking
 fails. Final-ranking quality is then unavailable, but the independent pool
-observation survives under the [dependency rules](#dependent-metrics-and-partial-observations).
+observation survives under the [completed-stage rule](#completed-stages-and-failed-requests).
 This does not make an invalid or incomplete pool scoreable, or allow a later
 attempt's pool to replace the first. All these evidence scores use question-then-
 document macro aggregation; partial required quality and confidence intervals
@@ -666,6 +765,8 @@ quality, token budgets, or native-generator compatibility checks. The mean
 describes average returned volume; p95 describes its upper tail. Neither has an
 automatic better direction or a workload-descriptor confidence interval.
 
+#### Retrieved-context token availability
+
 Require a valid first ranking and complete token counting for each query total.
 Known totals survive later independent evaluator failures; later rankings never
 replace a failed first observation. If eligible queries exist but no complete
@@ -673,16 +774,15 @@ total contributes, the aggregate is `null/unavailable`, not an observed zero.
 No eligible task in an optional slice is instead inapplicable; missing required
 corpus/query inputs still fail data validation. An incomplete collection of
 required totals remains a labelled partial workload diagnostic with
-planned/contributing counts. Shared percentile
-rules handle one observation and fractional interpolated counts; invalid empty
-rankings remain output-integrity failures, not a new empty-context convention.
+planned/contributing counts. The [percentile rule](#latency-percentiles) handles
+one observation and fractional interpolated counts. An invalid empty ranking
+is an output-integrity failure; it is not a valid zero-token context.
 
 ### Latency percentiles
 
 For p50 or p95, sort the benchmark's eligible observations and locate
 zero-based position `(n - 1) × p`, where `p` is `0.50` or `0.95`.
-Interpolate linearly between adjacent values at fractional positions. With one
-observation, every percentile equals it; with none, the percentile is unavailable.
+Interpolate linearly between adjacent values at fractional positions.
 The same interpolation applies to a descriptor explicitly reporting p95, such
 as chunk lengths; the descriptor retains its own observation set and units.
 
@@ -697,6 +797,17 @@ samples retain descriptive points without establishing reliable tail inference.
 Component percentiles cannot be added or subtracted to derive an end-to-end
 percentile; that path must be measured and summarized separately.
 
+#### Zero or one latency observation
+
+With no successful observations, the percentile is `null/unavailable`: there
+is no successful duration to summarize. Retain failed durations separately;
+they do not become successful-latency values. With one successful observation,
+both p50 and p95 equal that duration. For example, one `40 ms` observation gives
+p50 = p95 = `40 ms`, while every failed request remains in the outcome records.
+One observation does not establish reliable tail behavior or sufficient support
+for a confidence interval. The same interpolation applies to p95 workload
+descriptors, using their own eligible observations rather than request durations.
+
 ### Ratio-of-totals throughput
 
 For a metric defined as total work divided by total time, sum its declared work
@@ -706,7 +817,7 @@ arithmetic mean of individual work-per-time rates. Two operations completing
 equal-operation mean `(60 + 20) / 2 = 40`. The former measures pooled work per
 second; the latter answers a different question about request-level rates.
 
-Each benchmark owns the contributing cohort, work units, timing boundary, and
+Each benchmark defines the contributing observations, work units, timing boundary, and
 treatment of failures. Decode-only intervals, elapsed request time, and an
 entire batch window are not interchangeable. A throughput CI resamples the
 declared independent units, carries their work/time contributions, and
@@ -725,6 +836,8 @@ Model-backed workers normally include loading, warmup, and measured requests;
 offline data validation, quality scoring, and bootstrap calculations are outside
 that window. A suite may have additional measured work such as corpus build or
 media decoding; its local window remains explicit.
+
+#### Missing or partial resource measurements
 
 Usable samples are required. Missing required telemetry is unavailable, never
 an observed zero. Retain timestamped samples, method, scope, and failure reason.
@@ -781,11 +894,14 @@ shared percentile-bootstrap procedure, calculated offline from retained records:
    Paired comparisons use the same aligned source draws for both candidates
    and recalculate the difference on each draw.
 
+The resulting **confidence interval (CI)** describes uncertainty from sampling
+the evaluation sources. It is different from the range of individual scores
+or a p95 latency, which describes the slow end of observed requests.
+
 Record contributing and original independent-source support, not the number of
 repeated requests or resampled copies. More draws stabilize arithmetic but add
-no independent evidence or inference. A CI describes source-sampling uncertainty,
-not the range of individual scores, a latency percentile, or certainty on future
-inputs. One source repeatedly resampled cannot establish new support.
+no independent evidence or inference. The interval does not establish certainty
+on future inputs. One source repeatedly resampled cannot establish new support.
 
 Repeated attempts remain grouped within the source on every draw. Recalculate
 the estimator from those records, not by averaging separately calculated
@@ -794,15 +910,14 @@ labels, and timing records; it launches no new model inference or judging.
 Intervals describe the declared estimator under the frozen execution protocol,
 not all possible future generation seeds or configurations.
 
+#### Insufficient confidence-interval support
+
 Freeze minimum CI support by metric/slice after data review and before an
 authoritative comparison, including development. Earlier exploratory runs can
 retain descriptive points but cannot claim authoritative intervals from an
-unfrozen support policy. Keep a defined point with null bounds and a reason when support is
-insufficient. Record defined/undefined draw counts; an undefined draw is excluded
-only from that metric's bounds, not from other defined metrics or retained rows.
-With sufficient support, equal calculated bounds such as `[0,0]` remain valid
-observed bounds with a degeneracy flag, not a claim of future certainty. Artifacts
-keep null bounds/reasons; MLflow omits the corresponding scalar keys.
+unfrozen support policy. Keep a defined point with null bounds and a reason when
+support is insufficient. A mean score can therefore be available even when its interval
+is not.
 
 Support policy identifies the independent source groups, required attempt and
 evaluation coverage, and minimum independent eligible/contributing sources for
@@ -813,6 +928,19 @@ where the protocol/review checklist says so; no universal threshold is implied.
 Source count alone does not establish representative coverage. Freeze the
 policy before inspecting authoritative comparison results, not to obtain
 favorable bounds after the fact.
+
+#### Undefined bootstrap draws and equal bounds
+
+A bootstrap draw can contain no contributing value for a conditional metric.
+For example, a draw containing only failed requests has no successful-latency
+percentile. Record defined/undefined draw counts; exclude an undefined draw
+only from that metric's bounds, not from other defined metrics or retained rows.
+
+With sufficient support, equal calculated bounds such as `[0,0]` remain valid
+observed bounds with a degeneracy flag. The two percentile bounds coincide;
+the underlying draw statistics need not all be identical, and future performance
+is not certain. Artifacts keep null bounds and their reasons; MLflow omits the
+corresponding scalar keys.
 
 Smoke, fixed identifiers/configuration counts, and one cold-load, index-build,
 or resource-peak observation have no authoritative interval. Each benchmark's

@@ -89,10 +89,10 @@ automatic saved-output judging/recovery workflow. Judge identity,
 calibration evidence, prompts, and retry policy must be frozen before an
 authoritative semantic report; the examples do not select a judge.
 
-Apply the [shared availability and support rules](../../metrics.md#shared-availability-rules)
-to every measured seed. Generation quality uses all three scheduled seed
-outputs, not only attempt 1; this observation policy does not turn failed
-requests into numeric quality scores.
+Generation quality uses all three scheduled seed outputs, not only attempt 1.
+A failed or structurally invalid required output leaves its dependent quality
+unavailable, not zero; see [failed or invalid outputs](../../metrics.md#failed-or-invalid-outputs).
+Record every seed's outcome and support even when its score is null.
 
 | Case | Treatment |
 |---|---|
@@ -103,8 +103,11 @@ requests into numeric quality scores.
 
 Only normally completed, structurally evaluable responses supply answer quality.
 An interrupted fragment is not a completed response merely because it parses.
-The [shared dependency and partial-observation rules](../../metrics.md#dependent-metrics-and-partial-observations)
-govern derived scores and partial aggregates. Retain per-question/seed outcome,
+An unavailable required component leaves a derived score unavailable; see
+[undefined inputs to derived metrics](../../metrics.md#undefined-inputs-to-derived-metrics).
+Missing required outputs or evaluations leave surviving quality partial/diagnostic; see
+[partial work and complete measurements](../../metrics.md#partial-work-and-complete-measurements).
+Retain per-question/seed outcome,
 reference eligibility, contributing support, schema/ID checks, and evaluator
 status separately. A defined null convention, such as `no_generated_claims`,
 does not itself make completed evaluation incomplete; missing required labels
@@ -133,13 +136,15 @@ verification, and matching rules are frozen in the
 
 All semantic quality metrics, including Citation Support, use
 reference-answerable questions; unanswerable questions are `null/inapplicable`.
+Output or evaluator failures do not change that reference eligibility.
 A known claim-free response,
 including an exact refusal when an answer was required, leaves Faithfulness,
 Citation Support, and Factual Correctness Precision undefined, but has zero
 required-fact recall and Factual Correctness F1. Answer Relevancy follows its
-rubric. A failed request
-or unresolved evaluation instead follows the shared availability rules, not
-these known-empty conventions. Keep reference-eligible and actually contributing
+rubric. A failed request or unresolved evaluation instead leaves dependent quality
+unavailable, not claim-free; see [failed or invalid outputs](../../metrics.md#failed-or-invalid-outputs)
+and [missing evaluations](../../metrics.md#missing-measurements-or-evaluations).
+Keep reference-eligible and actually contributing
 counts distinct.
 
 ### Faithfulness
@@ -169,8 +174,10 @@ support for three. Faithfulness is `3 / 4 = 0.75`.
 | Completed claim extraction finds no factual assertions | A visible answer contains only "Thank you!" | `null` (`inapplicable`, `no_generated_claims`) | There is no generated-claim support ratio. This is not evidence of hallucination or a failed extraction. |
 | Required claim/support labels cannot be obtained | The judge fails after its frozen retries | `null` (`unavailable`); evaluation incomplete | Unknown labels cannot establish that there were no claims or that they were unsupported. |
 
-Shared rules for failed attempts and unavailable evaluations also apply; see the
-[shared availability rules](../../metrics.md#shared-availability-rules).
+A failed or structurally invalid response leaves Faithfulness unavailable; see
+[failed or invalid outputs](../../metrics.md#failed-or-invalid-outputs).
+Missing support labels are [unavailable evaluation](../../metrics.md#missing-measurements-or-evaluations),
+not an evaluated absence of claims.
 
 ### Factual Correctness Precision
 
@@ -193,8 +200,8 @@ when the frozen verification material establishes it. It does not earn extra
 recall credit or compensate for a missing required fact. An unverified addition
 receives no correctness credit; the judge's background knowledge is not a
 verification source. Answer Relevancy separately evaluates unrelated additions.
-This source-verified precision is EduMind's frozen claim contract, not a rule
-that every claim absent from a reference-answer list is automatically false.
+Precision therefore measures source-verified correctness, while recall measures
+coverage of the required facts.
 
 **Range and direction:** `[0, 1]`; higher is better when defined.
 
@@ -205,8 +212,10 @@ that every claim absent from a reference-answer list is automatically false.
 | Completed extraction finds no generated factual claims | The response is a greeting rather than a factual answer | `null` (`inapplicable`, `no_generated_claims`) | There are no correctness judgments to divide by. Required-fact omission remains visible in recall and F1. |
 | Required correctness labels cannot be obtained | Claims were extracted, but verification fails | `null` (`unavailable`); evaluation incomplete | Missing verification is not a set of incorrect claims. |
 
-Shared rules for failed attempts and unavailable evaluations also apply; see the
-[shared availability rules](../../metrics.md#shared-availability-rules).
+A failed or structurally invalid response leaves precision unavailable; see
+[failed or invalid outputs](../../metrics.md#failed-or-invalid-outputs).
+Missing correctness labels are [unavailable evaluation](../../metrics.md#missing-measurements-or-evaluations),
+not incorrect claims or an evaluated claim-free answer.
 
 ### Factual Correctness Recall
 
@@ -235,10 +244,11 @@ receives ordinary zero recall.
 
 **Edge cases and availability:**
 
-There is no additional valid empty-reference convention. Missing required
-gold-matching labels follow the
-[shared availability rules](../../metrics.md#shared-availability-rules), not zero
-matching.
+Required gold claims must be present under reference validation. Missing
+gold-matching labels leave recall unavailable, not zero; see
+[missing measurements or evaluations](../../metrics.md#missing-measurements-or-evaluations).
+A failed or structurally invalid output likewise leaves recall unavailable;
+see [failed or invalid outputs](../../metrics.md#failed-or-invalid-outputs).
 
 ### Factual Correctness F1
 
@@ -272,8 +282,9 @@ is accepted, while the missing duration still lowers completeness.
 | A completed response is known to contain no factual claims | Claim extraction succeeds with an empty list; required facts exist | `0` (`scored`, known-empty convention) | The combined correctness/completeness task recovered none of the required facts. This explicit convention does not substitute zero for null precision. |
 | A required evaluation is unavailable | Gold matching or claim verification is missing after judge failure | `null` (`unavailable`); evaluation incomplete | The known-empty convention cannot be applied to unknown claims or judgments. |
 
-See the [shared dependency and partial-observation rules](../../metrics.md#dependent-metrics-and-partial-observations)
-for unavailable components; the known-empty convention above remains specific to this metric.
+An unavailable required component leaves F1 unavailable; see
+[undefined inputs to derived metrics](../../metrics.md#undefined-inputs-to-derived-metrics).
+The known-empty convention above remains specific to this metric.
 
 ### Answer Relevancy
 
@@ -301,14 +312,15 @@ still measured separately by Factual Correctness Recall.
 
 There is no division-by-zero convention: every successfully assigned rubric
 level maps to a defined score. Missing or unusable rubric labels are unavailable
-under the [shared availability rules](../../metrics.md#shared-availability-rules). Judge calibration, label validity, and retry requirements
+under [missing measurements or evaluations](../../metrics.md#missing-measurements-or-evaluations).
+Judge calibration, label validity, and retry requirements
 belong to the [semantic judge contract](methodology.md#semantic-judge-contract),
 not additional numeric cases of this metric.
 
 ## Citation quality
 
 Citation Support measures generated-claim support; Citation Precision/Recall/F1
-retain their existing gold-evidence coverage definitions below. These answer
+measure gold-evidence coverage as defined below. These answer
 different questions and do not replace or rename one another.
 
 Citation Precision, Recall, and F1 are calculated only for answerable questions,
@@ -348,8 +360,10 @@ Citation Precision is `2 / 3`, approximately `0.67`.
 | A completed answerable response has an empty citation list | `citations: []` | `0` (`scored`) | Required evidence exists, but no evidence IDs were selected; define the empty produced-ID denominator as zero precision. |
 | No citation-quality task exists | An unanswerable question receives the required refusal | `null` (`inapplicable`) | Correct absence of citations is assessed by Refusal Validity, not a perfect citation score. |
 
-Shared rules for failed attempts and unavailable evaluations also apply; see the
-[shared availability rules](../../metrics.md#shared-availability-rules).
+A failed or structurally invalid response leaves citation precision unavailable,
+not an evaluated empty list; see [failed or invalid outputs](../../metrics.md#failed-or-invalid-outputs).
+Missing required citation checks leave evaluation unavailable; see
+[missing measurements or evaluations](../../metrics.md#missing-measurements-or-evaluations).
 
 ### Citation Recall
 
@@ -380,8 +394,10 @@ Only answerable questions have this task; other questions are
 is no additional valid empty-denominator case. A valid empty list covers zero
 units normally; input annotation requirements belong to reference validation.
 
-Shared rules for failed attempts and unavailable evaluations also apply; see the
-[shared availability rules](../../metrics.md#shared-availability-rules).
+A failed or structurally invalid response leaves citation recall unavailable;
+see [failed or invalid outputs](../../metrics.md#failed-or-invalid-outputs).
+Missing required citation checks leave evaluation unavailable, not zero coverage;
+see [missing measurements or evaluations](../../metrics.md#missing-measurements-or-evaluations).
 
 ### Citation F1
 
@@ -407,8 +423,8 @@ Citation F1 approximately `0.62`.
 | Both defined components are zero | The answerable response has no correct citations | `0` (`scored`) | Resolve the harmonic mean's `0/0` without rewarding missing evidence. |
 | Citation quality is inapplicable | An unanswerable question | `null` (`inapplicable`) | F1 inherits its components' reference eligibility. |
 
-Unavailable required citation fields follow the
-[shared dependency and partial-observation rules](../../metrics.md#dependent-metrics-and-partial-observations). An
+Unavailable required citation fields leave F1 unavailable; see
+[undefined inputs to derived metrics](../../metrics.md#undefined-inputs-to-derived-metrics). An
 unknown but well-typed ID is instead a scored incorrect citation: `[E1, UNKNOWN]`
 has precision `1/2` and recall `1` if E1 covers the only required unit, giving
 F1 approximately `0.67`, not a blanket zero for the entire response.
@@ -442,7 +458,7 @@ material may receive correctness credit but no context or cited-support credit.
 
 This is a response-level cited-set adaptation of citation-support evaluation,
 not sentence-to-citation attribution, the exact ALCE metric, or another metric
-named Citation Recall. Existing Citation Precision/Recall/F1 still measure
+named Citation Recall. Citation Precision/Recall/F1 measure
 required gold-evidence coverage. Support can be high for a faithfully cited
 partial answer while gold-evidence recall remains low.
 
@@ -465,10 +481,10 @@ Diagnostic, not a primary metric or qualification gate.
 | Completed claim extraction finds no factual claims | The exact refusal or a greeting on an answerable question | `null` (`inapplicable`, `no_generated_claims`) | There is no claim-support denominator; this is not missing evaluation. |
 | Question is outside answerable-only quality | An unanswerable question, regardless of its produced answer | `null` (`inapplicable`) | Refusal behavior is evaluated separately. |
 
-Missing required output or evaluation follows the
-[shared availability](../../metrics.md#shared-availability-rules) and
-[dependency rules](../../metrics.md#dependent-metrics-and-partial-observations):
-`null/unavailable`, not an evaluated empty claim inventory. Evaluator-label
+Missing required output or evaluation leaves Citation Support `null/unavailable`,
+not an evaluated empty claim inventory. See
+[failed or invalid outputs](../../metrics.md#failed-or-invalid-outputs) and
+[missing evaluations](../../metrics.md#missing-measurements-or-evaluations). Evaluator-label
 consistency follows the [judge contract](methodology.md#semantic-judge-contract),
 not a separate metric edge case.
 
@@ -517,10 +533,11 @@ correctness, relevance, or that a citation entails the generated claims.
 |---|---|---|---|
 | The reporting slice has no answerable questions | An unanswerable-only slice | `null` (`inapplicable`) | There is no required answered behavior to assess. |
 
-Missing required outcomes or judgments follow the
-[shared availability rules](../../metrics.md#shared-availability-rules).
-Known runtime failures count as unsuccessful answer behavior; unexecuted
-requests are not fabricated validity events.
+Missing claim labels leave an otherwise mechanically passing observation
+unavailable; see [missing evaluations](../../metrics.md#missing-measurements-or-evaluations).
+Known runtime failures count as unsuccessful answer behavior. Missing outcomes
+or unexecuted requests leave evidence incomplete, not fabricated validity events;
+see [execution accounting](../../metrics.md#execution-accounting-and-result-completeness).
 
 ### Refusal Validity Rate
 
@@ -551,9 +568,9 @@ is not a valid refusal, even if partial text resembles the refusal sentence.
 |---|---|---|---|
 | The reporting slice has no unanswerable questions | An answerable-only slice | `null` (`inapplicable`) | No refusal behavior was required. |
 
-Missing required execution follows the
-[shared availability rules](../../metrics.md#shared-availability-rules); it must not
-shrink the scheduled denominator to surviving attempts.
+Missing required execution leaves refusal-rate evidence incomplete; it must
+not shrink the scheduled denominator to surviving attempts. See
+[execution accounting](../../metrics.md#execution-accounting-and-result-completeness).
 
 ### Malformed Output Rate
 
@@ -587,8 +604,10 @@ completed outputs, even if they parse.
 |---|---|---|---|
 | No generation completes normally | All three executed attempts crash or are interrupted | `null` (`unavailable`, no completed outputs) | No complete output exists whose structure can be counted; reliability and scheduled support remain visible. |
 
-Shared rules for unavailable outputs and incomplete execution also apply; see the
-[shared availability rules](../../metrics.md#shared-availability-rules).
+If no output completes normally, the rate is unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
+Missing required execution remains incomplete under
+[execution accounting](../../metrics.md#execution-accounting-and-result-completeness).
 
 The three validity metrics have different scopes. A malformed answerable output
 increments Malformed Output Rate and fails Response Validity Rate. A parseable
@@ -632,9 +651,9 @@ result only when scheduled outcomes are fully accounted for.
 
 **Edge cases and availability:**
 
-There is no additional arithmetic exception for a nonempty, accounted schedule.
-Other availability follows [shared execution-accounting rules](../../metrics.md#execution-accounting-and-result-completeness) rather than inventing measured
-events for requests that did not execute.
+Missing required execution or outcome records leaves rate evidence incomplete;
+unexecuted requests are not invented runtime errors. See
+[execution accounting](../../metrics.md#execution-accounting-and-result-completeness).
 
 ### Timeout Rate
 
@@ -657,10 +676,10 @@ if parsing/cleanup ends later; a timeout after tokens were emitted still counts.
 
 **Edge cases and availability:**
 
-No additional numeric exception is needed for accounted attempt outcomes.
-Missing termination records follow [shared availability rules](../../metrics.md#shared-availability-rules), not an
-assumption of zero timeouts. Observed TTFT can survive an interrupted response;
-quality and successful-completion latency use their own availability rules.
+Missing termination records leave rate evidence incomplete, not zero timeouts;
+see [execution accounting](../../metrics.md#execution-accounting-and-result-completeness).
+Observed TTFT survives an interrupted response, but that response supplies no
+successful-completion latency; see [completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests).
 
 ### Context-Limit-Reached Rate
 
@@ -686,9 +705,9 @@ before generation, not an output-exhaustion event or another summary metric.
 
 **Edge cases and availability:**
 
-No additional empty-denominator convention applies to an accounted, nonempty
-generation schedule. Other availability follows [shared execution-accounting rules](../../metrics.md#execution-accounting-and-result-completeness), not an
-assumption of zero context-exhaustion events.
+Missing required execution or outcome records leaves rate evidence incomplete,
+not zero context-exhaustion events. See
+[execution accounting](../../metrics.md#execution-accounting-and-result-completeness).
 
 ## Repeatability
 
@@ -698,7 +717,10 @@ list is used by every candidate. The three outputs create three unordered respon
 values are averaged within the question. Smoke and preflight use one seed and do
 not report repeatability metrics.
 
-Adopt the [shared scheduled-pair denominator, failure handling, and availability rules](../../metrics.md#pairwise-repeatability).
+Adopt the [shared scheduled-pair denominator](../../metrics.md#pairwise-repeatability).
+Executed failures contribute zero to their pairs; missing required attempts or
+evaluations leave evidence incomplete or unavailable, not a surviving-pair score.
+See [repeatability with failed or missing attempts](../../metrics.md#repeatability-with-failed-or-missing-attempts).
 The three comparison functions below determine pair values; none measures
 answer correctness. A schema-valid response with wrong behavior or incorrect
 citation IDs can be consistently wrong without becoming a failed execution.
@@ -727,9 +749,9 @@ Agreement is not correctness.
 
 **Edge cases and availability:**
 
-Use the [shared pairwise-repeatability rules](../../metrics.md#pairwise-repeatability): executed failures contribute zero, while a one-seed
-profile is inapplicable and missing required outcomes are incomplete. No
-additional status-comparison exception is needed.
+Executed failures contribute zero to their pairs. A one-seed profile has no
+pair task, while missing required outcomes leave evidence incomplete. See
+[repeatability with failed or missing attempts](../../metrics.md#repeatability-with-failed-or-missing-attempts).
 
 ### Repeat Citation Agreement
 
@@ -764,7 +786,7 @@ distinct citations in either output
 | No citation-repeatability task exists | An unanswerable question, or a deliberately one-seed profile | `null` (`inapplicable`) | Neither correct refusal nor absent pairs earns artificial agreement. |
 
 Failed or structurally invalid response pairs follow the
-[shared pairwise-repeatability rules](../../metrics.md#pairwise-repeatability); a
+[zero-contribution rule](../../metrics.md#repeatability-with-failed-or-missing-attempts); a
 missing citation field is not an empty array. Matching erroneous ID sets can
 agree, just as matching incorrect answers can agree semantically.
 
@@ -795,9 +817,11 @@ while factual correctness and faithfulness measure quality.
 
 **Edge cases and availability:**
 
-Required pair labels that cannot be obtained follow [shared availability rules](../../metrics.md#shared-availability-rules), not a zero disagreement. The
-[shared pairwise-repeatability rules](../../metrics.md#pairwise-repeatability) still apply to
-executed candidate failures. A one-seed profile has no pair task. Two valid
+Missing required pair labels leave evaluation unavailable, not a zero
+disagreement; see [missing evaluations](../../metrics.md#missing-measurements-or-evaluations).
+Executed candidate failures contribute zero to their pairs; see
+[repeatability with failed or missing attempts](../../metrics.md#repeatability-with-failed-or-missing-attempts).
+A one-seed profile has no pair task. Two valid
 refusals can agree on meaning even when refusing was the wrong behavior.
 
 ## Operational measurement
@@ -849,8 +873,11 @@ responsiveness and p95 the slow tail, not an uncertainty bound.
 | A first token is observed before interruption | First token at `0.4 s`, followed by timeout | Preserve `0.4 s` (`scored`) | The first-token measurement completed independently of response completion. |
 | No question contributes a TTFT observation | All measured requests emit no tokens | p50/p95 `null` (`unavailable`) | There is no observation set to summarize. |
 
-Single-observation percentiles and missing instrumentation follow [shared percentile rules](../../metrics.md#latency-percentiles)
-and [shared availability rules](../../metrics.md#shared-availability-rules); do not substitute full-response time for TTFT.
+One contributing question's TTFT observation is its own p50 and p95; see
+[zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
+Missing required instrumentation leaves TTFT unavailable; see
+[missing measurements or evaluations](../../metrics.md#missing-measurements-or-evaluations).
+Do not substitute full-response time for TTFT.
 
 ### End-to-End Latency p50/p95
 
@@ -889,9 +916,10 @@ reranking, and switching subintervals in timing artifacts rather than extra metr
 | No request completes successfully for a question | All three attempts terminate early | Question completion-latency observation `null` (`unavailable`) | Interrupted elapsed times remain in artifacts, not the successful-completion distribution. |
 | No question contributes successful completion latency | Every request is interrupted or structurally unusable | p50/p95 `null` (`unavailable`) | No successful-completion observation set exists. |
 
-Use [shared percentile rules](../../metrics.md#latency-percentiles) for a single observation, retaining support rather
-than inventing another request. An ordinary wrong answer is still a completed
-request; correctness is not a latency eligibility filter.
+One contributing question's observation is its own p50 and p95; see
+[zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
+Retain support rather than inventing another request. An ordinary wrong answer
+is still a completed request; correctness is not a latency eligibility filter.
 
 ### Decode Throughput
 
@@ -943,7 +971,8 @@ no upper bound of one.
 | No positive interval can be resolved | Several tokens receive the same timestamp | Stream rate `null` (`unavailable`) | Do not report an infinite speed or invent elapsed decoding time. |
 | No completed stream contributes valid work/time | Every stream is interrupted or lacks a usable interval | Aggregate `null` (`unavailable`) | No positive contributing decoding interval exists. |
 
-Missing required instrumentation follows [shared availability rules](../../metrics.md#shared-availability-rules).
+Missing required instrumentation leaves the affected stream's rate unavailable;
+see [missing measurements or evaluations](../../metrics.md#missing-measurements-or-evaluations).
 Aggregation follows the [shared ratio-of-totals rules](../../metrics.md#ratio-of-totals-throughput). The
 main scalar's cohort excludes interrupted streams even when their diagnostic
 partial-stream rates are defined; their known work remains in artifacts.
@@ -969,9 +998,9 @@ observation receives no confidence interval.
 
 **Edge cases and availability:**
 
-Apply the [shared completed-phase and partial-observation rules](../../metrics.md#dependent-metrics-and-partial-observations):
-interrupted loading has unavailable completed load time, while completed loading
-survives a later warmup or inference failure. Retain elapsed-to-failure separately.
+Interrupted loading has unavailable completed load time, while completed loading
+survives a later warmup or inference failure. Retain elapsed-to-failure separately;
+see [completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests).
 
 ### Peak Process-Tree RAM
 
@@ -990,9 +1019,11 @@ and `1,900 + 1,200 = 3,100 MiB` give a peak of `3,100 MiB`, not
 
 **Edge cases and availability:**
 
-Availability, partial-window reporting, and single-peak uncertainty follow the
-[shared resource rules](../../metrics.md#resource-measurements). The candidate
-has one continuous monitored lifecycle, not three independent peak experiments.
+Missing usable RAM samples leave the peak unavailable. A peak from an interrupted
+window remains partial evidence; see
+[missing or partial resource measurements](../../metrics.md#missing-or-partial-resource-measurements).
+The candidate has one continuous monitored lifecycle, not three independent peak
+experiments; one peak has no inferred confidence interval.
 
 ### Peak Device VRAM
 
@@ -1010,8 +1041,10 @@ evidence, not proof that the complete workload fits.
 
 **Edge cases and availability:**
 
-Apply the [shared CPU/CUDA resource availability, partial-window, and scope rules](../../metrics.md#resource-measurements).
-Missing required telemetry is not an observed allocation of zero.
+CPU execution has no VRAM task; missing required CUDA telemetry is unavailable,
+not zero. See [CPU/CUDA VRAM availability](../../metrics.md#peak-device-vram).
+A peak from an interrupted window remains partial evidence; see
+[missing or partial resource measurements](../../metrics.md#missing-or-partial-resource-measurements).
 
 ## Workload descriptors
 
@@ -1043,8 +1076,8 @@ It is this complete count, not the evidence count alone, that consumes context.
 
 **Edge cases and availability:**
 
-There is no additional arithmetic exception for an observed integer count.
-Missing tokenization measurements follow [shared availability rules](../../metrics.md#shared-availability-rules).
+Missing tokenization measurements leave the count unavailable, not zero; see
+[missing measurements or evaluations](../../metrics.md#missing-measurements-or-evaluations).
 
 ### Context Tokens
 
@@ -1063,8 +1096,9 @@ complete input cost without asserting that every remaining token is an instructi
 **Edge cases and availability:**
 
 A known empty evidence component, where the request contract permits it, has
-count zero. An unrecorded component is unavailable under [shared availability rules](../../metrics.md#shared-availability-rules), not
-an empty component. Retrieved-token counts using `cl100k_base` are separate.
+count zero. An unrecorded component is unavailable, not empty; see
+[missing measurements or evaluations](../../metrics.md#missing-measurements-or-evaluations).
+Retrieved-token counts using `cl100k_base` are separate.
 
 ### Reasoning Tokens
 
@@ -1086,7 +1120,8 @@ null, not an assumption of zero reasoning.
 | Reasoning is not reliably separated or exposed | Only a visible response is returned | `null` (`unavailable`) | Do not infer hidden reasoning length from latency or answer text. |
 | Reasoning absence is verified | A supported direct mode exposes no reasoning events | `0` (`scored`) | Known absence is different from missing visibility. |
 
-Missing measurements follow the [shared availability rules](../../metrics.md#shared-availability-rules).
+Missing reasoning measurements leave the count unavailable, not verified zero;
+see [missing measurements or evaluations](../../metrics.md#missing-measurements-or-evaluations).
 
 ### Visible-Answer Tokens
 
@@ -1104,9 +1139,9 @@ records `20`, whether those tokens express correct facts or unsupported claims.
 **Edge cases and availability:**
 
 A known empty `answer` string counts zero even if it fails answer behavior.
-An absent/unusable field follows the
-[shared availability rules](../../metrics.md#shared-availability-rules), not
-zero answer length. Preserve raw generated-token counts independently.
+An absent or unusable field leaves answer length unavailable, not zero;
+see [missing measurements or evaluations](../../metrics.md#missing-measurements-or-evaluations).
+Preserve raw generated-token counts independently.
 
 ### Total Output Tokens
 
@@ -1127,7 +1162,8 @@ components to sum to `60` when boundaries or retokenizations differ.
 
 An observed stream known to emit no token events has count zero. Missing token
 records are unavailable, not zero. Partial streams follow the
-[shared dependency and partial-observation rules](../../metrics.md#dependent-metrics-and-partial-observations); their real token counts do not establish successful completion.
+[partial-work rule](../../metrics.md#partial-work-and-complete-measurements);
+their real token counts do not establish successful completion.
 
 ## Per-response diagnostic artifacts
 
@@ -1152,8 +1188,9 @@ list counts zero; unknown string IDs remain counted and separately flagged.
 
 **Edge cases and availability:**
 
-Missing or unusable citation fields follow [shared availability rules](../../metrics.md#shared-availability-rules) rather than
-becoming empty lists. ID-reference validity is separate from structural validity.
+Missing or unusable citation fields leave the count unavailable, not an empty
+list; see [missing measurements or evaluations](../../metrics.md#missing-measurements-or-evaluations).
+ID-reference validity is separate from structural validity.
 
 ### Generated-Claim Count
 
@@ -1170,8 +1207,9 @@ duration does not create a fourth distinct claim.
 
 **Edge cases and availability:**
 
-Completed extraction finding no claims gives zero. Missing labels follow the
-[shared availability rules](../../metrics.md#shared-availability-rules), not a fallback claim-free answer.
+Completed extraction finding no claims gives zero. Missing labels leave the
+count unavailable, not a claim-free answer; see
+[missing measurements or evaluations](../../metrics.md#missing-measurements-or-evaluations).
 
 ### Finish-reason inventory
 
@@ -1191,8 +1229,10 @@ successful behavior. These frequencies do not receive confidence intervals.
 
 **Edge cases and availability:**
 
-Apply [shared missing-record rules](../../metrics.md#execution-accounting-and-result-completeness): no recorded terminations means undefined
-shares, with missing/unexecuted support retained. Keep runtime outcome, decoding
+No recorded terminations means undefined shares; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
+Retain missing/unexecuted support under
+[execution accounting](../../metrics.md#execution-accounting-and-result-completeness). Keep runtime outcome, decoding
 finish reason, schema validity, and ID validity in separate fields. For example,
 EOS with malformed JSON is normal decoding completion but structural failure;
 an input-context rejection has no decoding finish reason because it never began.
@@ -1254,7 +1294,7 @@ score with a later favorable output. Every seed's execution and evaluator outcom
 remains recorded even when its score is null.
 
 Apply the [shared reporting-slice](../../metrics.md#reporting-slices) and
-[partial-evidence rules](../../metrics.md#dependent-metrics-and-partial-observations).
+[partial-evidence rules](../../metrics.md#partial-work-and-complete-measurements).
 Known claim-free null ratios are explicit evaluated conventions, not missing
 judge labels; they retain reference eligibility and `no_generated_claims`
 support. Missing required evaluations or unavailable outputs leave surviving
@@ -1320,15 +1360,17 @@ possible future generation seed.
 
 Report eligible and contributing independent-source counts, not `3 × questions`
 as independent support. Missing required judge labels or scheduled seeds keep
-any surviving-output estimate incomplete/diagnostic under the shared availability
-rules, not a complete comparison obtained by omitting missing rows.
+any surviving-output estimate incomplete/diagnostic, not a complete comparison
+obtained by omitting missing rows. See
+[partial work and complete measurements](../../metrics.md#partial-work-and-complete-measurements).
 
 The numeric independent-source support minimum remains pending data review.
-Its freeze follows the [shared CI-support deadline](../../metrics.md#confidence-intervals),
+Its freeze follows the [CI-support deadline](../../metrics.md#insufficient-confidence-interval-support),
 before any authoritative comparison, including development. Earlier exploratory
-points remain descriptive, with null bounds and a reason. Apply the shared
-undefined-draw and degeneracy rules;
-calculated bounds such as `[1, 1]` are not a claim of future certainty.
+points remain descriptive, with null bounds and a reason. Undefined draws do not
+enter the affected bounds; equal bounds retain their degeneracy flag. See
+[undefined bootstrap draws and equal bounds](../../metrics.md#undefined-bootstrap-draws-and-equal-bounds).
+Calculated bounds such as `[1, 1]` are not a claim of future certainty.
 
 For example, `Faithfulness = 0.90, 95% CI [0.86, 0.94]` describes uncertainty
 in the document-macro estimate, not a range of individual answers. Bootstrap

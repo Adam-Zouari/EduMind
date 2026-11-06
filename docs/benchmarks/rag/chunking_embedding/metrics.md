@@ -77,7 +77,7 @@ at the two candidate context counts before the final system's top-K is frozen.
 | Embedding-Matrix Bytes | Storage descriptor | How large is the complete matrix's raw vector payload? | Descriptive |
 
 The following retained quantities are not candidate scalar metrics under the
-approved reporting simplification: [Corpus Counts](#corpus-counts) and
+target reporting contract: [Corpus Counts](#corpus-counts) and
 [Source Tokens](#source-tokens) are parent workload metadata;
 [Embedding Dimension and Dtype](#embedding-dimension-and-dtype) are verified
 configuration parameters; [Corpus-Build Throughput](#corpus-build-throughput)
@@ -95,14 +95,15 @@ Invalid or missing required evidence is a
 [data-validation failure](../../data-validation.md#chunking-and-embedding-inputs),
 not a zero or null observation from a candidate that never ran.
 
-Quality uses the designated first measured ranking under the
-[shared availability rules](../../metrics.md#shared-availability-rules).
+Quality uses the designated first measured ranking. If that attempt fails,
+later success does not replace it; a later failure does not erase valid first-ranking
+quality. See [first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
 
 Score all four quality families once at both cutoffs from a valid first ranking.
 Missing evidence in valid retrieved chunks receives the normal poor numeric
-score. Failures and missing records follow the
-[shared availability rules](../../metrics.md#shared-availability-rules);
-slice eligibility and partial results follow
+score. Failed or invalid required rankings leave dependent quality unavailable:
+see [failed or invalid outputs](../../metrics.md#failed-or-invalid-outputs).
+Missing records, slice eligibility, and partial results follow
 [aggregation and comparison completeness](#aggregation-and-completeness).
 
 Generated chunks, vectors, and rankings have separate integrity checks. Exact
@@ -130,7 +131,7 @@ which completed results can enter selection comparisons.
 **Question:** How early do evidence-rich chunks appear when repeated evidence
 keeps its relevance credit?
 
-Apply the [shared linear-gain nDCG rule](../../metrics.md#retrieval-evidence-quality)
+Apply the [linear-gain nDCG calculation](../../metrics.md#retrieval-gains-and-denominators)
 to each question and candidate pair. The exact ideal comes from that pair's
 complete generated corpus; distinct relevant chunks keep full evidence credit
 even when their text or evidence repeats.
@@ -167,8 +168,10 @@ evidence as a relevance-ranking error.
 |---|---|---|---|
 | Zero ideal gain over the complete candidate corpus | Every chunk splits the question's required units, so no chunk covers a complete unit. | `0` (`scored`) | The explicit zero-denominator convention keeps boundary fragmentation in the quality result rather than excluding the pair. |
 
-The [shared retrieval-evidence conventions](../../metrics.md#retrieval-evidence-quality)
-and [availability rules](../../metrics.md#shared-availability-rules) apply.
+Zero ideal gain and a legitimately short corpus follow
+[zero gain and short rankings](../../metrics.md#zero-gain-and-short-rankings).
+A failed or invalid first ranking leaves nDCG unavailable; see
+[failed or invalid outputs](../../metrics.md#failed-or-invalid-outputs).
 Evidence-slice and aggregate status follow
 [this suite's completeness rules](#aggregation-and-completeness).
 
@@ -201,8 +204,11 @@ gives zero under the ordinary calculation.
 
 **Edge cases and availability:**
 
-The [shared retrieval-evidence conventions](../../metrics.md#retrieval-evidence-quality)
-and [availability rules](../../metrics.md#shared-availability-rules) apply.
+No complete unit recovered from a valid ranking gives zero recall. A short
+corpus does not reduce the required-unit denominator; see
+[zero gain and short rankings](../../metrics.md#zero-gain-and-short-rankings).
+A failed or invalid first ranking instead leaves recall unavailable; see
+[failed or invalid outputs](../../metrics.md#failed-or-invalid-outputs).
 Evidence-slice and aggregate status follow
 [this suite's completeness rules](#aggregation-and-completeness).
 
@@ -211,7 +217,7 @@ Evidence-slice and aggregate status follow
 **Question:** What share of the tokens returned in the first three or first five
 chunks is relevant evidence?
 
-Apply the [shared evidence-token, source-offset, and UTF-8 mapping rules](../../metrics.md#retrieval-evidence-quality)
+Apply the [evidence-token, source-offset, and UTF-8 mapping rules](../../metrics.md#retrieval-quality-eligibility)
 to each canonical chunk's `tiktoken:cl100k_base` occurrences. Count relevant
 returned occurrences over all returned source-token occurrences; overlapping
 chunks retain their repeated occurrences. Model-native input lengths are a
@@ -237,8 +243,9 @@ zero under the ordinary calculation.
 
 **Edge cases and availability:**
 
-The [shared retrieval-evidence conventions](../../metrics.md#retrieval-evidence-quality)
-and [availability rules](../../metrics.md#shared-availability-rules) apply.
+Valid returned text with no evidence overlap gives zero precision. A ranking
+with no valid returned source tokens leaves precision unavailable, not zero;
+see [zero-gain and invalid-token cases](../../metrics.md#zero-gain-and-short-rankings).
 Evidence-slice and aggregate status follow
 [this suite's completeness rules](#aggregation-and-completeness).
 
@@ -284,7 +291,8 @@ primary retrieval metrics. With one unit, its first occurrence receives full
 credit and later occurrences receive discounted credit; the same rule is used
 in the greedy normalization.
 
-Apply the [shared greedy normalization and score-cap rules](../../metrics.md#retrieval-evidence-quality)
+Apply the [greedy normalization](../../metrics.md#retrieval-gains-and-denominators)
+and [score-cap rules](../../metrics.md#retrieval-score-bounds)
 to this pair's complete corpus. A score of one means the ranking meets or
 exceeds that greedy baseline, not necessarily an exact ideal.
 The [data-review checklist](../../pending-data-review.md) records the development-only
@@ -300,8 +308,10 @@ evaluation.
 | Zero greedy-baseline gain over the complete candidate corpus | No chunk covers any complete gold unit for an eligible question. | `0` (`scored`) | Keep fragmentation in the quality result using the explicit zero-denominator convention. |
 | Observed gain exceeds the greedy normalization baseline | The uncapped ratio is `1.02`. | Report `1` (`scored`); retain raw `1.02` and the greedy-baseline-exceeded flag. | The deterministic greedy baseline is approximate. Exceeding it is not itself a failed evaluation; the raw ratio and flag are per-question diagnostics, not another primary metric. |
 
-The [shared retrieval-evidence conventions](../../metrics.md#retrieval-evidence-quality)
-and [availability rules](../../metrics.md#shared-availability-rules) apply.
+Zero baseline gain follows [zero gain and short rankings](../../metrics.md#zero-gain-and-short-rankings);
+a ratio above the greedy baseline follows [retrieval score bounds](../../metrics.md#retrieval-score-bounds).
+A failed or invalid first ranking leaves alpha-nDCG unavailable; see
+[failed or invalid outputs](../../metrics.md#failed-or-invalid-outputs).
 Evidence-slice and aggregate status follow
 [this suite's completeness rules](#aggregation-and-completeness).
 
@@ -358,9 +368,10 @@ higher quality.
 |---|---|---|---|
 | No attempt pairs are scheduled | One-attempt smoke | `null` (`inapplicable`) | No repeatability task was measured. |
 
-Missing required execution or records follows the
-[shared pairwise-repeatability rule](../../metrics.md#pairwise-repeatability), not a
-surviving-pair average. Supported source-document intervals follow
+Missing required execution or records leaves repeatability incomplete, not a
+surviving-pair average; executed failures contribute zero to their pairs. See
+[repeatability with failed or missing attempts](../../metrics.md#repeatability-with-failed-or-missing-attempts).
+Supported source-document intervals follow
 [this suite's CI table](#which-values-receive-an-interval).
 
 ## Operational performance
@@ -368,12 +379,11 @@ surviving-pair average. Supported source-document intervals follow
 The phase calls preparation of the searchable embedding matrix **corpus build**.
 It is not the later vector-server indexing experiment.
 
-Operational availability follows the
-[shared rules](../../metrics.md#shared-availability-rules). Each build component
-requires its own completed phase; total corpus-build values require the complete
+Each build component requires its own completed phase; total corpus-build values require the complete
 searchable matrix. Query-component latency uses each query's median successful
 completed component duration, and complete-query latency uses successful complete
-requests. A completed embedding can survive a later search failure. Keep each
+requests. A completed embedding survives a later search failure; see
+[completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests). Keep each
 cohort's support; component success does not establish whole-query success.
 Apply the shared
 [percentile](../../metrics.md#latency-percentiles) and
@@ -403,9 +413,9 @@ worker/model, not forcibly cleared operating-system disk caches.
 
 **Edge cases and availability:**
 
-[Shared completed-phase rules apply.](../../metrics.md#dependent-metrics-and-partial-observations)
-A completed load survives later failure; interrupted loading retains elapsed-
-to-failure separately. There is no additional metric-specific empty convention.
+A completed load survives later failure. Interrupted loading has no completed
+load time; retain elapsed-to-failure separately. See
+[completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests).
 
 ### Chunking Time
 
@@ -425,10 +435,10 @@ The semantic strategy's boundary embeddings belong to this phase.
 
 **Edge cases and availability:**
 
-[Shared completed-phase rules apply.](../../metrics.md#dependent-metrics-and-partial-observations)
-No additional metric-specific exception is needed. Retain a completed chunking
-duration if later vector production fails; invalid empty inventories remain
-runtime-integrity failures, not new duration conventions.
+Retain a completed chunking duration if later vector production fails;
+interrupted chunking has no completed duration. See
+[completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests).
+Invalid empty inventories remain runtime-integrity failures.
 
 ### Chunk-Embedding Time
 
@@ -448,9 +458,9 @@ completion time; its known progress remains diagnostic evidence.
 
 **Edge cases and availability:**
 
-[Shared completed-phase rules apply.](../../metrics.md#dependent-metrics-and-partial-observations)
-No additional metric-specific exception is needed. Missing vectors and invalid
-native inputs retain their separate integrity/input outcomes.
+An incomplete vector set has no completed chunk-embedding duration; retain
+known progress separately. See [partial work and complete measurements](../../metrics.md#partial-work-and-complete-measurements).
+Missing vectors and invalid native inputs retain their separate integrity/input outcomes.
 
 ### Corpus-Build Time
 
@@ -475,8 +485,9 @@ reports `80` as the complete preparation cost.
 
 **Edge cases and availability:**
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
-See this page's [operational completion rules](#operational-performance-1).
+An incomplete searchable matrix has no completed Corpus-Build Time, even when
+chunking finished. Retain completed components and elapsed-to-failure separately;
+see [partial work and complete measurements](../../metrics.md#partial-work-and-complete-measurements).
 
 ### Corpus-Build Throughput
 
@@ -516,10 +527,10 @@ equal quality.
 |---|---|---|---|
 | Completed build has zero measured duration | The retained, unrounded completed duration is `0` seconds. | `null` (`unavailable`) | The throughput denominator is zero. Do not substitute a tiny constant or report infinity. |
 
-[Shared availability](../../metrics.md#shared-availability-rules) and
-[ratio-of-totals throughput rules](../../metrics.md#ratio-of-totals-throughput) apply.
-Incomplete builds and invalid timers follow the
-[operational completion rules](#operational-performance-1).
+An incomplete build or unavailable build timer leaves throughput unavailable;
+see [undefined inputs to derived metrics](../../metrics.md#undefined-inputs-to-derived-metrics).
+The [ratio-of-totals throughput rule](../../metrics.md#ratio-of-totals-throughput)
+requires the source count and duration to describe the same completed build.
 
 ### Query-Embedding Latency p50/p95
 
@@ -543,10 +554,8 @@ subsequently fails.
 
 **Edge cases and availability:**
 
-Apply [shared availability](../../metrics.md#shared-availability-rules) and
-[percentile rules](../../metrics.md#latency-percentiles). One observation is its
-own p50. If no completed component observation contributes, the aggregate is
-`null/unavailable`, not zero.
+No completed component observation gives `null/unavailable`; one observation
+is its own p50. See [zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
 
 #### Query-Embedding Latency p95
 
@@ -561,9 +570,10 @@ Take p95 over the same per-query component observations, not all attempts pooled
 
 **Edge cases and availability:**
 
-Apply the shared [percentile](../../metrics.md#latency-percentiles) and
-[availability](../../metrics.md#shared-availability-rules) rules. One observation
-is its own p95; sufficient source support is separately required for bounds.
+No completed component observation gives `null/unavailable`; one observation
+is its own p95. See [zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
+Insufficient source support leaves bounds null; see
+[confidence-interval support](../../metrics.md#insufficient-confidence-interval-support).
 
 ### Vector Search Latency p50/p95
 
@@ -586,9 +596,10 @@ creates more vectors, even with an unchanged query-embedding model.
 
 **Edge cases and availability:**
 
-Apply [shared availability](../../metrics.md#shared-availability-rules) and
-[percentile rules](../../metrics.md#latency-percentiles). Search never entered
-after embedding failure is unexecuted, not a fabricated search failure.
+No completed search observation gives an unavailable percentile; one observation
+is its own p50. See [zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
+Search never entered after embedding failure is unexecuted, not a fabricated
+search failure; see [execution accounting](../../metrics.md#execution-accounting-and-result-completeness).
 
 #### Vector Search Latency p95
 
@@ -603,9 +614,10 @@ This is not complete-query p95 minus query-embedding p95.
 
 **Edge cases and availability:**
 
-Apply the shared [percentile](../../metrics.md#latency-percentiles) and
-[availability](../../metrics.md#shared-availability-rules) rules. A completed
-search survives later independent offline-scoring failure.
+No completed search observation gives an unavailable percentile; one observation
+is its own p95. See [zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
+A completed search survives later independent offline-scoring failure; see
+[completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests).
 
 ### p50 Warm Query Latency
 
@@ -629,10 +641,10 @@ quality.
 
 **Edge cases and availability:**
 
-[Shared availability](../../metrics.md#shared-availability-rules) and
-[percentile rules](../../metrics.md#latency-percentiles) apply.
-See the [successful-observation and percentile rules](#operational-performance-1)
-and [CI support requirements](#aggregation-and-confidence-intervals).
+No successful query observation gives `null/unavailable`; one observation is
+its own p50. See [zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
+Insufficient source support leaves bounds null; see
+[confidence-interval support](../../metrics.md#insufficient-confidence-interval-support).
 
 ### p95 Warm Query Latency
 
@@ -649,15 +661,16 @@ added to derive its p95.
 zero-based percentile position `(5 - 1) × 0.95 = 3.8`, giving
 `40 + 0.8 × (50 - 40) = 48` milliseconds. This describes the slow tail rather
 than the typical query; p50 is not a mean and does not replace p95.
+
 **Range and direction:** Non-negative milliseconds per query; lower is better at
 equal quality.
 
 **Edge cases and availability:**
 
-[Shared availability](../../metrics.md#shared-availability-rules) and
-[percentile rules](../../metrics.md#latency-percentiles) apply.
-See the [successful-observation and percentile rules](#operational-performance-1)
-and [CI support requirements](#aggregation-and-confidence-intervals).
+No successful query observation gives `null/unavailable`; one observation is
+its own p95. See [zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
+Insufficient source support leaves bounds null; see
+[confidence-interval support](../../metrics.md#insufficient-confidence-interval-support).
 
 ### Peak Process-Tree RAM
 
@@ -674,8 +687,9 @@ queries, and ends before offline scoring/bootstrap analysis.
 
 **Edge cases and availability:**
 
-[Shared resource-measurement rules](../../metrics.md#resource-measurements) apply.
-See the [resource-sampling and scope rules](#operational-performance-1).
+Missing usable RAM samples leave the peak unavailable. A peak observed before
+interruption remains partial-window evidence, not proof that the complete
+workload fits; see [missing or partial resource measurements](../../metrics.md#missing-or-partial-resource-measurements).
 
 ### Peak Device VRAM
 
@@ -692,9 +706,10 @@ allocation occurred between samples.
 
 **Edge cases and availability:**
 
-[Shared CPU/CUDA availability](../../metrics.md#peak-device-vram) and
-[resource-window rules](../../metrics.md#resource-measurements) apply.
-See the [resource-sampling and scope rules](#operational-performance-1).
+CPU execution has no VRAM task; missing required CUDA telemetry is unavailable,
+not zero. See [CPU/CUDA VRAM availability](../../metrics.md#peak-device-vram).
+A peak from an interrupted window remains partial evidence; see
+[missing or partial resource measurements](../../metrics.md#missing-or-partial-resource-measurements).
 
 ## Workload and storage descriptors
 
@@ -716,8 +731,10 @@ Chunk Count = 0 and an invalid empty-index outcome.
 Verified input counts remain known even if candidate execution later fails.
 An incomplete matrix's final payload size is null/unavailable: retain known
 progress in existing artifacts without introducing a partial-matrix-bytes metric.
-Missing measurements and records otherwise follow the
-[shared availability rules](../../metrics.md#shared-availability-rules).
+Missing measurements remain unavailable, not zero; see
+[missing measurements or evaluations](../../metrics.md#missing-measurements-or-evaluations).
+Missing required records leave execution incomplete under
+[execution accounting](../../metrics.md#execution-accounting-and-result-completeness).
 
 ### Corpus Counts
 
@@ -744,8 +761,9 @@ not independent query or attempt support.
 
 **Edge cases and availability:**
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
-See the [verified-workload and inventory rules](#workload-and-storage-descriptors-1).
+The verified document count remains known after candidate failure; it does not
+establish that all documents were processed. See
+[partial work and complete measurements](../../metrics.md#partial-work-and-complete-measurements).
 
 #### Answerable-Question Count
 
@@ -763,8 +781,9 @@ queries. Three measured attempts per query do not change this input count to
 
 **Edge cases and availability:**
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
-See the [verified-workload and inventory rules](#workload-and-storage-descriptors-1).
+The planned question count remains known after request failures. Missing
+execution does not reduce this count; see
+[execution accounting](../../metrics.md#execution-accounting-and-result-completeness).
 
 #### Unanswerable-Question Count
 
@@ -783,8 +802,9 @@ question inventory and this phase's workload.
 
 **Edge cases and availability:**
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
-See the [verified-workload and inventory rules](#workload-and-storage-descriptors-1).
+Unanswerable questions remain inventory only, even after candidate failure;
+they supply no retrieval-quality task. See
+[retrieval-quality eligibility](../../metrics.md#retrieval-quality-eligibility).
 
 ### Source Tokens
 
@@ -803,8 +823,9 @@ tokens when a chunker repeats some text through overlap.
 
 **Edge cases and availability:**
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
-See the [verified-workload and inventory rules](#workload-and-storage-descriptors-1).
+The verified source-token count remains known after candidate failure; it does
+not establish completed corpus processing. See
+[partial work and complete measurements](../../metrics.md#partial-work-and-complete-measurements).
 
 ### Indexed-Token Occurrences
 
@@ -823,8 +844,9 @@ work without inflating source-token throughput.
 
 **Edge cases and availability:**
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
-See the [generated-inventory rules](#workload-and-storage-descriptors-1).
+An incomplete chunk inventory supplies only a labelled partial count, not a
+full-corpus total. A missing inventory is unavailable; see
+[partial work and complete measurements](../../metrics.md#partial-work-and-complete-measurements).
 
 ### Chunk Count
 
@@ -840,10 +862,10 @@ its complete matrix.
 
 **Edge cases and availability:**
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
-The [generated-inventory rules](#workload-and-storage-descriptors-1) distinguish
-a missing inventory from an observed zero count and preserve partial scope;
-an empty index is not an integrity-valid build.
+A missing inventory is unavailable, not zero. An observed empty inventory has
+count zero but fails index integrity; an unfinished inventory is partial. See
+the [generated-inventory rules](#workload-and-storage-descriptors-1) and
+[partial work and complete measurements](../../metrics.md#partial-work-and-complete-measurements).
 
 ### Mean Chunk Tokens
 
@@ -865,8 +887,8 @@ The mean summarizes average size but can hide long chunks.
 |---|---|---|---|
 | No chunks to average | The completed generated inventory has Chunk Count = `0`. | `null` (`unavailable`) | The mean's denominator is zero; this is not an observed mean of zero tokens. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
-See the [generated-inventory and partial-scope rules](#workload-and-storage-descriptors-1).
+An unfinished inventory supplies only a partial size summary, not a full-corpus
+mean; see [partial work and complete measurements](../../metrics.md#partial-work-and-complete-measurements).
 
 ### p95 Chunk Tokens
 
@@ -889,11 +911,11 @@ not be an integer even though each observed chunk length is an integer.
 |---|---|---|---|
 | No chunk-length observations | The completed generated inventory has Chunk Count = `0`. | `null` (`unavailable`) | There is no size distribution from which to calculate p95, not a measured zero-token percentile. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
 The [shared percentile convention](../../metrics.md#latency-percentiles)
-makes a single chunk's p95 equal its length. See the
-[generated-inventory and partial-scope rules](#workload-and-storage-descriptors-1)
-and [descriptor CI rules](#which-values-receive-an-interval).
+makes a single chunk's p95 equal its length. An unfinished inventory supplies
+only a partial size summary; see
+[partial work and complete measurements](../../metrics.md#partial-work-and-complete-measurements).
+Descriptors have no CI under the [interval table](#which-values-receive-an-interval).
 
 ### Mean Retrieved Context Tokens@3/@5
 
@@ -918,10 +940,9 @@ volume, including the large context; it is not a latency prediction or limit.
 
 **Edge cases and availability:**
 
-The valid workload has a positive contributing denominator. No additional
-valid-empty convention is needed. Use shared
-[context-count availability](../../metrics.md#retrieved-context-workload) for
-missing/partial totals; later rankings never repair a failed first observation.
+If no complete query total contributes, the mean is `null/unavailable`; a partial
+collection remains a labelled workload diagnostic. Later rankings never repair a failed first
+observation. See [retrieved-context token availability](../../metrics.md#retrieved-context-token-availability).
 
 ### p95 Retrieved Context Tokens@3/@5
 
@@ -943,7 +964,7 @@ produce a fractional count, for example `600.95` from totals `600,601`.
 One contributing query's p95 equals its count under the shared percentile rule.
 If eligible queries exist but no complete total contributes, the aggregate is
 `null/unavailable`, not a zero-token context. Missing/partial totals follow
-[shared context-count availability](../../metrics.md#retrieved-context-workload).
+[retrieved-context token availability](../../metrics.md#retrieved-context-token-availability).
 
 ### Embedding Dimension and Dtype
 
@@ -969,10 +990,9 @@ named numeric-type parameter. Both are descriptive, not quality measures.
 
 **Edge cases and availability:**
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
-
 The declared parameters remain known after failure, but missing output leaves
-shape/dtype verification unavailable rather than passed. See the
+shape/dtype verification unavailable rather than passed. See
+[missing measurements or evaluations](../../metrics.md#missing-measurements-or-evaluations) and the
 [runtime-integrity prerequisites](#scoring-inputs-eligibility-and-result-status).
 
 ### Embedding-Matrix Bytes
@@ -1000,9 +1020,9 @@ file-size checks to a serialized or compressed artifact.
 
 **Edge cases and availability:**
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
-Only a complete matrix has a final payload-size observation; see the
-[storage-availability rules](#workload-and-storage-descriptors-1).
+An incomplete matrix has no final payload-size observation. Retain known
+progress without a partial-matrix-bytes metric; see
+[partial work and complete measurements](../../metrics.md#partial-work-and-complete-measurements).
 
 ## Worked result interpretation
 
@@ -1083,9 +1103,12 @@ question-then-document pair statistic from all scheduled outcomes. Latency draws
 collect the sampled documents' per-query successful component/request medians
 and recalculate each p50/p95 separately, not a macro-average of document latencies.
 
-The shared support, undefined-draw, duplicate-draw, and degenerate-bound rules,
-including the [support-freeze deadline](../../metrics.md#confidence-intervals),
-apply. The
+Insufficient or unfrozen support leaves defined points with null bounds; see
+[confidence-interval support and its freeze deadline](../../metrics.md#insufficient-confidence-interval-support).
+Undefined draws do not enter the affected bounds, and equal bounds retain their
+degeneracy flag; see [undefined bootstrap draws and equal bounds](../../metrics.md#undefined-bootstrap-draws-and-equal-bounds).
+Drawn source copies retain their multiplicity under the
+[shared CI procedure](../../metrics.md#confidence-intervals). The
 [data-review checklist](../../pending-data-review.md#chunking-embedding-retrieval-and-generation)
 tracks those decisions.
 

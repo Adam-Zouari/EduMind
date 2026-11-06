@@ -31,41 +31,40 @@ required by this contract.
 
 ### Implementation status
 
-This page defines the approved single-system design: CPU/CUDA smoke, integrated
-preflight, and one locked evaluation. The current Final RAG runner/protocol expose
-smoke/development/validation/locked profiles, omit integrated preflight, and cross
-component finalists/top-K values into multiple systems. Their smoke path does not
-yet establish the complete selected-server workflow described here. The current
-locked command also requires a legacy human-review artifact; removing that
-dependency and its obsolete review workflow is pending implementation. Those
-paths must not be presented as evidence of this approved single-system contract.
+The approved design is CPU/CUDA smoke, integrated preflight, and one locked
+evaluation of a single system. The current runner and protocol differ from it:
+
+- They expose smoke/development/validation/locked profiles, omit integrated
+  preflight, and combine component finalists and top-K values into multiple systems.
+- Their smoke path does not yet establish the complete selected-server workflow.
+- The locked command still requires a legacy human-review artifact. Removing
+  that dependency and its obsolete review workflow is pending implementation.
+
+These current paths do not establish conformance with the approved single-system
+contract and do not authorize another Final RAG selection stage.
 
 Judge calibration is pending as described in the
 [generation methodology](../generation/methodology.md#semantic-judge-contract).
 Final RAG's standalone data-validator/report-reuse interface is also pending.
 A matching server-backed execution trace, required metric coverage, and
 retained evaluation artifacts must be verified before claiming the complete
-contract is implemented. No authoritative manifest, winner, judge identity,
-or calibration result is supplied by these examples.
-The documented design does not authorize the existing multi-system workflow as
-another Final RAG selection stage.
+contract is implemented. Examples on this page do not supply an authoritative
+manifest, winner, judge identity, or calibration result.
 
 Citation Support, stage-eligible failure accounting, stable citation identities,
 the attempt-table exports, and the live timing boundaries below are approved
-requirements, not claims of implemented behavior. Commands and their current
-limitations belong to the [runbook](../../running.md); this documentation change
-does not modify the runner or protocol.
+requirements, not claims of implemented behavior. Consult the
+[runbook](../../running.md) for executable commands and their current limitations.
 
 ## Frozen system
 
 Final RAG uses `smoke` and `preflight` for technical readiness, followed by
 `locked` for authoritative quality reporting. It has no development or validation
 selection stage. All three use the same frozen composition. The engineer records
-one complete system
-assembled from the selected chunking–embedding pair, retrieval–reranking stack,
-vector-server profile, and generator model-mode configuration. Top-K is one
-frozen value, either `3` or `5`,
-chosen from component development and validation evidence before any applicable
+one complete system assembled from the selected chunking–embedding pair,
+retrieval–reranking stack, vector-server profile, and generator model-mode
+configuration. Top-K is one frozen value, either `3` or `5`, chosen from
+component development and validation evidence before any applicable
 locked evaluation. Offline annotation review is separate from candidate selection.
 Freeze component/model identities and revisions, database/index configuration,
 prompts, context packing, decoding, refusal policy, and model-loading/residency
@@ -115,8 +114,8 @@ operational measurements.
 End-to-End Request Failure Rate records failed complete requests. Generator
 Runtime Error, Timeout, and Context-Limit-Reached rates retain distinct events
 and generation-stage eligibility, so a skip after retrieval failure is not a
-generator crash. Roles add no automatic winner, qualification gate, or weighted
-overall score. See the [failure denominators](metrics.md#request-failures-and-generation-stage-eligibility).
+generator crash. Metric roles do not create an automatic winner, qualification
+gate, or weighted overall score. See the [failure denominators](metrics.md#request-failures-and-generation-stage-eligibility).
 
 ## Evaluation setup
 
@@ -170,7 +169,8 @@ for server-backed search. Validate IDs, contents/provenance, filter eligibility,
 pool size, and required finite scores. A reranker must permute exactly the actual
 verified pool for that attempt; selected top-K must be its ordered prefix.
 A valid ANN pool may differ from the exact-search reference or another attempt.
-Do not transplant the exact-retrieval live-pool-equality gate into this path.
+Unlike the exact-retrieval benchmark, this path does not require repeated live
+pools to be identical.
 Integrity checks are not a requirement for perfect ranking repeatability.
 
 ## Benchmark workflow and selection
@@ -197,8 +197,8 @@ selected server, retrieval/reranking, packing, and generator lifecycle on CUDA,
 including model residency transitions. Separate component qualification does
 not guarantee that this composition fits or runs correctly together.
 
-The component decisions, not readiness checks, establish the
-composition. Failed or unverified required readiness blocks locked execution.
+Component decisions establish the composition; readiness checks verify that it
+can execute. Failed or unverified required readiness blocks locked execution.
 Do not silently reduce top-K, truncate context, offload, or substitute a model
 to make the run fit. Any intentional correction creates a new version of the
 affected configuration and repeats the applicable readiness checks. Qualification
@@ -226,9 +226,9 @@ construction, inspects placement, runs the reviewed demanding complete request
 workload without a warmup, inspects placement again, and retains its qualification
 report. Test the frozen residency/switching policy, not an artificial requirement
 to keep all models loaded together. Include the server and selected CPU work,
-such as BM25, while GPU
-model stages retain their frozen placement and resource requirements. Normal
-CPU database execution and tokenization are not model-weight offloading. Offline
+such as BM25, while GPU model stages retain their frozen placement and resource
+requirements. Normal CPU database execution and tokenization are not model-weight
+offloading. Offline
 LLM judging is outside this measured path. The reviewed stress envelope and
 runtime requirements must be frozen before qualification; do not infer coverage
 of larger inputs from a small smoke success.
@@ -254,8 +254,11 @@ Retrieval quality uses the designated first measured ranking on answerable
 questions. Generation quality uses all three scheduled seeds `42`, `43`, and
 `44`; its repeatability retains the three unordered response pairs. Those are
 different metric observation rules, not interchangeable ways of selecting an
-answer. A later success does not replace an earlier failure. Retain retrieval
-integrity and generation's diagnostic agreement scopes separately.
+answer. Retrieval keeps the designated-first observation even if a later ranking
+succeeds; see [first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+Each generation seed supplies its own observation: a later successful output
+does not replace an earlier failed output. Retain retrieval integrity and
+generation's diagnostic agreement scopes separately.
 
 Use the [shared measured-run lifecycle](../../methodology.md#preflight-and-measured-run-lifecycles):
 initialize the frozen stack and run one representative complete-request warmup
@@ -266,8 +269,11 @@ context-packing operation. Generator cold loading is not full-system startup;
 generator TTFT is not user-request or visible-answer TTFT. Capture server-call,
 retrieval, generation, packing, switching, and the outer timer on the same live
 path. Preserve detailed subintervals as timing artifacts, not new metrics.
-Stage support and complete/partial resource windows remain explicit after
-failure. Save all three outputs/outcomes before automatic offline judging;
+Completed stage measurements survive later request failures, with their support
+recorded: see [completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests).
+Interrupted monitoring retains partial-window peaks, not a complete-lifecycle
+measurement: see [partial resource measurements](../../metrics.md#missing-or-partial-resource-measurements).
+Save all three outputs/outcomes before automatic offline judging;
 evaluation-only recovery follows the
 [shared saved-evidence rule](../../metrics.md#prediction-evidence-and-rescoring),
 without re-inference or another locked execution. The exact
@@ -300,9 +306,8 @@ for questions, attempts, components, or the LLM judge.
 Component smoke, preflight, development, validation, and locked evidence stays
 in the component experiments and is linked through the frozen decisions.
 
-This is the approved target layout. The
-[implementation boundary](#implementation-status) still applies to its runner
-and artifacts.
+This is the approved target layout, subject to the
+[runner and artifact implementation gaps](#implementation-status).
 
 ### Parent and child records
 
@@ -310,17 +315,17 @@ The parent stores the executed profile/phase, plan, frozen system decision,
 manifest checksum, composed protocol/model identities, judge contract and
 calibration identity where applicable, hardware/software provenance, linked
 upstream run IDs, and completion summary. Its direct metrics describe
-execution/comparison completeness, not a
-second copy of the system's answer-quality metrics. It has one planned system,
-not a finalist leaderboard or paired system comparisons.
+execution/comparison completeness, not a second copy of the system's answer-quality
+metrics. It has one planned system, not a finalist leaderboard or paired system
+comparisons.
 
 The child records the complete resolved composition: chunker, embedding,
 retriever, reranker, vector server/configuration, generator/model mode, top-K,
 prompts, context packing, residency policy, device/dtype, batch size, the phase's
 warmup/attempt settings, and measured seeds where applicable. Keep the model,
 protocol, manifest, judge, and decision identities available when the child is
-viewed alone. Its metrics and artifacts
-cover all questions and attempts; a question is a row, not another MLflow run.
+viewed alone. Its metrics and artifacts cover all questions and attempts;
+a question is a row, not another MLflow run.
 
 ### Child metrics
 
@@ -373,8 +378,9 @@ not one metric per exception or schema violation. Automated evaluation consumes
 the saved locked outputs under the frozen judge contract; evaluation recovery
 does not repeat inference or authorize changing the judge or system.
 
-Apply the [shared availability and artifact-reporting rules](../../metrics.md#shared-availability-rules)
-to component evaluation, attempt records, and completed stage measurements.
-Missing required component evidence prevents a complete locked report.
+Undefined metrics are omitted from MLflow scalars but retained with statuses and
+reasons in artifacts: see [metric status and MLflow storage](../../metrics.md#metric-status-and-mlflow-storage).
+Missing required component evidence prevents a complete locked report; retain
+surviving observations as [partial evidence](../../metrics.md#partial-work-and-complete-measurements).
 Independent support, bootstrap units, and single-observation exceptions follow
 [Final RAG uncertainty rules](metrics.md#aggregation-and-confidence-intervals).

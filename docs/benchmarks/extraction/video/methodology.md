@@ -14,7 +14,7 @@ On this page:
 - [Results and MLflow structure](#results-and-mlflow-structure)
 
 With the image parser and ASR fixed, which keyframe policy recovers useful
-on-screen text at useful times without unnecessary processing and duplicate output?
+on-screen text promptly while limiting processing cost and duplicate output?
 
 ## Purpose and scope
 
@@ -49,8 +49,8 @@ selection, including a scene selection, resets that elapsed-time timer. Frame
 cadence can overshoot either threshold: after a selection at `0 s`, a `5 s`
 threshold with subsequent frames at `4.9 s` and `5.2 s` selects `5.2 s` if no
 earlier scene selection occurs. The hybrid “maximum gap” parameter is thus a
-fallback trigger, not a hard bound on observed gaps. Retain actual frame times;
-existing policy names and parameter identifiers do not change.
+fallback trigger, not a hard bound on observed gaps. Retain actual frame times.
+Policy names and parameter identifiers remain unchanged.
 
 The hybrid configurations share the scene threshold chosen from a
 preliminary development scene comparison. Testing all thresholds with all gaps
@@ -72,25 +72,28 @@ slides, screen recordings, presenter video, gradual changes, and genuine repeate
 appearances. The [dataset guide](../../datasets.md#video-extraction) defines the
 SlideSpeech, AVLectures, and EduMind-owned allocation.
 
-This is an allocation contract, not a claim that the reviewed corpus or a
-winning keyframe policy already exists. Authoritative manifests and references
-remain preparation work. The protocol currently leaves the selected scene
-threshold/source run, nonspeech unit type/allocation, and both independent-source
-CI minima null. Those are explicit pending decisions in the
-[data-review checklist](../../pending-data-review.md#video-extraction), not
-defaults the evaluator may invent. Freeze them at their documented stages;
-implemented smoke/runner support alone is not authoritative evidence.
+These targets define the corpus allocation contract. Authoritative manifests
+and references still require preparation, and no winning keyframe policy is
+established. The protocol
+currently leaves the selected scene threshold/source run, nonspeech unit
+type/allocation, and both independent-source CI minima null. Freeze each decision
+at the stage specified in the
+[data-review checklist](../../pending-data-review.md#video-extraction).
+The evaluator must not supply defaults for these pending decisions; implemented
+smoke/runner support alone does not establish authoritative evidence.
 
 Each video has a verified spoken transcript, positive duration, complete
 visible-text annotation (including explicit text-free negatives), occurrence IDs,
 and visibility intervals. A genuine reappearance has a new occurrence ID.
 Spoken timing metrics additionally require reviewed spoken segments. An explicit
-`reference_segments: []` declares that no spoken-timing task is annotated; it does
-not remove the transcript from WER/CER scoring. A missing field is invalid. Visual
-appearance intervals cannot stand in for them. Reviewed nonspeech videos or
-actual ASR windows support Nonspeech False-Transcription Rate. Their consistent
-unit type and allocation are frozen after development data review, not inferred
-from missing transcripts or invented before review.
+`reference_segments: []` declares that no spoken-timing task is annotated; the
+transcript remains eligible for WER/CER scoring. A missing field is invalid,
+and visual appearance intervals cannot substitute for spoken segments.
+
+Reviewed nonspeech videos or actual ASR windows support Nonspeech
+False-Transcription Rate. Freeze a consistent unit type and allocation after
+development data review; neither is inferred from missing transcripts or chosen
+before review.
 
 Sources contain one visual track and one audio track. Remux multi-track containers
 to the intended tracks before annotation, so stream selection and measured frame
@@ -129,12 +132,11 @@ with retained failure and support counts, not mistaken for zero error.
 Spoken and visible content are separate; there is no transcript-dominated
 combined recall score. Visual line scoring is a
 [lexical projection, not code/formula syntax fidelity](metrics.md#visual-content-quality-1).
-Under the approved Final RAG scope, extraction is outside its quality and timing
-evaluation: Final RAG starts from reviewed prepared content. A future
-extraction-to-RAG integration check would be a separate task, not a required
-confirmation step or a result established by this benchmark. Any integrated
-measurement needs its own explicit boundary; component percentiles, ratios, and
-peaks cannot be added to invent a full-path measurement.
+Final RAG starts from reviewed prepared content, so extraction is outside its
+approved quality and timing scope. An extraction-to-RAG integration check is a
+separate future task, neither a required confirmation step nor a result of this
+benchmark. Any integrated measurement needs its own explicit boundary;
+component percentiles, ratios, and peaks cannot be added to obtain it.
 
 ## Evaluation setup
 
@@ -268,7 +270,7 @@ Repeatability applies the [shared pair rule](../../metrics.md#pairwise-repeatabi
 to canonical selected-frame times and structured visual
 outputs across the three scheduled pairs. Numeric precision, normalization,
 ordering, and stable ID mapping are frozen. Every attempt executes extraction,
-not a cached previous result.
+not a cached result from an earlier attempt.
 
 ## Results and MLflow structure
 
@@ -394,8 +396,9 @@ Applicable sample-based aggregates use the
 Use [shared confidence intervals](../../metrics.md#confidence-intervals)
 with the [video-specific eligibility and source-group rules](metrics.md#aggregation-and-confidence-intervals).
 ASR windows and repeated visual attempts remain dependent parts of source videos,
-not extra independent samples. Artifact nulls and MLflow scalar omission follow
-the [shared availability rules](../../metrics.md#shared-availability-rules).
+not extra independent samples. Artifacts retain nulls with statuses and reasons;
+MLflow omits their scalar keys. See
+[metric status and MLflow storage](../../metrics.md#metric-status-and-mlflow-storage).
 
 Every decoding/selection step records the FFmpeg version and exact argument
 vector. Raw source videos are not duplicated into candidate artifacts.

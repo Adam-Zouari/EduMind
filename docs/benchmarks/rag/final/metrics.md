@@ -111,10 +111,10 @@ component peaks or additional copies of isolated generation resource metrics.
 
 ### Inherited metric definitions
 
-Reuse the component definitions, examples, and edge rules, rather than
-implementing a second version of the same metrics.
+The following component references define the inherited calculations, examples,
+and edge cases. Final RAG changes only the scopes and boundaries stated here.
 
-Retrieval adopts the [shared evidence-quality rules](../../metrics.md#retrieval-evidence-quality).
+Retrieval adopts the [shared evidence gains and denominators](../../metrics.md#retrieval-gains-and-denominators).
 Its normalization source is the selected system's complete frozen chunk corpus,
 not the retrieved pool. Component links below provide applications and examples.
 
@@ -174,9 +174,13 @@ Do not reduce citation-recall denominators to the units actually retrieved.
 Retrieval quality uses the designated first measured ranking. Generation
 quality averages all three scheduled seeds `42`, `43`, and `44` under its own
 contract. Later rankings do not replace or average into first-ranking quality.
-Apply the [shared availability rules](../../metrics.md#shared-availability-rules)
-to each stage and measured seed, retaining the component metric's own known-empty
-conventions and eligible/contributing support.
+If the first ranking fails, later successful rankings cannot replace it: see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+Each generation seed retains its own output or failure; a later success does not
+replace it. An invalid required output makes dependent quality unavailable under
+[failed or invalid outputs](../../metrics.md#failed-or-invalid-outputs).
+Retain each component metric's known-empty conventions and eligible/contributing
+support for every stage and measured seed.
 
 | Case | Required reporting |
 |---|---|
@@ -194,8 +198,9 @@ the [shared input contract](../../data-validation.md#generation-references-and-m
 A retrieval failure can prevent generation from executing. An unexecuted
 generation is not an observed generator crash or refusal. Valid earlier answers,
 completed build/load times, observed TTFT, and scoped resource samples survive
-later failure under the shared retention rules. Required semantic labels and
-integrated instrumentation are not optional reporting fields.
+later failure under the [completed-stage rule](../../metrics.md#completed-stages-and-failed-requests).
+Required semantic labels and integrated instrumentation are not optional
+reporting fields.
 
 Use the [frozen-index and integrity contract](methodology.md#retrieval-integrity-and-frozen-index-checks).
 Valid ANN pool differences are not failures of equality to an exact-search
@@ -210,7 +215,8 @@ not additional retrieval-quality samples or replacement first observations.
 **Question:** How often does a complete request fail operationally over the
 prepared corpus?
 
-For a question with its complete three-attempt schedule executed and recorded:
+**Calculation:** For a question with its complete three-attempt schedule executed
+and recorded:
 
 ```text
 question End-to-End Request Failure Rate = failed complete requests / scheduled requests
@@ -240,17 +246,16 @@ failing gives `1`, not missing failure evidence or three generator crashes.
 
 **Edge cases and availability:**
 
-There is no additional metric-specific exception. Apply the
-[shared execution-accounting](../../metrics.md#execution-accounting-and-result-completeness)
-and [availability rules](../../metrics.md#shared-availability-rules), without
-shrinking the scheduled denominator to surviving requests.
+An unexecuted request or missing outcome leaves the rate incomplete: see
+[missing execution and outcome records](../../metrics.md#execution-accounting-and-result-completeness).
+Do not shrink the scheduled denominator to surviving requests.
 
 ### Generation-stage rates
 
 **Question:** Among slots eligible for generation, how often does the generator
 encounter an execution error, timeout, or output-context termination?
 
-Retain the [generation event definitions, examples, and metric-specific edges](../generation/metrics.md#generation-reliability),
+**Calculation:** Retain the [generation event definitions, examples, and metric-specific edges](../generation/metrics.md#generation-reliability),
 but freeze their Final RAG denominator as follows. A generation slot is eligible
 when that request has completed valid retrieval, evidence packing/native-input
 checks, and required generator preparation, and requires the generation call.
@@ -284,17 +289,16 @@ Runtime Error Rate is `1 / 2` and Timeout Rate `0 / 2`.
 |---|---|---|---|
 | No generator slot is eligible because all requests have recorded upstream failures | Three retrieval failures and three explicit generation skips | Generator rates `null/inapplicable`, zero eligible support | Complete-request failure is still `1`; no generator execution was observed. |
 
-Other missing outcomes or eligibility evidence follow the
-[shared execution-accounting](../../metrics.md#execution-accounting-and-result-completeness)
-and [availability rules](../../metrics.md#shared-availability-rules); absence of
-records cannot establish the known zero-eligible case above.
+Missing outcomes or eligibility records leave required evidence incomplete: see
+[missing execution and outcome records](../../metrics.md#execution-accounting-and-result-completeness).
+Absent records cannot establish the known zero-eligible case above.
 
 Response/Refusal Validity retain the full scheduled complete-request denominator
 on their answerable/unanswerable slices. A known executed request failure earns
 no valid answer/refusal behavior, even when generation is skipped. Malformed
 Output Rate remains conditional on normally completed generator outputs; a skip
 is not malformed output. Scheduled response pairs containing an executed request
-failure contribute zero under the [shared pairwise rule](../../metrics.md#pairwise-repeatability);
+failure contribute zero under the [failed-attempt pair rule](../../metrics.md#repeatability-with-failed-or-missing-attempts);
 missing requests or required judge labels remain incomplete/unavailable rather
 than manufactured disagreements. No stage denominator turns missing required
 answer quality into complete evidence.
@@ -304,7 +308,7 @@ answer quality into complete evidence.
 **Question:** Do repeated outputs cite the same evidence content despite any
 changes in request-local evidence labels?
 
-Reuse [Repeat Citation Agreement](../generation/metrics.md#repeat-citation-agreement)'s
+**Calculation:** Reuse [Repeat Citation Agreement](../generation/metrics.md#repeat-citation-agreement)'s
 Jaccard calculation, answerable eligibility, scheduled three-pair denominator,
 and empty/failure conventions. Change only the
 comparison representation required by retrieved contexts:
@@ -329,12 +333,16 @@ evidence, Citation Support, or citation-quality credit.
 **Range and direction:** `[0, 1]`; higher is better. Agreement measures repeated
 selection, not correctness, gold coverage, or semantic support.
 
-**Edge cases and availability:** Both evaluated empty sets still give pair
-agreement `1`, not good citation quality. A missing required mapping for a
-known label is unavailable comparison evidence, not an unknown-label sentinel
-or an empty set. Unanswerable questions have no citation-repeatability task.
-The [shared availability](../../metrics.md#shared-availability-rules) and
-[pairwise rules](../../metrics.md#pairwise-repeatability) apply.
+**Edge cases and availability:**
+
+Both evaluated empty sets give pair agreement `1`, not good citation quality.
+A missing required mapping for a known label makes the comparison unavailable,
+not an unknown-label sentinel or an empty set: see
+[missing measurements or evaluations](../../metrics.md#missing-measurements-or-evaluations).
+Unanswerable questions have [no citation-repeatability task](../../metrics.md#no-applicable-task).
+Pairs containing an executed request failure contribute zero; missing required
+attempts or judge labels leave the evidence incomplete or unavailable under
+[repeatability with failed or missing attempts](../../metrics.md#repeatability-with-failed-or-missing-attempts).
 
 ## Complete-system operations
 
@@ -370,14 +378,14 @@ processes and complete/partial lifecycle scope. Corpus/index preparation precede
 this online lifecycle; keep
 its separate preparation records rather than folding build resource use into
 the request-lifecycle peak.
-Resource availability and partial-window reporting follow the
-[shared resource rules](../../metrics.md#resource-measurements).
+Missing required telemetry is unavailable; usable peaks from interrupted monitoring remain
+[partial-window observations](../../metrics.md#missing-or-partial-resource-measurements).
 
 ### Server-Call Latency p50/p95
 
 **Question:** How long does the caller wait for the approved vector server?
 
-Measure the logical dense-query interval for each request attempt: start at
+**Calculation:** Measure the logical dense-query interval for each request attempt: start at
 dispatch to the selected vector server and stop after receipt and validation of
 the last reply required by that frozen query. Include transport/serialization,
 but not query embedding or later reranking. Ordinarily this is one physical
@@ -396,18 +404,18 @@ not `52 ms` retrieval. Question observations `10,20,30,40,50 ms` give p50
 **Edge cases and availability:**
 
 BM25-only execution with no logical vector-server query is null/inapplicable,
-not zero. A failed logical query has no successful completion time; retain
-elapsed-to-failure and its physical-call outcomes.
-Server-internal timing is separate.
-
-The [shared percentile rules](../../metrics.md#latency-percentiles) and
-[shared availability rules](../../metrics.md#shared-availability-rules) apply.
+not zero: see [no applicable task](../../metrics.md#no-applicable-task).
+A failed logical query has no successful completion time; retain elapsed-to-failure
+and its physical-call outcomes under [completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests).
+Server-internal timing is separate. With no successful latency observation the
+percentiles are unavailable; with one, both equal that observation: see
+[zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
 
 ### Retrieval Latency p50/p95
 
 **Question:** How long does the live selected stack take to return its ranking?
 
-Time required query preparation/embedding, Dense and/or BM25 requests, RRF when
+**Calculation:** Time required query preparation/embedding, Dense and/or BM25 requests, RRF when
 selected, learned reranking when selected, and validated top-K selection. Server
 time and any per-request embedding/reranker residency transitions are included;
 cached quality pools cannot replace the live operational path. Start at retrieval
@@ -424,18 +432,18 @@ give p50 `40 ms` and p95 `90 ms`, exposing the tail hidden by the median.
 
 **Edge cases and availability:**
 
-Failed retrieval has no successful-completion value. Completed retrieval
-remains measured if generation later fails, with that outcome retained.
-
-The [shared percentile rules](../../metrics.md#latency-percentiles) and
-[shared availability rules](../../metrics.md#shared-availability-rules) apply.
+Failed retrieval has no successful-completion value. Completed retrieval remains
+measured if generation later fails, with that outcome retained: see
+[completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests).
+No successful observation makes the percentiles unavailable; one supplies both
+descriptive points under [zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
 
 ### Generation Latency p50/p95
 
 **Question:** From the validated retrieved ranking, how long does preparing and
 completing generation take?
 
-Start immediately after validated top-K selection. Include evidence
+**Calculation:** Start immediately after validated top-K selection. Include evidence
 packing/numbering, required switching into generator residency, prompt
 preparation/native-input checks, tokenization/prefill, reasoning and visible
 decoding, parsing, citation validation, and synchronization. Stop when the
@@ -454,17 +462,17 @@ but not successful generation latency.
 
 **Edge cases and availability:**
 
-No successful completions gives null/unavailable. Retain failure/termination
-times separately. Judge time is excluded.
-
-The [shared percentile rules](../../metrics.md#latency-percentiles) and
-[shared availability rules](../../metrics.md#shared-availability-rules) apply.
+No successful completion gives null/unavailable percentiles; a single observation
+supplies both descriptive points under [zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
+Retain failure/termination times separately from successful latency under
+[completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests).
+Judge time is excluded.
 
 ### Complete End-to-End Latency p50/p95
 
 **Question:** How long does the caller wait for a complete answer to a warm question?
 
-Use an outer wall timer from question-request entry through retrieval, context
+**Calculation:** Use an outer wall timer from question-request entry through retrieval, context
 packing/numbering, generation, parsing, and citation validation, including dispatch
 overhead, every selected per-request model transition, and required synchronization.
 Stop at complete structurally usable response delivery. Correctness and valid
@@ -480,17 +488,17 @@ observations `2,3,4,5,10 s` give p50 `4 s` and p95 `9 s`.
 
 **Edge cases and availability:**
 
-No complete successes means null/unavailable. Fast failure is not fast
-completed answering; report successful coverage alongside reliability.
-
-The [shared percentile rules](../../metrics.md#latency-percentiles) and
-[shared availability rules](../../metrics.md#shared-availability-rules) apply.
+No complete success gives null/unavailable percentiles; a single observation
+supplies both descriptive points under [zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
+Fast failure is not fast completed answering; retain failed elapsed times separately
+and report successful coverage alongside reliability. Independently completed
+stage timings survive under [completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests).
 
 ### Peak Process-Tree RAM
 
 **Question:** What peak host memory is observed for integrated execution?
 
-Use the [shared process-tree RSS peak](../../metrics.md#peak-process-tree-ram)
+**Calculation:** Use the [shared process-tree RSS peak](../../metrics.md#peak-process-tree-ram)
 for the worker and its children. Identify separately managed vector-server
 processes and their memory scope rather than silently excluding them or
 double-counting them as children.
@@ -503,13 +511,16 @@ measure a simultaneous system peak.
 
 **Edge cases and availability:**
 
-Apply the [shared resource rules](../../metrics.md#resource-measurements) to the integrated monitoring window above.
+Missing required samples make RAM unavailable. Usable samples from interrupted
+monitoring retain a labelled partial-window peak, not a complete-lifecycle result:
+see [missing or partial resource measurements](../../metrics.md#missing-or-partial-resource-measurements).
+One lifecycle peak has no inferred confidence interval.
 
 ### Peak Device VRAM
 
 **Question:** How much total assigned-GPU memory is occupied at the integrated peak?
 
-Use the [shared NVML device-total peak](../../metrics.md#peak-device-vram) across
+**Calculation:** Use the [shared NVML device-total peak](../../metrics.md#peak-device-vram) across
 the recorded integrated lifecycle with resident selected components. Do not sum
 isolated component peaks. Placement is checked separately.
 
@@ -519,14 +530,14 @@ component qualification does not prove that concurrent residency fits.
 **Range and direction:** Non-negative MiB; lower is better at equal quality.
 Applicable runtime gates still apply during locked execution, independently of
 the preceding integrated preflight qualification.
-Single-peak uncertainty follows the shared resource rules.
+One lifecycle peak has no inferred confidence interval.
 
 **Edge cases and availability:**
 
-CPU-only execution is null/inapplicable, not zero VRAM. Missing required CUDA
-telemetry is null/unavailable. Complete and partial monitoring windows follow
-the [shared resource rules](../../metrics.md#resource-measurements); retain
-measured peaks without representing a partial window as a complete one.
+CPU-only execution is null/inapplicable, not zero VRAM: see
+[device VRAM applicability](../../metrics.md#peak-device-vram). Missing required CUDA
+telemetry is null/unavailable; retain usable partial-window peaks without presenting
+them as complete under [missing or partial resource measurements](../../metrics.md#missing-or-partial-resource-measurements).
 
 ## Worked result interpretation
 
@@ -560,7 +571,7 @@ claims into an alternative overall quality percentage.
 
 Request failure rates retain all scheduled request slots; generator rates retain
 only their known eligible slots, with upstream skips visible separately. The
-[shared partial-evidence rules](../../metrics.md#dependent-metrics-and-partial-observations)
+[partial-work rules](../../metrics.md#partial-work-and-complete-measurements)
 apply: evaluated no-claim/inapplicable ratios are not missing judging, but missing
 required outputs or labels leave surviving quality diagnostic, not complete.
 Keep each source's questions, three attempts, and pair records together; three
@@ -582,9 +593,12 @@ Generation Decode Throughput inherits its pooled work/time estimator and
 conditional interval eligibility. Recalculate that ratio on each aligned source
 draw rather than applying quality's document-macro averaging to stream rates.
 
-The shared support and degeneracy rules apply to reviewed independent-source support;
-calculated bounds such as `[1,1]` do not establish certainty. Cold load, resource
-peaks, workload counts, and fixed settings use the shared interval exclusions.
+With [insufficient independent-source support](../../metrics.md#insufficient-confidence-interval-support),
+retain a defined point with null bounds and a reason. For
+[undefined bootstrap draws or equal bounds](../../metrics.md#undefined-bootstrap-draws-and-equal-bounds),
+retain the applicable counts and flags; calculated bounds such as `[1,1]` do not
+establish certainty. Cold load, resource peaks, workload counts, and fixed settings
+use the shared interval exclusions.
 Numeric independent-source minima remain pending reviewed data. Freeze them
 at the shared deadlines; this document supplies no thresholds or calibration
 result.

@@ -12,7 +12,7 @@ still check transcripts, blank sources, evidence, and labels against the assets.
 are implemented for Document, ASR (`audio`), Video, Chunking–Embedding,
 Retrieval–Reranking, and Generation. Their runners require a matching successful
 report before execution. Final RAG and Vector Database retain the planned
-validator interfaces below.
+validator interfaces described under [Folder and command interface](#folder-and-command-interface).
 
 ## Preparation and execution
 
@@ -180,10 +180,11 @@ python -m experiments.benchmarks.validate vectordb --profile all
 
 `--profile smoke|development|validation|locked` chooses one applicable dataset;
 `all` validates every applicable dataset and the cross-split inventory. Final
-RAG supports smoke and locked datasets; its `all` input check also validates the
-separately declared integrated-preflight stress inputs. This does not create
-Final RAG development or validation selection profiles. In the extended coordinator, suites without
-an applicable profile will be reported as not applicable. Missing required
+RAG's planned validator supports smoke and locked datasets; its `all` input check
+also validates the separately declared integrated-preflight stress inputs. This
+does not create Final RAG development or validation selection profiles. In the
+extended coordinator, suites without an applicable profile will be reported as
+not applicable. Missing required
 authoritative data is an error, never a silent skip or a successful all-data
 report. This permits smoke checks while authoritative datasets are unpopulated.
 
@@ -214,8 +215,10 @@ report unless its required input contract changes. A successful report is
 reusable across CPU/CUDA smoke and later invocations only when their input and
 profile requirements match; success on smoke does not certify development.
 
-Store reports locally under the path above. Benchmark provenance references the
-consumed report and checksum, and MLflow receives it as an input artifact, not
+Store reports locally under
+`artifacts/benchmarks/data-validation/<benchmark>/<fingerprint>.json`.
+Benchmark provenance references the consumed report and checksum, and MLflow
+receives it as an input artifact, not
 as a quality metric or candidate child. Review decisions, model locks, protocols,
 and data-validation reports retain their separate responsibilities.
 
@@ -362,8 +365,8 @@ or `formula`. The question's slice agrees with its units: `mixed` requires at
 least two types, not merely two units or distant intervals.
 Offsets are Unicode code-point positions in that exact canonical text, not
 UTF-8 bytes or model-token indices. The
-[shared scoring contract](metrics.md#retrieval-evidence-quality) defines the
-token-to-source mapping used by all retrieval evidence metrics.
+[retrieval quality eligibility rules](metrics.md#retrieval-quality-eligibility)
+define the token-to-source mapping used by all retrieval evidence metrics.
 Review that units are atomic enough to fit a valid chunk; automatic interval
 checks do not establish annotation truth. Missing required evidence is invalid
 data, not a retrieval score or candidate failure.
@@ -454,18 +457,21 @@ must not be treated as a difficult candidate prediction or assigned a score.
 
 Validation makes the inputs valid, not every metric applicable to every sample.
 A formula-free document has no formula reconstruction task; a nonspeech clip has
-no required spoken boundary to measure. Such rows retain an `inapplicable` status
-and null value. A required task with missing annotation fails data validation.
+no required spoken boundary to measure. Such rows retain a null value and
+`inapplicable` status: see [no applicable task](metrics.md#no-applicable-task).
+A required task with missing annotation fails data validation.
 Rejection produces a validation-error report, not measured candidate failures
 or quality scores. It must not contribute a zero or null observation to a
 benchmark aggregate that never ran.
 
-Metric artifacts use the [shared status definitions](metrics.md#shared-availability-rules)
+Metric artifacts use the [status and MLflow storage rules](metrics.md#metric-status-and-mlflow-storage)
 and each metric's adopted scoring conventions. Data checks must not replace
 those rules with a universal empty/null policy.
 
 Dataset checks validate only the input contract. They do not reject a dataset
 because its planned CI support is too small: valid small diagnostic slices can
-retain point estimates without intervals. A missing required corpus allocation
-or annotation is invalid; an optional slice with insufficient independent
+retain point estimates without intervals under the
+[insufficient confidence-interval support rule](metrics.md#insufficient-confidence-interval-support).
+A missing required corpus allocation or annotation is invalid; an optional
+slice with insufficient independent
 support is a reporting limitation recorded in the validation report.

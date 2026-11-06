@@ -36,9 +36,10 @@ ordered transcript with WER. It does not split recognition into Content F1 and
 document Reading Order NED for two-dimensional element sequences.
 
 One audio clip supplies a quality observation. Independent clips are resampling
-units; related clips from a reviewed common source travel together under the
-manifest's group ID. Three measured attempts improve timing and repeatability
-diagnosis but never become three independent quality samples.
+units; related clips from a reviewed common source stay together in each
+bootstrap draw under the manifest's group ID. Three measured attempts improve
+timing and repeatability diagnosis but never become three independent quality
+samples.
 
 The runner implements the failure and repeatability contract below. See the
 [runbook](../../running.md#1-prepare-the-environment) for execution prerequisites.
@@ -72,13 +73,14 @@ scores are screening context; they do not replace this frozen corpus.
 
 The authoritative manifests and reviewed references must be prepared before
 these allocations become evaluation evidence. Implemented smoke execution does
-not establish a completed corpus or a winning ASR profile. Both
-`minimum_ci_sources` and `minimum_latency_ci_sources` are currently null in the
-protocol. Freeze those data-dependent support requirements after source review,
+not establish that the authoritative corpus is complete or that an ASR profile
+has been selected. Both `minimum_ci_sources` and `minimum_latency_ci_sources`
+are currently null in the protocol. Freeze those data-dependent support
+requirements after source review,
 before authoritative evaluation, using the
 [pending-data-review checklist](../../pending-data-review.md#audio-extraction).
-Until then, do not infer an authoritative confidence interval from clip counts
-or the number of measured attempts alone.
+Clip counts and measured-attempt counts alone cannot support authoritative
+intervals; see [insufficient confidence-interval support](../../metrics.md#insufficient-confidence-interval-support).
 
 A small fixed reliability set contains verified silence, music without lyrics,
 background noise, and other nonspeech audio. These controls are separate from the
@@ -129,20 +131,24 @@ Audio already supplies chronological order, so Corpus WER evaluates the required
 ordered transcript. Diarization is not scored unless
 speaker identification becomes a product requirement.
 
-The exact calculations, examples, ranges, directions, and confidence-interval
-rules are defined in [audio metrics](metrics.md). Corpus WER, CER, and the three
-WER components pool valid completed first-output edit counts before division; they are
-not averages of independently calculated clip error rates. Timestamp Boundary
-MAE and Alignment Coverage are interpreted together. Reliability controls are
-excluded from speech Corpus WER/CER and evaluated by their own false-transcription
-rate. Every authoritative split requires reviewed controls from all four
-nonspeech categories; absent required controls fail data preparation. The two
-output-event rates use successful eligible first outputs, with Attempt Failure
-Rate and contributing counts beside them. Recognition diagnostics exclude
-failed first outputs rather than inventing deletions; both timestamp metrics
-are unavailable for those failed outputs. Planned reference counts stay in
-artifacts, while scored timestamp coverage uses valid completed first outputs. These denominators answer different
-questions and are frozen explicitly in [audio metrics](metrics.md).
+The [audio metric reference](metrics.md) defines calculations, examples, ranges,
+directions, and confidence intervals. The main denominator distinctions are:
+
+- Corpus WER, CER, and the three WER components pool edit counts from valid
+  completed first outputs before division; they do not average clip error rates.
+- Timestamp Boundary MAE and Alignment Coverage are interpreted together.
+  Failed first outputs supply neither fabricated deletions nor timestamp scores.
+  Their planned reference counts remain in artifacts; scored timestamp coverage
+  uses valid completed first outputs.
+- Unexpected Empty Transcript Rate and Nonspeech False-Transcription Rate use
+  successful eligible first outputs. Report Attempt Failure Rate and contributing
+  counts beside them.
+- Reliability controls have their own false-transcription rate and are excluded
+  from speech Corpus WER/CER. Every authoritative split requires reviewed controls
+  from all four nonspeech categories; absent required controls fail preparation.
+
+These denominators answer different questions. Their exact populations are
+defined under [scoring inputs and eligibility](metrics.md#scoring-inputs-eligibility-and-result-status).
 
 ## Evaluation setup
 
@@ -237,7 +243,8 @@ benchmark invocation.
 The quality result for a clip comes from its designated first measured output.
 Repeated executions preserve timing and outcome records but are not averaged
 into additional quality samples. The first attempt is selected by index, not
-success; never replace a failed first output with a successful later one.
+success. A failed first output stays unavailable even if a later attempt succeeds;
+see [first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
 Transcript Repeatability Success Rate applies
 [shared pairwise repeatability](../../metrics.md#pairwise-repeatability) to all
 three scheduled pairs using projected transcript identity.
@@ -357,8 +364,9 @@ cannot finish:
 | `placement.json` | CUDA model-placement checks before and after inference; CPU checks are inapplicable and retained as null. |
 | `execution_error.json` | When a lifecycle or measurement failure prevents completion, records its phase and error without discarding completed sample or timing rows. Remaining scheduled attempts are explicitly not executed. |
 
-The fixed artifact schema uses null plus status/reason for inapplicable or
-unavailable values, not omitted required fields or fabricated zeros.
+The fixed artifact schema preserves inapplicable or unavailable values as null
+with a status and reason. Required fields remain present, and MLflow omits null
+scalars; see [metric status and MLflow storage](../../metrics.md#metric-status-and-mlflow-storage).
 Raw audio and candidate predictions are not uploaded to MLflow. The frozen
 speech manifest is uploaded and contains the verified reference transcripts,
 source identifiers, and checksums needed to reproduce scoring.

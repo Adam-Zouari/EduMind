@@ -22,16 +22,16 @@ retrieval stack's educational usefulness. Latency, reliability, maintenance and
 resource measurements answer separate questions rather than forming one weighted
 score. Primary status does not select a winner automatically.
 
-Each metric follows the document-extraction reference: question, calculation,
-example, interpretation, range/direction, and **Edge cases and availability**.
-The [shared availability rules](../metrics.md#shared-availability-rules) own
-failures, missing records and partial observations. Local blocks add only genuine
-metric-specific exceptions, not bad-data cases or repeated general rules.
+Each entry explains the question, calculation, example, interpretation,
+range/direction, and **Edge cases and availability**. Local edge blocks identify
+metric-specific cases and link directly to shared failure and missing-value rules.
+Undefined values retain their reasons and support counts in artifacts under
+[metric status and MLflow storage](../metrics.md#metric-status-and-mlflow-storage).
 All numbers below illustrate arithmetic, not measured database results.
 
 The [implementation boundary](methodology.md#implementation-status) applies to
-this entire reporting contract. Old keys/measurements must not be renamed to imply
-the revised calculations already execute.
+this entire reporting contract. Historical keys and measurements must not be
+renamed to imply that these calculations already execute.
 
 ## Metric summary
 
@@ -98,10 +98,14 @@ are not extra selection metrics. See [MLflow structure](methodology.md#results-a
 
 Quality uses the designated first measured response for each query/condition.
 Later attempts supply timing and diagnostic database-ranking comparisons, not
-replacement quality. Reference eligibility is fixed before execution. Apply
-[shared completeness accounting](../metrics.md#execution-accounting-and-result-completeness)
-to failed, unavailable and not-executed outcomes. Partial required quality is
-retained as labelled diagnostic evidence, not a normal complete-quality aggregate.
+replacement quality. Reference eligibility is fixed before execution. A later
+success cannot replace a failed first response: see
+[first and later attempt failures](../metrics.md#first-and-later-attempt-failures).
+Retain missing and not-executed outcomes under
+[execution accounting](../metrics.md#execution-accounting-and-result-completeness).
+Missing required quality leaves surviving scores as
+[partial diagnostic evidence](../metrics.md#partial-work-and-complete-measurements),
+not a complete-quality aggregate.
 
 Invalid vectors, missing evidence, incorrect filter references, and split leakage
 belong to [data validation](../data-validation.md). Duplicate/unknown output IDs,
@@ -147,7 +151,7 @@ silently rerun, pad, or refill them. A genuinely smaller eligible corpus uses
 all available chunks. Its valid final ranking must still contain source tokens.
 
 Application metrics use answerable questions and the
-[shared retrieval-evidence definitions](../metrics.md#retrieval-evidence-quality).
+[shared retrieval gains and denominators](../metrics.md#retrieval-gains-and-denominators).
 Unanswerable questions are inapplicable, not empty gold comparisons. Complete-unit
 coverage uses source intervals; token precision uses `tiktoken:cl100k_base` source
 token occurrences. The nDCG ideal uses the entire eligible frozen corpus, never
@@ -204,7 +208,7 @@ two different valid tied answers need not agree.
 
 **Question:** How many of the exact nearest neighbours survive unfiltered search?
 
-Apply the boundary-tie rule to the first 20 returned IDs, with no ordering credit
+**Calculation:** Apply the boundary-tie rule to the first 20 returned IDs, with no ordering credit
 inside that prefix. In plain language:
 
 ```text
@@ -232,15 +236,17 @@ when effective denominators differ. Compare speed at comparable recall.
 | Fewer eligible records than 20 | Only 8 records exist; 6 are recovered. | `6/8 = 0.75` (`scored`). | Score the available task, not 20 imaginary records. |
 | More records tie at the cutoff than there are slots | 18 strict neighbours and 5 tied alternatives. | Credit at most 2 boundary records. | Equally close alternatives are interchangeable only in those slots. |
 
-[Shared availability rules](../metrics.md#shared-availability-rules) govern
-failed requests and unavailable evaluations; neither receives the valid-empty
-zero described above.
+Failed or invalid requests make recall unavailable under
+[failed or invalid outputs](../metrics.md#failed-or-invalid-outputs). A missing
+required evaluation also makes recall unavailable under
+[missing measurements or evaluations](../metrics.md#missing-measurements-or-evaluations).
+Neither case receives the valid-empty zero described above.
 
 ### Filtered ANN Recall@20
 
 **Question:** How many exact neighbours inside the allowed subset survive search?
 
-Use the same calculation, after restricting the exact reference and the request
+**Calculation:** Use the same calculation, after restricting the exact reference and the request
 to the same frozen predicate. The denominator is `min(20, eligible records)`,
 not the unfiltered corpus size. Report conditions separately.
 
@@ -265,10 +271,12 @@ when no records are permitted follow the task-eligibility cases below.
 | Filter permits fewer than 20 records | All 3 permitted records are returned. | `1` (`scored`). | All available neighbours were recovered. |
 | Boundary ties in the eligible subset | Several permitted vectors tie for the final slot. | Apply the same boundary-slot credit. | Filtering does not change the tie policy. |
 
-[Shared availability](../metrics.md#shared-availability-rules) and
-[output-integrity rules](#scoring-inputs-eligibility-and-result-status) apply
-after reference eligibility is established. The filter values above are
-per-response events, not an aggregate Filter Violation Rate.
+With a positive permitted-record count, a failed or invalid filtered response
+makes recall unavailable: see the local
+[search outcomes and filter eligibility](#scoring-inputs-eligibility-and-result-status)
+and shared [failed or invalid outputs](../metrics.md#failed-or-invalid-outputs).
+A missing reference does not establish an empty permitted set. The filter values
+above are per-response events, not an aggregate Filter Violation Rate.
 
 ## Application retrieval quality
 
@@ -276,7 +284,7 @@ per-response events, not an aggregate Filter Violation Rate.
 
 **Question:** Does the database-backed stack place evidence-rich chunks early?
 
-Each chunk's gain is the number of distinct complete required evidence units it
+**Calculation:** Each chunk's gain is the number of distinct complete required evidence units it
 contains, used linearly. Apply the shared rank discount and normalize against the
 exact ideal over the entire eligible frozen corpus, identically for every pair.
 
@@ -302,14 +310,19 @@ their ordinary linear gain.
 |---|---|---|---|
 | Zero ideal gain in an otherwise valid frozen corpus | Every chunk fragments the required evidence. | `0` (`scored`), with upstream-fragmentation limitation. | Inherit the shared zero-ideal convention; the database cannot repair those boundaries. |
 
-The [shared retrieval-evidence conventions](../metrics.md#retrieval-evidence-quality),
-[availability rules](../metrics.md#shared-availability-rules), and
-[integration integrity](#scoring-inputs-eligibility-and-result-status) apply.
-Missing evidence annotations are not this zero-ideal case.
+For a valid smaller corpus, missing ranks add no gain; see
+[zero gain and short rankings](../metrics.md#zero-gain-and-short-rankings).
+An unexpectedly short or invalid integration ranking instead makes quality
+unavailable under [integration integrity](#scoring-inputs-eligibility-and-result-status).
+Missing evidence annotations are invalid inputs, not zero ideal gain. A substantive
+nDCG above one is a scoring-integrity error, not a value to clamp: see
+[retrieval score bounds](../metrics.md#retrieval-score-bounds).
 
 ### Evidence-unit Recall@3/@5
 
 **Question:** How much distinct required evidence reaches the selected context?
+
+**Calculation:**
 
 ```text
 distinct required evidence units fully contained in selected chunks
@@ -328,16 +341,18 @@ of ANN recall. Eligible answerable questions have a positive gold denominator.
 
 **Edge cases and availability:**
 
-No additional empty-reference convention is needed for the eligible task.
-See the [shared retrieval-evidence conventions](../metrics.md#retrieval-evidence-quality),
-[availability rules](../metrics.md#shared-availability-rules), and
+Unanswerable questions are inapplicable, not empty-reference comparisons: see
+[retrieval-quality eligibility](../metrics.md#retrieval-quality-eligibility).
+A legitimately smaller corpus does not reduce the required-unit denominator:
+see [short-ranking scoring](../metrics.md#zero-gain-and-short-rankings).
+An invalid or unexpectedly short required pool leaves quality unavailable under
 [integration integrity](#scoring-inputs-eligibility-and-result-status).
 
 ### Evidence-token Precision@3/@5
 
 **Question:** How much selected context consists of verified evidence?
 
-Use canonical source text and `tiktoken:cl100k_base`, not the embedding/reranker
+**Calculation:** Use canonical source text and `tiktoken:cl100k_base`, not the embedding/reranker
 tokenizer. Count each returned token occurrence once against overlapping gold
 intervals; occurrences repeated through different chunks count again.
 
@@ -360,10 +375,10 @@ without containing an entire evidence unit.
 **Edge cases and availability:**
 
 The valid integration task has a positive source-token denominator. Token-free
-or invalid rankings follow [output integrity](#scoring-inputs-eligibility-and-result-status),
-not an artificial zero-denominator score. The
-[shared retrieval-evidence conventions](../metrics.md#retrieval-evidence-quality)
-and [availability rules](../metrics.md#shared-availability-rules) apply.
+or invalid rankings make precision unavailable under
+[output integrity](#scoring-inputs-eligibility-and-result-status), not an artificial
+zero-denominator score. A valid ranking with no evidence-overlapping tokens
+instead scores zero: see [zero gain and short rankings](../metrics.md#zero-gain-and-short-rankings).
 
 ## Diagnostics
 
@@ -371,7 +386,7 @@ and [availability rules](../metrics.md#shared-availability-rules) apply.
 
 **Question:** How much required evidence is available before reranking?
 
-Apply Evidence-unit Recall to the actual verified first-stage pool of the frozen
+**Calculation:** Apply Evidence-unit Recall to the actual verified first-stage pool of the frozen
 stack, after fusion for RRF but before learned reranking.
 
 ```text
@@ -386,23 +401,24 @@ change which available chunks reach @3/@5, but cannot introduce E3.
 Record the pool identity with this observation. It is not ANN Recall: E1 can be
 available in a useful alternative chunk outside the exact nearest-neighbour set.
 A verified designated-first pool remains scoreable if reranking later fails,
-under the [shared pool-recall dependency rule](../metrics.md#retrieval-evidence-quality).
+under [retrieval quality after downstream failure](../metrics.md#retrieval-quality-after-downstream-failure).
 
 **Range and direction:** `[0,1]`; higher is a better evidence-availability ceiling.
 
 **Edge cases and availability:**
 
-Eligible questions have a positive gold denominator. A legitimately smaller
-corpus uses its available pool; unexpected short integration pools follow
-[integrity rules](#scoring-inputs-eligibility-and-result-status). The
-[shared retrieval-evidence conventions](../metrics.md#retrieval-evidence-quality)
-and [availability rules](../metrics.md#shared-availability-rules) apply.
+Eligible questions have a positive gold denominator; unanswerable questions have
+[no retrieval-quality task](../metrics.md#retrieval-quality-eligibility).
+A legitimately smaller corpus uses its available pool without reducing the gold
+denominator: see [short-ranking scoring](../metrics.md#zero-gain-and-short-rankings).
+Unexpectedly short integration pools make dependent quality unavailable under
+[integration integrity](#scoring-inputs-eligibility-and-result-status).
 
 ### Ranking Repeatability
 
 **Question:** Does the database reproduce the same ordered retrieved IDs?
 
-Apply the [shared all-pairs rule](../metrics.md#pairwise-repeatability) to the
+**Calculation:** Apply the [shared all-pairs rule](../metrics.md#pairwise-repeatability) to the
 database output before reranking: compare ordered IDs, not floating-point score
 bit patterns. The scope is the requested top 20, or the actual valid returned
 list when fewer records are returned; retain requested/actual counts.
@@ -434,8 +450,10 @@ reproducibility.
 |---|---|---|---|
 | Only one attempt deliberately scheduled | Smoke executes one request. | `null` (`inapplicable`). | No pairwise comparison task exists. |
 
-Failed and not-executed outcomes follow [shared pairwise-repeatability rules](../metrics.md#pairwise-repeatability), not new local
-conventions. Legitimate short lists may agree without meeting integration needs.
+Pairs containing an executed failure contribute zero; missing required attempts
+leave repeatability incomplete under
+[repeatability with failed or missing attempts](../metrics.md#repeatability-with-failed-or-missing-attempts).
+Legitimate short lists may agree without meeting integration needs.
 
 ## Reliability and filter correctness
 
@@ -451,6 +469,8 @@ warmup requests are outside these measured-operation denominators.
 
 **Question:** What fraction of submitted search operations fail to execute successfully?
 
+**Calculation:**
+
 ```text
 failed submitted search operations / submitted search operations
 ```
@@ -463,13 +483,15 @@ not describe the failed requests.
 
 **Edge cases and availability:**
 
-No submitted searches gives `null`, not 0% errors. Deliberately absent search
-work is inapplicable; missing required execution is incomplete under the
-[shared execution-accounting rules](../metrics.md#execution-accounting-and-result-completeness).
+No submitted searches gives `null`, not 0% errors. A deliberately absent search
+task is [inapplicable](../metrics.md#no-applicable-task); missing required execution
+is incomplete under [execution accounting](../metrics.md#execution-accounting-and-result-completeness).
 
 ### Request Error Rate — Insert
 
 **Question:** What fraction of submitted document insertions fail to complete?
+
+**Calculation:**
 
 ```text
 failed submitted document insertions / submitted document insertions
@@ -483,12 +505,16 @@ not several successful API batches and one unrelated failure.
 
 **Edge cases and availability:**
 
-No submitted insertions gives `null`. Apply [shared availability rules](../metrics.md#shared-availability-rules) and
-[shared execution-accounting rules](../metrics.md#execution-accounting-and-result-completeness); an operation never submitted is not a failed insertion.
+No submitted insertions gives `null`. A deliberately absent insertion task is
+[inapplicable](../metrics.md#no-applicable-task); missing required execution is
+incomplete under [execution accounting](../metrics.md#execution-accounting-and-result-completeness).
+An operation never submitted is not an observed failed insertion.
 
 ### Request Error Rate — Update
 
 **Question:** What fraction of submitted document replacements fail to complete?
+
+**Calculation:**
 
 ```text
 failed submitted document replacements / submitted document replacements
@@ -502,12 +528,16 @@ completed replacement.
 
 **Edge cases and availability:**
 
-No submitted updates gives `null`, with task-free versus incomplete status under
-the [shared execution-accounting rules](../metrics.md#execution-accounting-and-result-completeness). Do not use insertion counts as this denominator.
+No submitted updates gives `null`. A deliberately absent update task is
+[inapplicable](../metrics.md#no-applicable-task); missing required execution is
+incomplete under [execution accounting](../metrics.md#execution-accounting-and-result-completeness).
+Do not use insertion counts as this denominator.
 
 ### Request Error Rate — Delete
 
 **Question:** What fraction of submitted document deletions fail to complete?
+
+**Calculation:**
 
 ```text
 failed submitted document deletions / submitted document deletions
@@ -520,15 +550,17 @@ even if 10,000 searches succeed; there is no global error rate hiding it.
 
 **Edge cases and availability:**
 
-No submitted deletions gives `null`, not proof that deletion works. [Shared availability](../metrics.md#shared-availability-rules) and
-[shared execution-accounting rules](../metrics.md#execution-accounting-and-result-completeness) apply.
+No submitted deletions gives `null`, not proof that deletion works. A deliberately
+absent deletion task is [inapplicable](../metrics.md#no-applicable-task); missing
+required execution is incomplete under
+[execution accounting](../metrics.md#execution-accounting-and-result-completeness).
 
 ### Filter Violation Rate
 
 **Question:** How often does a completed checkable filtered response contain
 at least one record forbidden by the requested predicate?
 
-Check each returned ID against trusted original metadata. Count responses, not
+**Calculation:** Check each returned ID against trusted original metadata. Count responses, not
 the number of forbidden records inside them.
 
 ```text
@@ -558,10 +590,9 @@ all filter correctness. Positive/compound-filter correctness probes remain separ
 | No completed checkable responses | All submitted filtered requests time out. | `null` (`unavailable`). | There is no observed leakage denominator; failures remain visible separately. |
 
 Unknown IDs or missing checks are integrity/verification problems, not evidence
-that filtering passed.
-
-The [shared availability rules](../metrics.md#shared-availability-rules) and
-[output-integrity rules](#scoring-inputs-eligibility-and-result-status) also apply.
+that filtering passed: see [search outcomes and filter checks](#scoring-inputs-eligibility-and-result-status).
+When a filtering task exists but no checkable response contributes, the rate is
+unavailable under [no contributing observations](../metrics.md#no-contributing-observations).
 
 ## Why the quality metrics are not interchangeable
 
@@ -579,7 +610,7 @@ execution rather than nearest-neighbour or evidence correctness.
 
 ## Operational performance
 
-Use [shared timing and availability rules](../metrics.md#latency-and-warm-latency).
+Use the [shared timing boundaries](../metrics.md#latency-and-warm-latency).
 Database request timers include adapter preparation, serialization, communication,
 server work and decoded response. Upstream model inference, offline reference
 calculation and quality scoring are excluded. Full-stack timers include the
@@ -600,7 +631,7 @@ separately flagged checkable filter violations, not every decoded invalid respon
 
 **Question:** How long does a typical completed database request take?
 
-Take p50 over completed request durations in one declared corpus/filter/load
+**Calculation:** Take p50 over completed request durations in one declared corpus/filter/load
 condition. This is the median, not document-macro averaging.
 
 **Example:** `2,3,4,5,11 ms` gives `4 ms`. A filtered condition has its own list.
@@ -611,16 +642,16 @@ at comparable quality and load.
 
 **Edge cases and availability:**
 
-Use [shared percentile rules](../metrics.md#latency-percentiles) and
-[shared availability rules](../metrics.md#shared-availability-rules):
-one completed observation supplies the descriptive point; none gives unavailable
-latency. Do not turn failed elapsed time into successful-completion latency.
+One completed observation supplies the descriptive point; none gives unavailable
+latency: see [zero or one latency observation](../metrics.md#zero-or-one-latency-observation).
+Failed elapsed time is not successful-completion latency under
+[completed stages and failed requests](../metrics.md#completed-stages-and-failed-requests).
 
 ### Database Search Latency p95
 
 **Question:** How slow is the completed database-request tail under this load?
 
-Take the interpolated 95th percentile of the same condition's individual completed
+**Calculation:** Take the interpolated 95th percentile of the same condition's individual completed
 durations. It is not the mean of per-query p95 values.
 
 **Example:** For `2,3,4,5,11 ms`, position `4 × 0.95 = 3.8` gives
@@ -631,15 +662,16 @@ sufficient evidence for a precise unseen-workload tail estimate.
 
 **Edge cases and availability:**
 
-[Shared percentile rules](../metrics.md#latency-percentiles) and
-[shared availability rules](../metrics.md#shared-availability-rules) apply. Weak independent support limits the confidence
-claim, not the existence of a descriptive point. No completed durations is unavailable.
+No completed duration gives unavailable latency; one gives a descriptive point:
+see [zero or one latency observation](../metrics.md#zero-or-one-latency-observation).
+Weak independent support limits the confidence claim, not the descriptive point:
+see [insufficient confidence-interval support](../metrics.md#insufficient-confidence-interval-support).
 
 ### Full-Stack Retrieval Latency p50
 
 **Question:** How long is a typical complete question-to-retrieved-context wait?
 
-Measure preparation/query embedding, database-backed source retrieval, any frozen
+**Calculation:** Measure preparation/query embedding, database-backed source retrieval, any frozen
 fusion, reranking and validated final chunks. Take each question's median successful
 attempt duration, then p50 across those query observations.
 
@@ -651,16 +683,17 @@ generation. The shared estimator matches retrieval–reranking.
 
 **Edge cases and availability:**
 
-[Shared completed-phase rules](../metrics.md#dependent-metrics-and-partial-observations) and
-[shared percentile rules](../metrics.md#latency-percentiles) apply. A completed database search
-followed by reranker failure supplies no successful full-stack duration; its
-independent database timing remains available.
+A completed database search followed by reranker failure supplies no successful
+full-stack duration; its independent database timing remains available under
+[completed stages and failed requests](../metrics.md#completed-stages-and-failed-requests).
+No successful full-stack observation gives unavailable latency; one supplies the
+descriptive point: see [zero or one latency observation](../metrics.md#zero-or-one-latency-observation).
 
 ### Full-Stack Retrieval Latency p95
 
 **Question:** How slow is the full-stack tail across benchmark questions?
 
-Take p95 across the same per-question median successful durations.
+**Calculation:** Take p95 across the same per-question median successful durations.
 
 **Example:** For `20,30,100 ms`, the interpolated p95 is `93 ms`.
 It is the tail of typical per-question runtimes, not the percentile of every
@@ -670,13 +703,16 @@ individual model attempt or a sum of stage p95s.
 
 **Edge cases and availability:**
 
-[Shared percentile](../metrics.md#latency-percentiles) and
-[shared availability rules](../metrics.md#shared-availability-rules) apply; contributing queries and independent
-source support determine the reported scope and CI applicability.
+No contributing query observation gives unavailable latency; one supplies the
+descriptive point: see [zero or one latency observation](../metrics.md#zero-or-one-latency-observation).
+Retain contributing-query counts. If independent-source support is insufficient,
+retain the point with null bounds under [insufficient confidence-interval support](../metrics.md#insufficient-confidence-interval-support).
 
 ### QPS
 
 **Question:** How many successful search requests complete per wall-clock second?
+
+**Calculation:**
 
 ```text
 successful measured search completions / measured load-window wall seconds
@@ -702,16 +738,18 @@ comparable quality, workload and resources.
 |---|---|---|---|
 | Zero measured load-window duration | The retained, unrounded elapsed duration is zero seconds. | `null` (`unavailable`). | The rate denominator is zero; do not fabricate an epsilon duration or report infinity. |
 
-Missing required clock evidence follows
-[shared availability rules](../metrics.md#shared-availability-rules).
+Missing required clock evidence makes QPS unavailable: see
+[missing measurements or evaluations](../metrics.md#missing-measurements-or-evaluations).
 An interrupted window retains completed work/time as partial diagnostics, not a
 completed-window result, under the
-[shared partial-observation rules](../metrics.md#dependent-metrics-and-partial-observations).
+[partial-work rules](../metrics.md#partial-work-and-complete-measurements).
 Throughput aggregation follows the [shared ratio-of-totals rule](../metrics.md#ratio-of-totals-throughput). One window has no CI.
 
 ### Initial Build Time
 
 **Question:** How long until the prepared corpus and configured indexes are ready?
+
+**Calculation:**
 
 ```text
 verified query/index readiness time - start of collection/index setup and ingestion
@@ -729,14 +767,15 @@ not merely acknowledgment or an index-only internal timer.
 
 **Edge cases and availability:**
 
-Use [shared completed-phase rules](../metrics.md#dependent-metrics-and-partial-observations): an unfinished build has no completed Build
-Time; retain progress and elapsed-to-failure. One build receives no inferred CI.
+An unfinished build has no completed Build Time; retain progress and
+elapsed-to-failure under [completed stages and failed requests](../metrics.md#completed-stages-and-failed-requests).
+One build receives no inferred CI.
 
 ### Insert Latency p50
 
 **Question:** How long does a typical prepared document take to become available?
 
-For each submitted document, time first submission through verified availability
+**Calculation:** For each submitted document, time first submission through verified availability
 of all intended records, including adapter batches and visibility polling.
 Take p50 across completed logical insertions in the condition.
 
@@ -747,15 +786,16 @@ A 40-chunk document is one operation, regardless of backend batch count.
 
 **Edge cases and availability:**
 
-[Shared completed-phase rules](../metrics.md#dependent-metrics-and-partial-observations) and
-[shared percentile rules](../metrics.md#latency-percentiles) apply. Partial acknowledgment is not a
-completed insertion; no completed inserts gives unavailable latency.
+Partial acknowledgment is not a completed insertion under
+[completed stages and failed requests](../metrics.md#completed-stages-and-failed-requests).
+No completed insert gives unavailable latency; one supplies the descriptive point:
+see [zero or one latency observation](../metrics.md#zero-or-one-latency-observation).
 
 ### Insert Latency p95
 
 **Question:** How slow are the completed document insertions in the tail?
 
-Take p95 of the same completed logical-insertion durations.
+**Calculation:** Take p95 of the same completed logical-insertion durations.
 
 **Example:** `20,30,40,50,100 ms` gives `90 ms`. Retain document chunk/byte sizes
 so this is not mistaken for a per-vector insertion time.
@@ -764,15 +804,17 @@ so this is not mistaken for a per-vector insertion time.
 
 **Edge cases and availability:**
 
-[Shared percentile rules](../metrics.md#latency-percentiles) and
-[shared availability rules](../metrics.md#shared-availability-rules) apply. Do not give zero latency to failed inserts
-or infer a precise tail from a small number of operations.
+Failed inserts do not receive zero latency. No completed insertion duration gives
+unavailable latency; one supplies the descriptive point under
+[zero or one latency observation](../metrics.md#zero-or-one-latency-observation).
+A small operation count does not establish a precise tail; retain null bounds
+when [confidence-interval support is insufficient](../metrics.md#insufficient-confidence-interval-support).
 
 ### Update Latency p50
 
 **Question:** How long does a typical complete document replacement take?
 
-Time first replacement work through verification that new records/metadata are
+**Calculation:** Time first replacement work through verification that new records/metadata are
 available and obsolete records are absent. Take p50 over completed replacements.
 This is not merely changing one scalar metadata field.
 
@@ -784,15 +826,16 @@ removal of the obsolete chunks belong to that operation.
 
 **Edge cases and availability:**
 
-[Shared completed-phase rules](../metrics.md#dependent-metrics-and-partial-observations) and
-[shared percentile rules](../metrics.md#latency-percentiles) apply. An acknowledged but incomplete
-replacement has no completed update latency; retain its partial state and error.
+An acknowledged but incomplete replacement has no completed update latency;
+retain its partial state and error under [completed stages and failed requests](../metrics.md#completed-stages-and-failed-requests).
+No completed replacement gives unavailable latency; one supplies the descriptive
+point: see [zero or one latency observation](../metrics.md#zero-or-one-latency-observation).
 
 ### Update Latency p95
 
 **Question:** How slow is the tail of complete document replacements?
 
-Take p95 across the same completed replacement durations.
+**Calculation:** Take p95 across the same completed replacement durations.
 
 **Example:** `40,60,120 ms` gives `114 ms`. Read it with the update error rate
 and operation sizes, not as a guarantee that every replacement finishes in time.
@@ -801,15 +844,15 @@ and operation sizes, not as a guarantee that every replacement finishes in time.
 
 **Edge cases and availability:**
 
-[Shared percentile rules](../metrics.md#latency-percentiles) and
-[shared availability rules](../metrics.md#shared-availability-rules) apply. No completed replacement durations means
-unavailable latency, not zero.
+No completed replacement duration gives unavailable latency, not zero; one
+supplies the descriptive point: see
+[zero or one latency observation](../metrics.md#zero-or-one-latency-observation).
 
 ### Delete Latency p50
 
 **Question:** How long does a typical document deletion take to become visible?
 
-Time first deletion submission through verified absence of the document's records,
+**Calculation:** Time first deletion submission through verified absence of the document's records,
 then take p50 across completed logical deletions.
 
 **Example:** `5,8,20 ms` gives `8 ms`. Later physical disk reclamation is not
@@ -819,15 +862,16 @@ part of the logical deletion timer.
 
 **Edge cases and availability:**
 
-[Shared completed-phase rules](../metrics.md#dependent-metrics-and-partial-observations) and
-[shared percentile rules](../metrics.md#latency-percentiles) apply. An acknowledgment without verified
-absence supplies no completed deletion latency.
+An acknowledgment without verified absence supplies no completed deletion latency
+under [completed stages and failed requests](../metrics.md#completed-stages-and-failed-requests).
+No completed deletion gives unavailable latency; one supplies the descriptive
+point: see [zero or one latency observation](../metrics.md#zero-or-one-latency-observation).
 
 ### Delete Latency p95
 
 **Question:** How slow is the tail of verified document deletions?
 
-Take p95 across the same completed logical-deletion durations.
+**Calculation:** Take p95 across the same completed logical-deletion durations.
 
 **Example:** `5,8,20 ms` gives `18.8 ms`. This describes deletion visibility,
 not storage compaction or image/container removal.
@@ -836,13 +880,17 @@ not storage compaction or image/container removal.
 
 **Edge cases and availability:**
 
-[Shared percentile rules](../metrics.md#latency-percentiles) and
-[shared availability rules](../metrics.md#shared-availability-rules) apply. A task-free deletion condition is inapplicable;
-a required task without completed durations is unavailable/incomplete as appropriate.
+A condition with no scheduled deletion task is [inapplicable](../metrics.md#no-applicable-task).
+For a required task, no completed duration gives unavailable latency under
+[zero or one latency observation](../metrics.md#zero-or-one-latency-observation),
+while missing required execution remains incomplete under
+[execution accounting](../metrics.md#execution-accounting-and-result-completeness).
 
 ### Startup Time
 
 **Question:** How long until an existing stopped database serves its preserved data?
+
+**Calculation:**
 
 ```text
 successful required query/state verification time - server start request time
@@ -859,14 +907,15 @@ at 4: Startup Time is `4 seconds`, not 3.
 
 **Edge cases and availability:**
 
-[Shared completed-phase rules](../metrics.md#dependent-metrics-and-partial-observations) apply. A server that becomes healthy but never
-serves the required preserved state has no completed Startup Time. One start has no CI.
+A server that becomes healthy but never serves the required preserved state has
+no completed Startup Time: see [completed stages and failed requests](../metrics.md#completed-stages-and-failed-requests).
+One start has no CI.
 
 ### Peak Server RAM
 
 **Question:** What is the highest observed server memory usage in the declared lifecycle?
 
-Take the maximum usable memory sample under the frozen container/cgroup method.
+**Calculation:** Take the maximum usable memory sample under the frozen container/cgroup method.
 For a declared multi-container server, sum simultaneous usage before taking the
 peak. Client model memory and unrelated services are outside this server scope.
 
@@ -880,9 +929,10 @@ and workload. Sampling may miss shorter spikes.
 
 **Edge cases and availability:**
 
-Use [shared resource rules](../metrics.md#resource-measurements), including retained
-partial peaks, missing telemetry and single-peak uncertainty. CPU-only server
-execution does not acquire a zero-valued GPU-memory metric.
+Missing required telemetry makes RAM unavailable; usable interrupted-window peaks remain
+labelled partial observations under [missing or partial resource measurements](../metrics.md#missing-or-partial-resource-measurements).
+One lifecycle peak has no inferred CI. CPU-only server execution does not acquire
+a zero-valued GPU-memory metric.
 
 ## Storage descriptors
 
@@ -890,7 +940,7 @@ execution does not acquire a zero-valued GPU-memory metric.
 
 **Question:** How much persistent state does the completed database require?
 
-Sum apparent bytes of dedicated database data, index, metadata and required log
+**Calculation:** Sum apparent bytes of dedicated database data, index, metadata and required log
 files at the synchronized completed-build checkpoint. Exclude Docker images,
 model snapshots, client memory and benchmark artifacts. Record measurement tool
 and checkpoint; allocated disk blocks are a different quantity.
@@ -908,10 +958,11 @@ score; a smaller footprint is advantageous only at comparable functionality.
 |---|---|---|---|
 | No trustworthy completed-build checkpoint | Interrupted loading leaves measurable partial files. | Completed size is `null` (`unavailable`); retain labelled partial footprint. | Partial bytes do not establish the space needed by the complete database. |
 
-Missing or incomplete size measurements follow
-[shared availability rules](../metrics.md#shared-availability-rules). A size scan
-that misses a required database directory is not a complete footprint. Keep
-known partial bytes as labelled artifacts, not as the completed-checkpoint
+Missing size measurements make the footprint unavailable under
+[missing measurements or evaluations](../metrics.md#missing-measurements-or-evaluations).
+A size scan that misses a required database directory is not a complete footprint:
+see [partial work and complete measurements](../metrics.md#partial-work-and-complete-measurements).
+Keep known partial bytes as labelled artifacts, not as the completed-checkpoint
 scalar. Unlike an observed RAM peak, this metric requires the entire declared
 storage scope at that checkpoint. Logical deletion need not reduce later
 physical footprint immediately; those later snapshots do not replace the
@@ -1004,13 +1055,15 @@ by total sampled wall time. Do not bootstrap concurrent requests as if each were
 a new experiment, or divide by summed per-request latency. Paired comparisons
 use matched window schedules/conditions and aligned source draws across candidates.
 If a condition lacks the reviewed window/support design, retain descriptive
-points and null bounds rather than claiming precision from 10,000 resamples.
+points and null bounds under [insufficient confidence-interval support](../metrics.md#insufficient-confidence-interval-support),
+rather than claiming precision from 10,000 resamples.
 
 Freeze support requirements after [data review](../pending-data-review.md#vector-databases)
 and before authoritative comparisons, including development, not merely before
-choosing finalists. Shared undefined-draw and degeneracy rules apply. Repeated
-identical queries add workload but not new independent sources. No nonzero-width
-CI is fabricated when all defined bootstrap statistics agree.
+choosing finalists. Record defined/undefined draw counts and equal-bound
+degeneracy flags under [undefined bootstrap draws and equal bounds](../metrics.md#undefined-bootstrap-draws-and-equal-bounds).
+No nonzero-width CI is fabricated when all defined statistics agree. Repeated
+identical queries add workload but not new independent sources.
 
 ### Interpretation
 

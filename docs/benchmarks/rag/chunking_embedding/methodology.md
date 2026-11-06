@@ -53,19 +53,19 @@ per-query observations defined below; they are not document-macro latency means.
 
 ### Implementation status
 
-The runner implements separate load/build/query
-measurements, first-ranking quality and context descriptors, retained per-attempt
+The runner measures loading, corpus build, and queries separately. It implements
+first-ranking quality and context descriptors, retained per-attempt
 rankings, diagnostic all-pairs Ranking Repeatability, and explicit execution,
 quality, and integrity coverage. Valid ranking changes are not a failure gate.
 The existing parent `paired_comparisons.json` contains the
 [overall-quality comparisons](#paired-comparison-artifact) described below.
 
-The approved reporting simplification is a documentation change that still
-requires code migration: fixed corpus document/question/source-token counts
+The approved target reporting contract still requires code migration: fixed
+corpus document/question/source-token counts
 move to parent workload metadata, embedding dimension becomes a child parameter
 verified against output shape, and derived Corpus-Build Throughput stays only
 in build evidence. The current runner still emits those candidate scalars.
-The updated scalar list below is the target contract, not a claim that this
+The scalar list below is the target contract, not a claim that this
 migration is implemented. Candidate-dependent descriptors and all execution,
 quality, and independent-source support counts remain required as applicable.
 
@@ -128,8 +128,8 @@ text, evidence intervals/IDs, answerability, evidence types, and split isolation
 Full validation runs separately during preparation; each profile then verifies
 that its actual inputs still match the successful report before candidate
 loading or measurement. Invalid references produce a preparation error report,
-not benchmark observations. This suite's standalone validator produces a sealed
-report; every profile verifies it before loading candidates. Canonical inputs
+not benchmark observations. The standalone validator seals the report that
+each profile verifies. Canonical inputs
 and the protocol's data requirements determine report reuse, not the model or
 execution device.
 
@@ -192,7 +192,7 @@ Atomic annotation does not guarantee that every strategy preserves every unit:
 a candidate boundary can still split it. Such fragmentation is a quality
 outcome, not a reason to repair the reference or resize chunks for that pair.
 
-Use the [shared complete-unit coverage rule](../../metrics.md#retrieval-evidence-quality)
+Use the [complete-unit coverage rule](../../metrics.md#retrieval-quality-eligibility)
 to map evidence to generated chunks. It keeps boundary fragmentation visible
 without candidate-specific fuzzy matching. Metric roles, examples, and edge
 cases are in [chunking and embedding metrics](metrics.md).
@@ -206,7 +206,7 @@ The fixed tokenizer is a protocol control, not another benchmark candidate. A
 future multilingual protocol may evaluate tokenizer sensitivity separately
 before freezing a replacement.
 
-Use the [shared source-offset and token-span mapping contract](../../metrics.md#retrieval-evidence-quality)
+Use the [source-offset and token-span mapping contract](../../metrics.md#retrieval-quality-eligibility)
 for evidence-token overlap, including the canonical offset unit and UTF-8 token
 mapping. Unlike unit coverage, token relevance does not require recovering the
 entire evidence unit; no candidate-specific mapping is substituted.
@@ -267,8 +267,12 @@ Keep scheduled, eligible, scored, failed, and unavailable counts per metric/slic
 successful-latency counts are separate because a later request may succeed when
 first-ranking quality is unavailable.
 
-Result statuses and slice availability use the
-[shared availability rules](../../metrics.md#shared-availability-rules).
+An optional slice with no eligible questions is inapplicable; see
+[no applicable task](../../metrics.md#no-applicable-task). Eligible questions
+with no usable scores instead leave the aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
+Artifacts retain these reasons even when MLflow omits a null scalar; see
+[metric status and MLflow storage](../../metrics.md#metric-status-and-mlflow-storage).
 
 Partial quality aggregates remain labelled diagnostics in artifacts, not normal
 `quality.*` aggregates, complete-result leaderboard entries, or paired selection
@@ -290,7 +294,8 @@ Count each query's valid designated-first ranking prefix with the fixed tokenize
 then average/query-percentile the totals. This descriptor is query-weighted, not
 document-macro quality. Later rankings never replace a failed first observation;
 partial required totals stay labelled workload diagnostics. No token budget or
-new descriptor CI is introduced.
+new descriptor CI is introduced. See
+[retrieved-context token availability](../../metrics.md#retrieved-context-token-availability).
 
 ## Execution and measurements
 
@@ -434,7 +439,7 @@ every request error as a missing comparison.
 are parent artifacts. The chosen pair's
 locked result remains in this component experiment and cannot reopen selection.
 
-Under the approved metadata migration, retain the verified document count,
+Under the approved, pending metadata migration, retain the verified document count,
 answerable/unanswerable question counts, and fixed-tokenizer source-token count
 once in the parent's workload inventory in `provenance.json`, optionally also
 as searchable parent parameters. Keep their manifest/tokenizer identities and
@@ -452,7 +457,7 @@ parameter-only reporting also records embedding dimension alongside stored
 vector dtype, with actual shape/dtype verification retained in build validation.
 The child has no child runs for documents, questions, repetitions, or metrics.
 
-Under the approved updated contract, a valid child logs the applicable scalars
+Under the approved target contract, a valid child logs the applicable scalars
 below. Moving the fixed metadata, dimension, and throughput out of the current
 scalar output still requires the migration noted above:
 
@@ -520,7 +525,8 @@ the updated contract; their declared values do not establish successful output
 validation when no complete matrix was produced.
 
 Nulls and their statuses/reasons remain in artifacts; MLflow scalar keys are
-absent. Partial quality estimates are artifact diagnostics, not normal quality
+absent. See [metric status and MLflow storage](../../metrics.md#metric-status-and-mlflow-storage).
+Partial quality estimates are artifact diagnostics, not normal quality
 scalars. A failed child can retain complete first-ranking quality aggregates,
 genuinely completed operational values, and observed resource peaks. Later
 failure does not erase observations; acceptance follows the declared coverage
@@ -596,7 +602,8 @@ document inside its reviewed source group. The artifact retains `lower`, `upper`
 `confidence`, contributing/eligible support, requested/defined/undefined draw
 counts, degeneracy, and unavailable-bound reasons. Unfrozen or insufficient CI
 support leaves a defined difference with null bounds; it does not establish
-authoritative advancement. This is existing reporting, unlike the pending
+authoritative advancement. See [insufficient confidence-interval support](../../metrics.md#insufficient-confidence-interval-support).
+Paired reporting is implemented, unlike the pending
 metadata/throughput migration.
 
 The engineer approves up to three complete chunker/embedding pairs. No separate

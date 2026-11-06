@@ -27,7 +27,7 @@ independent observations.
 
 ### Implementation status
 
-The protocol and runner implement the seven model-mode roster, complete
+The protocol and runner implement the seven-configuration model-mode roster, complete
 question-set execution, one warmup, three measured seeds, structured response
 scoring, separate lifecycle measurements, and sealed data-report verification.
 Semantic labels come through the calibrated-judge interface; lexical overlap
@@ -46,7 +46,7 @@ calibration result is selected automatically. CPU/CUDA smoke without a judge
 checks runtime and deterministic scoring only, retaining unavailable semantic
 values rather than fabricating labels.
 
-The approved workflow below is the updated contract, not a claim that these
+The approved workflow below is the target contract, not a claim that these
 deferred orchestration and scoring changes already exist. Executable command
 availability belongs to the [runbook](../../running.md).
 
@@ -278,8 +278,8 @@ The claim and evidence rules are frozen before calibration:
 
 The frozen verification material and required gold claims are separate inputs:
 the former establishes correctness, while the latter establishes completeness.
-This is EduMind's source-verified claim contract, rather than treating every
-generated claim absent from a reference-answer list as incorrect.
+A generated claim absent from the required gold list can still be correct
+when the frozen verification material establishes it; it earns no extra recall.
 
 The exact judge version, decoding, prompts, rubric checksums, schema, verification
 material identity, finite retry policy, and calibration artifact are frozen
@@ -375,7 +375,7 @@ repeatability separately measures agreement of status, citations, and meaning.
 Generation uses this all-seed quality policy because the frozen decoder samples
 responses. It does not change the designated-first-quality policy of extraction,
 chunking–embedding, or retrieval–reranking. The shared
-[partial-evidence](../../metrics.md#dependent-metrics-and-partial-observations)
+[partial-evidence](../../metrics.md#partial-work-and-complete-measurements)
 and [confidence-interval](../../metrics.md#confidence-intervals) rules apply to
 the observation set declared here. Resample reviewed independent-source groups,
 retaining their complete documents and questions, not individual generation
@@ -424,8 +424,10 @@ All scheduled outcomes remain recorded. Runtime/timeout/context-interrupted
 responses and required structural-schema failures have unavailable dependent
 quality, not artificial zero-quality answers. Normally completed responses with
 wrong behavior use the metric's own scoring or known-empty convention. Missing
-judging affects required labels, not independently completed ID checks or
-operational measurements. Apply the [shared availability rules](../../metrics.md#shared-availability-rules).
+judging leaves dependent evaluation unavailable, not zero quality; see
+[missing measurements or evaluations](../../metrics.md#missing-measurements-or-evaluations).
+Independently completed ID checks and operational measurements remain available;
+see [completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests).
 
 Repeatability adopts the shared scheduled-pair rule with local status, Jaccard
 citation, and semantic comparison functions. Operational observations keep
@@ -514,5 +516,6 @@ token counts, citation/claim counts and labels, structural and ID checks,
 behavioral checks, outcome/finish reason, and timing. A finish-reason count/share
 table is a diagnostic artifact, not another scalar family. Keep monitoring
 coverage and request outcomes alongside RAM/VRAM samples and their observed
-peaks. Undefined scalar keys are omitted according to the shared rules, while
-the records, reasons, and partial/incomplete status remain visible.
+peaks. Undefined scalar keys are omitted, while records, reasons, and
+partial/incomplete status remain visible; see
+[metric status and MLflow storage](../../metrics.md#metric-status-and-mlflow-storage).

@@ -98,17 +98,19 @@ Development, validation, and locked schedule three measured attempts per video
 after one warmup; attempts 2 and 3 supply timing, failure, and repeatability
 evidence, not extra quality scores. Smoke schedules one measured attempt.
 
-The [shared availability rules](../../metrics.md#shared-availability-rules)
-apply to every metric below. Metric-specific blocks follow
-[what belongs in a metric's edge-case block](../../metrics.md#what-belongs-in-a-metrics-edge-case-block):
-valid absence, empty denominators, and conditional measurement support, not
-generic execution or input-integrity failures.
+Local edge-case blocks explain valid absence, empty denominators, and
+conditional measurement support. Input validation and execution integrity remain
+separate from those scoring conventions.
 
-The shared first-output failure rule applies to visual quality and duplication;
-selection counts can survive subsequent parser failure under their own
-completed-selection boundary. Reference eligibility is identical across
-candidates; actual completed output cohorts can differ and must remain visible
-beside quality.
+A failed first visual attempt leaves quality and duplication unavailable; a
+later success cannot replace it, and a later failure does not erase valid
+first-output quality. See
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+Completed selection counts can survive subsequent parser failure under their
+own measurement boundary. Reference eligibility is identical across candidates;
+actual completed-output cohorts can differ and must remain visible beside quality.
+Artifacts retain nulls, statuses, reasons, and support; MLflow omits null scalars
+under [metric status and MLflow storage](../../metrics.md#metric-status-and-mlflow-storage).
 
 Visual content, coverage, delay, duplication, and repeatability use video-macro
 aggregation: calculate each defined video value, then average contributing
@@ -123,10 +125,13 @@ not certify model outputs. See
 
 ### Execution and measurement prerequisites
 
-Execution completeness, timed-phase availability, and failure diagnostics follow
-the [shared availability rules](../../metrics.md#shared-availability-rules);
-instrumentation and full/partial resource windows follow
-[shared resource measurements](../../metrics.md#resource-measurements).
+Missing or unexecuted required attempts leave execution incomplete under
+[execution accounting](../../metrics.md#execution-accounting-and-result-completeness).
+A completed timed phase survives later failure; an unfinished phase has only
+elapsed-to-failure. See [completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests).
+Missing telemetry makes the measurement unavailable, while interrupted monitoring
+retains an observed partial-window peak under
+[missing or partial resource measurements](../../metrics.md#missing-or-partial-resource-measurements).
 A failed first visual attempt can still supply later successful timings, but
 not replacement quality. Reliability evidence informs engineer review, not
 automatic quality-based exclusion. No artificial extraction VRAM cap applies;
@@ -150,10 +155,10 @@ These units are lines, not model-tokenizer IDs.
 This is a lexical visible-line projection, even when a line depicts code or a
 formula; it is not a syntax-preserving code/formula metric. For example, `f(x)`
 and `f[x]` both project to `f x` and intentionally compare equal here. Case and
-punctuation distinctions removed by this projection likewise cannot establish
-syntax fidelity. This is a limitation of the existing visual-content and
-occurrence-matching representations, not a new metric or a change to the shared
-exclusion of prose projection from document formula/code-specific scoring.
+punctuation distinctions are also removed, so these visual-content and
+occurrence-matching representations cannot establish syntax fidelity.
+Document formula/code-specific scoring remains separate and excludes prose
+projection.
 
 Different raw strings that project to empty compare as empty; raw text is retained.
 Verified text-free videos remain eligible for content-absence comparisons.
@@ -164,6 +169,8 @@ apply to these distinct-line sets, as illustrated under each metric.
 ### Visual Content Precision
 
 **Question:** How much extracted visible text is supported by the reference?
+
+**Calculation:**
 
 ```text
 Visual Content Precision = matched distinct lines / predicted distinct lines
@@ -184,11 +191,16 @@ captured or that the capture occurred while the line was visible.
 | Both projected line sets are empty | Text-free video; valid empty output | `1` (`scored`) | Correct absence uses the explicit empty-comparison convention. |
 | No predicted lines, but reference lines exist | A required title; valid empty output | `0` (`scored`) | The predicted-line denominator is zero; the convention assigns zero. |
 
-Other availability follows the [shared rules](../../metrics.md#shared-availability-rules).
+A failed first visual attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing video value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Visual Content Recall
 
 **Question:** How much verified visible text was recovered?
+
+**Calculation:**
 
 ```text
 Visual Content Recall = matched distinct lines / reference distinct lines
@@ -209,11 +221,16 @@ lower recall, so inspect precision too.
 | Both projected line sets are empty | Text-free video; valid empty output | `1` (`scored`) | Correct absence uses the explicit empty-comparison convention. |
 | No reference lines, but predicted lines exist | Text-free video; invented title | `0` (`scored`) | The reference-line denominator is zero; unsupported output receives zero by convention. |
 
-Other availability follows the [shared rules](../../metrics.md#shared-availability-rules).
+A failed first visual attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing video value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Visual Content F1
 
 **Question:** Does visible-text extraction balance support and completeness?
+
+**Calculation:**
 
 ```text
 Visual Content F1 = 2 × precision × recall / (precision + recall)
@@ -237,7 +254,10 @@ or successful recovery on failed first attempts.
 | Both projected line sets are empty | Text-free video; valid empty output | `1` (`scored`) | The content-absence comparison is perfect by convention. |
 | Precision and recall are both zero | One-sided empty comparison, or nonempty reference/output sets with no exact matches | `0` (`scored`) | The harmonic-mean denominator is zero; the explicit convention assigns zero. |
 
-Other availability follows the [shared rules](../../metrics.md#shared-availability-rules).
+A failed first visual attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing video value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ## Visual timestamp quality
 
@@ -259,6 +279,8 @@ do not optimize a different assignment for each displayed score.
 ### Mean Visual First-Detection Delay
 
 **Question:** How soon after an appearance starts is it first captured?
+
+**Calculation:**
 
 Subtract appearance start from its assigned frame time. Average covered
 occurrence delays within the video, then average defined video values equally.
@@ -283,11 +305,16 @@ less than its own `[start, end)` interval length.
 | No reference appearances | Verified text-free video | `null` (`inapplicable`) | No timed recovery task exists. |
 | Required appearances exist, but none is covered | Required title never captured in a valid output | `null` (`unavailable`) | There is no observed delay or covered-occurrence denominator; misses receive neither fabricated penalties nor zero delay. |
 
-Other availability follows the [shared rules](../../metrics.md#shared-availability-rules).
+A failed first visual attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing video value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Timed Visual Occurrence Coverage
 
 **Question:** How much of the reviewed appearance task was captured while visible?
+
+**Calculation:**
 
 ```text
 Video occurrence coverage = matched reference occurrences / required occurrences
@@ -313,7 +340,10 @@ receives zero.
 |---|---|---|---|
 | No reference appearances | Verified text-free video | `null` (`inapplicable`) | No occurrence-coverage task or denominator exists; correct content absence is scored separately. |
 
-Other availability follows the [shared rules](../../metrics.md#shared-availability-rules).
+A failed first visual attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing video value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ## Reliability and failure behavior
 
@@ -321,6 +351,8 @@ Other availability follows the [shared rules](../../metrics.md#shared-availabili
 
 **Question:** How much supported output repeats identical text within the same
 continuous visibility occurrence?
+
+**Calculation:**
 
 Assign each detection to at most one reference occurrence using the same
 in-interval and Content F1 ≥ `0.5` eligibility rules. For ambiguous assignments,
@@ -357,12 +389,17 @@ gives zero.
 | Reference occurrences exist, but no detections are assigned | Valid empty output, or only unsupported text | `null` (`unavailable`) | The assigned-detection denominator is zero; this is not evidence of efficient recovery. |
 | No reference occurrence task | Text-free reference video | `null` (`inapplicable`) | There is no supported visibility occurrence to assign. |
 
-Other availability follows the [shared rules](../../metrics.md#shared-availability-rules).
+A failed first visual attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing video value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Repeatability Success Rate
 
 **Question:** How often do two scheduled attempts deliver the same valid visual
 output?
+
+**Calculation:**
 
 Apply [shared pairwise repeatability](../../metrics.md#pairwise-repeatability)
 to the three measured visual attempts per video. Divide successful agreeing
@@ -398,13 +435,15 @@ quality stays unavailable. Identical error messages do not agree.
 |---|---|---|---|
 | Profile schedules only one attempt | Smoke | `null` (`inapplicable`), `repeatability_not_measured` | No attempt pair is scheduled; this differs from missing required attempts. |
 
-Missing required attempts follow the
-[shared pairwise-repeatability rules](../../metrics.md#pairwise-repeatability), not a
-favorable surviving-pair calculation.
+Executed failures contribute no successful pair; missing required attempts
+leave repeatability incomplete. See
+[repeatability with failed or missing attempts](../../metrics.md#repeatability-with-failed-or-missing-attempts).
 
 ### Attempt Failure Rate
 
 **Question:** How often does a measured visual request fail to deliver valid output?
+
+**Calculation:**
 
 For each video, divide recorded failed attempts by its scheduled measured
 attempts, then macro-average video fractions. With three attempts per video,
@@ -422,7 +461,10 @@ failing gives one.
 
 **Edge cases and availability:**
 
-See [shared execution-accounting rules](../../metrics.md#execution-accounting-and-result-completeness) and
+Missing or unexecuted required attempts make the rate incomplete, not a rate
+over surviving requests; see
+[execution accounting](../../metrics.md#execution-accounting-and-result-completeness).
+Setup failures remain separate from measured request failures under the
 [execution prerequisites](#execution-and-measurement-prerequisites).
 
 ## Visual operational performance
@@ -431,6 +473,8 @@ See [shared execution-accounting rules](../../metrics.md#execution-accounting-an
 
 **Question:** How much complete visual-processing time is required relative to
 video duration?
+
+**Calculation:**
 
 Divide the sum of successful measured visual-request times by the sum of those
 same attempts' verified video durations. Include FFmpeg selection/extraction,
@@ -445,9 +489,10 @@ RTF `60 / 240 = 0.25`. A value above one simply means slower than playback.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
-[execution prerequisites](#execution-and-measurement-prerequisites).
+No completed timed visual request makes RTF unavailable, not zero; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
+Missing required time or duration leaves the ratio unavailable under
+[undefined inputs to derived metrics](../../metrics.md#undefined-inputs-to-derived-metrics).
 
 ### p50 and p95 Warm Visual Latency
 
@@ -462,6 +507,8 @@ percentiles follow the [video confidence-interval rules](#aggregation-and-confid
 
 **Question:** What is the typical successful complete visual-processing wait?
 
+**Calculation:**
+
 Take the median of the video-level successful-attempt medians.
 
 **Example:** Video observations `10, 12, 14, 16, 18, 20 s` give p50
@@ -473,13 +520,17 @@ This summarizes a typical complete-video wait, not average frame speed.
 
 **Edge cases and availability:**
 
-See [shared availability](../../metrics.md#shared-availability-rules),
-[percentile rules](../../metrics.md#latency-percentiles), and
-[execution prerequisites](#execution-and-measurement-prerequisites).
+No completed timed video makes the percentile unavailable; one video observation
+makes both p50 and p95 equal that value. See
+[zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
+Insufficient independent-source support leaves confidence bounds null; see
+[insufficient confidence-interval support](../../metrics.md#insufficient-confidence-interval-support).
 
 #### p95 Warm Visual Latency
 
 **Question:** What is the slow-tail successful complete visual-processing wait?
+
+**Calculation:**
 
 Apply the [shared 95th-percentile calculation](../../metrics.md#latency-percentiles)
 to the same video observations.
@@ -494,13 +545,17 @@ sample below it.
 
 **Edge cases and availability:**
 
-See [shared availability](../../metrics.md#shared-availability-rules),
-[percentile rules](../../metrics.md#latency-percentiles), and
-[execution prerequisites](#execution-and-measurement-prerequisites).
+No completed timed video makes the percentile unavailable; one video observation
+makes both p50 and p95 equal that value. See
+[zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
+Insufficient independent-source support leaves confidence bounds null; see
+[insufficient confidence-interval support](../../metrics.md#insufficient-confidence-interval-support).
 
 ### Cold Visual-Pipeline Load Time
 
 **Question:** How long does a fresh worker take to make the visual pipeline ready?
+
+**Calculation:**
 
 Time runtime construction, required model loading/device placement, explicit
 pipeline initialization, and synchronization, ending before warmup. Docling
@@ -515,12 +570,15 @@ cold load is `5.0 s`. This is initialization cost, not a per-video warm wait.
 
 **Edge cases and availability:**
 
-See [shared completed-phase rules](../../metrics.md#dependent-metrics-and-partial-observations) and
-[execution prerequisites](#execution-and-measurement-prerequisites).
+Initialization that never completes has no cold-load latency; retain
+elapsed-to-failure separately. A completed cold load survives later failures;
+see [completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests).
 
 ### Peak Visual Process-Tree RAM
 
 **Question:** How much host memory does the complete visual lifecycle require?
+
+**Calculation:**
 
 Apply [shared Peak Process-Tree RAM](../../metrics.md#peak-process-tree-ram)
 to the visual worker and its descendants, including media subprocesses.
@@ -537,12 +595,15 @@ This measures simultaneous host demand of the parser and its media subprocesses.
 
 **Edge cases and availability:**
 
-See [shared resource-measurement rules](../../metrics.md#resource-measurements) and
-[execution prerequisites](#execution-and-measurement-prerequisites).
+Missing usable RAM samples make the peak unavailable. An interrupted monitoring
+window retains its observed peak as partial, not a complete-lifecycle peak; see
+[missing or partial resource measurements](../../metrics.md#missing-or-partial-resource-measurements).
 
 ### Peak Visual Device VRAM
 
 **Question:** What total GPU memory is occupied during visual extraction?
+
+**Calculation:**
 
 Apply [shared Peak Device VRAM](../../metrics.md#peak-device-vram) from before
 initialization through warmup and the final measured visual request.
@@ -556,9 +617,10 @@ not the baseline-subtracted `2,200 MiB`. This is device occupancy, not model siz
 
 **Edge cases and availability:**
 
-CPU applicability and CUDA telemetry follow
-[shared Peak Device VRAM](../../metrics.md#peak-device-vram)
-and [execution prerequisites](#execution-and-measurement-prerequisites).
+CPU execution makes VRAM inapplicable; missing required CUDA telemetry makes it
+unavailable. See [Peak Device VRAM](../../metrics.md#peak-device-vram).
+An interrupted monitoring window retains a partial peak under
+[missing or partial resource measurements](../../metrics.md#missing-or-partial-resource-measurements).
 
 ## Workload descriptor
 
@@ -566,12 +628,14 @@ and [execution prerequisites](#execution-and-measurement-prerequisites).
 
 **Question:** How many frames did the strategy actually select?
 
+**Calculation:**
+
 Use each video's completed first-attempt selection count, regardless of later
 parser acceptance or failure, then average videos with known completed counts.
 Keep all per-attempt counts in timing records. Do not replace an unavailable
 first selection with a later favorable one.
 
-In plain words, sum known completed first-selection counts and divide by the
+Sum known completed first-selection counts and divide by the
 number of videos contributing those counts.
 
 **Example:** If 360 frames are selected across 30 videos, the mean is
@@ -584,9 +648,13 @@ better when smaller.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and the completed-count
-and frame-zero [execution prerequisites](#execution-and-measurement-prerequisites).
+An unknown final first-selection count is unavailable; completed selection
+counts survive later parser failure under
+[partial work and complete measurements](../../metrics.md#partial-work-and-complete-measurements).
+No contributing count leaves the aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
+An observed zero count remains recorded with a selector failure under the
+[frame-zero prerequisite](#execution-and-measurement-prerequisites).
 
 ## Frozen-ASR diagnostics
 
@@ -618,14 +686,17 @@ video recognition, spoken-timing, or processing-speed observations. Missing
 required frozen-artifact records are an integrity/completeness problem before
 visual execution; see the [frozen-audio prerequisites](methodology.md#shared-audio-preparation).
 
-An applicable aggregate with no completed contributing comparisons is unavailable
-under the [shared availability rules](../../metrics.md#shared-availability-rules),
-not a perfect empty comparison. Recognition CIs resample complete source videos
+An applicable aggregate with no completed contributing comparisons is unavailable,
+not a perfect empty comparison; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
+Recognition CIs resample complete source videos
 and recalculate pooled counts under the [video CI rules](#aggregation-and-confidence-intervals).
 
 ### Transcript WER
 
 **Question:** How wrong is the complete stitched ordered word transcript?
+
+**Calculation:**
 
 ```text
 Transcript WER = pooled word substitutions + deletions + insertions
@@ -649,12 +720,16 @@ Insertions can make WER exceed one.
 | Zero contributing reference words and no predicted words | Silent video; valid empty transcript | `0` (`scored`) | The JiWER empty-reference convention returns zero edits. |
 | Zero contributing reference words with predicted words | Silent video; `go now` | `2` (`scored`) | Use total word insertions, not division by zero. |
 
-Other availability follows the [shared rules](../../metrics.md#shared-availability-rules)
-and [frozen-audio completion rules](#frozen-audio-completion-and-availability).
+A failed required window makes complete-video quality unavailable; see
+[frozen-audio completion](#frozen-audio-completion-and-availability).
+No contributing comparison leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Transcript CER
 
 **Question:** How severe are character-level errors in the stitched transcript?
+
+**Calculation:**
 
 Divide pooled character substitutions, deletions, and insertions by contributing
 projected reference characters, including remaining spaces.
@@ -673,12 +748,16 @@ transcript against nonempty reference deletes every character and gives CER one.
 | Zero contributing reference characters and no predicted characters | Silent video; valid empty transcript | `0` (`scored`) | The empty-reference convention returns zero edits. |
 | Zero contributing reference characters with predicted characters | Silent video; `go now` | `6` (`scored`) | Use total character insertions, including the remaining space. |
 
-Other availability follows the [shared rules](../../metrics.md#shared-availability-rules)
-and [frozen-audio completion rules](#frozen-audio-completion-and-availability).
+A failed required window makes complete-video quality unavailable; see
+[frozen-audio completion](#frozen-audio-completion-and-availability).
+No contributing comparison leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Word Substitution Rate
 
 **Question:** How much required spoken content became different words?
+
+**Calculation:**
 
 Use the same word alignment as WER: pooled substitutions divided by contributing
 reference words. **Example:** `40 / 1,000 = 0.04` means four substitutions per
@@ -694,12 +773,16 @@ This isolates word confusion from omission and invention.
 |---|---|---|---|
 | Zero contributing reference words | Silent video; empty transcript or `go now` | `0` (`scored`) | No reference word can be substituted; extra words are insertions under the explicit convention. |
 
-Other availability follows the [shared rules](../../metrics.md#shared-availability-rules)
-and [frozen-audio completion rules](#frozen-audio-completion-and-availability).
+A failed required window makes complete-video quality unavailable; see
+[frozen-audio completion](#frozen-audio-completion-and-availability).
+No contributing comparison leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Word Deletion Rate
 
 **Question:** How much required speech was omitted from the complete transcript?
+
+**Calculation:**
 
 Divide pooled word deletions by the same contributing reference-word count.
 **Example:** `20 / 1,000 = 0.02` exposes two missing words per hundred reference
@@ -716,12 +799,16 @@ giving one; unlike substitutions, this diagnoses omission.
 |---|---|---|---|
 | Zero contributing reference words | Silent video; empty transcript or `go now` | `0` (`scored`) | No reference word can be deleted; the empty-reference convention assigns zero. |
 
-Other availability follows the [shared rules](../../metrics.md#shared-availability-rules)
-and [frozen-audio completion rules](#frozen-audio-completion-and-availability).
+A failed required window makes complete-video quality unavailable; see
+[frozen-audio completion](#frozen-audio-completion-and-availability).
+No contributing comparison leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Word Insertion Rate
 
 **Question:** How much unsupported speech was added?
+
+**Calculation:**
 
 Divide pooled word insertions by contributing reference words.
 **Example:** `10 / 1,000 = 0.01`. These counts reuse WER's alignment, so rates
@@ -735,8 +822,10 @@ Divide pooled word insertions by contributing reference words.
 |---|---|---|---|
 | Zero contributing reference words | Silent video; `go now` | `2` (`scored`); `0` (`scored`) if output is also empty | Use total word insertions, not division by zero. |
 
-Other availability follows the [shared rules](../../metrics.md#shared-availability-rules)
-and [frozen-audio completion rules](#frozen-audio-completion-and-availability).
+A failed required window makes complete-video quality unavailable; see
+[frozen-audio completion](#frozen-audio-completion-and-availability).
+No contributing comparison leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Spoken timestamp matching
 
@@ -755,9 +844,9 @@ example, native `alpha beta` at window-local `[1, 3]` with offset `28 s` supplie
 intervals `[29, 30]` and `[30, 31]`. A boundary score therefore reflects the
 model's native timing resolution, not newly obtained word-time precision.
 
-Pool real boundary errors for MAE and matched/required segment counts from
-valid completed eligible videos for
-coverage, not independent windows.
+Pool actual boundary errors for MAE and matched/required segment counts for
+coverage across valid completed eligible videos. Windows are not independent
+observations.
 
 Spoken timing requires reviewed spoken segments; visual appearance timestamps
 are not spoken timestamps. Retain planned/contributing reference and
@@ -768,6 +857,8 @@ not an inapplicable timing task.
 ### Timestamp Boundary MAE
 
 **Question:** How far are aligned spoken starts/ends from reviewed boundaries?
+
+**Calculation:**
 
 Sum absolute start and end errors and divide by the number of matched boundaries,
 pooling real errors across completed videos rather than averaging video MAEs.
@@ -787,12 +878,16 @@ timing resolution than the inherited native bounds described above.
 | No reviewed spoken timing task | Explicit `reference_segments: []` | `null` (`inapplicable`) | There are no reference boundaries to evaluate; transcript recognition remains separate. |
 | Required spoken timings exist, but no segments align | Valid completed transcript with no eligible aligned span | `null` (`unavailable`) | No matched-boundary denominator or measured error exists; do not invent a zero or penalty. |
 
-Other availability follows the [shared rules](../../metrics.md#shared-availability-rules)
-and [frozen-audio completion rules](#frozen-audio-completion-and-availability).
+A failed required window makes complete-video quality unavailable; see
+[frozen-audio completion](#frozen-audio-completion-and-availability).
+No contributing comparison leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Timestamp Alignment Coverage
 
 **Question:** How much of the reviewed spoken timing task received an alignment?
+
+**Calculation:**
 
 Divide pooled matched reference segments by pooled required segments from valid
 completed eligible videos. **Example:** `18 / 20 = 0.90`; adding a valid video
@@ -811,12 +906,16 @@ completion rules.
 |---|---|---|---|
 | No reviewed spoken timing task | Explicit `reference_segments: []` | `null` (`inapplicable`) | No required spoken segments supply a coverage denominator. |
 
-Other availability follows the [shared rules](../../metrics.md#shared-availability-rules)
-and [frozen-audio completion rules](#frozen-audio-completion-and-availability).
+A failed required window makes complete-video quality unavailable; see
+[frozen-audio completion](#frozen-audio-completion-and-availability).
+No contributing comparison leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Unexpected Empty Transcript Rate
 
 **Question:** How often does completed video speech unexpectedly vanish?
+
+**Calculation:**
 
 Divide valid empty complete video transcripts by valid completed video
 transcripts requiring nonempty projected spoken text.
@@ -835,13 +934,16 @@ Attempt Failure Rate and complete-video failure counts.
 |---|---|---|---|
 | No nonempty projected spoken reference task | A legitimate slice of reviewed silent videos | `null` (`inapplicable`) | No video requires lexical speech, so none is eligible for unexpected emptiness. |
 
-Other availability follows the [shared rules](../../metrics.md#shared-availability-rules)
-and [frozen-audio completion rules](#frozen-audio-completion-and-availability);
-an applicable task without completed eligible transcripts is unavailable.
+A failed required window makes the complete transcript unavailable; see
+[frozen-audio completion](#frozen-audio-completion-and-availability).
+No completed eligible transcript leaves this event rate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Nonspeech False-Transcription Rate
 
 **Question:** How often does reviewed nonspeech produce invented lexical text?
+
+**Calculation:**
 
 Divide valid completed reviewed nonspeech units producing lexical text by all
 valid completed reviewed nonspeech units.
@@ -868,13 +970,16 @@ on nonspeech, not general speech recognition accuracy.
 |---|---|---|---|
 | No reviewed nonspeech task in a legitimate slice | Speech-only slice outside a required nonspeech allocation | `null` (`inapplicable`) | There are no eligible reviewed nonspeech units; missing required inputs are not this case. |
 
-Other availability follows the [shared rules](../../metrics.md#shared-availability-rules)
-and [frozen-audio completion rules](#frozen-audio-completion-and-availability);
-an applicable task without valid completed eligible units is unavailable.
+Failed reviewed units are not invented-text events; retain their outcomes
+under [frozen-audio completion](#frozen-audio-completion-and-availability).
+No valid completed eligible unit leaves this event rate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Audio Attempt Failure Rate
 
 **Question:** How often does a scheduled ASR window request fail?
+
+**Calculation:**
 
 Divide recorded failed window requests by all scheduled measured window
 requests, keeping per-video completion separately. Windows are request units,
@@ -893,7 +998,10 @@ requests. There is no audio repeatability score: each window is transcribed once
 
 **Edge cases and availability:**
 
-See [shared execution-accounting rules](../../metrics.md#execution-accounting-and-result-completeness) and
+Missing or unexecuted required attempts make the rate incomplete, not a rate
+over surviving requests; see
+[execution accounting](../../metrics.md#execution-accounting-and-result-completeness).
+Setup failures remain separate from measured request failures under the
 [execution prerequisites](#execution-and-measurement-prerequisites).
 
 ### Shared audio operational measurements
@@ -916,6 +1024,8 @@ and [frozen-audio completion rules](#frozen-audio-completion-and-availability).
 
 **Question:** How much complete audio-processing time is needed per unit duration?
 
+**Calculation:**
+
 Divide summed successful complete-video processing time by those videos'
 original audio durations. Count original duration once, not each overlapping
 window duration. **Example:** `60 s / 240 s = 0.25` means four times playback
@@ -928,13 +1038,18 @@ ratio from full source units, not means of per-window RTFs.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
-[frozen-audio completion rules](#frozen-audio-completion-and-availability).
+No completed timed audio preparation makes RTF unavailable, not zero; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
+Missing required time or duration leaves the ratio unavailable under
+[undefined inputs to derived metrics](../../metrics.md#undefined-inputs-to-derived-metrics).
+Partial video audio remains excluded under
+[frozen-audio completion](#frozen-audio-completion-and-availability).
 
 ### p50 Warm Audio-Processing Latency
 
 **Question:** What is the typical complete audio-processing wait per video?
+
+**Calculation:**
 
 Take the median of completed videos' warm audio latencies; there is one measured
 preparation per video, not three ASR repetitions.
@@ -946,13 +1061,19 @@ This describes a typical full preparation, not window latency.
 
 **Edge cases and availability:**
 
-See [shared availability](../../metrics.md#shared-availability-rules),
-[percentile rules](../../metrics.md#latency-percentiles), and
-[frozen-audio completion rules](#frozen-audio-completion-and-availability).
+No completed timed audio preparation makes the percentile unavailable; one
+video observation makes both p50 and p95 equal that value. See
+[zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
+Partial video audio is not a complete latency observation under
+[frozen-audio completion](#frozen-audio-completion-and-availability).
+Insufficient independent-source support leaves confidence bounds null; see
+[insufficient confidence-interval support](../../metrics.md#insufficient-confidence-interval-support).
 
 ### p95 Warm Audio-Processing Latency
 
 **Question:** What is the slow-tail complete audio-processing wait per video?
+
+**Calculation:**
 
 Apply the [shared 95th-percentile calculation](../../metrics.md#latency-percentiles)
 to completed video audio latencies. **Example:** For `10, 12, 14, 16, 18, 20 s`, position `4.75`
@@ -964,13 +1085,19 @@ This is a percentile estimate, not a maximum or a guarantee for unseen videos.
 
 **Edge cases and availability:**
 
-See [shared availability](../../metrics.md#shared-availability-rules),
-[percentile rules](../../metrics.md#latency-percentiles), and
-[frozen-audio completion rules](#frozen-audio-completion-and-availability).
+No completed timed audio preparation makes the percentile unavailable; one
+video observation makes both p50 and p95 equal that value. See
+[zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
+Partial video audio is not a complete latency observation under
+[frozen-audio completion](#frozen-audio-completion-and-availability).
+Insufficient independent-source support leaves confidence bounds null; see
+[insufficient confidence-interval support](../../metrics.md#insufficient-confidence-interval-support).
 
 ### Cold ASR Model-Load Time
 
 **Question:** How long does initialization take before audio warmup?
+
+**Calculation:**
 
 Subtract model/profile construction start from synchronized full readiness,
 including device placement and required components, ending before warmup.
@@ -982,12 +1109,15 @@ This is a one-time initialization cost, not per-video preparation latency.
 
 **Edge cases and availability:**
 
-See [shared completed-phase rules](../../metrics.md#dependent-metrics-and-partial-observations) and
-[execution prerequisites](#execution-and-measurement-prerequisites).
+Initialization that never completes has no cold-load latency; retain
+elapsed-to-failure separately. A completed cold load survives later failures;
+see [completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests).
 
 ### Peak Audio Process-Tree RAM
 
 **Question:** How much simultaneous host memory does audio preparation require?
+
+**Calculation:**
 
 Apply [shared Peak Process-Tree RAM](../../metrics.md#peak-process-tree-ram)
 to the audio worker and its descendants, including decoding subprocesses. Monitor loading,
@@ -1000,12 +1130,15 @@ This measures simultaneous host demand, including media subprocesses.
 
 **Edge cases and availability:**
 
-See [shared resource-measurement rules](../../metrics.md#resource-measurements) and
-[execution prerequisites](#execution-and-measurement-prerequisites).
+Missing usable RAM samples make the peak unavailable. An interrupted monitoring
+window retains its observed peak as partial, not a complete-lifecycle peak; see
+[missing or partial resource measurements](../../metrics.md#missing-or-partial-resource-measurements).
 
 ### Peak Audio Device VRAM
 
 **Question:** What total GPU memory is occupied during audio preparation?
+
+**Calculation:**
 
 Apply [shared Peak Device VRAM](../../metrics.md#peak-device-vram) over loading,
 warmup, and measured audio preparation, ending before scoring and visual execution.
@@ -1016,9 +1149,10 @@ is not subtracted. This measures occupancy, not isolated model-weight bytes.
 
 **Edge cases and availability:**
 
-CPU applicability and CUDA telemetry follow
-[shared Peak Device VRAM](../../metrics.md#peak-device-vram)
-and [execution prerequisites](#execution-and-measurement-prerequisites).
+CPU execution makes VRAM inapplicable; missing required CUDA telemetry makes it
+unavailable. See [Peak Device VRAM](../../metrics.md#peak-device-vram).
+An interrupted monitoring window retains a partial peak under
+[missing or partial resource measurements](../../metrics.md#missing-or-partial-resource-measurements).
 
 ## Worked result interpretation
 
@@ -1076,8 +1210,11 @@ to spoken timing and event rates.
 
 Support requirements are frozen after data review, before authoritative
 evaluation; [pending-data-review](../../pending-data-review.md#video-extraction)
-records unresolved data-dependent support and annotation choices. Null bounds,
-undefined draws, and degenerate intervals follow the shared procedure.
+records unresolved data-dependent support and annotation choices. A defined
+point with insufficient support retains null bounds and a reason under
+[insufficient confidence-interval support](../../metrics.md#insufficient-confidence-interval-support).
+Undefined draws and equal bounds follow
+[undefined bootstrap draws and equal bounds](../../metrics.md#undefined-bootstrap-draws-and-equal-bounds).
 
 ### Interpretation
 

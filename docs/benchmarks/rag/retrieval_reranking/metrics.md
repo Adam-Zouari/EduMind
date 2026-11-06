@@ -34,9 +34,9 @@ as reporting context, not additional mandatory metrics.
 
 These definitions are the approved reporting contract. The
 [implementation status](methodology.md#implementation-status) distinguishes
-implemented reporting from remaining data-review requirements. Historical runs
-retain their original contracts. Worked examples are illustrative, not measured
-results.
+implemented reporting from pending reporting migrations and data-review
+requirements. Historical runs retain their original contracts. Worked examples
+are illustrative, not measured results.
 
 ## Metric summary
 
@@ -135,9 +135,12 @@ reinterpretation of source spans.
 ### Attempts, failures, and integrity
 
 Quality uses the designated first measured ranking after warmup, with later
-attempts supplying timing and Ranking Repeatability. Apply the
-[shared availability/status rules](../../metrics.md#shared-availability-rules)
-to failed outputs, missing records, and task-free slices.
+attempts supplying timing and Ranking Repeatability. A failed first attempt leaves
+quality unavailable; a later failure does not erase valid first-ranking quality.
+See [first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+Missing required records leave execution incomplete under
+[execution accounting](../../metrics.md#execution-accounting-and-result-completeness).
+A slice with no eligible questions is [inapplicable](../../metrics.md#no-applicable-task).
 
 Each reranker must receive the correct checksummed query pool and return exactly
 its chunk IDs once each, possibly in a different order. It cannot add, remove,
@@ -177,7 +180,7 @@ runtime integrity failures.
 Build time and final index size require a verified complete index; incomplete
 preparation retains progress separately. Partial resource scope is stored in
 `resources.parquet`/`candidate.json` under the
-[shared resource rules](../../metrics.md#resource-measurements).
+[missing or partial resource measurement rules](../../metrics.md#missing-or-partial-resource-measurements).
 
 ## Retrieval quality
 
@@ -186,7 +189,7 @@ preparation retains progress separately. Partial resource scope is stored in
 **Question:** How early does the stack place chunks containing more required
 evidence?
 
-Apply the [shared linear-gain nDCG rule](../../metrics.md#retrieval-evidence-quality)
+Apply the [linear-gain nDCG calculation](../../metrics.md#retrieval-gains-and-denominators)
 to the frozen chunk corpus. Its exact ideal is identical for every compared
 stack on that question, regardless of which top-20 pool was retrieved.
 
@@ -214,10 +217,12 @@ nDCG above one is a scoring-integrity error, not a value to clamp.
 
 | Edge case | Example | Value/status | Explanation |
 |---|---|---|---|
-| Zero ideal gain in a valid frozen corpus | Gold evidence exists, but every chunk fragments it and contains no complete unit. | `0` (`scored`), with the shared upstream-fragmentation limitation recorded. | Apply the [shared zero-ideal convention](../../metrics.md#retrieval-evidence-quality). |
+| Zero ideal gain in a valid frozen corpus | Gold evidence exists, but every chunk fragments it and contains no complete unit. | `0` (`scored`), with the shared upstream-fragmentation limitation recorded. | Apply the [zero-gain convention](../../metrics.md#zero-gain-and-short-rankings). |
 
-The [shared retrieval-evidence conventions](../../metrics.md#retrieval-evidence-quality)
-and [availability rules](../../metrics.md#shared-availability-rules) apply.
+A legitimately short corpus uses all available chunks at the unchanged cutoff;
+see [zero gain and short rankings](../../metrics.md#zero-gain-and-short-rankings).
+A failed or invalid first ranking leaves nDCG unavailable; see
+[failed or invalid outputs](../../metrics.md#failed-or-invalid-outputs).
 
 ### Evidence-unit Recall@3/@5
 
@@ -244,16 +249,18 @@ needed for a complete answer. No recovered units gives zero normally.
 
 **Edge cases and availability:**
 
-See the [shared retrieval-evidence conventions](../../metrics.md#retrieval-evidence-quality),
-[availability rules](../../metrics.md#shared-availability-rules), and
-[retrieval eligibility and integrity](#scoring-inputs-eligibility-and-result-status).
+No complete unit recovered from a valid ranking gives zero recall. A short
+corpus does not reduce the required-unit denominator; see
+[zero gain and short rankings](../../metrics.md#zero-gain-and-short-rankings).
+A failed or invalid first ranking instead leaves recall unavailable; see
+[failed or invalid outputs](../../metrics.md#failed-or-invalid-outputs).
 
 ### Evidence-token Precision@3/@5
 
 **Question:** What share of returned source-token occurrences is verified
 evidence?
 
-Apply the [shared evidence-token counting rule](../../metrics.md#retrieval-evidence-quality)
+Apply the [evidence-token counting rule](../../metrics.md#retrieval-gains-and-denominators)
 to canonical text in the final @3/@5 prefixes. This counts returned source-token
 occurrences, not native reranker inputs or distinct evidence units.
 
@@ -278,9 +285,9 @@ returned-token denominator follows the page-wide
 
 **Edge cases and availability:**
 
-See the [shared retrieval-evidence conventions](../../metrics.md#retrieval-evidence-quality),
-[availability rules](../../metrics.md#shared-availability-rules), and
-[retrieval eligibility and integrity](#scoring-inputs-eligibility-and-result-status).
+Valid returned text with no evidence overlap gives zero precision. A ranking
+with no valid returned source tokens leaves precision unavailable, not zero;
+see [zero-gain and invalid-token cases](../../metrics.md#zero-gain-and-short-rankings).
 
 ### alpha-nDCG@3/@5
 
@@ -297,7 +304,7 @@ In plain language:
     ------------------------------------------------
     discounted novelty gain of the greedy baseline
 
-The [shared greedy baseline](../../metrics.md#retrieval-evidence-quality) uses
+The [greedy normalization baseline](../../metrics.md#retrieval-gains-and-denominators) uses
 the complete frozen corpus and is the same for every stack on the question.
 
 **Example:** Chunks cover E1, E1, and E2. At @3, order E1, E1, E2 gives gain
@@ -322,9 +329,11 @@ The development-only exact-normalization review is in
 | Zero greedy-baseline gain in a valid corpus | No corpus chunk contains any complete required unit. | `0` (`scored`), under the zero-baseline convention. | Follow the shared upstream-fragmentation convention rather than dividing by zero. |
 | A valid ranking exceeds the greedy baseline | The uncapped novelty-gain ratio is `1.02`. | Report `1` (`scored`); retain `1.02` and the greedy-baseline-exceeded flag. | The deterministic greedy denominator is not a guaranteed maximum; exceeding it is not itself evaluation failure. |
 
-These are the [shared retrieval-evidence conventions](../../metrics.md#retrieval-evidence-quality).
-[Shared availability rules](../../metrics.md#shared-availability-rules) apply
-to failed rankings or evaluations.
+Zero baseline gain follows [zero gain and short rankings](../../metrics.md#zero-gain-and-short-rankings);
+a ratio above the greedy baseline follows [retrieval score bounds](../../metrics.md#retrieval-score-bounds).
+Failed rankings leave dependent quality unavailable, as do missing required
+evaluations; see [failed or invalid outputs](../../metrics.md#failed-or-invalid-outputs)
+and [missing evaluations](../../metrics.md#missing-measurements-or-evaluations).
 
 ### Candidate-pool Evidence-unit Recall@20
 
@@ -333,8 +342,8 @@ its rerankers?
 
 Apply Evidence-unit Recall to the verified pool before learned reranking.
 For RRF, use the fused pool, not the union of both source lists. A verified
-designated-first pool remains scoreable if reranking later fails, under the
-[shared pool-recall dependency rule](../../metrics.md#retrieval-evidence-quality).
+designated-first pool remains scoreable if reranking later fails; see
+[retrieval quality after downstream failure](../../metrics.md#retrieval-quality-after-downstream-failure).
 
 In plain language:
 
@@ -360,9 +369,10 @@ its complete available pool; record requested depth and actual size separately.
 
 **Edge cases and availability:**
 
-See the [shared retrieval-evidence conventions](../../metrics.md#retrieval-evidence-quality),
-[availability rules](../../metrics.md#shared-availability-rules), and
-[pool verification and result status](#attempts-failures-and-integrity).
+An invalid or incomplete first pool leaves pool recall unavailable; a later
+pool cannot replace it. A verified first pool remains scoreable after downstream
+reranker failure. See [retrieval quality after downstream failure](../../metrics.md#retrieval-quality-after-downstream-failure)
+and the [pending first-pool reporting migration](methodology.md#implementation-status).
 
 ## Ranking consistency
 
@@ -411,8 +421,9 @@ relevant.
 |---|---|---|---|
 | One-attempt smoke | One measured ranking, hence no scheduled pair. | `null` (`inapplicable`). | A single attempt cannot measure pairwise ranking repeatability. |
 
-Availability follows the shared
-[pairwise-repeatability contract](../../metrics.md#pairwise-repeatability).
+Executed failures contribute zero to their pairs; missing required outcomes
+leave repeatability incomplete, not a surviving-pair average. See
+[repeatability with failed or missing attempts](../../metrics.md#repeatability-with-failed-or-missing-attempts).
 
 ## Why the quality metrics are not interchangeable
 
@@ -466,9 +477,8 @@ quality.
 
 **Edge cases and availability:**
 
-See [shared availability rules](../../metrics.md#shared-availability-rules),
-[shared percentile rules](../../metrics.md#latency-percentiles), and
-[warm-latency observation rules](#operational-performance-1).
+No successful full-stack observation gives `null/unavailable`; one observation
+is its own p50. See [zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
 
 ### Full-Stack Warm Latency p95
 
@@ -484,9 +494,8 @@ quality.
 
 **Edge cases and availability:**
 
-See [shared availability rules](../../metrics.md#shared-availability-rules),
-[shared percentile rules](../../metrics.md#latency-percentiles), and
-[warm-latency observation rules](#operational-performance-1).
+No successful full-stack observation gives `null/unavailable`; one observation
+is its own p95. See [zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
 
 ### Retrieval Warm Latency p50
 
@@ -510,9 +519,10 @@ quality.
 
 **Edge cases and availability:**
 
-See [shared availability rules](../../metrics.md#shared-availability-rules),
-[shared percentile rules](../../metrics.md#latency-percentiles), and
-[warm-latency observation rules](#operational-performance-1).
+No completed retrieval observation gives `null/unavailable`; one observation
+is its own p50. See [zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
+Completed retrieval timing survives later reranker failure; see
+[completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests).
 
 ### Retrieval Warm Latency p95
 
@@ -529,9 +539,10 @@ quality.
 
 **Edge cases and availability:**
 
-See [shared availability rules](../../metrics.md#shared-availability-rules),
-[shared percentile rules](../../metrics.md#latency-percentiles), and
-[warm-latency observation rules](#operational-performance-1).
+No completed retrieval observation gives `null/unavailable`; one observation
+is its own p95. See [zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
+Completed retrieval timing survives later reranker failure; see
+[completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests).
 
 ### Reranker Warm Latency p50
 
@@ -557,10 +568,9 @@ quality.
 |---|---|---|---|
 | No learned reranker | `dense\|none`. | `null` (`inapplicable`); omit the scalar. | The stack has no learned-reranking task; its cost is not a measured zero. |
 
-The [shared availability rules](../../metrics.md#shared-availability-rules),
-[shared percentile rules](../../metrics.md#latency-percentiles), and
-[warm-latency observation rules](#operational-performance-1) apply when a
-reranker exists but completed timings are unavailable.
+When a reranker exists but no completed observation contributes, p50 is
+unavailable; one observation is its own p50. See
+[zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
 
 ### Reranker Warm Latency p95
 
@@ -581,10 +591,9 @@ quality.
 |---|---|---|---|
 | No learned reranker | `bm25\|none`. | `null` (`inapplicable`); omit the scalar. | There is no learned-reranking latency distribution to summarize. |
 
-The [shared availability rules](../../metrics.md#shared-availability-rules),
-[shared percentile rules](../../metrics.md#latency-percentiles), and
-[warm-latency observation rules](#operational-performance-1) apply when a
-reranker exists but completed timings are unavailable.
+When a reranker exists but no completed observation contributes, p95 is
+unavailable; one observation is its own p95. See
+[zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
 
 ### Cold Initialization Time
 
@@ -627,8 +636,10 @@ not a value to clamp to zero.
 
 **Edge cases and availability:**
 
-See [shared dependency and partial-observation rules](../../metrics.md#dependent-metrics-and-partial-observations) and
-[completed-measurement status rules](#attempts-failures-and-integrity).
+Incomplete initialization or a missing required interval leaves this derived
+time unavailable; see [undefined inputs to derived metrics](../../metrics.md#undefined-inputs-to-derived-metrics).
+Completed initialization survives later request failure; see
+[completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests).
 
 ### Peak Process-Tree RAM
 
@@ -644,8 +655,9 @@ excluding offline scoring/bootstrap calculations.
 
 **Edge cases and availability:**
 
-See [shared resource-measurement rules](../../metrics.md#resource-measurements) and
-[resource-window status rules](#attempts-failures-and-integrity).
+Missing usable RAM samples leave the peak unavailable. A peak from an interrupted
+window remains partial evidence, not proof that the full workload fits; see
+[missing or partial resource measurements](../../metrics.md#missing-or-partial-resource-measurements).
 
 ### Peak Device VRAM
 
@@ -665,8 +677,9 @@ lifecycle as this stack's RAM measurement.
 | CPU-only execution | CPU smoke without an assigned GPU. | `null` (`inapplicable`). | No GPU-memory task exists; this differs from a missing CUDA measurement. |
 
 [Shared CPU/CUDA availability rules](../../metrics.md#peak-device-vram) govern
-missing required CUDA telemetry (`null/unavailable`) and
-[partial resource windows](#attempts-failures-and-integrity).
+missing required CUDA telemetry (`null/unavailable`). A peak from an interrupted
+window remains partial evidence; see
+[missing or partial resource measurements](../../metrics.md#missing-or-partial-resource-measurements).
 
 ### Index Build Time — Dense
 
@@ -689,8 +702,9 @@ owns the observation; no baseline run is invented.
 
 **Edge cases and availability:**
 
-See [shared dependency and partial-observation rules](../../metrics.md#dependent-metrics-and-partial-observations) and
-[completed-build status rules](#attempts-failures-and-integrity).
+An incomplete Dense index has no completed build time; retain progress and
+elapsed-to-failure separately. A verified completed build survives later query
+failure; see [completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests).
 
 ### Index Build Time — BM25
 
@@ -716,8 +730,9 @@ copy component build scalars or invent a combined third build time.
 
 **Edge cases and availability:**
 
-See [shared dependency and partial-observation rules](../../metrics.md#dependent-metrics-and-partial-observations) and
-[completed-build status rules](#attempts-failures-and-integrity).
+An incomplete BM25 index has no completed build time; retain progress and
+elapsed-to-failure separately. A verified completed build survives later query
+failure; see [completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests).
 
 ## Workload descriptors
 
@@ -765,9 +780,9 @@ before its first query.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
-[verified-inventory status rules](#workload-descriptors-1).
+The verified document count remains known after candidate failure; it does not
+establish completed execution. See
+[partial work and complete measurements](../../metrics.md#partial-work-and-complete-measurements).
 
 #### Answerable Query Count
 
@@ -785,9 +800,9 @@ required allocation is rejected under [input prerequisites](#evidence-and-cutoff
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
-[verified-inventory status rules](#workload-descriptors-1).
+Request failures and missing execution do not reduce the planned question count;
+retain their separate support under
+[execution accounting](../../metrics.md#execution-accounting-and-result-completeness).
 
 #### Chunk Count
 
@@ -802,8 +817,8 @@ queries. Distinct IDs can legitimately contain identical text.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
+The verified chunk count remains known after query failure. An observed empty
+index is invalid, not successful indexing; see
 [index-integrity prerequisites](#attempts-failures-and-integrity).
 
 #### Requested Pool Size
@@ -819,9 +834,9 @@ retain the observed short pool and failure separately.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
-[verified-inventory status rules](#workload-descriptors-1).
+The requested depth remains known when retrieval fails or returns a short pool;
+it is not an observed output count. See
+[pool-size integrity requirements](#attempts-failures-and-integrity).
 
 #### Mean Actual Pool Size
 
@@ -842,9 +857,10 @@ If the entire corpus has 12 chunks, every valid pool instead has size 12.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
-[pool-diagnostic status rules](#workload-descriptors-1).
+If no pool was observed, the mean is unavailable, not zero; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
+An incomplete collection supplies only a partial diagnostic; see
+[partial work and complete measurements](../../metrics.md#partial-work-and-complete-measurements).
 
 #### Minimum Actual Pool Size
 
@@ -859,9 +875,10 @@ that an average alone can obscure.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
-[pool-diagnostic status rules](#workload-descriptors-1).
+If no pool was observed, the minimum is unavailable, not zero; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
+An emitted empty pool instead has observed size zero and fails integrity under
+the [pool-diagnostic rules](#workload-descriptors-1).
 
 #### Short-Pool Query Count
 
@@ -880,9 +897,11 @@ A complete collection without short pools gives zero.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
-[pool-diagnostic status rules](#workload-descriptors-1).
+Missing pools are not zero-sized short pools. An incomplete collection leaves
+the observed count partial; see
+[partial work and complete measurements](../../metrics.md#partial-work-and-complete-measurements).
+Short but corpus-complete pools remain distinct from invalid short outputs under
+the [pool-diagnostic rules](#workload-descriptors-1).
 
 ### Mean Retrieved Context Tokens@3/@5
 
@@ -909,8 +928,10 @@ query; p95 separately describes larger contexts.
 
 **Edge cases and availability:**
 
-See [shared context-count availability](../../metrics.md#retrieved-context-workload) and
-[token-count status rules](#workload-descriptors-1).
+If no complete first-ranking token total contributes, the mean is `null/unavailable`;
+a partial collection remains a labelled workload diagnostic. Later rankings do not
+replace a failed first observation. See
+[retrieved-context token availability](../../metrics.md#retrieved-context-token-availability).
 
 ### p95 Retrieved Context Tokens@3/@5
 
@@ -928,8 +949,9 @@ statistics rather than latency or correctness.
 
 **Edge cases and availability:**
 
-See [shared context-count availability](../../metrics.md#retrieved-context-workload) and
-[token-count status rules](#workload-descriptors-1).
+If no complete first-ranking total contributes, p95 is `null/unavailable`;
+one total is its own p95. A partial collection remains a labelled workload diagnostic. See
+[retrieved-context token availability](../../metrics.md#retrieved-context-token-availability).
 
 ### Candidate-Pool Tokens@20
 
@@ -955,9 +977,10 @@ remains an artifact diagnostic.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
-[pool-verification rules](#attempts-failures-and-integrity).
+An incomplete or unverified pool supplies no complete token count; retain
+partial progress only as a diagnostic. See
+[partial work and complete measurements](../../metrics.md#partial-work-and-complete-measurements)
+and [pool verification](#attempts-failures-and-integrity).
 
 ### Mean Reranker Input Tokens
 
@@ -987,9 +1010,10 @@ The same passage can have different native lengths for different rerankers.
 |---|---|---|---|
 | No learned reranker | `rrf\|none`. | `null` (`inapplicable`); omit the scalar. | No native reranker template or tokenizer workload is prepared. |
 
-[Shared availability rules](../../metrics.md#shared-availability-rules) and
-[prepared-input status rules](#workload-descriptors-1) apply when a reranker
-exists but complete token totals are unavailable.
+When a reranker exists but no complete token total contributes, the mean is
+unavailable; see [no contributing observations](../../metrics.md#no-contributing-observations).
+A fully prepared total survives later inference failure without establishing
+completed inference; see [prepared-input status rules](#workload-descriptors-1).
 
 ### p95 Reranker Input Tokens
 
@@ -1010,10 +1034,11 @@ tail of prepared per-query workload, not the largest individual pair length.
 |---|---|---|---|
 | No learned reranker | `dense\|none`. | `null` (`inapplicable`); omit the scalar. | No native reranker-input distribution exists to summarize. |
 
-The [shared availability rules](../../metrics.md#shared-availability-rules),
-[shared percentile rules](../../metrics.md#latency-percentiles), and
-[prepared-input status rules](#workload-descriptors-1) apply when a reranker
-exists but complete token totals are unavailable.
+When a reranker exists but no complete token total contributes, p95 is
+unavailable; see [no contributing observations](../../metrics.md#no-contributing-observations).
+One complete total is its own p95 under the [percentile calculation](../../metrics.md#latency-percentiles).
+Prepared totals survive later inference failure under the
+[prepared-input status rules](#workload-descriptors-1).
 
 ## Storage descriptors
 
@@ -1045,9 +1070,9 @@ Rerankers reference the owner rather than claiming separately built copies.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
-[verified-index status rules](#attempts-failures-and-integrity).
+An incomplete Dense index has no final size observation; retain progress
+separately. A verified complete size survives later query failure; see
+[partial work and complete measurements](../../metrics.md#partial-work-and-complete-measurements).
 
 ### Index Size — BM25
 
@@ -1067,9 +1092,9 @@ RRF references this state alongside Dense rather than creating a third copy.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
-[verified-index status rules](#attempts-failures-and-integrity).
+An incomplete BM25 index has no final size observation; retain progress
+separately. A verified complete size survives later query failure; see
+[partial work and complete measurements](../../metrics.md#partial-work-and-complete-measurements).
 
 ### Index Size — RRF and component sizes
 
@@ -1101,9 +1126,9 @@ preserve the known component size separately.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
-[verified-index status rules](#attempts-failures-and-integrity).
+If either dependency size is missing, the total is unavailable, not equal to
+the known component alone. Preserve that component separately; see
+[undefined inputs to derived metrics](../../metrics.md#undefined-inputs-to-derived-metrics).
 
 #### Dense Index Size — RRF
 
@@ -1122,9 +1147,9 @@ incremental storage.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
-[verified-index status rules](#attempts-failures-and-integrity).
+Missing verified Dense size leaves this component unavailable. A known Dense
+size remains available even if BM25 size is missing; see
+[undefined inputs to derived metrics](../../metrics.md#undefined-inputs-to-derived-metrics).
 
 #### BM25 Index Size — RRF
 
@@ -1142,9 +1167,9 @@ This identifies lexical storage without counting the same state twice.
 
 **Edge cases and availability:**
 
-Shared availability rules apply. See the
-[shared rules](../../metrics.md#shared-availability-rules) and
-[verified-index status rules](#attempts-failures-and-integrity).
+Missing verified BM25 size leaves this component unavailable. A known BM25
+size remains available even if Dense size is missing; see
+[undefined inputs to derived metrics](../../metrics.md#undefined-inputs-to-derived-metrics).
 
 Model snapshot size is preparation metadata (`snapshot_size_bytes`) in the model
 lock, not a per-candidate benchmark metric. See the
@@ -1184,8 +1209,9 @@ but retain metric-specific scored/unavailable support.
 averaging 0.4 give document-macro (0.8 + 0.4) / 2 = 0.6, not the
 question-weighted (10 × 0.8 + 2 × 0.4) / 12, approximately 0.73.
 
-A slice with no eligible questions is inapplicable; eligible questions without
-usable scores make its aggregate unavailable. Partial required quality remains an artifact
+A slice with no eligible questions is [inapplicable](../../metrics.md#no-applicable-task);
+eligible questions without usable scores make its aggregate
+[unavailable](../../metrics.md#no-contributing-observations). Partial required quality remains an artifact
 diagnostic, not a normal complete-result leaderboard value or paired selection
 comparison. For example, 0.90 on eight of ten questions cannot establish
 superiority over 0.85 on all ten. Complete first-ranking quality can survive a
@@ -1215,9 +1241,11 @@ that. Recalculate document-macro quality and pool recall; latency draws use
 the sampled documents' query-level successful-attempt medians before calculating
 each component's percentile. Repeatability draws recalculate each question's
 scheduled pair score and document-macro mean; they do not create new rankings or
-treat pairs as independent documents. The shared support, undefined-draw,
-paired-draw, and degenerate-bound rules apply. Diagnostic status does not waive
-source-support requirements; null bounds do not erase a defined descriptive point.
+treat pairs as independent documents. Insufficient or unfrozen support leaves
+defined points with null bounds, including diagnostics; see
+[confidence-interval support](../../metrics.md#insufficient-confidence-interval-support).
+Undefined draws do not enter the affected bounds, and equal bounds retain their
+degeneracy flag; see [undefined bootstrap draws and equal bounds](../../metrics.md#undefined-bootstrap-draws-and-equal-bounds).
 
 **Example:** nDCG@5 0.84 with CI [0.79, 0.88] describes the observed macro
 score and source-sampling uncertainty, not individual-question score ranges.

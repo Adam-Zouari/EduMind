@@ -45,18 +45,15 @@ primary results or expose a narrower failure mode. Primary status does not assig
 weights, combine categories into an overall score, or select a candidate
 automatically.
 
-Each metric has a self-contained explanation: question, calculation, example,
-interpretation, valid range, preferred direction, and an **Edge cases and availability:**
-block. Category introductions define shared rules such as element matching.
-The [shared availability rules](../../metrics.md#shared-availability-rules) apply
-to every metric; the individual blocks add only
-[genuine metric-specific exceptions](../../metrics.md#what-belongs-in-a-metrics-edge-case-block).
+Each metric explains its question, calculation, example, interpretation, range,
+direction, and edge cases. Category introductions define common operations such
+as element matching. Local edge-case blocks distinguish valid empty comparisons
+from failed outputs and link to the relevant shared rule.
 
 ## Metric summary
 
-The following tables provide the complete metric list for readers who only need
-to know what the document-extraction benchmark measures. The detailed contracts,
-examples, and confidence-interval rules follow the summary.
+These tables list every document-extraction metric. Detailed definitions,
+examples, and confidence-interval rules follow.
 
 ### Text content and recognition
 
@@ -160,8 +157,9 @@ source document and all its dependent observations.
 Eligibility comes from each authoritative reference's explicit
 `reference_capabilities` list: `text`, `pages`, `reading_order`,
 `layout_boxes`, `element_types`, `hierarchy`, `tables`, and `formulas`. Smoke
-fixtures may infer this list from inline annotations. A missing capability marks
-the metric inapplicable, retaining its reason rather than fabricating a zero.
+fixtures may infer this list from inline annotations. An unclaimed capability means
+the task is inapplicable; retain its reason and null value under
+[no applicable task](../../metrics.md#no-applicable-task).
 Table/formula capabilities use explicit
 `has_table:false` and `has_formula:false` negatives in detection counts.
 
@@ -191,13 +189,18 @@ task. Missing or incorrect predictions for existing eligible reference elements
 receive zero rather than becoming inapplicable. An explicitly annotated root
 with no parent is meaningful; an absent parent annotation is not a verified root.
 
-Per-document statuses, nulls, first-output failures, and retained support follow
-the [shared availability rules](../../metrics.md#shared-availability-rules);
-invalid references follow [data validation](../../data-validation.md#data-validity-and-metric-applicability).
-For document extraction, output-dependent quality includes Content, layout,
-reconstruction, and Reading Order NED. Quality aggregates describe valid
-completed first outputs, not replacement outputs from later attempts. Attempt
-Failure Rate and repeatability use their separate calculations below.
+Artifacts retain per-document nulls, statuses, reasons, and support; MLflow omits
+null scalars under [metric status and MLflow storage](../../metrics.md#metric-status-and-mlflow-storage).
+Invalid references follow [data validation](../../data-validation.md#data-validity-and-metric-applicability).
+
+A failed first attempt leaves output-dependent quality unavailable, including
+Content, layout, reconstruction, and Reading Order NED. Later success cannot
+replace that output, and later failure does not erase valid first-output quality;
+see [first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+Quality aggregates therefore describe valid completed first outputs. An
+applicable aggregate with none is unavailable under
+[no contributing observations](../../metrics.md#no-contributing-observations).
+Attempt Failure Rate and repeatability use their separate calculations below.
 
 Document artifacts retain one `timings.parquet` row per scheduled measured
 attempt, including explicit not-executed outcomes under the shared rules.
@@ -348,11 +351,11 @@ Repeated token occurrences are counted; token sets are not used.
 
 **Question:** How much extracted content is supported by the reference?
 
+**Calculation:**
+
 Repeated occurrences are matched only up to the smaller count in the reference
 and prediction. For example, if a word appears twice in the reference and three
 times in the prediction, only two occurrences are correct.
-
-In plain language:
 
 ```text
 correct extracted tokens
@@ -382,16 +385,19 @@ High precision means the extractor rarely adds incorrect text.
 | Both projected token sequences are empty | Blank reference and valid empty output | `1` (`scored`) | Correct absence receives full credit. |
 | No predicted tokens, but reference tokens exist | Required text with valid empty output | `0` (`scored`) | The prediction denominator is zero; the explicit convention assigns zero. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Content Recall
 
 **Question:** How much required content was recovered?
 
+**Calculation:**
+
 Repeated occurrences are matched only up to the smaller count in the reference
 and prediction, using the same rule as Content Precision.
-
-In plain language:
 
 ```text
 correct extracted tokens
@@ -420,17 +426,20 @@ Everything extracted is correct, but half of the reference content is missing.
 | Both projected token sequences are empty | Blank reference and valid empty output | `1` (`scored`) | Correct absence receives full credit despite the empty reference denominator. |
 | No reference tokens, but predicted tokens exist | Invented text on a verified blank source | `0` (`scored`) | The reference denominator is zero; the explicit convention assigns zero. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Content F1
 
 **Question:** Does the extractor balance correct output and complete output?
 
+**Calculation:**
+
 Content F1 combines the Content Precision and Content Recall calculated above.
 Repeated token occurrences still count only up to the smaller reference and
 prediction count.
-
-In plain language:
 
 ```text
 2 × Content Precision × Content Recall
@@ -457,16 +466,19 @@ Content F1 = (2 × 1.00 × 0.50) / (1.00 + 0.50) = 0.67
 | Both projected token sequences are empty | Blank reference and valid empty output | `1` (`scored`) | The explicit empty-comparison convention precedes the harmonic-mean calculation. |
 | Precision and recall are both zero | One-sided empty comparison, or nonempty token sequences with no overlap | `0` (`scored`) | Define the harmonic mean when its denominator is zero. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Character Error Rate (CER)
 
 **Question:** How severe are character-recognition errors?
 
+**Calculation:**
+
 The evaluator finds the minimum character substitutions, deletions, and
 insertions needed to transform the reference into the prediction.
-
-In plain language:
 
 ```text
 character substitutions + deletions + insertions
@@ -503,16 +515,19 @@ to this document's projected characters:
 | Both projected strings are empty | Blank reference and valid empty output | `0` (`scored`) | No character edits are required. |
 | Empty projected reference, nonempty prediction | Reference `""`, prediction `abc` | `3` (`scored`) | Return the character insertion count, not a ratio with a zero denominator. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Word Error Rate (WER)
 
 **Question:** How severe are complete-word errors?
 
+**Calculation:**
+
 The evaluator finds the minimum word substitutions, deletions, and insertions
 needed to transform the reference into the prediction.
-
-In plain language:
 
 ```text
 word substitutions + deletions + insertions
@@ -548,12 +563,17 @@ to this document's projected words:
 | Both projected strings are empty | Blank reference and valid empty output | `0` (`scored`) | No word edits are required. |
 | Empty projected reference, nonempty prediction | Reference `""`, prediction `extra words` | `2` (`scored`) | Return the word insertion count, not a ratio with a zero denominator. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Reading Order NED
 
 **Question:** How much editing is needed to recover the complete expected
 element sequence?
+
+**Calculation:**
 
 Build the complete reference and prediction sequences using the frozen eligible
 element types and segmentation granularity. One-to-one matched predictions
@@ -561,8 +581,6 @@ inherit their reference identities. Unmatched predicted elements receive distinc
 extra identities; unmatched reference elements remain in the reference sequence.
 Match without using order correctness to optimize the pairing. Compare element
 identities, not characters in their serialized IDs.
-
-In plain language:
 
 ```text
 minimum element insertions + deletions + substitutions
@@ -583,8 +601,8 @@ For `A → B → X → C`, one extra element gives `1 / 4 = 0.25`. For
 `B → A → C`, two substitutions give `2 / 3 = 0.67`. The score captures complete
 sequence recovery, including omissions, insertions, order, and segmentation
 differences; it is not a pure ordering accuracy conditional on successful matches.
-This complete-sequence contract is an EduMind adaptation, not a claim of exact
-equivalence to OmniDocBench's matched-element reading-order evaluation.
+This complete-sequence contract is EduMind's adaptation; it differs from
+OmniDocBench's matched-element reading-order evaluation.
 
 One correct element with no extras receives zero, but one match out of a longer
 reference is not perfect. If exactly one complete sequence is empty, every
@@ -599,7 +617,10 @@ ordinary calculation.
 |---|---|---|---|
 | Both complete element sequences are empty | Explicit empty reference order and valid empty output | `0` (`scored`) | No edits are needed; the longer-sequence denominator would otherwise be zero. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ## Pages
 
@@ -621,12 +642,12 @@ ordinary calculation.
 
 **Question:** Did every expected page produce relevant content?
 
+**Calculation:**
+
 Each reference content-bearing page counts as covered when at least one expected
 usable content unit is matched to output on that page. Usable page content can
 include an annotated table, formula, or other required structure, not only prose.
 Empty text by itself does not establish a match.
-
-In plain language:
 
 ```text
 reference pages containing matched content
@@ -653,11 +674,16 @@ not establish that all content on those pages was recovered correctly.
 | No reference content-bearing pages but usable predicted content | Invented text on a verified blank PDF | `0` (`scored`) | Unsupported content does not earn blank-source coverage. |
 | No fixed physical-page task | Native DOCX without rendering | `null` (`inapplicable`) | Native pagination is not invented for scoring. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Page Content F1
 
 **Question:** Was the correct text recovered within the correct page?
+
+**Calculation:**
 
 Prose Content F1 is calculated separately for every expected page and then
 averaged within the document, including unexpected predicted page numbers
@@ -665,8 +691,6 @@ as additional zero-score observations, even when the unexpected page text is
 blank. Missing output on a page with nonempty projected
 reference text receives zero. This metric evaluates page text, not non-text structure;
 Page Coverage and the table/formula metrics evaluate that recovery separately.
-
-In plain language:
 
 ```text
 sum of individual page Content F1 scores
@@ -697,12 +721,17 @@ This metric penalizes missing, incorrect, misplaced, and unexpected page content
 | No fixed physical-page task | Native DOCX without rendering | `null` (`inapplicable`) | Native pagination is not invented for scoring. |
 
 The [Content F1 zero-denominator rule](#content-f1) applies within each expected
-page. [Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+page. A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Page Attribution Recall
 
 **Question:** How many expected content-bearing elements were recovered on the
 correct page?
+
+**Calculation:**
 
 For this metric, Hungarian one-to-one content matching maximizes total Content
 F1 over admissible pairs with `Content F1 >= 0.5`; page numbers are deliberately
@@ -713,8 +742,6 @@ as in the common matching rules. Empty text or a non-text identity alone is not
 eligible for this content-first diagnostic. Each eligible reference element
 receives one only when it is recovered and its predicted page is correct.
 Missing elements and missing or wrong predicted page labels receive zero.
-
-In plain language:
 
 ```text
 matched elements assigned to the correct page
@@ -737,11 +764,16 @@ reference elements are recovered and seven have the right page, recall is
 | No eligible reference content-bearing page elements | Annotated page elements have no comparison text | `null` (`inapplicable`) | No eligible reference denominator exists for this content-first task. |
 | No fixed physical-page task | Native DOCX without rendering | `null` (`inapplicable`) | Native pagination is not invented for scoring. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Duplicate Page Rate
 
 **Question:** How often did the parser repeat a page?
+
+**Calculation:**
 
 Page records with nonempty projected page text are near-duplicates when their
 Content F1 is at least `0.95`. Empty projected text cannot establish page
@@ -756,8 +788,6 @@ predicted records in emitted order. A record similar to an existing
 representative counts as an unsupported duplicate; otherwise retain it as a
 new representative. Similarity is always checked against a representative, not
 transitively through previously counted duplicates.
-
-In plain language:
 
 ```text
 unsupported duplicated page-text records
@@ -790,7 +820,10 @@ copy counts as duplication; the unsupported first copy affects content quality.
 | No predicted page has comparison text | Valid empty output, or pages containing only non-text structures | `0` (`scored`) | The text-duplication denominator is empty; no repeated page text was observed. |
 | No fixed physical-page task | Native DOCX without rendering | `null` (`inapplicable`) | Native pagination is not invented for scoring. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ## Layout and document structure
 
@@ -857,10 +890,10 @@ reference-denominator versions as additional headline metrics.
 
 **Question:** How many predicted document elements are real?
 
+**Calculation:**
+
 One-to-one matched elements count as correct; unmatched predicted elements count
 as extra.
-
-In plain language:
 
 ```text
 correctly detected document elements
@@ -883,16 +916,19 @@ is `8 / 9 = 0.89`.
 | Both evaluated element sets are empty | Explicit empty layout reference and valid empty output | `1` (`scored`) | Correct absence receives full credit. |
 | No predicted elements, but reference elements exist | Required elements with valid empty output | `0` (`scored`) | The prediction denominator is zero; the explicit convention assigns zero. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Layout Element Recall
 
 **Question:** How many required document elements were detected?
 
+**Calculation:**
+
 One-to-one matched elements count as correct; unmatched reference elements count
 as missed.
-
-In plain language:
 
 ```text
 correctly detected document elements
@@ -915,18 +951,21 @@ blocks were missed.
 | Both evaluated element sets are empty | Explicit empty layout reference and valid empty output | `1` (`scored`) | Correct absence receives full credit despite the empty reference denominator. |
 | No reference elements, but predicted elements exist | Invented elements on a verified negative source | `0` (`scored`) | The reference denominator is zero; the explicit convention assigns zero. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Layout Element F1
 
 **Question:** Does layout detection balance false and missed elements?
 
+**Calculation:**
+
 Layout Element F1 combines Layout Element Precision and Recall calculated from
 that document's matched, extra, and missed element counts. Calculate document
 F1 first, then macro-average the document scores; do not pool counts across
 documents.
-
-In plain language:
 
 ```text
 2 × Layout Precision × Layout Recall
@@ -952,18 +991,21 @@ Layout F1        ≈ 0.84
 | Both evaluated element sets are empty | Explicit empty layout reference and valid empty output | `1` (`scored`) | Apply the empty-detection convention before the harmonic mean. |
 | Precision and recall are both zero | One-sided empty comparison, or nonempty sets with no admissible matches | `0` (`scored`) | Define the harmonic mean when its denominator is zero. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Element Type Recall
 
 **Question:** How many expected elements were recovered with the correct type?
 
+**Calculation:**
+
 Every eligible reference element receives credit only when it is matched and
 its predicted type equals its annotated type. Missing elements and wrong or
 missing predicted types receive zero. Reference elements without a type
 annotation are not in the denominator.
-
-In plain language:
 
 ```text
 matched elements assigned the correct type
@@ -984,12 +1026,17 @@ no type credit. Predicting no elements receives zero, not an undefined score.
 |---|---|---|---|
 | No type-annotated reference elements | Explicit empty eligible element set | `null` (`inapplicable`) | No reference type task exists; this is not a missed-element score. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Hierarchy Preservation Rate
 
 **Question:** How many expected annotated elements retained their required
 parent and level?
+
+**Calculation:**
 
 Every reference element with explicit hierarchy annotations is in the
 denominator. It receives credit only when recovered and every claimed parent
@@ -999,8 +1046,6 @@ that is not recovered cannot establish a correct relationship. An explicitly
 annotated root requires an explicit no-parent value in the prediction; an omitted
 parent annotation is not a verified root. Unclaimed reference attributes are
 not scored; missing required prediction attributes or a missing element earn zero.
-
-In plain language:
 
 ```text
 recovered elements with correct claimed hierarchy
@@ -1024,14 +1069,19 @@ claimed relationships correct, the rate is `3 / 10 = 0.30`.
 |---|---|---|---|
 | No hierarchy-annotated reference elements | Explicit empty eligible element set | `null` (`inapplicable`) | No parent/level task exists. An explicitly annotated root remains eligible. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Mean Bounding-Box Intersection over Union (IoU)
 
 **Question:** How accurately were expected elements localized, including missed
 elements?
 
-In plain language, IoU for one matched element is:
+**Calculation:**
+
+IoU for one matched element is:
 
 ```text
 area shared by reference and predicted boxes
@@ -1069,7 +1119,10 @@ but not interchangeable with, thresholded Layout Recall.
 |---|---|---|---|
 | No eligible reference boxes | Explicit empty box set, or native DOCX without fixed visual geometry | `null` (`inapplicable`) | There is no reference localization task. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ## Tables
 
@@ -1111,10 +1164,10 @@ its text recovered, and was its structure reconstructed?
 
 **Question:** How many predicted tables are real tables?
 
+**Calculation:**
+
 One-to-one matched table regions count as correct; unmatched predicted tables
 count as extra.
-
-In plain language:
 
 ```text
 correctly detected tables
@@ -1137,16 +1190,19 @@ precision is `8 / 10 = 0.80`.
 | Verified table-free reference and no predicted tables | `has_table:false`, valid output with no tables | `1` (`scored`) | Correct absence is a detection result, not an inapplicable reconstruction task. |
 | No predicted tables, but reference tables exist | Table-bearing source with valid empty table output | `0` (`scored`) | The prediction denominator is zero; the explicit convention assigns zero. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Table Detection Recall
 
 **Question:** How many reference tables were found?
 
+**Calculation:**
+
 One-to-one matched table regions count as correct; unmatched reference tables
 count as missed.
-
-In plain language:
 
 ```text
 correctly detected tables
@@ -1168,17 +1224,20 @@ It reveals how many real tables were found.
 | Verified table-free reference and no predicted tables | `has_table:false`, valid output with no tables | `1` (`scored`) | Correct absence receives full credit despite the empty reference denominator. |
 | No reference tables, but predicted tables exist | Invented tables on a verified table-free source | `0` (`scored`) | The reference denominator is zero; the explicit convention assigns zero. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Table Detection F1
 
 **Question:** Does table detection balance extra and missed tables?
 
+**Calculation:**
+
 Table Detection F1 combines Table Detection Precision and Recall calculated
 from each document's matched, extra, and missed table-region counts. Average
 the document F1 values equally; do not pool counts across documents.
-
-In plain language:
 
 ```text
 2 × Table Detection Precision × Table Detection Recall
@@ -1201,7 +1260,10 @@ approximately `0.84`.
 | Verified table-free reference and no predicted tables | `has_table:false`, valid output with no tables | `1` (`scored`) | Apply the empty-detection convention before the harmonic mean. |
 | Precision and recall are both zero | One-sided empty comparison, or nonempty table sets with no admissible matches | `0` (`scored`) | Define the harmonic mean when its denominator is zero. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Table-content scoring rules
 
@@ -1220,6 +1282,8 @@ predictions cannot create a reconstruction task on a table-free source.
 ### Table Content Precision
 
 **Question:** How much text in each recovered expected table is supported?
+
+**Calculation:**
 
 ```text
 Table Content Precision = matched token occurrences / predicted token occurrences
@@ -1242,11 +1306,16 @@ does not establish complete recovery or correct row/column placement.
 | Recovered table has empty projected cell text on both sides | Matched blank-cell table with empty predicted cell text | Table contribution `1` (`scored`) | Correct empty text receives full credit; structure is scored by TEDS/TEDS-S. |
 | Recovered table has empty predicted cell text but nonempty reference cell text | Required words omitted from a matched table | Table contribution `0` (`scored`) | The predicted-text denominator is zero; the explicit convention assigns zero. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Table Content Recall
 
 **Question:** How much of each expected table's text was recovered?
+
+**Calculation:**
 
 ```text
 Table Content Recall = matched token occurrences / reference token occurrences
@@ -1269,11 +1338,16 @@ that recovered values were assigned to the right cells.
 | Recovered table has empty projected cell text on both sides | Matched blank-cell table with empty predicted cell text | Table contribution `1` (`scored`) | Correct empty text receives full credit despite the empty reference-text denominator. |
 | Recovered table has empty reference cell text but nonempty predicted cell text | Invented words in a matched blank-cell table | Table contribution `0` (`scored`) | The reference-text denominator is zero; the explicit convention assigns zero. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Table Content F1
 
 **Question:** Does each expected table balance supported and complete cell text?
+
+**Calculation:**
 
 ```text
 Table Content F1 = 2 × table precision × table recall / (table precision + table recall)
@@ -1300,7 +1374,10 @@ can still coexist with wrong cells or merged spans; TEDS evaluates those errors.
 | Recovered table has empty projected cell text on both sides | Matched blank-cell table with empty predicted cell text | Table contribution `1` (`scored`) | Apply the empty-text convention before the harmonic mean; structure is scored separately. |
 | Table precision and recall are both zero | Recovered table with one-sided empty text or nonempty but disjoint cell-text tokens | Table contribution `0` (`scored`) | Define the harmonic mean when its denominator is zero. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Table-scorer normalization
 
@@ -1324,15 +1401,16 @@ and stripped wrappers are intentionally not separate fidelity tasks.
 Evaluator acceptance must include an identical-table baseline, equivalent
 header/wrapper representations, changed header text that remains different after
 normalization with unchanged structure (TEDS decreases; TEDS-S stays one), and
-changed header row/column spans (both decrease). These are required perturbation
-checks, not claimed test results or
-new quality metrics. A self-comparison alone is insufficient. Reference validity
+changed header row/column spans (both decrease). These required perturbation
+checks establish evaluator acceptance; they are not additional quality metrics,
+and their results are not yet established.
+A self-comparison alone is insufficient. Reference validity
 still follows [data validation](../../data-validation.md#document-references-including-blank-sources).
 
 **Pending implementation:** the current project worker only adds an HTML/body
 envelope and calls TEDS directly. Migrating it to the symmetric pinned function,
 retaining both raw and scorer-facing HTML, and verifying the perturbations remain
-required before claiming this updated contract. Record the normalizer's revision,
+required before the implementation meets this approved contract. Record the normalizer's revision,
 wrapper revision, evaluator image digest, and representations/checksums with the
 existing evaluation evidence. Preserve historical scores under their old identity;
 rescoring creates [versioned evidence](../../metrics.md#prediction-evidence-and-rescoring).
@@ -1343,12 +1421,14 @@ This change concerns TEDS/TEDS-S, not table-detection matching or prose cleanup.
 **Question:** How similar is the complete predicted table tree, including its
 structure and cell text, to the reference?
 
+**Calculation:**
+
 TEDS represents the [normalized scorer-facing HTML](#table-scorer-normalization)
 as a tree and converts the normalized edit distance between the reference and
 prediction into a similarity score. Unlike
 TEDS-S, edits to cell text affect the result.
 
-In plain language, subtract the official tree-edit cost divided by the larger
+Subtract the official tree-edit cost divided by the larger
 table-tree size from one. Node edits include structural differences and the
 official cell-text substitution cost; they are not simply a count of wrong
 cells. The pinned evaluator supplies tree parsing, costs, and edit-distance
@@ -1384,23 +1464,28 @@ eligible documents. Unmatched extra tables are handled by detection precision.
 | No reference tables | Verified table-free document | `null` (`inapplicable`) | There is no reference tree to reconstruct; detection still applies. |
 | Known invalid predicted table tree within an otherwise valid output | A recovered table has a malformed reconstruction | Table contribution `0` (`scored`) | This is the established reconstruction-evaluator convention, not an official evaluator crash or a failed extraction attempt. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules);
-official evaluator availability follows the [page-wide result rules](#scoring-inputs-eligibility-and-result-status).
+A failed first extraction leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+An evaluator crash or missing result leaves the affected evaluation unavailable,
+not zero; see [missing measurements or evaluations](../../metrics.md#missing-measurements-or-evaluations).
+Required evaluation gaps leave aggregates incomplete under the
+[document result rules](#scoring-inputs-eligibility-and-result-status).
 
 ### TEDS-S
 
 **Question:** Was the table's row/cell structure and its merged-cell spans
 reconstructed correctly, ignoring cell text?
 
-In plain language:
+**Calculation:**
 
 ```text
 TEDS-S = 1 − normalized table-tree edit distance
 ```
 
 The evaluator compares the [normalized scorer-facing table trees](#table-scorer-normalization),
-including row/cell tags and row/column spans. It divides the official structural edit cost by the larger
-tree size, subtracts that normalized distance from one, and then averages
+including row/cell tags and row/column spans. It divides the official structural
+edit cost by the larger tree size, subtracts that normalized distance from one,
+and then averages
 reference-table scores within each document before averaging eligible documents
 equally. Cell text is ignored, so this score focuses on structure rather than
 header wording or cell-value placement:
@@ -1430,11 +1515,15 @@ TEDS-S with low Table Content Recall means the shape is right but text is missin
 | No reference tables | Verified table-free document | `null` (`inapplicable`) | There is no reference structure to reconstruct; detection still applies. |
 | Known invalid predicted table tree within an otherwise valid output | A recovered table has a malformed reconstruction | Table contribution `0` (`scored`) | This is the established reconstruction-evaluator convention, not an official evaluator crash or a failed extraction attempt. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules);
-official evaluator availability follows the [page-wide result rules](#scoring-inputs-eligibility-and-result-status).
+A failed first extraction leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+An evaluator crash or missing result leaves the affected evaluation unavailable,
+not zero; see [missing measurements or evaluations](../../metrics.md#missing-measurements-or-evaluations).
+Required evaluation gaps leave aggregates incomplete under the
+[document result rules](#scoring-inputs-eligibility-and-result-status).
 
-Both scores retain the pinned official tree-edit implementation. Its use alone
-does not certify the project's still-pending normalization path described above.
+Both scores retain the pinned official tree-edit implementation. The required
+project-side normalization remains pending as described above.
 
 ## Mathematical formulas
 
@@ -1467,10 +1556,10 @@ into empty-string matches. Empty claimed reference expressions are invalid data.
 
 **Question:** How many predicted formula regions are real formulas?
 
+**Calculation:**
+
 Matched formula regions count as correct; unmatched predicted formula regions
 count as extra.
-
-In plain language:
 
 ```text
 correctly detected formula regions
@@ -1493,16 +1582,19 @@ mathematical formulas.
 | Verified formula-free reference and no predicted formulas | `has_formula:false`, valid output with no formulas | `1` (`scored`) | Correct absence is a detection result, not an inapplicable recognition task. |
 | No predicted formulas, but reference formulas exist | Formula-bearing source with valid empty formula output | `0` (`scored`) | The prediction denominator is zero; the explicit convention assigns zero. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Formula Detection Recall
 
 **Question:** How many reference formulas were found?
 
+**Calculation:**
+
 Matched formula regions count as correct; unmatched reference formula regions
 count as missed.
-
-In plain language:
 
 ```text
 correctly detected formula regions
@@ -1524,17 +1616,20 @@ It reveals how many real formulas were found.
 | Verified formula-free reference and no predicted formulas | `has_formula:false`, valid output with no formulas | `1` (`scored`) | Correct absence receives full credit despite the empty reference denominator. |
 | No reference formulas, but predicted formulas exist | Invented formulas on a verified formula-free source | `0` (`scored`) | The reference denominator is zero; the explicit convention assigns zero. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Formula Detection F1
 
 **Question:** Does formula detection balance extra and missed formulas?
 
+**Calculation:**
+
 Formula Detection F1 combines Formula Detection Precision and Recall calculated
 from each document's matched, extra, and missed formula-region counts. Average
 the document F1 values equally; do not pool counts across documents.
-
-In plain language:
 
 ```text
 2 × Formula Detection Precision × Formula Detection Recall
@@ -1557,12 +1652,17 @@ approximately `0.82`.
 | Verified formula-free reference and no predicted formulas | `has_formula:false`, valid output with no formulas | `1` (`scored`) | Apply the empty-detection convention before the harmonic mean. |
 | Precision and recall are both zero | One-sided empty comparison, or nonempty formula sets with no admissible matches | `0` (`scored`) | Define the harmonic mean when its denominator is zero. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Formula Recognition Similarity (CDM)
 
 **Question:** How visually and structurally close is each recognized formula to
 its reference?
+
+**Calculation:**
 
 The official evaluator renders each reference and predicted formula, then
 matches their character regions and positions. It compares matched characters
@@ -1572,8 +1672,6 @@ returns `F1_score` rounded to three decimal places. Keep that official similarit
 average the returned per-formula values within each document, including zero for
 misses, then macro-average eligible documents. Do not replace this metric with
 an unrounded variant or round document values again before aggregation.
-
-In plain language:
 
 ```text
 raw character F1 = 2 × tp / (gt_tokens + pred_tokens)
@@ -1608,13 +1706,19 @@ separately from raw counts below; neither metric proves mathematical equivalence
 | No reference formulas | Verified formula-free document | `null` (`inapplicable`) | There is no reference-formula recognition task; detection still applies. |
 | Known invalid predicted expression within an otherwise valid output | A recovered formula has a malformed reconstruction | Formula contribution `0` (`scored`) | Apply the established reconstruction convention rather than confusing it with an official renderer/evaluator failure. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules);
-official evaluator availability follows the [page-wide result rules](#scoring-inputs-eligibility-and-result-status).
+A failed first extraction leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+An evaluator crash or missing result leaves the affected evaluation unavailable,
+not zero; see [missing measurements or evaluations](../../metrics.md#missing-measurements-or-evaluations).
+Required evaluation gaps leave aggregates incomplete under the
+[document result rules](#scoring-inputs-eligibility-and-result-status).
 
 ### Formula Exact Match (ExpRate@CDM)
 
 **Question:** How often are all rendered reference and predicted character
 regions matched, with no missed or extra regions?
+
+**Calculation:**
 
 The approved EduMind policy is **`cdm_exact_counts_v1`**: for a successfully
 evaluated formula, the exact-match indicator is one if and only if
@@ -1622,8 +1726,6 @@ evaluated formula, the exact-match indicator is one if and only if
 pinned official CDM evaluation. Otherwise it is zero. This policy versions the
 strict exactness interpretation; it is not the test `F1_score == 1.0` on the
 official three-decimal similarity, nor an implemented protocol setting.
-
-In plain language:
 
 ```text
 reference formulas satisfying the exact-count predicate
@@ -1663,8 +1765,12 @@ LaTeX byte equality or a guarantee of mathematical meaning.
 | Known invalid predicted expression within an otherwise valid output | A recovered formula has a malformed reconstruction | Formula contribution `0` (`scored`) | It cannot be a perfect reconstruction under the established evaluator convention. |
 | Official similarity is available but raw counts are absent | A legacy result retains only rounded CDM `1.000` | `null` (`unavailable`) for strict exactness | Do not infer exactness or invent counts; independently complete CDM similarity remains available. Missed/known-invalid predictions retain their explicit zero convention. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules);
-official evaluator availability follows the [page-wide result rules](#scoring-inputs-eligibility-and-result-status).
+A failed first extraction leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+An evaluator crash or missing result leaves the affected evaluation unavailable,
+not zero; see [missing measurements or evaluations](../../metrics.md#missing-measurements-or-evaluations).
+Required evaluation gaps leave aggregates incomplete under the
+[document result rules](#scoring-inputs-eligibility-and-result-status).
 
 **Pending implementation and provenance:** the project worker currently returns
 only `F1_score`, and document aggregation tests that rounded scalar for equality
@@ -1678,9 +1784,9 @@ exact-match results remain identifiable as the old definition; they cannot be
 relabeled as strict-count results without a versioned rescore of saved predictions.
 
 The [CDM paper](https://openaccess.thecvf.com/content/CVPR2025/html/Wang_Image_Over_Text_Transforming_Formula_Recognition_Evaluation_with_Character_Detection_CVPR_2025_paper.html)
-motivates character-based similarity and expression recognition rate. The
-exact-count predicate above is EduMind's explicit versioned policy using the
-official counts, not a claim that rounded-score equality proves perfect recovery.
+motivates character-based similarity and expression recognition rate. EduMind's
+versioned exact-count policy uses the official counts; rounded-score equality
+does not establish perfect recovery.
 
 ## Reliability and failure behavior
 
@@ -1698,7 +1804,7 @@ automatically select or disqualify a candidate.
 **Question:** How often does extraction complete empty when the source requires
 usable content?
 
-In plain language:
+**Calculation:**
 
 ```text
 documents whose valid first output is unexpectedly empty
@@ -1727,16 +1833,17 @@ unexpected empty successes.
 
 **Edge cases and availability:**
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
-The [page-wide execution rules](#scoring-inputs-eligibility-and-result-status)
-preserve the scheduled-document denominator.
+A failed first attempt is not an empty-output event, but its document remains
+in the scheduled denominator. Missing first-attempt records make the rate
+incomplete; see [execution accounting](../../metrics.md#execution-accounting-and-result-completeness)
+and the [scheduled-document denominator](#scoring-inputs-eligibility-and-result-status).
 
 ### Duplicate Content Rate
 
 **Question:** How much repeated token content did the parser add without source
 support?
 
-In plain language:
+**Calculation:**
 
 ```text
 unsupported repeated content units
@@ -1768,12 +1875,17 @@ missing content; duplication alone does not.
 |---|---|---|---|
 | Valid empty projected prediction | Completed output with no projected prose tokens | `0` (`scored`) | The predicted-token denominator is empty; no repeated prose content was observed. |
 
-[Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+A failed first attempt leaves this score unavailable; see
+[first and later attempt failures](../../metrics.md#first-and-later-attempt-failures).
+No contributing value leaves an applicable aggregate unavailable; see
+[no contributing observations](../../metrics.md#no-contributing-observations).
 
 ### Repeatability Success Rate
 
 **Question:** How often do two scheduled attempts both deliver the same valid
 structured output?
+
+**Calculation:**
 
 Apply [shared pairwise repeatability](../../metrics.md#pairwise-repeatability)
 to each document's three measured attempts in development, validation, and
@@ -1789,7 +1901,7 @@ comparison precision are frozen and recorded, not selected after observing
 differences. Each attempt must execute extraction rather than return a cached
 previous result. Model and runtime-buffer reuse is expected.
 
-In plain language, for one document:
+For one document:
 
 ```text
 successful identical-output attempt pairs
@@ -1826,13 +1938,16 @@ observed failures.
 |---|---|---|---|
 | Profile schedules only one measured attempt | Smoke's one attempt per fixture | `null` (`inapplicable`) (`repeatability_not_measured`) | No pair-comparison task is scheduled. This differs from missing one of three required attempts. |
 
-[Shared pairwise-repeatability rules](../../metrics.md#pairwise-repeatability) apply.
-Required-attempt completeness follows the [page-wide execution rules](#scoring-inputs-eligibility-and-result-status).
+Executed failures contribute no successful pair; missing required attempts
+leave repeatability incomplete. See
+[repeatability with failed or missing attempts](../../metrics.md#repeatability-with-failed-or-missing-attempts).
 
 ### Attempt Failure Rate
 
 **Question:** How often does a measured extraction attempt fail to deliver a
 valid output?
+
+**Calculation:**
 
 For each document:
 
@@ -1859,9 +1974,11 @@ attempts divided by total scheduled attempts.
 
 **Edge cases and availability:**
 
-[Shared execution-accounting rules](../../metrics.md#execution-accounting-and-result-completeness) apply.
-Scheduled-attempt accounting, recoverable request errors, and setup failures follow the
-[page-wide execution rules](#scoring-inputs-eligibility-and-result-status).
+Missing or unexecuted required attempts make the rate incomplete, not a rate
+over the surviving attempts; see
+[execution accounting](../../metrics.md#execution-accounting-and-result-completeness).
+Setup and evaluator failures are not measured extraction failures; see the
+[document execution rules](#scoring-inputs-eligibility-and-result-status).
 
 ## Operational performance
 
@@ -1876,14 +1993,17 @@ latency while batch ingestion may emphasize pages per minute.
 
 ### Operational measurement availability
 
-Operational statuses and successful-completion support follow the
-[shared availability rules](../../metrics.md#shared-availability-rules);
-resource instrumentation and partial-window reporting follow
-[shared resource measurements](../../metrics.md#resource-measurements).
-The completed phase is initialization for Cold Model-Load Time, the first
-request for First-item Latency, and measured extraction for warm and complete-
-document latency. Batch throughput, unlike successful latency, includes failed-
-attempt time in its measured interval.
+A completed timed phase retains its observation after a later failure. An
+unfinished phase supplies elapsed-to-failure, not successful latency; see
+[completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests).
+The required completed phase is initialization for Cold Model-Load Time, the
+first request for First-item Latency, and measured extraction for warm and
+complete-document latency. Batch throughput, unlike successful latency, includes
+failed-attempt time in its measured interval.
+
+Missing telemetry leaves the resource value unavailable. An interrupted
+monitoring window retains only an observed partial-window peak; see
+[missing or partial resource measurements](../../metrics.md#missing-or-partial-resource-measurements).
 
 Physical-page normalization uses the validated input page inventory, never
 predicted page records. Missing or invalid claimed input page counts belong to
@@ -1901,6 +2021,8 @@ Interval eligibility for every operational value follows the
 **Question:** How long does the fresh worker take to initialize the candidate
 before warmup?
 
+**Calculation:**
+
 Time model/runtime construction, explicit pipeline initialization, and device
 placement in a fresh worker; synchronize before ending the timer. Required lazy
 model preparation must not be silently shifted into the warmup. The model is
@@ -1914,15 +2036,15 @@ cache is not forcibly cleared. Run one complete warmup only after loading ends.
 
 **Edge cases and availability:**
 
-[Shared completed-phase and partial-observation rules](../../metrics.md#dependent-metrics-and-partial-observations) apply.
-See [operational measurement availability](#operational-measurement-availability)
-for timed-phase completion and reporting.
+Initialization that never completes has no cold-load latency; retain
+elapsed-to-failure separately. A completed cold load survives later failures;
+see [completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests).
 
 ### First-item Latency
 
 **Question:** What initialization cost does the first request experience?
 
-In plain language:
+**Calculation:**
 
 ```text
 first extraction completion time − fresh process start time
@@ -1941,16 +2063,16 @@ Model-Load Time, which ends before that request begins.
 
 **Edge cases and availability:**
 
-[Shared completed-phase and partial-observation rules](../../metrics.md#dependent-metrics-and-partial-observations) apply.
-See [operational measurement availability](#operational-measurement-availability)
-for timed-phase completion and reporting.
+If the first request never completes, first-item latency is unavailable;
+retain elapsed-to-failure separately. A completed first request survives later
+failures; see [completed stages and failed requests](../../metrics.md#completed-stages-and-failed-requests).
 
 ### p50 and p95 Warm Latency per Page
 
 Use successful measured request durations after the one warmup. For each
 document, take the median successful attempt duration and normalize it by the
 verified number of physical input pages, not the number of pages emitted by the
-parser. In plain language:
+parser:
 
 ```text
 median successful warm document latency
@@ -1971,6 +2093,8 @@ successful-completion coverage follow [operational measurement availability](#op
 
 **Question:** What is the typical document-normalized warm page speed?
 
+**Calculation:**
+
 Take the median of the eligible document-normalized observations.
 **Example:** Observations `1, 2, 3, 4, 5 s/page` give p50 `3 s/page`.
 
@@ -1984,14 +2108,17 @@ This gives equal weight to document speeds, not to every page in a large PDF.
 |---|---|---|---|
 | No fixed physical-page task | Native DOCX without a fixed renderer | `null` (`inapplicable`) | Complete-document latency remains meaningful, but no physical-page denominator exists. |
 
-[Shared availability](../../metrics.md#shared-availability-rules) and
-[percentile rules](../../metrics.md#latency-percentiles) apply.
-See [operational measurement availability](#operational-measurement-availability)
-for successful-completion and measurement support.
+No successful latency observation makes the percentile unavailable; one
+observation makes both p50 and p95 equal that value. See
+[zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
+Insufficient independent-source support leaves confidence bounds null; see
+[insufficient confidence-interval support](../../metrics.md#insufficient-confidence-interval-support).
 
 #### p95 Warm Latency per Page
 
 **Question:** What is the slow tail of document-normalized warm page speeds?
+
+**Calculation:**
 
 Apply the [shared 95th-percentile calculation](../../metrics.md#latency-percentiles)
 to the document-normalized page speeds. **Example:** For `1, 2, 3, 4, 5 s/page`, position `3.8`
@@ -2008,10 +2135,11 @@ sample falls below the estimate.
 |---|---|---|---|
 | No fixed physical-page task | Native DOCX without a fixed renderer | `null` (`inapplicable`) | Complete-document latency remains meaningful, but no physical-page denominator exists. |
 
-[Shared availability](../../metrics.md#shared-availability-rules) and
-[percentile rules](../../metrics.md#latency-percentiles) apply.
-See [operational measurement availability](#operational-measurement-availability)
-for successful-completion and measurement support.
+No successful latency observation makes the percentile unavailable; one
+observation makes both p50 and p95 equal that value. See
+[zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
+Insufficient independent-source support leaves confidence bounds null; see
+[insufficient confidence-interval support](../../metrics.md#insufficient-confidence-interval-support).
 
 ### Complete Document Latency
 
@@ -2029,6 +2157,8 @@ failure durations follow [operational measurement availability](#operational-mea
 
 **Question:** What is the typical successful wait for a complete document?
 
+**Calculation:**
+
 Take the median of document-level median successful attempt times.
 **Example:** Document observations `2, 3, 4, 5, 11 s` give p50 `4 s`.
 
@@ -2038,14 +2168,17 @@ This is a whole-source wait, not a normalized page speed or arithmetic mean.
 
 **Edge cases and availability:**
 
-[Shared availability](../../metrics.md#shared-availability-rules) and
-[percentile rules](../../metrics.md#latency-percentiles) apply.
-See [operational measurement availability](#operational-measurement-availability)
-for successful-completion and measurement support.
+No successful latency observation makes the percentile unavailable; one
+observation makes both p50 and p95 equal that value. See
+[zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
+Insufficient independent-source support leaves confidence bounds null; see
+[insufficient confidence-interval support](../../metrics.md#insufficient-confidence-interval-support).
 
 #### p95 Complete Document Latency
 
 **Question:** What is the slow-tail successful wait for a complete document?
+
+**Calculation:**
 
 Interpolate the 95th percentile of the same document observations.
 **Example:** For `2, 3, 4, 5, 11 s`, sorted position `4 × 0.95 = 3.8` gives
@@ -2057,16 +2190,17 @@ This exposes long user waits that a good per-page speed can hide.
 
 **Edge cases and availability:**
 
-[Shared availability](../../metrics.md#shared-availability-rules) and
-[percentile rules](../../metrics.md#latency-percentiles) apply.
-See [operational measurement availability](#operational-measurement-availability)
-for successful-completion and measurement support.
+No successful latency observation makes the percentile unavailable; one
+observation makes both p50 and p95 equal that value. See
+[zero or one latency observation](../../metrics.md#zero-or-one-latency-observation).
+Insufficient independent-source support leaves confidence bounds null; see
+[insufficient confidence-interval support](../../metrics.md#insufficient-confidence-interval-support).
 
 ### Batch Pages per Minute
 
 **Question:** What sustained batch capacity does the parser provide?
 
-In plain language:
+**Calculation:**
 
 ```text
 60 × successfully processed pages
@@ -2094,13 +2228,17 @@ batch duration gives zero throughput.
 |---|---|---|---|
 | No fixed physical-page task | Native DOCX without fixed physical pagination | `null` (`inapplicable`) | No physical pages can be counted as completed work. |
 
-[Shared availability](../../metrics.md#shared-availability-rules) and
-[ratio-of-totals throughput rules](../../metrics.md#ratio-of-totals-throughput) apply.
-Batch timing requirements follow [operational measurement availability](#operational-measurement-availability).
+No observed batch, missing timing, or non-positive measured duration makes
+throughput unavailable; see [batch timing requirements](#operational-measurement-availability).
+Unavailable inputs cannot supply a ratio under
+[undefined inputs to derived metrics](../../metrics.md#undefined-inputs-to-derived-metrics);
+the [ratio-of-totals rule](../../metrics.md#ratio-of-totals-throughput) governs defined inputs.
 
 ### Peak Process-Tree RAM
 
 **Question:** How much system memory does the complete extractor require?
+
+**Calculation:**
 
 Apply [shared Peak Process-Tree RAM](../../metrics.md#peak-process-tree-ram)
 to the extractor worker and its children. The document window includes loading,
@@ -2113,12 +2251,15 @@ MiB, Peak Process-Tree RAM is `2,450 MiB`.
 
 **Edge cases and availability:**
 
-[Shared resource-measurement rules](../../metrics.md#resource-measurements) apply.
-Resource-window reporting follows [operational measurement availability](#operational-measurement-availability).
+Missing usable samples make the peak unavailable. An interrupted monitoring
+window retains its observed peak as partial, not a complete-lifecycle peak; see
+[missing or partial resource measurements](../../metrics.md#missing-or-partial-resource-measurements).
 
 ### Peak Device VRAM
 
 **Question:** How much total memory is occupied on the assigned GPU during extraction?
+
+**Calculation:**
 
 Apply [shared Peak Device VRAM](../../metrics.md#peak-device-vram) over loading,
 warmup, and measured document extraction.
@@ -2134,15 +2275,16 @@ Device VRAM `1,800 MiB`; an idle baseline is not subtracted.
 |---|---|---|---|
 | CPU-only execution | Native CPU extraction with no assigned GPU | `null` (`inapplicable`) | GPU-memory measurement is not a task for this execution; it is not a zero-MiB observation. |
 
-[Shared CPU/CUDA availability](../../metrics.md#peak-device-vram) and
-[resource-window rules](../../metrics.md#resource-measurements) apply.
-CUDA telemetry and resource-window reporting follow [operational measurement availability](#operational-measurement-availability).
+Missing required CUDA telemetry makes VRAM unavailable; see
+[Peak Device VRAM](../../metrics.md#peak-device-vram).
+An interrupted monitoring window retains a partial peak under
+[missing or partial resource measurements](../../metrics.md#missing-or-partial-resource-measurements).
 
 ### Peak Temporary Disk
 
 **Question:** How much additional working-disk space does extraction require?
 
-In plain language:
+**Calculation:**
 
 ```text
 largest temporary-file footprint during extraction
@@ -2164,8 +2306,9 @@ the sum of all sampled totals.
 
 **Edge cases and availability:**
 
-[Shared resource-measurement rules](../../metrics.md#resource-measurements) apply.
-Resource-window reporting follows [operational measurement availability](#operational-measurement-availability).
+Missing usable samples make the peak unavailable. An interrupted monitoring
+window retains its observed peak as partial, not a complete-lifecycle peak; see
+[missing or partial resource measurements](../../metrics.md#missing-or-partial-resource-measurements).
 
 ## Worked result interpretation
 
@@ -2242,8 +2385,9 @@ Document-group metrics resample only the samples in that group. Conditional
 tasks such as table reconstruction or formula recognition draw from reference-fixed
 eligible source records, including failed or unavailable first outputs. Do not
 prefilter to successful outputs before drawing. Within each draw, aggregate only
-defined numeric values and retain contributing counts and undefined-draw reasons. Verified-negative detection documents already have defined
-per-document scores under the empty convention; they are not dropped from
+defined numeric values and retain contributing counts and undefined-draw reasons.
+Verified-negative detection documents already have defined per-document scores
+under the empty convention; they are not dropped from
 bootstrap draws. Retain reference-formula
 and contributing-document support for formula aggregates; matched formula
 regions are not independent corpus samples.
@@ -2258,10 +2402,11 @@ saved results and does not launch 10,000 model inferences.
 Where dependent capture variants share one source, the independent source count
 can be smaller than the eligible input-document count; report both. For example,
 identical document values can yield bounds `[1, 1]`, flagged under the
-[shared degeneracy rule](../../metrics.md#confidence-intervals).
-Missing required evaluations do not become a normal authoritative aggregate
-by dropping rows. Support limits, unavailable bounds, and undefined draws follow
-the same shared procedure.
+[undefined bootstrap draws and equal bounds](../../metrics.md#undefined-bootstrap-draws-and-equal-bounds).
+Missing required evaluations leave aggregates incomplete; dropping their rows
+does not make them authoritative. A defined point with insufficient independent
+support retains null bounds and a reason under
+[insufficient confidence-interval support](../../metrics.md#insufficient-confidence-interval-support).
 
 ### Interpretation
 

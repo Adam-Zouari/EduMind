@@ -3,8 +3,8 @@
 [Benchmark program](../README.md#experiments) · [Dataset guide](datasets.md) ·
 [Methodology](methodology.md)
 
-This is a temporary checklist for decisions that cannot be made honestly before
-the candidate datasets are downloaded and inspected. It is not an experiment
+This is a temporary checklist for decisions that require downloading and
+inspecting the candidate datasets. It is not an experiment
 contract and must not be used to justify a result. Resolve each item by updating
 the authoritative dataset manifests and methodology, then remove the item.
 
@@ -21,8 +21,9 @@ the authoritative dataset manifests and methodology, then remove the item.
   and paired comparisons.
 - Freeze minimum independent eligible/contributing-source support separately
   from observation counts. State required attempt/evaluation coverage and keep
-  descriptive points with null bounds when support is insufficient. Diagnostic
-  repeatability can have source-sampling uncertainty; repeated pairs do not add
+  descriptive points with null bounds when support is insufficient; see
+  [insufficient confidence-interval support](metrics.md#insufficient-confidence-interval-support).
+  Diagnostic repeatability can have source-sampling uncertainty; repeated pairs do not add
   sources, and no universal numerical minimum has been adopted.
 
 ## Document extraction
@@ -50,7 +51,8 @@ the authoritative dataset manifests and methodology, then remove the item.
   more bootstrap resamples or repeated attempts do not replace more sources.
 - Inspect degenerate bootstrap cases, including all-zero/all-one reliability
   values, and ensure equal calculated bounds are flagged rather than described
-  as proof of zero uncertainty on future documents.
+  as proof of zero uncertainty on future documents. See
+  [undefined bootstrap draws and equal bounds](metrics.md#undefined-bootstrap-draws-and-equal-bounds).
 - Confirm whether document rows need multiple source/capability labels and make
   those labels consistent across datasets.
 - Publish one complete authoritative manifest example after real assets and
@@ -70,7 +72,6 @@ the authoritative dataset manifests and methodology, then remove the item.
   repeatability, and scheduled Attempt Failure Rate. Freeze interval support
   before evaluation; retain undefined-draw and failure counts rather than
   treating missing measurements as zero.
-
 - Verify the reviewed `conditions` lists: every speech clip must be either
   `clean` or `noisy`, while `accented` and `multi_speaker` may coexist with that
   acoustic label.
@@ -134,7 +135,7 @@ the authoritative dataset manifests and methodology, then remove the item.
   overlap describe the intended evidence without candidate-specific repairs.
   Freeze quality/slice, diagnostic top-five Ranking Repeatability, and complete-
   query/query-embedding/vector-search p50/p95 CI support requirements under the
-  [shared support policy](metrics.md#confidence-intervals) before authoritative comparisons;
+  [confidence-interval support policy](metrics.md#insufficient-confidence-interval-support) before authoritative comparisons;
   insufficient support retains defined point estimates with null bounds/reasons.
 - Freeze corresponding source support for retrieval–reranking's complete-order
   Ranking Repeatability. Preserve source-document grouping and every scheduled

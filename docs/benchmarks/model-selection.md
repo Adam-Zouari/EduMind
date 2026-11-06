@@ -17,7 +17,24 @@ Candidate selection follows the same practical sequence for each component:
 1. **Define the job.** Retrieval models are screened on retrieval quality, rerankers on reranking quality, ASR models on English transcription plus timestamps, and generators on their suitability for grounded answering.
 2. **Inspect relevant public evidence.** Prefer a common task-specific benchmark such as MTEB Retrieval, a common reranker comparison, OmniDocBench, or the Open ASR Leaderboard. General-capability evidence is used only when no current task-specific comparison covers the candidate set.
 3. **Apply basic eligibility checks.** A candidate must be downloadable, self-hostable, usable for the intended EduMind deployment, and expose the capability required by the experiment.
-4. **Enforce the target-hardware envelope.** Authoritative GPU-backed candidates must run on the laptop's RTX 3050 4 GiB GPU without CPU offload, automatic device splitting, quantization, or silent fallback, using the backend's supported frozen dtype. Every model processes one inference input at a time; runtimes with a batch setting use batch size `1`. Extraction runs alone and has no artificial VRAM limit in smoke, preflight, development, validation, or locked execution; actual OOM and offloading still fail. Embedding, learned-reranking, and generation retain a 3,584 MiB limit under the [shared Peak Device VRAM definition](metrics.md#peak-device-vram), leaving a nominal 512 MiB margin on the physical 4,096 MiB device at sampled observations. Qualification uses demanding valid development/stress inputs. CPU or CUDA smoke/debugging supplies no selection evidence. Models that fail their authoritative hardware contract remain recorded as exclusions rather than receiving a different execution protocol. Native document parsing and CPU OCR components retain their documented backend-specific placement rules.
+4. **Enforce the target-hardware envelope.** Authoritative GPU-backed candidates
+   must run on the laptop's RTX 3050 4 GiB GPU using the backend's supported frozen
+   dtype, without CPU offload, automatic device splitting, quantization, or silent
+   fallback. Every model processes one inference input at a time; runtimes with a
+   batch setting use batch size `1`.
+
+   Extraction runs alone and has no artificial VRAM limit in smoke, preflight,
+   development, validation, or locked execution; actual OOM and offloading still
+   fail. Embedding, learned-reranking, and generation retain a 3,584 MiB limit
+   under the [shared Peak Device VRAM definition](metrics.md#peak-device-vram),
+   leaving a nominal 512 MiB margin on the physical 4,096 MiB device at sampled
+   observations. Native document parsing and CPU OCR components retain their
+   documented backend-specific placement rules.
+
+   Qualification uses demanding valid development/stress inputs. CPU or CUDA
+   smoke/debugging supplies no selection evidence. Models that fail their
+   authoritative hardware contract remain recorded as exclusions rather than
+   receiving a different execution protocol.
 5. **Keep different resource scales in the shortlist.** Organize the screened models into approximate parameter-size groups so local qualification can test compact, middle, and larger options. Parameter count and public evidence do not establish GPU fit: recorded preflight determines hardware eligibility. A size range may remain empty after that gate. These groups describe the reviewed shortlist; they were not fixed before the search.
 6. **Prefer comparable evidence.** When candidates were tested under the same public protocol, the strongest eligible representatives are kept. When promising models use incompatible protocols, both may be kept and compared locally instead of comparing unlike public scores.
 7. **Keep an independent control.** Use the current baseline when it is eligible;
@@ -216,7 +233,14 @@ measuring each reranker's incremental effect.
 
 A reranker receives the query and the top passages returned by the first retrieval stage, then assigns new relevance scores. It can improve ordering without embedding every document again, but it adds query latency and memory use.
 
-The public screen uses a 23-model comparison published by the Ettin authors. “Author-run” means the model authors chose and executed the comparison rather than an independent leaderboard operator. The common protocol makes its rows useful for shortlisting, but author bias remains possible through candidate selection, implementation details, and tuning. EduMind therefore evaluates its shortlisted rerankers on its own data before selecting one; it does not reproduce the full 23-model experiment.
+The public screen uses a 23-model comparison published by the Ettin authors.
+“Author-run” means the model authors chose and executed the comparison rather
+than an independent leaderboard operator. The common protocol makes its rows
+useful for shortlisting, but author bias remains possible through candidate
+selection, implementation details, and tuning.
+
+EduMind therefore evaluates its shortlisted rerankers on its own data before
+selecting one; it does not reproduce the full 23-model experiment.
 
 | Approximate size | Included candidate | Public result | Why it is included |
 |---|---|---:|---|
@@ -239,11 +263,12 @@ local qualification and evaluation.
 
 No public benchmark currently compares the selected compact models under one protocol for all of EduMind's target behavior: grounded correctness, faithfulness, citations, answerability, completeness, refusal, and local latency. [ALCE](https://github.com/princeton-nlp/ALCE), [FaithJudge](https://github.com/vectara/FaithJudge), [ChatRAG-Bench](https://huggingface.co/datasets/nvidia/ChatRAG-Bench), and [FACTS Grounding](https://www.kaggle.com/benchmarks/google/facts-grounding) are relevant, but do not publish a common result for these current checkpoints.
 
-Artificial Analysis is therefore used only to choose plausible compact quality
-points. The Intelligence Index values recorded at the review date give the three candidates one common
-screening reference, but it does not evaluate the control and does not select
-the final generator. The control instead has a direct same-protocol comparison
-with Qwen3-0.6B in the Falcon-H1-Tiny technical report.
+Artificial Analysis is therefore used only to shortlist plausible compact
+generators. The Intelligence Index values recorded at the review date give the
+three candidates one common screening reference. The index does not evaluate
+the control and does not select the final generator. The control instead has a
+direct same-protocol comparison with Qwen3-0.6B in the Falcon-H1-Tiny technical
+report.
 
 | Approximate profile | Candidate | Public screening evidence | Why it is included |
 |---|---|---:|---|
@@ -276,8 +301,8 @@ version, decoding settings, prompts, rubric/schema checksums, finite retry polic
 and calibration artifact are then frozen in the generation evaluation contract.
 The required gold facts define completeness; frozen authoritative references
 can verify additional correct facts without awarding extra recall credit.
-Authoritative generation
-runs remain blocked until that calibration and freeze are complete.
+Authoritative generation runs remain blocked until that calibration and freeze
+are complete.
 
 ## Vector databases
 
@@ -287,8 +312,10 @@ boundaries. Each candidate is a database plus its explicit configuration;
 development compares the declared settings, validation confirms frozen finalists,
 and locked reports one selected pair. Native query planning is permitted under
 those settings. Vendor benchmark numbers do not rank these candidates because
-they do not hold EduMind's workload and environment constant. See the revised
-[methodology and implementation boundary](vectordb/methodology.md).
+they do not hold EduMind's workload and environment constant. The
+[vector methodology](vectordb/methodology.md) defines this contract; its
+[implementation boundary](vectordb/methodology.md#implementation-status)
+identifies the pending runner migration.
 
 | Server | Benchmark profile | Why it is included | Evidence |
 |---|---|---|---|

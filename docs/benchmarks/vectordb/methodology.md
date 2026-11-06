@@ -46,20 +46,22 @@ the work in the operation artifact.
 
 ### Implementation status
 
-This page defines the revised benchmark contract. The existing vector drivers
-have not yet been migrated to it. Their synthetic workloads, configuration
-tuning, metric keys, agreement checks, and separate retrieval-validation entry
-point must not be presented as execution of this revision. In particular, the
-current driver does not implement the complete frozen-configuration validation
-and locked workflow, tie-aware @20 scoring, or the reporting structure below.
-The standalone validated-input/report interface also remains planned for this
-suite. [The runbook](../running.md#9-vector-databases) distinguishes existing
-diagnostic commands from the target lifecycle.
+The existing vector drivers have not yet been migrated to this benchmark
+contract. Their synthetic workloads, configuration tuning, metric keys,
+agreement checks, and separate retrieval-validation entry point do not implement
+the procedure described here. The remaining work includes:
+
+- the complete frozen-configuration validation and locked workflow;
+- tie-aware @20 scoring and the reporting structure below; and
+- the standalone validated-input/report interface.
+
+The [runbook](../running.md#9-vector-databases) distinguishes executable diagnostic
+commands from the target lifecycle.
 
 Reviewed data, configuration ranges, load conditions, and independent-support
 requirements remain in [pending data review](../pending-data-review.md#vector-databases).
 Historical runs retain their original protocols; they are not relabeled with
-the revised metrics. A successful old driver exit does not establish conformance
+these metrics. A successful existing driver exit does not establish conformance
 with this contract.
 
 ## Candidates and configurations
@@ -113,7 +115,7 @@ substitute for application-representative measurements.
 
 Exact counts, growth sizes, synthetic seeds, query schedules, concurrency,
 load-window lengths/repeats, and shortlist limits are frozen after data review.
-They are not inherited automatically from the old driver's synthetic grid.
+They are not inherited automatically from the existing driver's synthetic grid.
 Source-related questions remain grouped across splits and uncertainty draws.
 All candidates within a condition receive the same corpus and query inventory.
 
@@ -184,9 +186,10 @@ repeated searches to return identical pools.
 
 The reranker receives the actual verified pool for that attempt and must return
 exactly its IDs once each. Final @3/@5 results are ordered prefixes of that
-validated ranking. The exact-retrieval benchmark's live-pool-equality gate is
-not copied into this ANN benchmark. No reranked-output repeatability metric is
-added here; only the database's pre-reranking output is compared across attempts.
+validated ranking. Unlike the exact-retrieval benchmark, this ANN benchmark does
+not require repeated live pools to be identical. Repeatability compares only the
+database's pre-reranking output across attempts; there is no reranked-output
+repeatability metric.
 
 Duplicate/unknown IDs, nonfinite required scores, forbidden records, and malformed
 responses retain explicit integrity outcomes. Check filter eligibility against
@@ -209,7 +212,8 @@ silently refill it. Integration expects `min(20, eligible chunk count)` records
 in each required source pool. An unexpectedly short pool leaves dependent
 integration quality unavailable while retaining the database observation. A
 truly smaller eligible corpus is not a short-pool failure. Unexpectedly empty or
-token-free integration rankings follow shared evidence-scoring integrity rules.
+token-free integration rankings leave dependent quality unavailable under the
+[retrieval output-integrity rules](../metrics.md#zero-gain-and-short-rankings).
 Empty-filter probes are separate tasks, not answerable integration questions.
 
 ### Correctness probes
@@ -251,10 +255,14 @@ the same selected database configuration without new selection.
 
 ### Result completeness and advancement
 
-Apply [shared execution, quality and integrity accounting](../metrics.md#execution-accounting-and-result-completeness).
-Retain every scheduled outcome, including not-executed work. A failed first
-request leaves applicable dependent quality unavailable; independent timings
-and resources survive. Later failures do not erase completed first quality.
+Retain every scheduled outcome, including not-executed work, under the
+[execution-accounting rules](../metrics.md#execution-accounting-and-result-completeness).
+A failed first request leaves dependent quality unavailable; later failures do
+not erase valid first-attempt quality: see [first and later attempt failures](../metrics.md#first-and-later-attempt-failures).
+Completed independent timings survive later failures under
+[completed stages and failed requests](../metrics.md#completed-stages-and-failed-requests).
+Usable resource samples retain their complete or partial monitoring scope under
+[missing or partial resource measurements](../metrics.md#missing-or-partial-resource-measurements).
 Ordinary ANN misses are scored search outcomes, not request errors.
 
 Submitted-operation error rates and completed-response filter violations have
@@ -370,13 +378,15 @@ guarantee; freeze and record the restart/cache procedure.
 
 ### Resources and storage
 
-Peak Server RAM follows [shared resource rules](../metrics.md#resource-measurements)
-within the build/warmup/query/operation/restart lifecycle. Sample the server
-container or declared container group with one consistent Docker/cgroup method;
+Peak Server RAM covers the build/warmup/query/operation/restart lifecycle under
+the [shared resource measurement conventions](../metrics.md#resource-measurements).
+Sample the server container or declared container group with one consistent Docker/cgroup method;
 record cache accounting and do not alternate raw API usage with cache-subtracted
 CLI values. Sum simultaneous components, not independent maxima. Client model
 memory is outside this metric. Stop/restart periods and telemetry gaps remain
-explicit; unrelated services and offline scoring are excluded.
+explicit; unrelated services and offline scoring are excluded. Missing required telemetry
+is unavailable; usable interrupted-window peaks remain labelled partial observations:
+see [missing or partial resource measurements](../metrics.md#missing-or-partial-resource-measurements).
 
 Persistent Storage Size is the apparent byte size of dedicated database data,
 indexes, metadata, and required logs at the synchronized completed-build checkpoint,
@@ -474,5 +484,6 @@ artifacts and metric-specific support fields.
 Parent comparison tables preserve conditions and upstream identities. Paired
 differences use aligned queries/source groups or independent load windows as
 defined in [confidence intervals](metrics.md#aggregation-and-confidence-intervals).
-Counts, configurations and descriptive storage facts do not acquire fabricated
-winner directions or CIs. This reporting contract does not certify old artifacts.
+Counts, configurations and descriptive storage facts do not acquire winner
+directions or CIs. Historical artifacts remain subject to their original
+protocols, not this reporting contract.
