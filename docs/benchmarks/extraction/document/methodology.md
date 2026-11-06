@@ -202,10 +202,13 @@ Every authoritative reference declares a `reference_capabilities` list drawn
 from `text`, `pages`, `reading_order`, `layout_boxes`, `element_types`,
 `hierarchy`, `tables`, and `formulas`. Validation and metric eligibility follow
 that declaration instead of assuming that every source has every annotation.
-Full data validation also checks that claimed table and formula references
-score perfectly against themselves in the pinned official Docker evaluators.
-This reference check happens outside candidate measurements; profile startup
-only verifies the sealed validation report and current input identity.
+Full data validation currently checks reference self-comparisons in the pinned
+official Docker evaluators. Self-comparison alone cannot establish that header
+text and spans affect table scores. The approved
+[table-scorer normalization contract](metrics.md#table-scorer-normalization)
+requires symmetric pinned normalization and header-text/header-span perturbation
+checks as evaluator acceptance evidence. Reference checks remain outside candidate
+measurements; profile startup verifies the sealed report and current input identity.
 Smoke fixtures may infer capabilities from their inline annotations. Table and
 formula capability declarations also carry explicit `has_table` and
 `has_formula` booleans so invented objects on verified negatives count as false
@@ -217,22 +220,39 @@ samples. EduMind calculates the common text, page, layout, detection,
 reliability, and operational metrics so their definitions remain identical for
 OHR-Bench, PureDocBench, DocPTBench, native DOCX, and EduMind-specific samples.
 Only the specialized table-tree and formula scorers—TEDS, TEDS-S, and CDM—come
-from the pinned official evaluator; ExpRate@CDM is derived from those CDM
-results.
+from the pinned official evaluator. The approved
+[ExpRate@CDM contract](metrics.md#formula-exact-match-expratecdm) derives exactness
+from its raw matched/reference/predicted character counts, not rounded CDM F1.
+
+**Implementation boundary:** the current project wrapper calls TEDS directly
+after adding an HTML/body envelope; it bypasses the required official HTML
+normalization. It also returns only rounded CDM F1, which the project currently
+tests for equality to one. Symmetric table normalization, raw-count transport,
+exact-count scoring, and their acceptance checks remain unimplemented changes.
+These approved contracts do not certify the current scorer path or reinterpret
+historical results. Authoritative results under the updated definitions require
+the corresponding wrapper migration and versioned evaluation provenance.
 
 The execution boundary is explicit:
 
 ```text
 Python 3.12: Docling/Granite/Paddle extraction -> canonical prediction
              -> common EduMind metrics
-Python 3.10 Docker: all table HTML pairs -> TEDS and TEDS-S
-                    all formula LaTeX pairs -> CDM
+Python 3.10 Docker (approved scorer contract):
+    table HTML pairs -> symmetric pinned normalization -> TEDS and TEDS-S
+    formula LaTeX pairs -> official CDM similarity + raw counts
+Python 3.12: raw CDM counts -> exact-count ExpRate@CDM
 ```
 
 The table and formula pairs for one extraction profile are scored in one
 container call after extraction finishes. Container startup and scoring time are
-evaluation overhead, not extraction latency. MLflow provenance records both the
-pinned OmniDocBench source revision and the immutable Docker image digest.
+evaluation overhead, not extraction latency. In addition to the pinned
+OmniDocBench revision and immutable Docker image digest, the updated contract
+requires the normalization identity, project wrapper revision, and exact-count
+policy version. Retain raw and scorer-facing table HTML and per-formula counts
+with the existing prediction/evaluation artifacts; a scalar or checksum alone
+cannot reconstruct those comparisons. This added provenance is part of the
+pending migration, not a claim that the current wrapper already retains it.
 
 ## Benchmark workflow and selection
 
@@ -316,8 +336,9 @@ inside resource monitoring; offline scoring is outside extraction resource
 measurements, which stop after the final measured request.
 
 Apply [shared confidence intervals](../../metrics.md#confidence-intervals)
-using complete independent source documents, with pages, objects, capture
-variants, and attempts kept together. Quality uses first-attempt scores;
+using reviewed independent-source groups, with every member document, page,
+object, capture variant, and attempt kept together. A document is an independent
+unit only when its reviewed source grouping establishes that. Quality uses first-attempt scores;
 repeatability uses each document's three-attempt pair score; failure uses its
 attempt-failure fraction. For example, 100 documents with three attempts remain
 100 independent units if their source families are independent. The

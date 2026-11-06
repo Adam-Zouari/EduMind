@@ -14,22 +14,36 @@ vector-server images. A benchmark does not download missing models while it is
 running.
 
 The revised Vector Database configuration/metric/reporting contract and the
-locked-only Final RAG workflow below retain their implementation boundaries.
+single-system Final RAG workflow below retain their implementation boundaries.
+
 Chunking–embedding implements its separate load/build/query-component timings,
 retrieved-context descriptors, diagnostic top-five pair score, and execution,
 quality, and integrity accounting. CI support requirements remain subject to data
 review; unfrozen support gives descriptive points and null bounds, not
 authoritative advancement evidence. See its
 [implementation boundary](rag/chunking_embedding/methodology.md#implementation-status).
+Its fixed-workload metadata and artifact-only build-throughput reporting cleanup
+are documented targets, not yet a migrated logging contract.
+
 Retrieval–reranking implements the corresponding complete-ranking diagnostic,
-one authoritative warmup, single-unit alpha-nDCG eligibility, index ownership,
-and reporting contract. Generation implements the seven model-mode runtime and
-scoring interface; a frozen calibrated judge, reviewed source support, and
-prepared model snapshots are required before authoritative comparison.
+one authoritative warmup, single-unit alpha-nDCG eligibility, and index ownership.
+Its first-attempt pool-recall gap and duplicate eligibility-counter cleanup are
+listed in its [implementation boundary](rag/retrieval_reranking/methodology.md#implementation-status).
+
+Generation implements the seven model-mode runtime and
+an initial judge/scoring interface. The automatic first-run judge workflow,
+saved-output scoring resume, and Citation Support contract require migration,
+as well as a calibrated judge, reviewed source support, and prepared model
+snapshots before authoritative use.
+
 Document, ASR, and Video provide their extraction metric, failure, repeatability,
 resource, and display-name paths. Their standalone data validators and
 automatic sealed-report verification are available. Video uses grouped parents
 with separate shared-audio preparation and visual children.
+Document's symmetric TEDS header normalization and count-based CDM ExpRate also
+need their specified evaluator migration; see its
+[implementation boundary](extraction/document/methodology.md#evaluation-setup).
+
 Verify the [required retained prediction evidence](metrics.md#prediction-evidence-and-rescoring)
 before claiming independent rescoring from a run; summary counts/fingerprints
 alone are insufficient. Historical outputs are not migrated to the current
@@ -124,8 +138,10 @@ smoke-cpu + smoke-cuda -> preflight -> development -> validation -> locked
 Vector Database server execution is CPU-only and has no CUDA preflight. Its own
 locked report is specified but not yet executable; see the
 [implementation boundary](vectordb/methodology.md#implementation-status).
-Final RAG has only one locked evaluation of the already-selected system;
-it does not run another smoke, preflight, development, or validation comparison.
+Final RAG checks the already-selected system through CPU/CUDA smoke and integrated
+preflight before its one locked evaluation. It has no development or validation
+comparison. This target lifecycle is not yet fully executable; see its
+[implementation boundary](rag/final/methodology.md#implementation-status).
 
 Development, validation, and locked use the device, dtype, and batch size in
 the benchmark protocol. Their current model-backed contracts require CUDA;
@@ -609,17 +625,14 @@ counts belong to `validity.*` support and the request ledger. See the complete
 
 ## 10. Generation and Final RAG
 
-Generation uses frozen evidence contexts. Its implemented model-mode/seed/judge
-contract and external readiness requirements are described in the
+Generation uses frozen evidence contexts. Its model-mode/seed/judge contract,
+current implementation boundary, and external readiness requirements are in the
 [generation implementation boundary](rag/generation/methodology.md#implementation-status)
 and apply before authoritative execution.
 
 ```powershell
 python -m experiments.benchmarks.rag.generation.run --profile smoke
 python -m experiments.benchmarks.rag.generation.run --profile preflight
-python -m experiments.benchmarks.rag.generation.run --profile development --judge-records path/to/development-judge-replies.json
-python -m experiments.benchmarks.rag.generation.run --profile validation --judge-records path/to/validation-judge-replies.json
-python -m experiments.benchmarks.rag.generation.run --profile locked --judge-records path/to/locked-judge-replies.json
 ```
 
 Its smoke command runs every model-mode configuration independently on CPU and
@@ -632,19 +645,37 @@ Authoritative runs use the protocol CUDA/FP16 contract, batch size `1`, one
 warmup, and aligned measured seeds `42`, `43`, and `44`.
 
 Before development, select and configure one semantic judge, freeze its exact
-identity and rubric, and verify its human-calibration artifact. The judge runs
-after generator timing and supplies
-structured labels for Faithfulness, Factual Correctness, Answer Relevancy, and
-Repeat Semantic Agreement. Its latency and resources are not attributed to the
-generator. After reviewing validation, record exactly one successful model-mode
+identity and rubrics, and verify its human-calibration artifact. The normal
+authoritative workflow is:
+
+1. Verify judge readiness and all run inputs before measured inference.
+2. Generate all three scheduled outputs per question and persist the output,
+   context/citation mapping, attempt status, timing, and provenance.
+3. End generator measurement, then evaluate those saved responses using the
+   single structured response rubric and separate semantic-pair rubric.
+4. Calculate metrics and source-grouped intervals from that same evidence;
+   publish complete results only when required evaluations are available.
+
+The response rubric supplies Faithfulness, Citation Support, Factual
+Correctness, and Answer Relevancy labels; the pair rubric supplies Repeat
+Semantic Agreement. Judge latency/resources are outside generator measurements.
+If judging is interrupted, resume evaluation of saved outputs without another
+candidate inference. That is evaluation recovery, not a second locked run.
+After reviewing validation, record exactly one successful model-mode
 configuration in `generation-locked.json`. Generation reports that choice on
 its own locked frozen-evidence test. Final RAG uses the same generator unchanged.
 
 Set `judge.contract_path` in the generation protocol to the reviewed contract.
-`--judge-records` replays replies already obtained under it; it does not call a
-provider. A live integration supplies a transport through the Python judge
-interface after judge selection. Replay misses or exhausted judge retries leave
-evaluation incomplete, never a candidate-quality zero. Generation's tiny
+The current CLI's `--judge-records` option replays pre-existing replies bound to
+exact response requests; it does not call a provider. It still performs candidate
+inference and is therefore neither a normal first-run judge setup nor a
+saved-output recovery command. Replaying replies for different generated answers
+must fail. Do not run a locked test once to obtain answers and then rerun it to
+attach judge replies. A Python judge transport interface exists, but automatic
+CLI transport orchestration and scoring-only resume are not implemented; an
+authoritative first-run command will be documented after that migration.
+Replay misses or exhausted judge retries leave evaluation incomplete, never a
+candidate-quality zero. Generation's tiny
 committed fixture is `data/benchmarks/rag/generation-smoke.json`; it is separate
 from retrieval's corpus fixture and supplies no selection evidence.
 
@@ -665,30 +696,35 @@ summary metrics. Shared null, dependency, and CI interpretation belongs to the
 [general metric guide](metrics.md#dependent-metrics-and-partial-observations).
 
 Freeze one complete system in `final-rag-locked.json`, referencing the selected
-component decisions and the chosen top-K, prompt, and context settings. Finish
-non-locked integration and extraction-confirmation checks before locked
-execution. Final RAG runs only this selected system:
+RAG component decisions and the chosen top-K, prompt, context, and residency
+settings. Use that same decision for CPU/CUDA smoke on fixtures, integrated CUDA
+preflight on reviewed development/stress inputs, and locked execution on the
+untouched holdout. Prepare the corresponding canonical corpus and indexes for
+each phase. Extraction is outside
+Final RAG's quality and runtime scope. Final RAG runs only this selected system.
+The existing entry point below is retained for orientation, not as a claim that
+its current implementation executes the complete approved contract:
 
 ```powershell
 python -m experiments.benchmarks.rag.final.run --profile locked --confirm-locked-test
 ```
 
-After locked execution, export the reporting-only human-review sample, enter
-judgments, and import them:
+The approved report uses the calibrated LLM judge and deterministic scoring of
+saved outputs. The current runner's legacy review-artifact prerequisite and
+review export/import workflow must be removed during implementation migration;
+they are not requirements of this contract.
 
-```powershell
-python -m experiments.benchmarks.review export FINAL_RAG_LOCKED REVIEW.csv
-python -m experiments.benchmarks.review import REVIEW.csv
-```
-
-The review describes the frozen system; it does not select another winner or
-authorize another locked run. If component reports share locked data with Final
-RAG, freeze the entire system before the first component locked report. Otherwise
+If component reports share locked data with Final RAG, freeze the entire system
+before the first component locked report. Otherwise
 use a separate untouched Final RAG holdout.
 
-The complete server-backed Final RAG path remains pending until the Final RAG
-runner accepts the selected vector-server decision. Do not present its current
-in-process retrieval result as server-backed confirmation.
+The single-system CPU/CUDA smoke and integrated-preflight paths, complete
+server-backed locked path, automatic saved-output judge workflow,
+Citation Support, stage-specific failure accounting, and revised artifacts
+remain pending in the Final RAG runner. Do not present its current in-process
+retrieval result as the approved server-backed locked report. The
+[Final RAG implementation boundary](rag/final/methodology.md#implementation-status)
+lists the required migration; it does not authorize another component selection.
 
 ## 11. Interpret failures and artifacts
 

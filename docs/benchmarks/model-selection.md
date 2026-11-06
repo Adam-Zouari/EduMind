@@ -216,16 +216,24 @@ measuring each reranker's incremental effect.
 
 A reranker receives the query and the top passages returned by the first retrieval stage, then assigns new relevance scores. It can improve ordering without embedding every document again, but it adds query latency and memory use.
 
-The public screen uses a 23-model comparison published by the Ettin authors. “Author-run” means the model authors chose and executed the comparison rather than an independent leaderboard operator. The common protocol makes its rows useful for shortlisting, but author bias remains possible through candidate selection, implementation details, and tuning. EduMind therefore reproduces the comparison on its own data before selecting a reranker.
+The public screen uses a 23-model comparison published by the Ettin authors. “Author-run” means the model authors chose and executed the comparison rather than an independent leaderboard operator. The common protocol makes its rows useful for shortlisting, but author bias remains possible through candidate selection, implementation details, and tuning. EduMind therefore evaluates its shortlisted rerankers on its own data before selecting one; it does not reproduce the full 23-model experiment.
 
 | Approximate size | Included candidate | Public result | Why it is included |
 |---|---|---:|---|
 | ≤200M | [`cross-encoder/ettin-reranker-150m-v1`](https://huggingface.co/cross-encoder/ettin-reranker-150m-v1/tree/3b3282e9bca7a60211a8b99e2936479703151a4f) | **0.5994** mean nDCG@10 | Highest value in this approximate size group in the common table. |
 | >200M–700M | [`cross-encoder/ettin-reranker-400m-v1`](https://huggingface.co/cross-encoder/ettin-reranker-400m-v1/tree/5dca36282a5d85f368d2544002513a29159b4c9e) | **0.6091** | Highest value in this approximate size group. |
-| >700M–1.5B | [`cross-encoder/ettin-reranker-1b-v1`](https://huggingface.co/cross-encoder/ettin-reranker-1b-v1/tree/7d20e9baad17016fdf5549c08f69a2d7ca3e60c3) | **0.6114** | Highest value in this approximate size group. |
+| >700M–1.5B | [`cross-encoder/ettin-reranker-1b-v1`](https://huggingface.co/cross-encoder/ettin-reranker-1b-v1/tree/7d20e9baad17016fdf5549c08f69a2d7ca3e60c3) | **0.6114** | Smaller upper-range candidate with almost the same public score as the excluded 1.54B mxbai model. |
 | Control | [`Alibaba-NLP/gte-reranker-modernbert-base`](https://huggingface.co/Alibaba-NLP/gte-reranker-modernbert-base/tree/f7481e6055501a30fb19d090657df9ec1f79ab2c) | **0.5843** | Weaker than every selected reranker in the same public comparison while providing an 8,192-token input limit compatible with the benchmark's chunking contract. |
 
 Shared evidence: [published comparison](https://huggingface.co/blog/ettin-reranker), [pinned comparison source](https://github.com/huggingface/blog/blob/8dc6a4f4bcdd9fe5ac2a107895b0515377691a17/ettin-reranker.md), and [MTEB English-v2 Retrieval](https://leaderboard.mteb.org/benchmark/MTEB%28eng%2C%20v2%29).
+
+`mixedbread-ai/mxbai-rerank-large-v2` records **0.6115**, compared with Ettin-1B's
+**0.6114**, but uses approximately **1.54B** rather than **1B** parameters. Its
+exclusion is a resource-conscious shortlist choice, not a claim that Ettin has a
+higher public score or that mxbai has been observed to fail locally. That tiny
+reported difference alone does not justify the larger model on the target laptop;
+actual eligibility and performance of the included candidates still require
+local qualification and evaluation.
 
 ## Generation
 
@@ -254,13 +262,16 @@ evaluation determines grounded-RAG quality.
 
 ### Semantic evaluator
 
-Authoritative generation will use one pinned LLM judge for Faithfulness, Factual
-Correctness, Answer Relevancy, and Repeat Semantic Agreement. The judge is an
+Authoritative generation will use one pinned LLM judge for Faithfulness, Citation
+Support, Factual Correctness, Answer Relevancy, and Repeat Semantic Agreement. The judge is an
 evaluation dependency and does not appear in the generator candidate roster or
 generator selection evidence. Its exact identity has not yet been selected. Before
 authoritative generation runs, the chosen judge must pass the human-labeled
-calibration set for claim extraction, supplied-context support, source-verified
-correctness, gold matching, relevancy, and semantic equivalence. Its exact model
+calibration set for claim extraction, supplied-context and cited-subset support,
+source-verified correctness, gold matching, relevancy, and semantic equivalence.
+The [judge contract](rag/generation/methodology.md#semantic-judge-contract)
+keeps these evidence scopes separate within one response rubric and uses a
+separate semantic-pair rubric. Its exact model
 version, decoding settings, prompts, rubric/schema checksums, finite retry policy,
 and calibration artifact are then frozen in the generation evaluation contract.
 The required gold facts define completeness; frozen authoritative references

@@ -24,7 +24,7 @@ The shared rules on this page apply alongside each benchmark's specific contract
 | Retrieval and reranking | [Methodology](rag/retrieval_reranking/methodology.md) | [Metrics](rag/retrieval_reranking/metrics.md) |
 | Generation | [Methodology](rag/generation/methodology.md) | [Metrics](rag/generation/metrics.md) |
 | Vector databases | [Methodology](vectordb/methodology.md) | [Metrics](vectordb/metrics.md) |
-| Final RAG and human review | [Methodology](rag/final/methodology.md) | [Metrics](rag/final/metrics.md) |
+| Final RAG | [Methodology](rag/final/methodology.md) | [Metrics](rag/final/metrics.md) |
 
 ## Shared conventions
 
@@ -104,9 +104,9 @@ This is the structure of the complete page. The
 [individual-metric template](#reading-an-individual-metric) below defines the
 structure within each metric explanation.
 
-Final RAG reuses component definitions and explains only its integrated and
-human-review measurements locally. Shared reference pages remain rule indexes,
-not additional benchmark comparisons.
+Final RAG reuses component definitions and explains only its integrated
+measurement and evidence-identity differences locally. Shared reference pages
+remain rule indexes, not additional benchmark comparisons.
 
 #### Reading an individual metric
 
@@ -237,6 +237,15 @@ unexecuted outcomes. Do not manufacture a failed request for every input that
 was never executed. A complete set of executed failures can still supply the
 suite's failure/repeatability observations.
 
+For a multi-stage request, distinguish the request outcome from each stage's
+outcome. A retrieval error can fail an executed end-to-end request while
+generation is explicitly `not_started` because of that error. The downstream
+skip is accounted for, not a generator crash and not a lost outcome record.
+Each stage metric uses its declared eligible/executed population; retain the
+upstream cause and downstream status in the existing attempt ledger. A task
+that should have executed but has no justified upstream skip still represents
+missing execution. Do not silently mix end-to-end and stage-level denominators.
+
 A completed timed phase retains its observation after an independent later
 failure. A phase that never completes has no successful-completion latency;
 retain elapsed-to-failure separately. Partial successful cohorts remain
@@ -325,6 +334,12 @@ when immutable inputs and sufficient prediction records already exist.
 Rescoring under a repaired evaluator preserves the original outputs and creates
 versioned evaluation provenance; it does not silently rewrite a historical run.
 Changed definitions require newly identified results, not relabelled old scores.
+
+If judging fails after inference has completed, resume evaluation from those
+same saved outputs and immutable inputs. Missing judge replies do not authorize
+another candidate inference, replacement seed, or new locked execution. Record
+the retry/resume and evaluator identity; repairing evaluation must not change
+which candidate outputs are being assessed.
 
 ### Reporting slices
 
@@ -558,10 +573,15 @@ definitions and edge-case conventions. Their comparison corpora differ:
 | Retrieval–Reranking | The frozen corpus shared by the compared stacks. |
 | Vector Database application evaluation | The entire eligible frozen corpus, restricted by the request's filter when applicable. |
 
+Final RAG reuses these evidence definitions for diagnostic retrieval quality
+against its frozen eligible corpus; it does not introduce a fourth candidate
+selection comparison or change reference answerability after retrieval.
+
 Never normalize against only the retrieved pool. Alpha-nDCG is reported by
 Chunking–Embedding and Retrieval–Reranking, not Vector Database. Candidate-pool
 Evidence-unit Recall@20 is reported by Retrieval–Reranking and Vector Database,
-not Chunking–Embedding. Metric roles remain in each suite's reference; sharing
+and reused diagnostically in Final RAG, not Chunking–Embedding. Metric roles
+remain in each suite's reference; sharing
 the calculation does not make a secondary metric primary.
 
 **Evidence coverage:** an answerable question has reviewed gold units with
@@ -571,6 +591,19 @@ Partial overlap can contribute evidence tokens without recovering a whole unit.
 Missing required annotations fail data validation; unanswerable questions are
 not empty-reference retrieval comparisons. Valid rankings and native model
 inputs retain their separate runtime-integrity checks.
+
+Source intervals use zero-based Unicode code-point offsets in the exact
+canonical text, with an inclusive start and exclusive end. They are not UTF-8
+byte offsets or positions in normalized prose. For Evidence-token Precision,
+encode each canonical chunk independently with `tiktoken:cl100k_base`; literal
+special-token-looking strings are ordinary source text. Map each token's UTF-8
+byte span back to the source characters it overlaps. A token counts as evidence
+when that span has positive overlap with a gold interval's corresponding bytes.
+Tokens can contain only part of a multi-byte character: adjacent tokens may
+therefore touch the same character, and repeated character-start offsets must
+not be mistaken for empty tokens. Count each token occurrence once, even when
+several gold intervals overlap it. Preserve the tokenizer/mapping identity with
+the scoring provenance.
 
 | Metric | Shared calculation |
 |---|---|
@@ -681,6 +714,11 @@ recalculates the ratio on each draw. No positive contributing interval gives
 an unavailable aggregate, not zero or infinity.
 
 ### Resource measurements
+
+Model-worker RAM and VRAM values use MiB (`1 MiB = 1,048,576 bytes`), including
+the existing metric/artifact keys ending in `_mb`. Those keys are not decimal
+megabyte measurements. Storage keys ending in `_bytes` retain exact byte counts;
+server-specific resource methods state their own scope and unit explicitly.
 
 Each resource metric declares its monitored process/device and lifecycle window.
 Model-backed workers normally include loading, warmup, and measured requests;

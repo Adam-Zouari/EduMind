@@ -150,13 +150,31 @@ Faithfulness is checked against the supplied blocks, not the broader reference.
 Generation also requires a versioned evaluator-calibration artifact drawn only
 from reviewed development material. It contains representative faithful,
 unsupported, partially correct, irrelevant, and refusal outputs with human
-labels for atomic claim extraction, context support, source-verified correctness,
-gold-claim matching, answer relevancy, and semantic equivalence. Include compound
+labels for atomic claim extraction, full-context support, cited-passage support,
+source-verified correctness, gold-claim matching, answer relevancy, and semantic
+equivalence. Include compound
 claims, paraphrases, repeated claims, factual qualifiers, verified extra facts,
 unverified additions, and incomplete answers. It is used only to qualify and
 freeze the semantic judge; it is not
 added to candidate quality results and never contains validation or locked-test
 questions.
+
+Include contrasts where a claim is supported elsewhere in the supplied context
+but not by its cited passages, and where it is verified only by evaluator-side
+references. Use one structured per-response rubric with separately scoped labels;
+pairwise semantic equivalence has its own rubric. Calibration must check that
+gold answers or broader verification material do not leak into either support
+judgment. The [generation guide](rag/generation/methodology.md) defines the
+automatic generate-save-judge-score workflow and its implementation boundary.
+
+Final RAG uses the reviewed canonical corpus and the same reference meanings,
+but supplies live retrieved context. An answerable question can therefore have
+insufficient retrieved evidence without becoming an unanswerable reference.
+Do not add gold evidence to repair that request before generation or judging
+support. Extraction of raw documents/media is outside Final RAG evaluation.
+Its CPU/CUDA smoke fixtures and integrated-preflight development/stress inputs
+remain separate from the locked holdout. They exercise the same selected system
+configuration on their respective prepared corpora, not new component choices.
 
 ### Vector databases
 
@@ -354,7 +372,7 @@ hf download zhihengli-casia/puredocbench `
   --local-dir data/benchmarks/raw/document/puredocbench-v1.0
 ```
 
-Then open Git Bash in the downloaded directory and verify and extract the split
+Then open Git Bash at the repository root and verify and extract the split
 archive without creating a second 37 GB tar file:
 
 ```bash

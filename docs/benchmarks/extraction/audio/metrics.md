@@ -300,8 +300,10 @@ Shared availability rules apply: [first-output and aggregate availability](../..
 
 Apply the [shared spoken-timestamp alignment](../../metrics.md#spoken-timestamp-alignment)
 to valid completed first clip outputs. It supports segment-level references
-and word-level model timestamps without allowing one prediction to cover
-multiple required segments.
+and word-level or broader native model timestamp units. Non-reuse applies to
+the predicted units supplied to alignment, not to the complete transcript:
+each unit can participate in at most one matched reference span. Matching does
+not infer finer word timing within a native segment.
 
 Boundary MAE alone can look excellent when only easy segments align. Coverage
 shows how much of the timed reference actually contributed. The two metrics are
@@ -531,9 +533,9 @@ duration?
 
 ```text
 Complete-Pipeline Real-Time Factor =
-processing time of successful measured speech attempts
-------------------------------------------------------
-audio duration of those same successful attempts
+summed processing time of successful measured speech attempts
+------------------------------------------------------------
+summed audio duration of those same successful attempts
 ```
 
 **Example:** Processing 60 minutes of audio in 15 minutes produces RTF `15 / 60
@@ -559,6 +561,8 @@ validation, and offline scoring are outside this RTF.
 
 Shared availability rules apply. See [shared availability](../../metrics.md#shared-availability-rules)
 and [operational measurement availability](#operational-performance-1).
+Use the [shared ratio-of-totals rule](../../metrics.md#ratio-of-totals-throughput),
+with processing time in the numerator and audio duration in the denominator.
 No completed timed speech attempt gives `null/unavailable`, not zero RTF.
 
 ### p50 and p95 Warm Clip Latency

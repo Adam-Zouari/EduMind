@@ -147,6 +147,14 @@ predicted/reference line sets by exact equality. Repeated copies count once
 for content, but remain separate detections for timing and duplication.
 These units are lines, not model-tokenizer IDs.
 
+This is a lexical visible-line projection, even when a line depicts code or a
+formula; it is not a syntax-preserving code/formula metric. For example, `f(x)`
+and `f[x]` both project to `f x` and intentionally compare equal here. Case and
+punctuation distinctions removed by this projection likewise cannot establish
+syntax fidelity. This is a limitation of the existing visual-content and
+occurrence-matching representations, not a new metric or a change to the shared
+exclusion of prose projection from document formula/code-specific scoring.
+
 Different raw strings that project to empty compare as empty; raw text is retained.
 Verified text-free videos remain eligible for content-absence comparisons.
 Each metric is calculated per video before video-macro averaging. The
@@ -583,8 +591,9 @@ and frame-zero [execution prerequisites](#execution-and-measurement-prerequisite
 ## Frozen-ASR diagnostics
 
 Decode each unique video once, transcribe each required 30-second/2-second-overlap
-window once, shift timestamps, and stitch its transcript. Compare the complete
-stitched result to that video's reviewed spoken reference. Do not score repeated
+window once, shift timestamps, and stitch its transcript using the retained
+[token units with inherited native bounds](#spoken-timestamp-matching). Compare
+the complete stitched result to that video's reviewed spoken reference. Do not score repeated
 overlap words twice or copy results to visual children.
 
 Apply the [shared recognition definitions and empty-reference conventions](../../metrics.md#recognition-error-rates-and-empty-references),
@@ -732,8 +741,22 @@ and [frozen-audio completion rules](#frozen-audio-completion-and-availability).
 ### Spoken timestamp matching
 
 Apply [shared spoken-timestamp alignment](../../metrics.md#spoken-timestamp-alignment)
-on each complete stitched video timeline. Pool real boundary errors for MAE and
-matched/required segment counts from valid completed eligible videos for
+on each complete stitched video timeline. Video first expands each native ASR
+segment into its normalized lexical token units. Every token inherits that
+segment's complete start/end interval after shifting by the window offset;
+stitching removes the matching overlap units and orders retained units without
+interpolating, dividing, or otherwise inferring finer word boundaries.
+
+Non-reuse in alignment applies to these retained token units, not to original
+native segment blocks. Distinct tokens from one native segment may align to
+different reference segments while sharing the same inherited interval. For
+example, native `alpha beta` at window-local `[1, 3]` with offset `28 s` supplies
+`alpha` and `beta`, both at video time `[29, 31]`; it does not supply inferred
+intervals `[29, 30]` and `[30, 31]`. A boundary score therefore reflects the
+model's native timing resolution, not newly obtained word-time precision.
+
+Pool real boundary errors for MAE and matched/required segment counts from
+valid completed eligible videos for
 coverage, not independent windows.
 
 Spoken timing requires reviewed spoken segments; visual appearance timestamps
@@ -752,7 +775,8 @@ pooling real errors across completed videos rather than averaging video MAEs.
 **Example:** Eighteen matched segments have 36 boundaries. Total absolute error
 `7.2 s` gives `7.2 / 36 = 0.20 s` MAE.
 
-Small MAE means precise matched boundaries, not complete alignment.
+Small MAE means precise matched boundaries, not complete alignment or finer
+timing resolution than the inherited native bounds described above.
 
 **Range and direction:** Non-negative seconds; lower is better.
 

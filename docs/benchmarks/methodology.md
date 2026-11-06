@@ -23,9 +23,9 @@ another candidate comparison.
 
 Each component: development -> validation -> one frozen component locked report
 
-selected extraction + chunking/embedding + retrieval + server + generator
---> extraction-to-RAG confirmation on separate non-locked data
---> one Final RAG locked report, followed by reporting-only human review
+reviewed canonical corpus + selected chunking/embedding + retrieval + server + generator
+--> Final RAG smoke-cpu / smoke-cuda -> integrated preflight
+--> one Final RAG locked report
 ```
 
 Document extraction, audio, chunking/embedding, database smoke/conformance
@@ -34,6 +34,8 @@ parser and ASR. Retrieval waits for chunking/embedding. Representative database
 vectors and full-stack retrieval require their frozen upstream components;
 synthetic server checks alone do not establish application impact. Final RAG
 waits for one selected server/configuration, retrieval stack, and generator.
+It starts from reviewed canonical text, not raw documents or media; extraction
+quality and extraction runtime belong to their component benchmarks.
 
 ## Benchmark methodologies
 
@@ -48,7 +50,7 @@ The shared rules on this page apply alongside each benchmark's specific contract
 | Retrieval and reranking | [Methodology](rag/retrieval_reranking/methodology.md) | [Metrics](rag/retrieval_reranking/metrics.md) |
 | Generation | [Methodology](rag/generation/methodology.md) | [Metrics](rag/generation/metrics.md) |
 | Vector databases | [Methodology](vectordb/methodology.md) | [Metrics](vectordb/metrics.md) |
-| Final RAG and human review | [Methodology](rag/final/methodology.md) | [Metrics](rag/final/metrics.md) |
+| Final RAG | [Methodology](rag/final/methodology.md) | [Metrics](rag/final/metrics.md) |
 
 ## How to read the benchmark guides
 
@@ -70,7 +72,7 @@ Every benchmark methodology follows the same reading order:
 8. **Results and MLflow structure:** where the recorded evidence can be inspected.
 
 Domain-specific phases belong beneath those headings. Document configuration
-screens, video's shared ASR preparation, and Final RAG's locked-only workflow
+screens, video's shared ASR preparation, and Final RAG's single-system workflow
 remain distinct procedures; a common reading order does not make their
 scientific contracts identical. Implementation-status notes identify remaining
 work without redefining the approved procedure.
@@ -122,8 +124,11 @@ profile. The four evaluation profiles remain `smoke`, `development`,
 
 Every independently evaluated component has its own locked report, including
 Generation and Vector Database. Final RAG is different: its components and
-complete-system settings are already selected, so it has only one locked
-evaluation, not another smoke, development, or validation comparison.
+complete-system settings are already selected. It checks that same composition
+through CPU/CUDA smoke and integrated preflight, then performs one locked
+evaluation. It has no development or validation candidate comparison. This
+single-system path remains subject to its
+[implementation boundary](rag/final/methodology.md#implementation-status).
 
 All choices affecting a shared locked manifest must be frozen before its first
 use by any benchmark. Component locked results cannot inform later system
@@ -136,7 +141,7 @@ Final RAG requires a separate untouched holdout.
 | `preflight` | Reviewed development/stress inputs | Every declared candidate | Qualify the exact model, protocol, software locks, CUDA device, dtype, batch size, and supported input envelope. | Hardware eligibility for authoritative execution while the qualification identity and input envelope still match; never quality selection. |
 | `development` | Development manifest | Matching preflight's qualified candidates; declared CPU-only server configurations for Vector Database | Compare alternatives, inspect failures, and make all tuning or shortlist decisions. | An engineer-reviewed finalist decision for validation. |
 | `validation` | Unseen validation manifest | Only finalists recorded from a completed development run | Test whether the development conclusion holds on unseen data without reopening the search. | An engineer-reviewed final component decision. |
-| `locked` | Untouched locked-test manifest | Exactly one fully frozen selection | Produce the final unbiased estimate after every model, setting, and policy decision is fixed. | Reporting only; never further tuning or reselection. |
+| `locked` | Untouched locked-test manifest | Exactly one fully frozen selection | Produce a held-out estimate under the frozen protocol after every model, setting, and policy decision is fixed. | Reporting only; never further tuning or reselection. |
 
 The profiles answer different questions, so a later profile does not merely mean
 "a bigger run." `development` asks what should advance; `validation` asks
@@ -163,7 +168,8 @@ embedding/reranking contracts; model preparation is not server-side inference.
 Its server/configuration roster advances through conformance checks and reviewed
 decisions. Document locks one routing policy containing a frozen route for each
 source type, rather than forcing PDF, image, and native DOCX through one parser.
-Final RAG has only its locked evaluation. These suite-specific contracts take
+Final RAG checks one selected system through smoke and integrated preflight
+before its locked evaluation. These suite-specific contracts take
 precedence over the generic lifecycle above.
 
 ## Preflight and measured-run lifecycles
@@ -365,8 +371,9 @@ one frozen winner + locked-test manifest
 -> no further tuning or reselection from locked results
 ```
 
-Final RAG consumes the single selected configuration from each component's
-validation-winner decision. The engineer freezes their composition, including
+Final RAG consumes the single selected configuration from each RAG component's
+validation-winner decision. Extraction decisions remain outside its canonical-
+text request path. The engineer freezes the RAG composition, including
 top-K, prompt, and context settings, before any applicable locked evaluation.
 Offline annotation review is separate from candidate selection. Component locked
 reports are evidence about those fixed choices, not inputs to another finalist search.
@@ -515,8 +522,9 @@ Only applicable phases appear. Vector Database omits CUDA smoke and preflight;
 its own locked report remains part of the target contract, subject to the
 [vector implementation boundary](vectordb/methodology.md#implementation-status).
 Its flat children are database–configuration pairs, not hidden configuration
-trials beneath one database winner. Final RAG has only a locked parent with one
-frozen complete-system child. Document uses source-specific parents: its locked
+trials beneath one database winner. Final RAG has `smoke-cpu`, `smoke-cuda`,
+`preflight`, and `locked` parents, each with one frozen complete-system child;
+it has no development or validation comparison. Document uses source-specific parents: its locked
 invocation reports the selected PDF route, selected image route, and fixed DOCX
 route as one frozen routing policy, not three competing winners. See the
 [Document run structure](extraction/document/methodology.md#results-and-mlflow-structure).
@@ -556,9 +564,13 @@ Peak Device VRAM limit; extraction does not. Smoke executes both
 CPU and CUDA by default, but neither result is selection evidence.
 Document and video parser backends follow their separately recorded lifecycle
 and device contracts because not every parser runtime exposes the same backend.
-Final RAG is intentionally outside preflight because its component candidates
-have already been qualified separately; its ordinary runtime resource gates
-still apply. Vector Database is CPU-only and has neither CUDA smoke nor
+Final RAG's integrated preflight qualifies the actual selected request path and
+model-residency transitions: component qualification alone does not establish
+complete-system fit. Its frozen component device/resource contracts and ordinary
+runtime gates still apply; normal CPU server/BM25 work is not GPU-model
+offloading. This integrated phase remains
+[pending implementation](rag/final/methodology.md#implementation-status).
+Vector Database server execution is CPU-only and has neither CUDA smoke nor
 preflight.
 
 Use the [shared Peak Device VRAM definition](metrics.md#peak-device-vram).
@@ -587,8 +599,8 @@ or baseline-delta memory policy is not reusable under the device-total contract.
 
 When a stage declares paired candidate comparisons, they are analysis artifacts
 rather than new metrics. They are calculated from aligned per-sample results;
-bootstrap comparisons resample the same sample IDs for both candidates instead
-of comparing unrelated aggregate values. The applicable pairs, stored fields,
+bootstrap comparisons resample the same independent units and aligned records
+for both candidates instead of comparing unrelated aggregate values. The applicable pairs, stored fields,
 and artifact placement are defined in that stage's methodology section.
 
 ## Shared uncertainty procedure
@@ -598,10 +610,10 @@ resampling procedure, with the independent unit appropriate to its benchmark:
 
 | Benchmark | Independent resampling unit |
 |---|---|
-| Document | Source document, retaining all pages and capture variants. |
+| Document | Reviewed independent-source group, retaining all member documents, pages, capture variants, objects, and attempts. |
 | ASR | Speech or control clip; related clips remain grouped if the reviewed manifest defines their common source as the independent unit. |
 | Video | Video; related excerpts remain grouped by the reviewed original source when required. |
-| Chunking–embedding, retrieval–reranking, generation, Final RAG, and real vector-server retrieval quality | Source document with all eligible questions, repeated outputs, and pair results. |
+| Chunking–embedding, retrieval–reranking, generation, Final RAG, and real vector-server retrieval quality | Reviewed independent-source group with every member document, eligible question, repeated output, and pair result; a single document is its own unit only when the reviewed grouping establishes independence. |
 | Vector-database ANN quality and database-ranking repeatability | Query with its aligned requests within one condition; related queries remain grouped by their reviewed source. |
 | Vector-database server load | Independent complete load windows, or a reviewed dependence-aware design; retain concurrent requests and wall time together. |
 | Vector-database standalone document operations | Independent operation/source groups, retaining related documents and repeated mutations. |
@@ -658,16 +670,19 @@ throughput, and resources. A **validity gate** must pass before a run may be use
 as evidence; it is not a trade-off metric. A **descriptor** records workload or
 storage needed to interpret other results but has no better direction. Evidence
 types and document groups are reporting slices, not additional metric roles.
-Blinded rubric scores are labeled separately as human judgments.
 
 ## Locked test
 
 Every component benchmark reports its selected configuration on its own locked
-test. After all selection and non-locked extraction confirmation are complete,
+test. After selection, Final RAG CPU/CUDA smoke, and integrated preflight are complete,
 Final RAG runs the one frozen system exactly once on its locked-test manifest.
-The selected parser, ASR, chunker, embedding, retrieval method, vector server, generator, prompt, and
-context settings cannot change between confirmation and this run.
+The canonical corpus contract, chunker, embedding model, retrieval method,
+reranker, vector server/configuration, generator, prompt, context settings, and
+residency policy cannot change between those checks and this run. Extraction is
+outside this request path, not an additional Final RAG confirmation requirement.
 
-The locked result is the final unbiased estimate. It is not used for more tuning.
+The locked result estimates held-out performance under that frozen protocol;
+it does not establish freedom from annotation bias or pretraining contamination.
+It is not used for more tuning.
 If the system changes after the result is inspected, a new benchmark and locked
 dataset version are required.

@@ -28,12 +28,24 @@ or generated answers.
 
 ### Implementation status
 
-The runner implements the reporting contract below: one warmup, designated-first
-quality, all-pairs complete-order Ranking Repeatability, separate live retrieval
+The runner implements one warmup, designated-first final-ranking quality,
+all-pairs complete-order Ranking Repeatability, separate live retrieval
 and reranker timings, owned index measurements, and retained per-attempt evidence.
 Standalone validation and sealed-report verification run before candidate loading.
 Pool/index provenance, permutation, input, placement, and numerical integrity
 remain separate from diagnostic ranking changes and measured failure counts.
+Alpha-nDCG already uses the same answerable-question and source-document
+eligibility as primary retrieval quality, including single-unit questions.
+
+Two reporting details still require migration. The current no-reranker owner
+retains its first successful pool and can therefore score pool recall from a
+later attempt when the designated first attempt failed. The approved
+[pool-recall contract](metrics.md#candidate-pool-evidence-unit-recall20) must use
+only the designated first measured pool; this current fallback must not be
+treated as conforming evidence. Separately, the current reporter emits duplicate
+alpha eligibility counters even though their populations equal primary
+eligibility. The updated reporting contract reuses the common reference counts
+below while retaining all metric-specific contributing/unavailable support.
 
 Reviewed independent-source CI support requirements remain data-dependent.
 Unfrozen requirements cannot establish authoritative uncertainty or advancement;
@@ -119,6 +131,9 @@ answerable-question eligibility, document-macro aggregation, confidence
 intervals, and text/table/formula/mixed slices are the same as in the
 chunking/embedding phase. Exact definitions and comparison rules are in
 [retrieval and reranking metrics](metrics.md).
+Canonical source-offset units and UTF-8 token-to-source mapping follow the
+[shared retrieval-evidence contract](../../metrics.md#retrieval-evidence-quality);
+this phase does not introduce a second mapping or tokenizer convention.
 
 ## Evaluation setup
 
@@ -324,10 +339,11 @@ same live first stage without a learned reranker.
 
 Retrieval Warm Latency times Dense, BM25, or both source retrievals plus RRF fusion,
 before learned reranking. Full-stack latency additionally includes the
-reranker when present. All warm timers begin after the complete warmup; a
-fresh-worker startup is reported separately as Cold Initialization Time.
-That initialization counter excludes separately timed offline index construction
-and input preflight. Dense and BM25 own their build-time observations; RRF
+reranker when present. All warm timers begin after the complete warmup.
+Cold Initialization Time reports the fresh query-runtime portion, not all
+worker-startup wall time. It excludes the complete offline corpus-build interval,
+including chunk construction, and the separately timed input preflight. Dense
+and BM25 own their narrower index-build observations; RRF
 references those dependencies and has no separate third-index-build scalar.
 The [metric reference](metrics.md#cold-initialization-time) gives the explicit
 non-overlapping timing calculation rather than treating cold initialization
@@ -495,12 +511,13 @@ The per-scope keys below use `overall`, `text`, `table`, `formula`, or
 |---|---|
 | `eligible_question_count` | Eligible answerable questions for that scope. |
 | `eligible_document_count` | Distinct source documents containing eligible questions. |
-| `alpha_ndcg_eligible_question_count` | Alpha-nDCG-eligible questions; the approved contract uses the same questions as primary quality, including single-unit questions. |
-| `alpha_ndcg_eligible_document_count` | Their distinct source documents; it must match primary eligibility under the approved rule. |
 
-Current alpha eligibility differs as described in the implementation boundary.
-Scored/unavailable support and independent source grouping remain separate from
-these reference counts. A contributing `sample_count` is not permission to
+All four quality families use these same reference-eligibility counts, including
+single-unit questions. Separate `alpha_ndcg_eligible_question_count` and
+`alpha_ndcg_eligible_document_count` scalars currently repeat them and are omitted
+from the approved updated contract; removing their emission remains pending.
+Metric-specific scored/unavailable support and independent source grouping
+remain separate from these reference counts. A contributing `sample_count` is not permission to
 discard planned questions or treat repetitions as independent documents.
 Required checks include complete query/attempt accounting, zero truncation,
 finite scores, pool provenance/live-order agreement, exact pool permutation,

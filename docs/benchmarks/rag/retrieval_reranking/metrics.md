@@ -29,6 +29,8 @@ ranked chunks. Every metric below has a question, calculation, worked example,
 interpretation, range/direction, and availability rules. The
 [methodology](methodology.md) defines pool ownership, advancement, MLflow
 artifacts, and paired comparisons.
+Inventory, configuration, and pool-artifact definitions are retained separately
+as reporting context, not additional mandatory metrics.
 
 These definitions are the approved reporting contract. The
 [implementation status](methodology.md#implementation-status) distinguishes
@@ -65,7 +67,7 @@ reranker's input and a diagnostic depth, not another final context cutoff.
 | Full-Stack Warm Latency p50/p95 | Operational | What are typical and slow-tail complete query times? | Lower |
 | Retrieval Warm Latency p50/p95 | Operational | How much time belongs to the first-stage retriever? | Lower |
 | Reranker Warm Latency p50/p95 | Operational | How much time belongs to learned reranking? | Lower |
-| Cold Initialization Time | Operational | How much fresh query-runtime initialization time is required, excluding offline index build? | Lower |
+| Cold Initialization Time | Operational | How much fresh query-runtime initialization time is required, excluding complete offline corpus/index preparation and input preflight? | Lower |
 | Peak Process-Tree RAM | Operational | What peak host memory does the worker and its children occupy? | Lower at equal quality |
 | Peak Device VRAM | Operational | What peak total memory is occupied on the assigned GPU? | Lower at equal quality |
 | Index Build Time | Operational, separate Dense/BM25 owners | How long does preparing each searchable index take? | Lower |
@@ -77,7 +79,7 @@ in the [MLflow keys](methodology.md#results-and-mlflow-structure).
 
 ### Workload descriptors
 
-| Value | Role | Question answered | Direction |
+| Metric | Role | Question answered | Direction |
 |---|---|---|---|
 | Mean Retrieved Context Tokens@3/@5 | Workload descriptor | How much source text does the final ranked context contain on average? | Descriptive |
 | p95 Retrieved Context Tokens@3/@5 | Workload descriptor | How large is the long tail of final context sizes? | Descriptive |
@@ -87,10 +89,16 @@ Corpus/query/chunk counts belong to the parent input inventory, and requested
 pool depth is a protocol parameter. Actual pool sizes and optional
 Candidate-Pool Tokens@20 belong to pool artifacts. They explain and verify the
 workload without becoming mandatory leaderboard metrics.
+The selected upstream embedding dimension and stored dtype remain configuration
+parameters verified against vector output shape/dtype, not new retrieval quality
+or workload scalars. Chunk count is fixed across this phase's stacks but remains
+candidate-dependent in the upstream chunking comparison. Eligibility,
+contributing, failed/unavailable, and independent-source counts are still needed
+to interpret completeness and intervals; input inventory does not replace them.
 
 ### Storage descriptors
 
-| Value | Role | Question answered | Direction |
+| Metric | Role | Question answered | Direction |
 |---|---|---|---|
 | Index Size | Storage descriptor, separate Dense/BM25 owners | How much searchable state does each independent index require? | Descriptive |
 | Index Size, with Dense/BM25 breakdown | Storage descriptor, RRF owner | What total storage does RRF require, and how much belongs to each dependency? | Descriptive |
@@ -119,6 +127,10 @@ The four @3/@5 families use the
 [shared retrieval-evidence definitions](../../metrics.md#retrieval-evidence-quality).
 Chunking/embedding candidates can create different corpora; here every stack
 shares the same complete frozen corpus and per-question normalization baselines.
+All four families share reference eligibility, including single-unit questions;
+alpha-nDCG has no separate multi-unit-only exception. Canonical offset units and
+UTF-8 token-to-source mapping also follow that shared contract, not a local
+reinterpretation of source spans.
 
 ### Attempts, failures, and integrity
 
@@ -577,28 +589,34 @@ reranker exists but completed timings are unavailable.
 ### Cold Initialization Time
 
 **Question:** How much fresh query-runtime initialization time is required,
-apart from the one-time offline index build?
+apart from one-time offline corpus and index preparation?
 
 Include required model/tokenizer/reranker loading, device placement, and
 query-runtime initialization before warmup. Exclude the separately timed
-offline index-build interval and separately identified input-preflight interval.
+complete offline corpus-build interval and separately identified input-preflight interval.
 The current counter derives this value from those disjoint recorded intervals;
 it is narrower than wall time from worker start through all corpus preparation.
+The excluded `corpus_build_seconds` interval includes chunk construction as well
+as index construction. It is not the Dense/BM25 Index Build Time scalar or their
+sum: those phase observations omit chunk construction. Retain the complete
+excluded interval in initialization/build evidence rather than inferring it
+from index-owner summary metrics.
 Operating-system disk caches are not forcibly cleared. Downloads, environment
 installation, and offline quality scoring remain outside initialization.
 
 In plain language:
 
     initialization elapsed time
-    - separately timed offline index build
+    - separately timed complete offline corpus build
     - separately timed input preflight
 
-**Example:** Model loading takes 3 seconds, offline index build 12 seconds,
-input preflight 0.2 seconds, and remaining reranker/runtime loading 2 seconds.
-Initialization elapsed is 17.2 seconds; Cold Initialization Time is
-17.2 - 12 - 0.2 = 5 seconds. Index Build Time separately reports 12 seconds.
-Do not describe the five-second scalar as the full 17.2-second first readiness
-wait, or count offline build again as part of cold loading.
+**Example:** Model loading takes 3 seconds, chunk construction 2 seconds,
+index construction 12 seconds, input preflight 0.2 seconds, and remaining
+reranker/runtime loading 2 seconds. Initialization elapsed is 19.2 seconds;
+the complete offline corpus-build interval is `2 + 12 = 14 seconds`.
+Cold Initialization Time is `19.2 - 14 - 0.2 = 5 seconds`, while Index Build
+Time separately reports 12 seconds. Do not describe the five-second scalar as
+the full 19.2-second readiness wait, or substitute 12 for the excluded 14 seconds.
 
 BM25 without a learned model still has runtime initialization; model absence
 does not imply zero initialization time.
@@ -1178,10 +1196,10 @@ the shared completeness distinction, not a blanket zero-request-failure gate.
 
 | Value | 95% confidence interval? | Rule |
 |---|---|---|
-| Development/validation/locked @3/@5 quality and pool recall | When defined and sufficiently supported | Resample independent source documents and recalculate the macro statistic. |
+| Development/validation/locked @3/@5 quality and pool recall | When defined and sufficiently supported | Resample reviewed independent-source groups with all member documents and recalculate the document-macro statistic. |
 | Text, table, formula, and mixed quality slices | When defined and sufficiently supported | Preserve eligible source question/failure records. |
-| Full-stack, retrieval, and reranker warm p50/p95 | Conditional | Resample source documents with query-level successful-attempt medians; recalculate percentiles. |
-| Ranking Repeatability | When complete and sufficiently supported | Resample source documents with all scheduled query pairs and recalculate question-then-document means. |
+| Full-stack, retrieval, and reranker warm p50/p95 | Conditional | Resample reviewed source groups with every member document's query-level successful-attempt medians; recalculate percentiles. |
+| Ranking Repeatability | When complete and sufficiently supported | Resample reviewed source groups with every member document's scheduled query pairs and recalculate question-then-document means. |
 | Validity counters | No selection-uncertainty interval | Retain actual checks, support, and failure details. |
 | Smoke | No authoritative interval | Wiring evidence only. |
 | One cold initialization, index build, or observed memory peak | No | One lifecycle observation cannot estimate uncertainty. |
@@ -1190,8 +1208,10 @@ the shared completeness distinction, not a blanket zero-request-failure gate.
 ### Calculation
 
 Apply the [shared CI procedure](../../metrics.md#confidence-intervals) to the
-reference-eligible source-document inventory and its complete query/failure
-records. Recalculate document-macro quality and pool recall; latency draws use
+reference-eligible source inventory: draw reviewed independent-source groups,
+retaining all member documents and their complete query/failure records. A
+document is its own independent unit only when the reviewed grouping establishes
+that. Recalculate document-macro quality and pool recall; latency draws use
 the sampled documents' query-level successful-attempt medians before calculating
 each component's percentile. Repeatability draws recalculate each question's
 scheduled pair score and document-macro mean; they do not create new rankings or

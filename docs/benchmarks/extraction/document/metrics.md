@@ -24,8 +24,9 @@ cost.
 OmniDocBench has two separate roles. Its selected pages supply ground-truth text,
 reading order, element types and boxes, tables, and formulas for all applicable
 metrics below. Its scoring code is reused only for TEDS, TEDS-S, and CDM;
-ExpRate@CDM is derived from CDM results. EduMind calculates the remaining metrics
-from the same canonical reference/prediction pairs because those definitions
+ExpRate@CDM uses the approved raw-count exactness policy below, derived from CDM
+matching counts rather than its rounded similarity. EduMind calculates the
+remaining metrics from the same canonical reference/prediction pairs because those definitions
 must also work unchanged on OHR-Bench, PureDocBench, DocPTBench, native DOCX, and
 EduMind-specific samples.
 
@@ -33,6 +34,10 @@ EduMind calculates the common metrics in its Python 3.12 environment. TEDS,
 TEDS-S, and CDM alone run from the pinned official evaluator inside its verified
 Python 3.10 Docker image. This changes only where those calculations execute;
 all metrics still belong to the same extraction-profile child run in MLflow.
+The [table normalization](#table-scorer-normalization) and
+[exact-count ExpRate@CDM](#formula-exact-match-expratecdm) updates are approved
+contracts, not completed implementation: the current project wrapper bypasses
+that normalization and discards the counts required for strict exactness.
 
 Within each quality category, **primary metrics** summarize the category's main
 outcomes. The remaining metrics are **secondary metrics**: they explain the
@@ -105,7 +110,7 @@ examples, and confidence-interval rules follow the summary.
 | Formula Detection Recall | Secondary | How many reference formulas were found? | Higher |
 | Formula Detection F1 | Primary | Does formula detection balance extra and missed formulas? | Higher |
 | Formula Recognition Similarity (CDM) | Secondary | How visually and structurally close is each recognized formula to its reference? | Higher |
-| Formula Exact Match (ExpRate@CDM) | Primary | How often was a formula reconstructed perfectly? | Higher |
+| Formula Exact Match (ExpRate@CDM) | Primary | How often are all rendered reference and predicted character regions matched, with no misses or extras? | Higher |
 
 ### Reliability and failure behavior
 
@@ -1297,19 +1302,57 @@ can still coexist with wrong cells or merged spans; TEDS evaluates those errors.
 
 [Shared availability rules apply.](../../metrics.md#shared-availability-rules)
 
+### Table-scorer normalization
+
+The approved TEDS/TEDS-S contract applies the official `normalized_html_table`
+function symmetrically to each paired reference and prediction before either
+scorer. Pin the complete function and its dependencies to OmniDocBench revision
+`193627ae9e97d89188468ed1ee3b7a856ff76044`, not an independently rewritten subset.
+Its [pinned normalization source](https://github.com/opendatalab/OmniDocBench/blob/193627ae9e97d89188468ed1ee3b7a856ff76044/src/core/preprocess/data_preprocess.py)
+converts `th` to `td` while retaining cell text and row/column spans, unwraps
+`thead`/`tbody` and presentation wrappers, and applies its own cell-text cleanup.
+This scorer-facing representation is distinct from the shared prose projection
+and from the raw HTML, which remains unchanged and retained.
+
+The [pinned TEDS implementation](https://github.com/opendatalab/OmniDocBench/blob/193627ae9e97d89188468ed1ee3b7a856ff76044/src/metrics/table_metric.py)
+reads cell text and spans specifically from `td` nodes. Directly passing raw
+`th` nodes can therefore conceal header-content and header-span errors even when
+a reference self-comparison scores one. Under normalization, header wording
+affects TEDS and header spans affect both scores; header-versus-body tag semantics
+and stripped wrappers are intentionally not separate fidelity tasks.
+
+Evaluator acceptance must include an identical-table baseline, equivalent
+header/wrapper representations, changed header text that remains different after
+normalization with unchanged structure (TEDS decreases; TEDS-S stays one), and
+changed header row/column spans (both decrease). These are required perturbation
+checks, not claimed test results or
+new quality metrics. A self-comparison alone is insufficient. Reference validity
+still follows [data validation](../../data-validation.md#document-references-including-blank-sources).
+
+**Pending implementation:** the current project worker only adds an HTML/body
+envelope and calls TEDS directly. Migrating it to the symmetric pinned function,
+retaining both raw and scorer-facing HTML, and verifying the perturbations remain
+required before claiming this updated contract. Record the normalizer's revision,
+wrapper revision, evaluator image digest, and representations/checksums with the
+existing evaluation evidence. Preserve historical scores under their old identity;
+rescoring creates [versioned evidence](../../metrics.md#prediction-evidence-and-rescoring).
+This change concerns TEDS/TEDS-S, not table-detection matching or prose cleanup.
+
 ### TEDS
 
 **Question:** How similar is the complete predicted table tree, including its
 structure and cell text, to the reference?
 
-TEDS represents the HTML table as a tree and converts the normalized edit
-distance between the reference and prediction into a similarity score. Unlike
+TEDS represents the [normalized scorer-facing HTML](#table-scorer-normalization)
+as a tree and converts the normalized edit distance between the reference and
+prediction into a similarity score. Unlike
 TEDS-S, edits to cell text affect the result.
 
 In plain language, subtract the official tree-edit cost divided by the larger
 table-tree size from one. Node edits include structural differences and the
 official cell-text substitution cost; they are not simply a count of wrong
-cells. The pinned evaluator supplies the tree parsing, costs, and normalization.
+cells. The pinned evaluator supplies tree parsing, costs, and edit-distance
+normalization after the separately required HTML normalization.
 
 ```text
 TEDS = 1.0       → identical structure and cell text
@@ -1355,8 +1398,8 @@ In plain language:
 TEDS-S = 1 − normalized table-tree edit distance
 ```
 
-The evaluator compares the canonical HTML table trees, including row/cell tags
-and row/column spans. It divides the official structural edit cost by the larger
+The evaluator compares the [normalized scorer-facing table trees](#table-scorer-normalization),
+including row/cell tags and row/column spans. It divides the official structural edit cost by the larger
 tree size, subtracts that normalized distance from one, and then averages
 reference-table scores within each document before averaging eligible documents
 equally. Cell text is ignored, so this score focuses on structure rather than
@@ -1390,9 +1433,8 @@ TEDS-S with low Table Content Recall means the shape is right but text is missin
 [Shared availability rules apply.](../../metrics.md#shared-availability-rules);
 official evaluator availability follows the [page-wide result rules](#scoring-inputs-eligibility-and-result-status).
 
-The benchmark uses the pinned official scorer rather than a custom
-approximation. OmniDocBench documents TEDS and TEDS-S in its
-[official evaluation repository](https://github.com/opendatalab/OmniDocBench).
+Both scores retain the pinned official tree-edit implementation. Its use alone
+does not certify the project's still-pending normalization path described above.
 
 ## Mathematical formulas
 
@@ -1412,13 +1454,14 @@ into empty-string matches. Empty claimed reference expressions are invalid data.
   regions were found without hallucinating extra formula regions.
 - **ExpRate@CDM** is primary because mathematical meaning can change after one
   wrong symbol. It reports the proportion of reference formulas reconstructed
-  perfectly under the CDM evaluator.
+  with no missed or extra rendered-character regions under the approved
+  exact-count policy and official CDM matcher.
 - **Formula Detection Precision and Recall** are secondary metrics. They expose
   whether Detection F1 is limited by false formula regions or missed formulas.
 - **Formula Recognition Similarity (CDM)** is supporting because it shows how
   close imperfect recognitions are to the reference. It is valuable for error
   analysis, but a high average similarity can hide formulas with small,
-  meaning-changing mistakes; ExpRate@CDM makes perfect reconstruction explicit.
+  meaning-changing mistakes; ExpRate@CDM identifies strict character matches.
 
 ### Formula Detection Precision
 
@@ -1523,20 +1566,24 @@ its reference?
 
 The official evaluator renders each reference and predicted formula, then
 matches their character regions and positions. It compares matched characters
-against extra predicted and missed reference characters. The reported score is
-first averaged over reference formulas within each document, including zero for
-misses, and then macro-averaged across eligible documents.
+against extra predicted and missed reference characters. Its
+[pinned CDM implementation](https://github.com/opendatalab/OmniDocBench/blob/193627ae9e97d89188468ed1ee3b7a856ff76044/src/metrics/cdm/cdm.py)
+returns `F1_score` rounded to three decimal places. Keep that official similarity:
+average the returned per-formula values within each document, including zero for
+misses, then macro-average eligible documents. Do not replace this metric with
+an unrounded variant or round document values again before aggregation.
 
 In plain language:
 
 ```text
-                  2 × matched characters
-CDM = ──────────────────────────────────────────────
-      2 × matched + extra + missed character regions
+raw character F1 = 2 × tp / (gt_tokens + pred_tokens)
+reported CDM     = round(raw character F1, 3)
+
+tp = matched regions; gt_tokens = reference regions; pred_tokens = predicted regions
 ```
 
 ```text
-CDM = 1.0  → perfect rendered-character match
+CDM = 1.0  → rounded maximum; not by itself proof of an exact match
 CDM = 0.8  → mostly correct formula
 CDM = 0.0  → no useful match
 ```
@@ -1549,7 +1596,8 @@ counts, not a prose-token comparison. A missed formula receives zero. Macro-aver
 the eligible document values rather than pooling formulas across the corpus.
 
 CDM compares rendered character positions, so equivalent renderings are not
-penalized merely for using different LaTeX source.
+penalized merely for using different LaTeX source. Exactness is assessed
+separately from raw counts below; neither metric proves mathematical equivalence.
 
 **Range and direction:** `[0, 1]`; higher is better.
 
@@ -1565,28 +1613,45 @@ official evaluator availability follows the [page-wide result rules](#scoring-in
 
 ### Formula Exact Match (ExpRate@CDM)
 
-**Question:** How often was a formula reconstructed perfectly?
+**Question:** How often are all rendered reference and predicted character
+regions matched, with no missed or extra regions?
+
+The approved EduMind policy is **`cdm_exact_counts_v1`**: for a successfully
+evaluated formula, the exact-match indicator is one if and only if
+`tp == gt_tokens == pred_tokens > 0`, using raw integer counts from the same
+pinned official CDM evaluation. Otherwise it is zero. This policy versions the
+strict exactness interpretation; it is not the test `F1_score == 1.0` on the
+official three-decimal similarity, nor an implemented protocol setting.
 
 In plain language:
 
 ```text
-reference formulas in the document whose CDM score equals 1
-───────────────────────────────────────────────────────────
-               all reference formulas in the document
+reference formulas satisfying the exact-count predicate
+──────────────────────────────────────────────────────
+         all reference formulas in the document
 ```
 
-**Example:**
+**Example:** Four illustrative formula evaluations have these counts:
 
 ```text
-CDM scores: 1.0, 0.9, 1.0, 0.7
+Raw (tp, gt_tokens, pred_tokens): (10,10,10), (9,10,10), (10,10,10), (7,10,10)
+Official CDM similarities:         1.0,         0.9,        1.0,        0.7
+Exact-count indicators:             1,           0,          1,          0
 
 Mean CDM    = (1.0 + 0.9 + 1.0 + 0.7) / 4 = 0.90
 ExpRate@CDM = 2 / 4 = 0.50
 ```
 
-The formulas are generally close, but only half are completely correct. Mean
-CDM and ExpRate@CDM therefore answer different questions. Macro-average the
+The formulas are generally close, but only half meet strict character matching.
+For the rounding counterexample, `tp=1000`, `gt_tokens=1000`, and
+`pred_tokens=1001` yield raw F1 `2000 / 2001 ≈ 0.99950025`, which the official
+scorer rounds to `1.000`. Exact match is nevertheless zero: one predicted region
+is extra. Rounded CDM alone cannot recover the exact-count indicator.
+
+Mean CDM and ExpRate@CDM therefore answer different questions. Macro-average the
 document exact-match fractions equally; a missed formula contributes zero.
+The predicate measures exactness under the official character matcher, not
+LaTeX byte equality or a guarantee of mathematical meaning.
 
 **Range and direction:** `[0, 1]`; higher is better.
 
@@ -1596,14 +1661,26 @@ document exact-match fractions equally; a missed formula contributes zero.
 |---|---|---|---|
 | No reference formulas | Verified formula-free document | `null` (`inapplicable`) | There is no reference-formula exact-match denominator; detection still applies. |
 | Known invalid predicted expression within an otherwise valid output | A recovered formula has a malformed reconstruction | Formula contribution `0` (`scored`) | It cannot be a perfect reconstruction under the established evaluator convention. |
+| Official similarity is available but raw counts are absent | A legacy result retains only rounded CDM `1.000` | `null` (`unavailable`) for strict exactness | Do not infer exactness or invent counts; independently complete CDM similarity remains available. Missed/known-invalid predictions retain their explicit zero convention. |
 
 [Shared availability rules apply.](../../metrics.md#shared-availability-rules);
 official evaluator availability follows the [page-wide result rules](#scoring-inputs-eligibility-and-result-status).
 
-The evaluator and its exact revision are pinned from the [official OmniDocBench evaluation
-code](https://github.com/opendatalab/OmniDocBench); EduMind does not substitute a
-home-grown LaTeX edit score. The CDM and ExpRate@CDM definitions come from the
-[CVPR 2025 CDM paper](https://openaccess.thecvf.com/content/CVPR2025/html/Wang_Image_Over_Text_Transforming_Formula_Recognition_Evaluation_with_Character_Detection_CVPR_2025_paper.html).
+**Pending implementation and provenance:** the project worker currently returns
+only `F1_score`, and document aggregation tests that rounded scalar for equality
+to one. Transporting and retaining `tp`, `gt_tokens`, and `pred_tokens`, applying
+`cdm_exact_counts_v1`, and verifying near-perfect rounding cases are still required
+migration work. Record the policy version, pinned evaluator revision/image digest,
+wrapper revision, and each formula's counts, similarity, indicator, and status
+in existing evaluation artifacts. Missing/invalid reconstructions need their
+explicit status, not fabricated successful-evaluation counts. Old rounded-scalar
+exact-match results remain identifiable as the old definition; they cannot be
+relabeled as strict-count results without a versioned rescore of saved predictions.
+
+The [CDM paper](https://openaccess.thecvf.com/content/CVPR2025/html/Wang_Image_Over_Text_Transforming_Formula_Recognition_Evaluation_with_Character_Detection_CVPR_2025_paper.html)
+motivates character-based similarity and expression recognition rate. The
+exact-count predicate above is EduMind's explicit versioned policy using the
+official counts, not a claim that rounded-score equality proves perfect recovery.
 
 ## Reliability and failure behavior
 
@@ -1783,7 +1860,7 @@ attempts divided by total scheduled attempts.
 **Edge cases and availability:**
 
 [Shared execution-accounting rules](../../metrics.md#execution-accounting-and-result-completeness) apply.
-Scheduled-attempt accounting, recoverable retries, and setup failures follow the
+Scheduled-attempt accounting, recoverable request errors, and setup failures follow the
 [page-wide execution rules](#scoring-inputs-eligibility-and-result-status).
 
 ## Operational performance
@@ -2130,16 +2207,16 @@ reports the metrics separately instead of calculating a weighted overall score.
 ## Aggregation and confidence intervals
 
 Use the [shared confidence-interval procedure](../../metrics.md#confidence-intervals)
-with source documents as independent units. The table and applications below
+with reviewed independent-source groups as resampling units. The table and applications below
 specify document-extraction eligibility and aggregation.
 
 ### Which values receive an interval
 
 | Value | 95% confidence interval? | Rule |
 |---|---:|---|
-| Development, validation, and locked text, page, layout, table, and formula aggregates | Yes | Calculated from the contributing independent samples. |
-| Development, validation, and locked reliability rates | Yes | Calculated across scheduled independent samples. |
-| Development, validation, and locked p50/p95 latency | Conditional | Reported when enough independent source documents support the percentile estimate; pages and attempts remain dependent observations. |
+| Development, validation, and locked text, page, layout, table, and formula aggregates | When defined and sufficiently supported | Recalculate document-macro values from reference-eligible source records, retaining failures and unavailable evaluations. |
+| Development, validation, and locked reliability rates | When defined, complete where required, and sufficiently supported | Recalculate each rate using its own scheduled or completed-output denominator. |
+| Development, validation, and locked p50/p95 latency | Conditional | Reported when enough reviewed independent-source groups support the percentile estimate; their documents, pages, and attempts travel together. |
 | Smoke metrics | No authoritative interval | Smoke validates execution and is too small for selection claims. |
 | Statuses, revisions, checksums, configuration values | No | These are states or fixed facts rather than sampled estimates. |
 | One first-item or cold-load measurement | No | One observation cannot estimate uncertainty. |
@@ -2156,8 +2233,10 @@ bootstrap arithmetic and target corpus sizes do not themselves establish support
 ### Calculation
 
 Apply the [shared bootstrap algorithm and parameters](../../metrics.md#confidence-intervals)
-to complete independent source documents, retaining all dependent pages,
-objects, capture variants, and attempts.
+to reviewed independent-source groups, retaining all member documents, pages,
+objects, capture variants, and attempts. A document is an independent unit only
+when its reviewed source grouping establishes that; document-macro point
+weighting does not change.
 
 Document-group metrics resample only the samples in that group. Conditional
 tasks such as table reconstruction or formula recognition draw from reference-fixed

@@ -196,7 +196,8 @@ engineer-selected finalists on 18 unseen speech clips and validation controls
 locked test:
 one benchmark invocation for the selected profile on 18 locked speech clips
 and locked controls, using the configured measured repetitions
-→ final unbiased ASR report; no further tuning in this benchmark version
+→ held-out ASR estimate under the frozen protocol
+→ no further tuning in this benchmark version
 ```
 
 Smoke validates wiring only. Development is where all candidates that passed

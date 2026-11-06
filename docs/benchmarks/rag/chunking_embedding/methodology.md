@@ -39,9 +39,10 @@ documents remain in the frozen searchable corpus; excluding a query does not
 remove corpus distractors or alter another question's available evidence.
 
 One answerable question is one scoring sample. Because questions from the same
-paper are related, the source document—not the individual question—is the
-independent resampling unit. Repeated query executions improve timing
-measurement but do not create additional quality samples.
+paper are related, resampling retains the whole source document, grouping
+related documents by their reviewed independent-source identity under the
+[shared CI rule](../../metrics.md#confidence-intervals). Repeated query executions
+improve timing measurement but do not create additional quality samples.
 
 For example, a document with two first-ranking recall values `1` and `0`
 contributes `0.5`; a second document with one value `1` contributes `1`.
@@ -52,10 +53,21 @@ per-query observations defined below; they are not document-macro latency means.
 
 ### Implementation status
 
-The runner implements the reporting contract below: separate load/build/query
+The runner implements separate load/build/query
 measurements, first-ranking quality and context descriptors, retained per-attempt
 rankings, diagnostic all-pairs Ranking Repeatability, and explicit execution,
 quality, and integrity coverage. Valid ranking changes are not a failure gate.
+The existing parent `paired_comparisons.json` contains the
+[overall-quality comparisons](#paired-comparison-artifact) described below.
+
+The approved reporting simplification is a documentation change that still
+requires code migration: fixed corpus document/question/source-token counts
+move to parent workload metadata, embedding dimension becomes a child parameter
+verified against output shape, and derived Corpus-Build Throughput stays only
+in build evidence. The current runner still emits those candidate scalars.
+The updated scalar list below is the target contract, not a claim that this
+migration is implemented. Candidate-dependent descriptors and all execution,
+quality, and independent-source support counts remain required as applicable.
 
 Independent-source CI support requirements still need data review. Unfrozen
 support retains descriptive points with null bounds and an exploratory-readiness
@@ -131,8 +143,13 @@ data cannot guarantee every candidate's boundaries, vectors, or inference inputs
 | Retrieval quality | **nDCG@3/@5**, **Evidence-unit Recall@3/@5**, **Evidence-token Precision@3/@5**; alpha-nDCG@3/@5 diagnostic | Measures evidence-richness ordering, evidence completeness, and context concentration; alpha-nDCG diagnoses novelty on the same answerable questions. |
 | Evidence slices | Retrieval metrics repeated for text, table, formula, and mixed questions | Reveals a pair that performs well only on the majority evidence type. |
 | Diagnostic | Ranking Repeatability | Describes valid top-five ordering stability and delivery across all scheduled attempt pairs without requiring a perfect score. |
-| Operational | Cold load; chunking, chunk embedding, total corpus-build time and source-token throughput; query-embedding, vector-search, and complete warm p50/p95; peak RAM/VRAM | Measures complete costs and explains their non-overlapping components without double-counting them as independent quality benefits. |
-| Workload and storage | Corpus counts, source/indexed tokens, chunk count/lengths, mean/p95 retrieved-context tokens at @3/@5, vector dimension/dtype, matrix bytes | Describes preparation, returned context, and storage; descriptors have no automatic better direction. |
+| Operational | Cold load; chunking, chunk embedding, total corpus-build time; query-embedding, vector-search, and complete warm p50/p95; peak RAM/VRAM | Measures complete costs and explains their non-overlapping components without double-counting them as independent quality benefits. Derived source-token throughput remains in build evidence only. |
+| Workload and storage descriptors | Indexed-token occurrences, chunk count/lengths, mean/p95 retrieved-context tokens at @3/@5, matrix bytes | Describes candidate-dependent preparation, returned context, and storage; descriptors have no automatic better direction. |
+
+Fixed corpus document/question/source-token counts are parent workload metadata,
+not candidate metrics. Embedding dimension and stored dtype are child parameters;
+runtime validation checks the produced vector shape and dtype. See
+[reporting placement](#results-and-mlflow-structure) and its migration boundary.
 
 The three bold metric families are primary and reviewed separately at both
 cutoffs. Apply the [shared retrieval-quality definitions](../../metrics.md#retrieval-evidence-quality)
@@ -189,11 +206,10 @@ The fixed tokenizer is a protocol control, not another benchmark candidate. A
 future multilingual protocol may evaluate tokenizer sensitivity separately
 before freezing a replacement.
 
-Token relevance uses positive source-span overlap with verified evidence. Count
-each returned token occurrence once even if several evidence intervals overlap
-it; occurrences repeated through different chunks count again. Prefixes and
-special inference tokens are excluded from source-content scoring. Unlike unit
-coverage, token relevance does not require recovering the entire evidence unit.
+Use the [shared source-offset and token-span mapping contract](../../metrics.md#retrieval-evidence-quality)
+for evidence-token overlap, including the canonical offset unit and UTF-8 token
+mapping. Unlike unit coverage, token relevance does not require recovering the
+entire evidence unit; no candidate-specific mapping is substituted.
 
 Every declared pair is checked against the embedding model's native input
 contract, including query/document prefixes and required special tokens.
@@ -414,18 +430,31 @@ Summaries additionally distinguish complete outcome ledgers, executed/unexecuted
 coverage, required quality coverage, and integrity outcomes rather than treating
 every request error as a missing comparison.
 `plan.json`, `provenance.json`, `metric_contract.json`, `leaderboard.parquet`,
-paired comparisons, and `summary.json` are parent artifacts. The chosen pair's
+`paired_comparisons.json` on non-smoke measured profiles, and `summary.json`
+are parent artifacts. The chosen pair's
 locked result remains in this component experiment and cannot reopen selection.
+
+Under the approved metadata migration, retain the verified document count,
+answerable/unanswerable question counts, and fixed-tokenizer source-token count
+once in the parent's workload inventory in `provenance.json`, optionally also
+as searchable parent parameters. Keep their manifest/tokenizer identities and
+reference them from child build evidence. They are not required candidate
+scalar metrics. This placement does not replace expected/processed counts,
+per-metric/slice contributing support, or independent-source counts.
 
 Each child is one planned pair. Its run name is the complete pair identifier,
 `<chunker_id>|<embedding_id>`. Parameters contain the resolved chunker and
 embedding contracts, model and tokenizer revisions and checksums, device, dtype,
 prefixes, pooling, normalization, evaluation tokenizer, evidence rule,
 `quality_cutoffs=[3,5]`, `artifact_top_k=20`, `alpha=0.5`, seed, warmups,
-repetitions, `repeatability_depth=5`, split, and manifest checksum.
+repetitions, `repeatability_depth=5`, split, and manifest checksum. The approved
+parameter-only reporting also records embedding dimension alongside stored
+vector dtype, with actual shape/dtype verification retained in build validation.
 The child has no child runs for documents, questions, repetitions, or metrics.
 
-A valid child logs:
+Under the approved updated contract, a valid child logs the applicable scalars
+below. Moving the fixed metadata, dimension, and throughput out of the current
+scalar output still requires the migration noted above:
 
 ```text
 quality.overall.ndcg_at_3
@@ -448,7 +477,6 @@ operational.cold_model_load_seconds
 operational.chunking_seconds
 operational.chunk_embedding_seconds
 operational.corpus_build_seconds
-operational.corpus_build_source_tokens_per_second
 operational.query_embedding_latency_ms_p50
 operational.query_embedding_latency_ms_p95
 operational.vector_search_latency_ms_p50
@@ -458,11 +486,7 @@ operational.query_latency_ms_p95
 operational.peak_process_tree_ram_mb
 operational.peak_vram_mb
 
-workload.source_tokens
 workload.indexed_token_occurrences
-workload.document_count
-workload.answerable_query_count
-workload.unanswerable_query_count
 workload.chunk_count
 workload.chunk_tokens_mean
 workload.chunk_tokens_p95
@@ -470,7 +494,6 @@ workload.retrieved_context_tokens_at_3_mean
 workload.retrieved_context_tokens_at_3_p95
 workload.retrieved_context_tokens_at_5_mean
 workload.retrieved_context_tokens_at_5_p95
-workload.embedding_dimension
 workload.embedding_matrix_bytes
 ```
 
@@ -491,8 +514,10 @@ document-macro values, and independent sources are not interchangeable counts.
 The run-level validation outcome is also stored as a
 `benchmark.valid` tag and a `validation.status` tag whose value is `passed` or
 `failed`. MLflow scalar values do not replace the
-detailed `validation_report.json` artifact. Stored dtype is a parameter in the
-resolved embedding contract rather than a numeric metric.
+detailed `validation_report.json` artifact. Embedding dimension and stored dtype
+belong to the resolved embedding parameters rather than numeric metrics under
+the updated contract; their declared values do not establish successful output
+validation when no complete matrix was produced.
 
 Nulls and their statuses/reasons remain in artifacts; MLflow scalar keys are
 absent. Partial quality estimates are artifact diagnostics, not normal quality
@@ -527,7 +552,7 @@ and unexecuted attempts; a missing output is not a successful empty artifact.
 | `evidence_matches.parquet` | Trace from each question and evidence unit to the chunks that recovered it. |
 | `timings.parquet` | One row per query/attempt with outcome and embedding/search/enclosing durations and phase status, plus separate cold-load, chunking, chunk-embedding, total-build records and elapsed-to-failure. Each completed component enters its own latency cohort. |
 | `resources.parquet` | Timestamped process-tree RAM and raw assigned-device VRAM samples, with method, availability, and complete/partial window scope. |
-| `candidate.json` | Resolved contracts, run and metric statuses, fingerprint, complete or labelled partial aggregates, support, CI draw counts/degeneracy flags, operational values and measurement scope, and artifact references. |
+| `candidate.json` | Resolved contracts, run and metric statuses, fingerprint, complete or labelled partial aggregates, support, CI draw counts/degeneracy flags, operational values and measurement scope, and artifact references. Under the approved migration, its corpus-build evidence retains derived source-token throughput and the parent numerator reference, without a throughput scalar. |
 | `validation_report.json` | Input-length and validity checks, counts, limits, checksums, and any errors. |
 
 Raw documents, model weights, and a full embedding matrix are not duplicated
@@ -541,6 +566,38 @@ Aggregation and uncertainty follow the
 [chunking and embedding confidence-interval contract](metrics.md#aggregation-and-confidence-intervals).
 Evidence slices use the classifications above and report their contributing
 question and document counts.
+
+### Paired-comparison artifact
+
+The existing `paired_comparisons.json` is a parent analysis artifact, not another
+MLflow run or metric. Non-smoke measured profiles compare every unordered pair
+of successful complete candidates. Smoke does not produce it; a single-candidate
+locked report has an empty comparison list. Failed, incomplete, or excluded
+candidates do not receive fabricated comparisons.
+
+Each entry identifies `left`, `right`, and a `metrics` mapping for the eight
+`quality.overall.*` values: nDCG, Evidence-unit Recall, Evidence-token Precision,
+and diagnostic alpha-nDCG, each at @3 and @5. It does not add evidence-slice,
+repeatability, operational, or descriptor pair rows. Candidate question IDs,
+document identities, and independent-source identities must align, with complete
+quality values on both sides; mismatches reject the comparison rather than
+shrinking it to surviving overlaps.
+
+Each metric retains `left_minus_right`, identical to its difference `estimate`,
+and `direction=max`: a positive value favors the left candidate on that metric,
+not an overall winner. For example, illustrative document-macro Recall@5 values
+of `0.82` and `0.77` give `0.05`, not a relative percentage improvement.
+`paired_samples`, `paired_documents`, and `paired_resampling_units` respectively
+count aligned questions, source documents, and reviewed independent source groups.
+
+Apply the [shared paired-source bootstrap](../../metrics.md#confidence-intervals)
+to aligned question differences, preserving document-macro weighting and every
+document inside its reviewed source group. The artifact retains `lower`, `upper`,
+`confidence`, contributing/eligible support, requested/defined/undefined draw
+counts, degeneracy, and unavailable-bound reasons. Unfrozen or insufficient CI
+support leaves a defined difference with null bounds; it does not establish
+authoritative advancement. This is existing reporting, unlike the pending
+metadata/throughput migration.
 
 The engineer approves up to three complete chunker/embedding pairs. No separate
 embedding winner or chunker winner is required. Advancement jointly reviews

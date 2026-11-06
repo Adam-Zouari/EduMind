@@ -36,12 +36,23 @@ Development compares nine configurations of three strategies:
 
 | Strategy | Configurations | Question answered |
 |---|---|---|
-| Fixed interval | One frame every 5, 10, or 20 seconds | What visual recovery is gained by more frequent sampling, and at what cost? |
+| Fixed interval | Elapsed-time threshold of 5, 10, or 20 seconds since the last selected frame | What visual recovery is gained by more frequent sampling, and at what cost? |
 | Scene change | FFmpeg scene threshold 0.30, 0.40, or 0.50 | How sensitive should transition detection be? |
-| Hybrid | Selected scene threshold plus maximum gap of 5, 10, or 20 seconds | How often must fallback sampling capture gradual or static changes? |
+| Hybrid | Selected scene threshold plus fallback gap threshold of 5, 10, or 20 seconds | How often must fallback sampling capture gradual or static changes? |
 
 Every configuration includes frame zero and uses variable-frame-rate FFmpeg
-output. The hybrid configurations share the scene threshold chosen from a
+output. Fixed interval selects the first available frame whose timestamp is at
+least the configured interval after the previously selected frame; it does not
+synthesize frames on an exact wall-clock grid. Hybrid selects scene changes or
+the first available frame at its gap threshold, whichever occurs first. Every
+selection, including a scene selection, resets that elapsed-time timer. Frame
+cadence can overshoot either threshold: after a selection at `0 s`, a `5 s`
+threshold with subsequent frames at `4.9 s` and `5.2 s` selects `5.2 s` if no
+earlier scene selection occurs. The hybrid “maximum gap” parameter is thus a
+fallback trigger, not a hard bound on observed gaps. Retain actual frame times;
+existing policy names and parameter identifiers do not change.
+
+The hybrid configurations share the scene threshold chosen from a
 preliminary development scene comparison. Testing all thresholds with all gaps
 would produce 15 configurations; that interaction grid is not the current design.
 The staged choice does not establish that every untested hybrid threshold would
@@ -115,14 +126,15 @@ recognition pools valid complete-video edit counts. Latency/RTF/resource metrics
 retain their own definitions. Null output-dependent quality after failure is read
 with retained failure and support counts, not mistaken for zero error.
 
-Spoken and visible content are separate. Combined audio/visual usefulness is
-checked through the non-locked
-[extraction-to-RAG confirmation](../../rag/final/methodology.md#extraction-to-rag-confirmation),
-not a transcript-dominated combined recall score. Confirmation reports the
-actual full-path latency defined in its metric list, rather than a sum of
-component percentiles. Any additional integrated RTF or resource observation
-would need its own explicit boundary; component ratios or peaks cannot be
-added to invent such a measurement.
+Spoken and visible content are separate; there is no transcript-dominated
+combined recall score. Visual line scoring is a
+[lexical projection, not code/formula syntax fidelity](metrics.md#visual-content-quality-1).
+Under the approved Final RAG scope, extraction is outside its quality and timing
+evaluation: Final RAG starts from reviewed prepared content. A future
+extraction-to-RAG integration check would be a separate task, not a required
+confirmation step or a result established by this benchmark. Any integrated
+measurement needs its own explicit boundary; component percentiles, ratios, and
+peaks cannot be added to invent a full-path measurement.
 
 ## Evaluation setup
 
@@ -198,10 +210,17 @@ decode audio once
 → deterministic windows ≤30 seconds, with 2-second overlap
 → selected ASR once per required window
 → shift window-local timestamps to the video timeline
-→ stitch the normalized suffix/prefix overlap once, retaining native timestamps
+→ expand normalized lexical token units, each inheriting its shifted native-segment bounds
+→ stitch the normalized suffix/prefix overlap once without inventing finer times
 → order retained timestamp units chronologically (stable window order on ties)
 → retain transcript completion status and every window outcome
 ```
+
+Several token units can inherit the same segment interval; they are not inferred
+word timestamps. Spoken alignment prevents reuse of retained token units, not
+reuse of an entire native segment's interval. The
+[spoken timestamp contract](metrics.md#spoken-timestamp-matching) explains this
+resolution limit and its effect on boundary-error interpretation.
 
 The checksummed `FrozenASRArtifact` records the producing run ID, selected-model
 decision fingerprint, model-lock identity, manifest and composed protocol

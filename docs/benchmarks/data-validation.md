@@ -39,7 +39,9 @@ benchmarks; there is no separate implementation for each profile. A batch
 invocation validates the applicable inputs for each profile, not one universal
 dataset that can replace their different manifests. `preflight` uses reviewed
 development/stress inputs, not validation or locked content; its stress-input
-requirements are checked alongside development inputs.
+requirements are checked alongside development inputs. Final RAG has no
+development evaluation profile; its planned validator checks separately declared
+reviewed stress inputs for integrated preflight instead.
 
 ### Automatic validated-input verification before execution
 
@@ -172,14 +174,15 @@ report's content seal; it neither repairs inputs nor creates a passed report.
 Planned commands for the remaining benchmarks:
 
 ```powershell
-python -m experiments.benchmarks.validate final-rag --profile locked
+python -m experiments.benchmarks.validate final-rag --profile all
 python -m experiments.benchmarks.validate vectordb --profile all
 ```
 
 `--profile smoke|development|validation|locked` chooses one applicable dataset;
 `all` validates every applicable dataset and the cross-split inventory. Final
-RAG has only locked evaluation inputs; non-locked integration fixtures are not
-another Final RAG selection profile. In the extended coordinator, suites without
+RAG supports smoke and locked datasets; its `all` input check also validates the
+separately declared integrated-preflight stress inputs. This does not create
+Final RAG development or validation selection profiles. In the extended coordinator, suites without
 an applicable profile will be reported as not applicable. Missing required
 authoritative data is an error, never a silent skip or a successful all-data
 report. This permits smoke checks while authoritative datasets are unpopulated.
@@ -239,7 +242,7 @@ declared shared holdout policy.
 | Chunking and embedding | Nonempty required corpus and answerable-query allocation, canonical source text, exact evidence intervals, unique evidence IDs, explicit answerability, evidence types, and source-group isolation. Generated chunks, vectors, rankings, and native-model input lengths remain runtime integrity checks. |
 | Retrieval and reranking | The same reviewed RAG inputs and selected upstream data identities. Runtime pool collection, chunk-content, and dense/BM25 index checksums remain artifact-integrity gates, not data annotations. |
 | Generation | Required facts, accepted answers, supplied evidence for answerable questions, unanswerable labels, and frozen context provenance. Judge calibration/readiness and predicted-output validation are separate gates. |
-| Final RAG | Its untouched held-out inputs, frozen composition's input requirements, and source isolation from component selection/confirmation. Automatic checks cannot prove that a reviewer has never examined a holdout. |
+| Final RAG | Smoke fixtures, reviewed integrated-preflight stress inputs, its untouched held-out canonical corpus/questions, and the frozen composition's input requirements. Check locked-source isolation from component selection and readiness inputs. Automatic checks cannot prove that a reviewer has never examined a holdout. |
 | Vector database | Representative corpus/growth provenance, query/source allocation and split isolation, vector shape/dtype/finiteness/nonzero norms, canonical chunk/document IDs and metadata, trusted filter eligibility, exact-distance inputs/tie policy, integration evidence, and prepared insert/replace/delete expectations. Synthetic stress inputs remain labelled. Readiness, actual responses and write visibility are runtime checks; this suite's standalone validator remains planned. |
 
 ### Document references, including blank sources
@@ -270,6 +273,17 @@ raw strings differ. That projection must not erase formula, code, or table-tree
 identity. A valid blank source is not a missing source file. Reference/scorer
 compatibility is a data requirement; installed Docker evaluators and model
 components are environment requirements.
+
+The document evaluator's conformance checks must also verify the exact
+scorer-facing representation. Self-comparing a reference is necessary but not
+sufficient: a scorer that ignores a header can still give that self-comparison
+one. Add positive and deliberately perturbed `th`/`td` header-text/span examples
+for the pinned symmetric TEDS normalization, plus a near-perfect CDM case that
+rounds to one but has unmatched tokens. These are versioned evaluator checks,
+not new dataset annotations or metric edge cases. Their required normalization
+and strict ExpRate predicate are defined in the
+[document evaluator contract](extraction/document/methodology.md); the adapter
+migration remains part of its stated implementation boundary.
 
 ### ASR references and controls
 
@@ -346,6 +360,10 @@ with nonempty half-open intervals inside the referenced canonical text. A unit's
 intervals resolve to the same document and its evidence type is `text`, `table`,
 or `formula`. The question's slice agrees with its units: `mixed` requires at
 least two types, not merely two units or distant intervals.
+Offsets are Unicode code-point positions in that exact canonical text, not
+UTF-8 bytes or model-token indices. The
+[shared scoring contract](metrics.md#retrieval-evidence-quality) defines the
+token-to-source mapping used by all retrieval evidence metrics.
 Review that units are atomic enough to fit a valid chunk; automatic interval
 checks do not establish annotation truth. Missing required evidence is invalid
 data, not a retrieval score or candidate failure.
@@ -375,6 +393,15 @@ Unanswerable labels and their non-answering supplied context are reviewed
 explicitly. Missing required facts/evidence are invalid references, not an empty
 precision/recall case. Human review establishes truth and atomicity; automatic
 checks establish structure, provenance, and consistency.
+
+Final RAG uses the same reviewed answerability and required-fact labels against
+its canonical corpus. Retrieved evidence may be incomplete; that is a system
+outcome, not permission to relabel the question, insert gold context, or reject
+the reference. Claim support is judged only against the actual supplied context
+and its valid cited subset. Broader verification material is available only for
+factual correctness, following the generation rubric. The judge calibration set
+must distinguish these evidence scopes and include cases where citations are
+valid identifiers but do not support the generated claims.
 
 Passing dataset validation does not certify every native model input. After
 applying the actual tokenizer, template, prefixes, special tokens, and mode,

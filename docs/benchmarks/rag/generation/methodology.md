@@ -21,7 +21,9 @@ every model receives exactly the same verified evidence?
 The candidate is one generator model-mode configuration. This benchmark isolates
 generation on verified evidence; it does not measure retrieval or the complete
 RAG system. A question supplies repeated response observations, while the
-source document is the independent unit for uncertainty estimation.
+source document is the quality aggregation unit. Reviewed independent-source
+grouping defines uncertainty support; related documents are not automatically
+independent observations.
 
 ### Implementation status
 
@@ -34,11 +36,19 @@ and a local classifier are not substitutes for that interface.
 Judge identity is pending calibration, not selected by this document. No
 authoritative claim-level score or complete comparison is established until
 the resolved settings, reference data, snapshots, and calibration artifact meet
-this contract. The CLI can replay previously obtained replies bound to that
-judge contract; the Python interface accepts a judge transport. No live provider
-or calibration result is selected automatically. CPU/CUDA smoke without a judge
+this contract. The current CLI requires previously obtained judge replies for
+authoritative profiles and replays them during a generation invocation; the
+Python interface accepts a judge transport and exposes saved-execution scoring.
+That CLI is neither the approved automatic generate-then-judge workflow nor a
+saved-output-only recovery command. Citation Support and its cited-subset labels
+also require implementation changes. No live provider, judge identity, or
+calibration result is selected automatically. CPU/CUDA smoke without a judge
 checks runtime and deterministic scoring only, retaining unavailable semantic
 values rather than fabricating labels.
+
+The approved workflow below is the updated contract, not a claim that these
+deferred orchestration and scoring changes already exist. Executable command
+availability belongs to the [runbook](../../running.md).
 
 ## Candidates and configurations
 
@@ -96,7 +106,7 @@ separate from data-validation reports, hardware qualification, and quality.
 | Role | Metrics | Why they are needed |
 |---|---|---|
 | Primary quality | **Faithfulness**, **Factual Correctness F1**, **Answer Relevancy**, **Citation F1** | Separates support by supplied context, correctness and completeness against required facts, relevance to the question, and explicit evidence selection. |
-| Quality diagnostic | Factual Correctness Precision/Recall, Citation Precision/Recall | Explains whether an F1 loss comes from incorrect/unverified claims, omitted required facts, or incorrect/missing citations. |
+| Quality diagnostic | Factual Correctness Precision/Recall, Citation Precision/Recall, Citation Support | Explains incorrect/unverified claims, omitted required facts, incorrect/missing citations, and whether the combined cited passages support the generated claims. |
 | Behavioral validity | **Response Validity Rate**, **Refusal Validity Rate**, **Malformed Output Rate** | Measures valid answer behavior on answerable questions, the exact refusal contract on unanswerable questions, and general schema integrity. |
 | Reliability | Runtime Error Rate, Timeout Rate, Context-Limit-Reached Rate | Distinguishes measured inference errors, deadline stops, and output-context exhaustion. |
 | Repeatability diagnostic | Repeat Status Agreement, Repeat Citation Agreement, Repeat Semantic Agreement | Measures stability of answer/refusal decisions, selected evidence, and meaning across seeds without requiring identical wording. |
@@ -106,9 +116,11 @@ separate from data-validation reports, hardware qualification, and quality.
 Malformed Output Rate is minimized; Response and Refusal Validity Rates are
 maximized. Malformed Output Rate is conditional on normally completed outputs;
 the behavior and reliability rates retain their own scheduled denominators.
-Citation metrics are deterministic: a correct citation is a supplied
-evidence-block ID covering required gold evidence. The judge supplies semantic
-claim labels, while code calculates ratios, F1, aggregates, and intervals.
+Citation Precision/Recall/F1 remain deterministic: a correct citation is a
+supplied evidence-block ID covering required gold evidence. Citation Support
+instead uses semantic support labels against the combined valid cited passages.
+The judge supplies claim labels, while code calculates ratios, F1, aggregates,
+and intervals. Citation Support is diagnostic, not a fifth primary metric.
 Citation/claim counts and a compact finish-reason inventory remain per-response
 or run artifacts, not extra MLflow summary metrics.
 
@@ -212,12 +224,14 @@ evidence blocks.
 
 Authoritative generation will use one pinned LLM judge after its identity has
 passed calibration and been frozen. That judge supplies every semantic label
-needed for Faithfulness, Factual Correctness, Answer Relevancy, and Repeat
-Semantic Agreement. It uses one structured per-response rubric for claim
-extraction, context support, source-verified correctness, gold-claim matching,
-and relevancy, plus one pairwise rubric for repeated-answer semantic equivalence.
-Deterministic
-benchmark code converts those labels into metric values and aggregates; the
+needed for Faithfulness, Citation Support, Factual Correctness, Answer Relevancy,
+and Repeat Semantic Agreement. One structured per-response judge call uses a
+single deduplicated atomic claim inventory and distinct labels for all-context
+support, cited-subset support, source-verified correctness, gold-claim matching,
+and relevancy. A separate pairwise rubric handles repeated-answer semantic
+equivalence; separate per-metric calls are not required without calibration
+evidence that the single-call approach is inadequate. Deterministic benchmark
+code converts those labels into metric values and aggregates; the
 judge never calculates citation-ID coverage, validity, reliability, or
 operational metrics.
 
@@ -246,6 +260,15 @@ The claim and evidence rules are frozen before calibration:
   cannot rescue a claim unsupported by the supplied context. When those two
   reference sets coincide, support and correctness can overlap; gold recall
   still measures completeness.
+- Judge Citation Support against only the combined passages identified by valid
+  citations in that response. Unknown IDs supply no text. Gold answers and
+  evaluator-only verification material cannot enter either support evidence
+  set. Reuse the same generated claims for both support metrics and Factual
+  Correctness; retain a separate cited-subset label for each claim. A claim
+  supported by that subset must also be supported by the full context containing
+  it. Contradictory labels require evaluator resolution, not silent clamping or
+  an invented unsupported claim. This is response-level cited-set support, not
+  sentence-to-citation attribution or the exact ALCE metric.
 - Retain the source span or evidence justification for each support,
   correctness, and gold-matching label. The judge's own memory or an unrecorded
   lookup is not an authoritative verification source.
@@ -264,11 +287,19 @@ before authoritative execution. Candidate identity is hidden from the judge,
 raw judge outputs are retained, and a judge
 failure makes evaluation incomplete rather than lowering the candidate's score.
 The judge must first pass a human-labeled development calibration set with
-recorded acceptance criteria for claim extraction, support, correctness,
-gold matching, relevancy, and semantic equivalence separately. Unresolved judge
+recorded acceptance criteria for claim extraction, all-context and cited-subset
+support, correctness, gold matching, relevancy, and semantic equivalence
+separately. Unresolved judge
 errors make evaluation incomplete after the frozen retry policy is exhausted.
 Its latency, cost, and resources are excluded from generator operational
 measurements.
+
+Calibration must include facts verified only by evaluator material, facts in
+supplied context but absent from the cited subset, extra verified facts,
+claim-free answers, and contradictory or partly supported claims. Retain
+evidence justifications and check subset/full-context consistency. Judge choice,
+acceptance criteria, and reviewed calibration records remain pending data review;
+these examples do not supply them.
 
 ## Benchmark workflow and selection
 
@@ -308,17 +339,26 @@ Development is the stage for introducing candidate
 configurations and tuning their settings. Validation compares only the frozen
 finalists named in the reviewed development decision on unseen data; it does not
 introduce configurations or retune their settings. The resulting
-`generation-locked.json` records exactly one successful model-mode configuration
-selected from validation. Its
-own locked run measures generation on verified evidence; Final RAG uses the
+`generation-locked.json` records exactly one model-mode configuration with
+complete required evidence and valid run-level checks, selected from validation.
+Its own locked run measures generation on verified evidence; Final RAG uses the
 same selection but measures answers on the complete retrieval path. Neither
 locked report can reopen selection.
+
+For example, an answerable question with two scored outputs and one executed
+runtime failure has a complete outcome ledger but partial required quality.
+Its surviving quality mean cannot establish full advancement evidence, and the
+third seed is not replaced by another draw. This is the
+[shared completeness rule](../../metrics.md#execution-accounting-and-result-completeness),
+not a blanket zero-error selection policy.
 
 Validation and locked decisions also bind the source run's judge-contract file
 checksum. Replacing the judge, rubric, or calibration under an unchanged path
 does not make earlier selection evidence comparable. Rescore retained outputs
 under a new versioned run and author a new decision when intentionally changing
-the evaluator; do not rewrite the source run.
+the evaluator; do not rewrite the source run. Such rescoring is versioned
+evaluation of saved predictions, not permission to reuse locked inputs for
+generation, tuning, or selection.
 
 ## Execution and measurements
 
@@ -337,8 +377,9 @@ responses. It does not change the designated-first-quality policy of extraction,
 chunking–embedding, or retrieval–reranking. The shared
 [partial-evidence](../../metrics.md#dependent-metrics-and-partial-observations)
 and [confidence-interval](../../metrics.md#confidence-intervals) rules apply to
-the observation set declared here. The independent unit is the source document,
-not a generation seed. Detailed denominators, conditional observations, and CI
+the observation set declared here. Resample reviewed independent-source groups,
+retaining their complete documents and questions, not individual generation
+seeds. Detailed denominators, conditional observations, and CI
 applicability belong to the [metric reference](metrics.md#aggregation-and-confidence-intervals).
 
 ### Measured worker lifecycle
@@ -356,8 +397,9 @@ verify the dataset report and frozen model-mode prompt compatibility
 -> generate sequentially with aligned seeds 42, 43, and 44
 -> separate reasoning from the visible answer where supported
 -> record termination, validate structural schema and supplied citation IDs
+-> durably save every scheduled output/outcome and its evidence/provenance
 -> end generator resource monitoring after the last measured request
--> apply the frozen semantic judge after generator timing is complete
+-> automatically judge the saved outputs with the frozen response and pair rubrics
 -> derive answer/refusal validity from recorded checks and required claim labels
 -> aggregate quality, validity, repeatability, workload, and operational results
 ```
@@ -368,6 +410,15 @@ the model is ready and CUDA is synchronized; it is separate from Time to First
 Token and total warm latency. The three fixed measured seeds sample the frozen
 decoder reproducibly and support semantic, status, and citation repeatability
 diagnostics.
+
+In the normal intended workflow, generate and save all three scheduled outputs
+before offline judging; automatic judging and aggregation complete the same
+benchmark workflow. Recovery follows the
+[shared evaluation-only resume rule](../../metrics.md#prediction-evidence-and-rescoring):
+score the saved outputs without re-inference or another locked execution, and
+retain evaluation provenance without reopening selection.
+The current replay CLI does not provide that saved-output recovery workflow;
+see [implementation status](#implementation-status).
 
 All scheduled outcomes remain recorded. Runtime/timeout/context-interrupted
 responses and required structural-schema failures have unavailable dependent
@@ -424,6 +475,7 @@ quality.factual_correctness_precision
 quality.factual_correctness_recall
 quality.citation_precision
 quality.citation_recall
+quality.citation_support
 validity.response_validity_rate
 validity.refusal_validity_rate
 validity.malformed_output_rate

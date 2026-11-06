@@ -32,8 +32,9 @@ Read the project in this order:
 ```text
 candidate roster + reviewed datasets -> CPU/CUDA smoke -> GPU preflight
     -> qualified-candidate development -> finalist validation
-    -> frozen component choices -> component locked reports
-    -> one Final RAG locked report + reporting-only human review
+    -> frozen component choices -> Final RAG CPU/CUDA smoke + integrated preflight
+    -> component locked reports
+    -> one Final RAG locked report
     -> explicit application configuration change
 ```
 

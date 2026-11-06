@@ -178,13 +178,21 @@ the authoritative dataset manifests and methodology, then remove the item.
   in the calibration artifact. Choose an affordable judge that meets the reviewed
   acceptance criteria, rather than assuming a frontier model is required.
 - Build a development-only semantic-judge calibration set with human labels for
-  claim extraction, context support, source-verified correctness, gold-claim
+  claim extraction, full-context support, cited-passage support, source-verified correctness, gold-claim
   matching, answer relevancy, and pairwise semantic equivalence. Include repeated
   and compound claims, qualifiers, correct extra facts, unverified additions,
   missed required facts, and genuinely claim-free responses. Freeze the exact judge version, decoding, prompts,
   rubric/schema, finite retry policy, and calibration checksum only after it
   passes recorded criteria for each responsibility; do not use validation or
   locked-test questions. Do not fabricate acceptance thresholds before review.
+- Calibrate the single structured per-response rubric with contrasting evidence
+  scopes: support in cited passages, support elsewhere in supplied context,
+  correctness established only by evaluator references, and no verified support.
+  Include valid-but-irrelevant citations, unknown IDs, true extra facts, and
+  missing required facts. Check that gold references do not leak into either
+  support label and that cited-subset support implies full-context support.
+  Pairwise semantic equivalence remains a separate calibrated rubric; keep
+  claim extraction and per-claim justifications inspectable.
 - Inspect the resulting question and document counts by evidence type before
   deciding which slice confidence intervals are sufficiently supported.
 - Review generation token-event instrumentation and independent-source support
@@ -196,20 +204,18 @@ the authoritative dataset manifests and methodology, then remove the item.
   unanswerable, table, formula, and mixed question examples after the real
   manifests and checksums exist.
 
-## Final RAG human review
+## Final RAG readiness
 
-- Freeze the rule selecting one measured response per sampled question before
-  inspecting answer quality. Record its seed/response ID and preserve failures;
-  do not choose a best response or silently replace a missing item.
-- Calibrate the refusal-specific instructions for Human Faithfulness, Answer
-  Correctness, Completeness, and Citation Accuracy on non-locked review examples.
-  A valid refusal does not automatically imply four perfect substantive ratings.
-  Freeze applicability, rating, and missing-item handling before exporting the
-  locked blinded packet; Human Answerability Correctness keeps its separate
-  behavior judgment.
-- Keep the anonymous item-to-run/response mapping outside the reviewer's packet,
-  verify evidence identity on import, and retain all 20 planned items. A partial
-  review remains a diagnostic, not a completed reporting-only human report.
+- Freeze reviewed integrated-preflight inputs and their supported envelope:
+  demanding retrieval/reranker inputs, packed generator prompts, generation
+  limits, and selected model-residency transitions. Check the complete selected
+  server-backed path, not only independently qualified component models. Keep
+  these inputs and CPU/CUDA smoke fixtures separate from locked questions.
+- On those nonlocked readiness inputs, verify stable chunk/source/content identity
+  despite reordered context and request-local citation labels. Verify that the
+  frozen ANN index permits valid pool variation without weakening corpus,
+  filter, ranking/permutation, or citation-resolution checks. This is readiness
+  testing, not another finalist search or a required exact-pool equality gate.
 
 ## Vector databases
 

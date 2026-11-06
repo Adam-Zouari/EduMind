@@ -257,6 +257,12 @@ human-calibration artifact must exist
 before an authoritative generation run. Hosted credentials, if required by the
 selected judge, are supplied through the environment and are never written to a
 protocol or MLflow artifact.
+Judge preparation includes the response rubric's separate full-context and
+cited-passage support labels, correctness/relevancy labels, and the separate
+semantic-pair rubric. Credentials alone do not complete this setup: the
+[runbook](../benchmarks/running.md#10-generation-and-final-rag) distinguishes
+current replay support from the pending automatic first-run and saved-output
+recovery workflow.
 
 ### Migrating an existing MiniLM index
 
@@ -319,6 +325,13 @@ text/page/layout/reliability/operational metrics in Python 3.12. It then sends
 only the table HTML and formula LaTeX reference/prediction pairs to the isolated
 official scorer. The scoring time is evaluation overhead and is not included in
 parser latency.
+
+Preparing the pinned evaluator does not itself implement the newly specified
+symmetric TEDS header normalization or count-based ExpRate decision. Those
+adapter changes remain pending under the
+[document implementation boundary](../benchmarks/extraction/document/methodology.md#evaluation-setup);
+the official CDM similarity stays unchanged, while strict ExpRate uses retained
+matching counts rather than testing its rounded display score.
 
 ## 4. Datasets
 
@@ -419,6 +432,5 @@ Before using a run as comparative evidence:
   allowed; every query need not traverse an ANN index.
 - the parent MLflow run reports `benchmark_complete=1`; failed candidates and partial artifacts remain visible, and smoke output is never treated as comparative evidence.
 - component winners and the complete system are frozen before candidates are evaluated on their applicable locked data; offline annotation review remains separate from candidate selection.
-- Final RAG human review is imported as reporting-only evidence, not used to select another system.
 
 If a model is missing, rerun the matching preparation target. If a pinned revision no longer resolves, stop and review the selection package; do not replace it with the repository's current head.

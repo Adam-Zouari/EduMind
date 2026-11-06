@@ -20,8 +20,7 @@ On this page:
 This page covers generation on frozen evidence and the same automated metrics
 when generation is embedded in Final RAG. Once selected, calibrated, and frozen,
 one pinned LLM judge supplies structured semantic labels; deterministic
-benchmark code calculates the metric values and aggregates. Blinded human review
-provides separate reporting-only evidence about the selected complete system.
+benchmark code calculates the metric values and aggregates.
 
 ## Metric summary
 
@@ -37,6 +36,7 @@ provides separate reporting-only evidence about the selected complete system.
 | Factual Correctness Recall | Diagnostic | What share of the required gold claims are correctly included? | Higher |
 | Citation Precision | Diagnostic | What share of the produced citations identify required evidence? | Higher |
 | Citation Recall | Diagnostic | What share of the required gold evidence is covered by valid citations? | Higher |
+| Citation Support | Diagnostic | What share of generated factual claims is supported by the combined valid cited passages? | Higher |
 
 ### Behavioral validity and reliability
 
@@ -84,7 +84,8 @@ MLflow summary metrics.
 ## Scoring inputs, eligibility, and result status
 
 The [implementation status](methodology.md#implementation-status) distinguishes
-implemented scoring from the pending judge calibration. Judge identity,
+implemented scoring from pending judge calibration, Citation Support, and the
+automatic saved-output judging/recovery workflow. Judge identity,
 calibration evidence, prompts, and retry policy must be frozen before an
 authoritative semantic report; the examples do not select a judge.
 
@@ -113,10 +114,14 @@ or execution does.
 
 Once selected, calibrated, and frozen, the judge returns structured claim-level
 labels. It extracts distinct atomic factual claims from the visible answer,
-checks support against the supplied context, verifies correctness against frozen
+checks support separately against all supplied context and the combined valid
+cited subset, verifies correctness against frozen
 authoritative reference material, matches required gold claims, and applies the
 Answer Relevancy rubric. Benchmark code retains those labels and calculates all
-ratios, F1 values, aggregates, and intervals.
+ratios, F1 values, aggregates, and intervals. The same deduplicated atomic claim
+inventory supplies both support metrics and Factual Correctness. One structured
+per-response call returns the distinct labels; Repeat Semantic Agreement keeps
+its separate pairwise rubric.
 
 An atomic claim expresses one independently checkable fact. Compound statements
 are split; repeated or semantically equivalent claims count once per response.
@@ -126,11 +131,13 @@ correct fact the response is permitted to contain. The exact extraction,
 verification, and matching rules are frozen in the
 [semantic judge contract](methodology.md#semantic-judge-contract).
 
-All five semantic quality metrics use reference-answerable questions;
-unanswerable questions are `null/inapplicable`. A known claim-free response,
-including an exact refusal when an answer was required, leaves Faithfulness
-and Factual Correctness Precision undefined, but has zero required-fact recall
-and Factual Correctness F1. Answer Relevancy follows its rubric. A failed request
+All semantic quality metrics, including Citation Support, use
+reference-answerable questions; unanswerable questions are `null/inapplicable`.
+A known claim-free response,
+including an exact refusal when an answer was required, leaves Faithfulness,
+Citation Support, and Factual Correctness Precision undefined, but has zero
+required-fact recall and Factual Correctness F1. Answer Relevancy follows its
+rubric. A failed request
 or unresolved evaluation instead follows the shared availability rules, not
 these known-empty conventions. Keep reference-eligible and actually contributing
 counts distinct.
@@ -300,6 +307,10 @@ not additional numeric cases of this metric.
 
 ## Citation quality
 
+Citation Support measures generated-claim support; Citation Precision/Recall/F1
+retain their existing gold-evidence coverage definitions below. These answer
+different questions and do not replace or rename one another.
+
 Citation Precision, Recall, and F1 are calculated only for answerable questions,
 which always have one or more verified gold evidence units. Unanswerable
 questions are evaluated by Refusal Validity Rate and the applicable reliability
@@ -309,7 +320,7 @@ A citation is correct when it is a valid supplied evidence-block ID and that
 block completely covers at least one required gold evidence unit. Repeated IDs
 count once. Unknown IDs remain in the distinct produced-ID denominator, earn
 no correctness or evidence-coverage credit, and fail Response Validity. They
-are reference-validity failures, not structural schema failures, and do not
+are citation-ID validity failures, not structural schema failures, and do not
 overwrite independently evaluable semantic scores. Retain each ID check.
 
 ### Citation Precision
@@ -401,6 +412,65 @@ Unavailable required citation fields follow the
 unknown but well-typed ID is instead a scored incorrect citation: `[E1, UNKNOWN]`
 has precision `1/2` and recall `1` if E1 covers the only required unit, giving
 F1 approximately `0.67`, not a blanket zero for the entire response.
+
+### Citation Support
+
+**Question:** What share of the answer's generated factual claims is supported
+by the combined passages it actually cites?
+
+Use exactly the same semantically deduplicated atomic generated-claim inventory
+as Faithfulness and Factual Correctness. Resolve distinct citation IDs against
+this response's supplied evidence, then combine only the valid cited passages.
+Count a claim once when that combined text entails the complete atomic claim,
+including its qualifiers; support may require more than one cited passage.
+Unknown IDs supply no supporting text. Do not inject gold answers, missing gold
+evidence, or evaluator-only verification material into this cited set.
+Partly supported or contradicted atomic claims receive no support credit under
+the same entailment rubric as Faithfulness.
+
+```text
+Citation Support = generated factual claims supported by the combined valid cited passages
+                   / all generated factual claims
+MLflow key = quality.citation_support
+```
+
+**Example:** The answer has four distinct claims. All supplied context supports
+three, but the combined cited passages support only two. Faithfulness is
+`3 / 4 = 0.75`; Citation Support is `2 / 4 = 0.50`. Repeating a supported claim
+or citation does not increase either count. A claim verified only by evaluator
+material may receive correctness credit but no context or cited-support credit.
+
+This is a response-level cited-set adaptation of citation-support evaluation,
+not sentence-to-citation attribution, the exact ALCE metric, or another metric
+named Citation Recall. Existing Citation Precision/Recall/F1 still measure
+required gold-evidence coverage. Support can be high for a faithfully cited
+partial answer while gold-evidence recall remains low.
+
+For the same evaluated response and claim inventory, Citation Support cannot
+exceed Faithfulness:
+each supported cited-subset claim must also have all-context support. This is
+a per-claim evaluator consistency requirement, not permission to clamp a score
+or compare aggregates with different contributing cohorts. Contradictory labels
+must be resolved under the frozen judge policy, with evidence justifications
+retained. Unresolved affected support evaluation is unavailable, not a candidate
+error or a silently rewritten label.
+
+**Range and direction:** `[0, 1]`; higher is better when defined. This metric is
+Diagnostic, not a primary metric or qualification gate.
+
+**Edge cases and availability:**
+
+| Edge case | Example | Value/status | Explanation |
+|---|---|---|---|
+| Completed claim extraction finds no factual claims | The exact refusal or a greeting on an answerable question | `null` (`inapplicable`, `no_generated_claims`) | There is no claim-support denominator; this is not missing evaluation. |
+| Question is outside answerable-only quality | An unanswerable question, regardless of its produced answer | `null` (`inapplicable`) | Refusal behavior is evaluated separately. |
+
+Missing required output or evaluation follows the
+[shared availability](../../metrics.md#shared-availability-rules) and
+[dependency rules](../../metrics.md#dependent-metrics-and-partial-observations):
+`null/unavailable`, not an evaluated empty claim inventory. Evaluator-label
+consistency follows the [judge contract](methodology.md#semantic-judge-contract),
+not a separate metric edge case.
 
 ## Response, refusal, and output validity
 
@@ -529,6 +599,11 @@ Validity Rate and receives zero for Citation Precision, Recall, and F1. Store
 the numerator, denominator, and rate for each metric.
 
 ## Generation reliability
+
+The scheduled-seed denominators below describe standalone generation, where
+upstream retrieval is absent. Final RAG retains these event definitions but
+uses its [generation-stage eligibility and request-failure contract](../final/metrics.md#request-failures-and-generation-stage-eligibility).
+An upstream skip is not a generator error, timeout, or context termination.
 
 ### Runtime Error Rate
 
@@ -661,7 +736,11 @@ additional status-comparison exception is needed.
 **Question:** Does the model repeatedly select the same evidence blocks?
 
 Each valid, completed answerable response pair uses Jaccard agreement over
-distinct produced citation IDs. Preserve unknown IDs in these sets: filtering
+distinct produced citation IDs on standalone generation's identical frozen
+evidence mapping. Final RAG must instead resolve known labels to
+[stable evidence identities](../final/metrics.md#citation-repeatability-on-retrieved-evidence)
+before comparison, because request-local labels can change. Preserve unknown IDs
+in a separate unknown-label namespace in these sets: filtering
 them away could manufacture agreement between different erroneous choices.
 Their correctness is measured by citation quality, not agreement:
 
@@ -733,10 +812,16 @@ latency deliberately have different observation eligibility.
 produce its first token?
 
 Time to First Token is measured for every query and measured seed. It starts
-immediately before the generation call and ends when the first model-generated
-token becomes available. For reasoning configurations, that token may belong to
-the reasoning stream; the metric measures model start responsiveness rather than
-time to the completed visible answer.
+immediately before the model's decoding/generation call, after prompt rendering,
+native tokenization, input validation, and input-device transfer, and ends when
+the first model-generated token becomes available. It is not timed from entry
+to the enclosing generator-request function. For reasoning configurations, that
+token may belong to the reasoning stream; the metric measures model start responsiveness rather than
+time to the completed visible answer. It is generator TTFT, not user-request
+TTFT: retrieval, packing, and per-request model switching before the generation
+call are outside this interval. Prompt preparation, tokenization, and input
+checks remain inside complete generation-request latency, not TTFT. No
+user-visible first-token observation is inferred from an internal reasoning token.
 
 This matters because two models can have similar total latency while one leaves
 the caller waiting much longer before generation starts. Prompt prefill and
@@ -791,8 +876,9 @@ Question observations `2, 3, 4, 5, 10` have p50 `4` and interpolated p95
 of a small sample completes within that value; the timeout stays visible
 separately.
 
-For Final RAG, retrieval, reranking, context packing, generation, and complete
-system latency are also reported separately.
+For Final RAG, the [integrated timing boundaries](../final/metrics.md#complete-system-operations)
+retain retrieval-stack, generation, and complete-request latency, with packing,
+reranking, and switching subintervals in timing artifacts rather than extra metrics.
 
 **Range and direction:** Non-negative seconds; lower is better.
 
@@ -870,6 +956,10 @@ The timer starts before model construction and ends after weights are loaded,
 device placement is complete, and CUDA is synchronized. It ends before the
 warmup request. The model is absent from the new process and device at the start;
 the operating-system disk cache is left in its normal state.
+
+This is generator cold loading, not complete-system startup. Final RAG's
+per-request residency transitions belong to its live request timers, even when
+they reload generator weights; they are not removed as one-time cold loading.
 
 **Example:** If loading starts at `0.0 seconds` and the synchronized CUDA model is
 ready at `5.4 seconds`, Cold Model-Load Time is `5.4 seconds`.
@@ -1118,6 +1208,7 @@ Factual Correctness Recall           = 0.70
 Factual Correctness F1               = 0.78
 Answer Relevancy                     = 0.95
 Citation F1                          = 0.84
+Citation Support                     = 0.80
 Response Validity Rate               = 0.96
 Refusal Validity Rate                = 0.85
 Malformed Output Rate                = 0.02
@@ -1132,6 +1223,9 @@ F1 per response before averaging, not from the displayed aggregate precision
 and recall. The answers are usually well supported
 and directly relevant. Required-fact coverage is weaker than generated-claim
 precision; the different denominators do not establish corpus-wide error counts.
+Citation Support is below Faithfulness in this illustration: inspect the same
+claims' cited-subset and all-context labels to locate omitted supporting
+citations. It does not replace Citation F1's gold-evidence coverage.
 Refusal Validity shows
 that unanswerable questions remain a distinct weakness. The non-zero malformed
 rate identifies a schema issue separate from answer/refusal behavior, while
@@ -1139,6 +1233,16 @@ repeatability and latency describe stability and runtime cost. Malformed Output
 Rate describes normally completed outputs, not all scheduled attempts. Judge
 coverage, defined claim ratios, completion counts, and every metric's support
 remain necessary to interpret the displayed estimates.
+
+As a separate completeness example, one answerable question has Faithfulness
+`0.90`, `0.80`, and a runtime failure across its three scheduled outputs. The
+surviving mean is `(0.90 + 0.80) / 2 = 0.85`, with two contributing outputs out
+of three scheduled, and Runtime Error Rate `1 / 3`. The ledger and failure
+evidence can be complete, but required quality is partial: `0.85` is a diagnostic,
+not full advancement evidence. Neither zero-imputation nor another generated
+answer repairs that coverage. Apply the
+[shared advancement/completeness rules](../../metrics.md#execution-accounting-and-result-completeness),
+not an inferred blanket zero-error policy.
 
 ## Aggregation and confidence intervals
 
@@ -1177,7 +1281,8 @@ document weight is used consistently for generation quality and rates.
 
 Development, validation, and locked runs apply the
 [shared bootstrap and confidence-interval rules](../../metrics.md#confidence-intervals)
-to complete source documents; the bootstrap seed is independent of generation
+to reviewed independent-source groups, keeping member documents together; the
+bootstrap seed is independent of generation
 seeds. Answerable-only, unanswerable-only, and evidence-type
 results always report reference-eligible, executed, evaluated, contributing,
 claim-free, failed, and unavailable support as applicable. A refusal on an
@@ -1203,9 +1308,11 @@ instrument makes affected evidence incomplete under the shared rules.
 | One cold load or observed lifecycle memory peak | No | One lifecycle observation is not an independent-sample distribution. |
 | Token descriptors, citation/claim counts, and finish-reason inventories | No | Descriptive counts/inventories are not additional quality estimates. |
 
-The independent bootstrap unit is the complete reference-eligible source
-document, including questions, all three seed outputs, pair labels, failures,
-and unavailable evaluations. Follow the shared resampling procedure rather
+The independent bootstrap unit is the reviewed source group, retaining each
+member reference-eligible document with its questions, all three seed outputs,
+pair labels, failures, and unavailable evaluations. A single document is its
+own unit only when the reviewed grouping establishes independence. Follow the
+shared resampling procedure rather
 than calculating and averaging three seed-specific intervals. The table's
 statistic is recomputed from the retained records on every draw. This estimates
 source-sampling uncertainty under the frozen three-seed protocol, not every

@@ -25,8 +25,10 @@ The applications below use each candidate pair's complete generated corpus,
 not another pair's corpus or the retrieved top-20 pool.
 
 The [implementation status](methodology.md#implementation-status) identifies
-implemented reporting and remaining data-review requirements. Definitions below
-apply to this protocol; historical outputs keep their original definitions.
+implemented reporting, the approved but unimplemented metadata/throughput
+migration, and remaining data-review requirements. Definitions below apply to
+the updated contract; historical outputs keep their original definitions.
+All numerical examples are illustrative, not measured results.
 
 ## Metric summary
 
@@ -57,7 +59,6 @@ at the two candidate context counts before the final system's top-K is frozen.
 | Chunking Time | Operational | How expensive is creating the complete chunk inventory? | Lower at equal quality |
 | Chunk-Embedding Time | Operational | How expensive is producing the final vectors for all chunks? | Lower at equal quality |
 | Corpus-Build Time | Operational | How long does chunking, document embedding, and searchable-matrix preparation take? | Lower |
-| Corpus-Build Throughput | Operational | How many original source tokens are processed per second? | Higher |
 | Query-Embedding Latency p50/p95 | Operational | What typical and slow-tail query cost belongs to producing its vector? | Lower at equal quality |
 | Vector Search Latency p50/p95 | Operational | What typical and slow-tail query cost belongs to searching and selecting results? | Lower at equal quality |
 | p50 Warm Query Latency | Operational | What is normal query-embedding and exact-search latency? | Lower |
@@ -67,16 +68,23 @@ at the two candidate context counts before the final system's top-K is frozen.
 
 ### Workload and storage descriptors
 
-| Value | Role | Question answered | Direction |
+| Metric | Role | Question answered | Direction |
 |---|---|---|---|
-| Corpus Counts | Workload descriptor | How many documents and answerable/unanswerable questions were represented in the run? | Descriptive |
-| Source Tokens | Workload descriptor | How large was the original corpus before chunk overlap? | Descriptive |
 | Indexed-Token Occurrences | Workload descriptor | How much source text do the generated chunks represent, including overlap and repeated context? | Descriptive |
 | Chunk Count | Workload descriptor | How many searchable vectors and metadata records did the strategy create? | Descriptive |
 | Mean/p95 Chunk Tokens | Workload descriptor | What typical and long-tail chunk sizes did the strategy actually produce? | Descriptive |
 | Mean/p95 Retrieved Context Tokens@3/@5 | Workload descriptor | How much text do the actual selected prefixes return on average and in the upper tail? | Descriptive |
-| Embedding Dimension and Dtype | Storage descriptor | What shape and numeric representation did each vector use? | Descriptive |
 | Embedding-Matrix Bytes | Storage descriptor | How large is the complete matrix's raw vector payload? | Descriptive |
+
+The following retained quantities are not candidate scalar metrics under the
+approved reporting simplification: [Corpus Counts](#corpus-counts) and
+[Source Tokens](#source-tokens) are parent workload metadata;
+[Embedding Dimension and Dtype](#embedding-dimension-and-dtype) are verified
+configuration parameters; [Corpus-Build Throughput](#corpus-build-throughput)
+is derived build-artifact information only. Their definitions remain below so
+the inputs and build evidence stay interpretable. The current runner still
+needs code migration to this placement. Contributing and independent-source
+support counts are unchanged.
 
 ## Scoring inputs, eligibility, and result status
 
@@ -203,12 +211,11 @@ Evidence-slice and aggregate status follow
 **Question:** What share of the tokens returned in the first three or first five
 chunks is relevant evidence?
 
-Measure canonical chunk text with `tiktoken:cl100k_base`. A token occurrence is
-relevant when its source span has positive overlap with a verified evidence
-interval in the same document. Count it once even if several gold intervals
-overlap it. All returned source-token occurrences form the denominator; text
-repeated in different chunks counts each time in both numerator and denominator.
-Native model prefixes and special inference tokens are not source content.
+Apply the [shared evidence-token, source-offset, and UTF-8 mapping rules](../../metrics.md#retrieval-evidence-quality)
+to each canonical chunk's `tiktoken:cl100k_base` occurrences. Count relevant
+returned occurrences over all returned source-token occurrences; overlapping
+chunks retain their repeated occurrences. Model-native input lengths are a
+separate compatibility measurement, not this precision denominator.
 The valid nonempty ranking and token-bearing chunks make the denominator
 positive; see the [output-integrity prerequisites](#scoring-inputs-eligibility-and-result-status).
 
@@ -475,6 +482,12 @@ See this page's [operational completion rules](#operational-performance-1).
 
 **Question:** How quickly does the pair prepare the fixed source workload?
 
+**Reporting placement:** derived build-artifact information only, not a mandatory
+MLflow scalar or an additional candidate-comparison metric. The approved move
+out of scalar reporting still requires code migration. Retain the rate in
+`candidate.json`'s corpus-build evidence with the source-token numerator's parent
+metadata reference and the completed build duration from `timings.parquet`.
+
 Corpus-build throughput divides the number of original source tokens in the
 frozen corpus by corpus-build wall-clock seconds. Original source tokens use the
 fixed evaluation tokenizer. Indexed-token occurrences are not used because
@@ -482,6 +495,10 @@ overlap would otherwise reward a candidate for duplicating text.
 Use the unrounded completed duration.
 The required nonempty corpus is checked during
 [data validation](../../data-validation.md#chunking-and-embedding-inputs).
+
+```text
+Corpus-Build Throughput = parent corpus source tokens / completed Corpus-Build Time
+```
 
 **Example:** Preparing 100,000 source tokens in 80 seconds gives 1,250 source
 tokens/second, regardless of how many overlapping chunk-token occurrences were
@@ -681,9 +698,14 @@ See the [resource-sampling and scope rules](#operational-performance-1).
 
 ## Workload and storage descriptors
 
-These values explain operational outcomes, not retrieval quality. Numeric
-descriptors are chartable; dtype is a recorded parameter. None independently
-selects a winner or compensates for worse quality.
+These values explain operational outcomes, not retrieval quality.
+Candidate-dependent chunk/token/context and matrix-byte descriptors remain
+chartable scalars. Fixed corpus counts and source tokens instead belong to parent
+workload metadata, while embedding dimension and stored dtype are child
+parameters. None independently selects a winner or compensates for worse quality.
+These are the approved placements; the
+[implementation boundary](methodology.md#implementation-status) records the
+pending migration. Required execution, quality, and CI support are not removed.
 
 Input counts describe the full verified workload. Generated-chunk descriptors
 may remain known even if embedding later fails. If chunk generation stops early,
@@ -700,7 +722,9 @@ Missing measurements and records otherwise follow the
 ### Corpus Counts
 
 Record document, answerable-question, and unanswerable-question counts
-separately. Only answerable questions enter this benchmark's retrieval-quality
+separately in the parent's verified workload inventory, optionally also as
+searchable parent parameters, not candidate scalar metrics. Only answerable
+questions enter this benchmark's retrieval-quality
 and query-latency evaluation; unanswerable questions retained in a shared input
 manifest are a workload count, not measured retrieval requests.
 
@@ -731,7 +755,7 @@ Count the verified manifest's answerable questions once each, not once per
 measured repetition. These questions supply retrieval-quality and query-latency
 tasks; the count does not depend on how many requests later succeed.
 
-**Example:** A manifest with 120 answerable questions supplies `120` evaluated
+**Example:** A manifest with 120 answerable questions supplies `120` planned
 queries. Three measured attempts per query do not change this input count to
 360; attempts are separate execution records.
 
@@ -747,12 +771,12 @@ See the [verified-workload and inventory rules](#workload-and-storage-descriptor
 **Question:** How many questions are retained for later stages but not executed
 in this phase?
 
-Count the verified manifest's unanswerable questions once each. This descriptor
+Count the verified manifest's unanswerable questions once each. This metadata
 does not add retrieval requests or empty-reference quality comparisons.
 
 **Example:** A manifest with 120 answerable questions and 30 unanswerable
-questions reports an unanswerable count of `30` but supplies 120 evaluated
-queries, not 150. The descriptor explains the difference between the shared
+questions reports an unanswerable count of `30` but supplies 120 planned
+queries, not 150. The metadata explains the difference between the shared
 question inventory and this phase's workload.
 
 **Range and direction:** Non-negative integer count; descriptive.
@@ -767,8 +791,10 @@ See the [verified-workload and inventory rules](#workload-and-storage-descriptor
 **Question:** How much original source text does the pair process?
 
 Count each canonical document once using `tiktoken:cl100k_base`, before chunking
-or overlap. The count is the same for every pair using the same frozen corpus
-and is the numerator of Corpus-Build Throughput.
+or overlap. Retain this fixed count with the parent workload metadata and
+tokenizer identity, optionally also as a searchable parent parameter, not a
+candidate scalar metric. It is the same for every pair using that corpus and
+is the numerator of the artifact-only Corpus-Build Throughput calculation.
 
 **Example:** A corpus containing 100,000 source tokens still has 100,000 source
 tokens when a chunker repeats some text through overlap.
@@ -924,19 +950,30 @@ If eligible queries exist but no complete total contributes, the aggregate is
 **Question:** How many coordinates does each vector contain, and how are they
 stored?
 
-Record the model's embedding dimension and the matrix's stored dtype. Inference
-dtype and stored dtype are separate settings: CUDA inference can use FP16 while
-the resulting vectors are stored as FP32.
+Record the model's declared embedding dimension and stored vector dtype as child
+parameters, not scalar metrics. Verify the produced matrix's shape against
+`(chunk_count, declared_dimension)` and its actual dtype against the declared
+stored dtype. Preserve verification outcomes in the build validation evidence;
+declared configuration alone is not proof that vectors were successfully built.
+The dimension's parameter-only reporting is approved but still needs code
+migration. Inference dtype and stored dtype are separate settings: CUDA inference
+can use FP16 while the resulting vectors are stored as FP32.
 
 **Example:** A dimension of 768 with stored `float32` means each vector contains
-768 four-byte coordinates.
+768 four-byte coordinates. A completed 1,000-chunk matrix must therefore have
+shape `(1000, 768)` and stored dtype `float32`; a mismatch is an integrity failure,
+not a lower-dimensional observation to accept silently.
 
-**Range and direction:** Dimension is a positive integer; dtype is a parameter.
-Both are descriptive, not higher-is-better quality measures.
+**Range and direction:** Dimension is a positive-integer parameter; dtype is a
+named numeric-type parameter. Both are descriptive, not quality measures.
 
 **Edge cases and availability:**
 
 [Shared availability rules apply.](../../metrics.md#shared-availability-rules)
+
+The declared parameters remain known after failure, but missing output leaves
+shape/dtype verification unavailable rather than passed. See the
+[runtime-integrity prerequisites](#scoring-inputs-eligibility-and-result-status).
 
 ### Embedding-Matrix Bytes
 
@@ -1024,20 +1061,23 @@ complete valid quality, and the engineer reviews recorded failures separately.
 
 | Value | 95% confidence interval? | Rule |
 |---|---:|---|
-| Development, validation, and locked nDCG, Evidence-unit Recall, Evidence-token Precision, and alpha-nDCG at @3/@5 | When defined and sufficiently supported | Resample source documents and recalculate each aggregate. Partial estimates and any bounds remain diagnostic, not complete selection evidence. |
-| Text, table, formula, and mixed evidence slices | When defined and sufficiently supported | Resample eligible source documents with their first-ranking and failure records; do not prefilter to successful contributors. |
-| Ranking Repeatability | When complete and sufficiently supported | Resample source documents with every query's scheduled attempt pairs and recalculate the macro pair score. |
-| p50/p95 complete-query, query-embedding, and vector-search latency | Conditional | Resample source documents with each component's own query medians; otherwise retain defined descriptive points without bounds. |
+| Development, validation, and locked nDCG, Evidence-unit Recall, Evidence-token Precision, and alpha-nDCG at @3/@5 | When defined and sufficiently supported | Resample reviewed independent-source groups with all member documents and recalculate each aggregate. Partial estimates and any bounds remain diagnostic, not complete selection evidence. |
+| Text, table, formula, and mixed evidence slices | When defined and sufficiently supported | Resample reviewed source groups with every eligible member document's first-ranking and failure records; do not prefilter to successful contributors. |
+| Ranking Repeatability | When complete and sufficiently supported | Resample reviewed source groups with every member document's scheduled query pairs and recalculate the macro pair score. |
+| p50/p95 complete-query, query-embedding, and vector-search latency | Conditional | Resample reviewed source groups with every member document's component-specific query medians; otherwise retain defined descriptive points without bounds. |
 | Smoke metrics | No authoritative interval | Smoke validates execution and is too small for selection claims. |
-| Cold load, chunking, chunk embedding, corpus-build time and throughput | No | Each is one completed phase/build observation, not independent repeated builds. |
+| Cold load, chunking, chunk embedding, and corpus-build time | No | Each is one completed phase/build observation, not independent repeated builds. |
+| Artifact-only Corpus-Build Throughput | No | Derived from one completed build and fixed parent source-token metadata; not another scalar metric or independent observation. |
 | Peak Process-Tree RAM and Peak Device VRAM | No | Report the observed peak without invented bounds. |
 | Workload and storage descriptors | No | These are observed properties of the candidate and fixed corpus, not sampled quality estimates. |
+| Fixed workload metadata and embedding parameters | No | Retained input/configuration facts, not sampled candidate metrics; they do not replace eligible/contributing independent-source support. |
 
 ### Calculation
 
-Apply the [shared CI procedure](../../metrics.md#confidence-intervals) to complete
-source documents eligible for the metric/slice, carrying their question,
-first-ranking, timing, and failure records. Each quality draw recalculates the
+Apply the [shared CI procedure](../../metrics.md#confidence-intervals) to the
+reference-eligible inventory, retaining whole source documents inside their
+reviewed independent source groups with all question, first-ranking, timing,
+and failure records. Each quality draw recalculates the
 question-then-document macro statistic. Repeatability draws recalculate the
 question-then-document pair statistic from all scheduled outcomes. Latency draws
 collect the sampled documents' per-query successful component/request medians
@@ -1049,9 +1089,15 @@ apply. The
 [data-review checklist](../../pending-data-review.md#chunking-embedding-retrieval-and-generation)
 tracks those decisions.
 
+The existing [parent paired-quality artifact](methodology.md#paired-comparison-artifact)
+uses the same source draws for both complete successful candidates and preserves
+document-macro weighting. It compares overall @3/@5 quality only, recording raw
+`left_minus_right` differences and separate question/document/source support;
+it does not add pairwise operational or metadata metrics.
+
 ### Interpretation
 
 An nDCG@5 of `0.81` with a 95% confidence interval of `[0.77, 0.85]` means
-`0.81` is the observed aggregate, while resampling complete source documents
-estimates its uncertainty. The interval does not describe the range of
+`0.81` is the observed aggregate, while resampling reviewed source groups with
+all their documents estimates its uncertainty. The interval does not describe the range of
 individual-question scores.
