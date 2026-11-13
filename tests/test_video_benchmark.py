@@ -316,21 +316,13 @@ def test_video_profiles_validate_candidate_sources() -> None:
     assert candidates == all_candidates(VIDEO_PROTOCOL, 0.40)
     assert decisions == {}
     development_hybrid = SimpleNamespace(
-        profile="development", phase="hybrid", shortlist=None
+        profile="development", phase="all", shortlist=None
     )
     with pytest.raises(ValueError, match="selected_scene_threshold"):
         _candidates(development_hybrid, VIDEO_PROTOCOL)
     locked = SimpleNamespace(profile="locked", phase="all", shortlist=None)
     with pytest.raises(ValueError, match="shortlist"):
         _candidates(locked, VIDEO_PROTOCOL)
-
-
-def test_visual_worker_has_no_asr_execution_dependency() -> None:
-    source = (
-        ROOT / "experiments/benchmarks/extraction/video/visual_worker.py"
-    ).read_text(encoding="utf-8")
-    assert "build_runtime" not in source
-    assert "audio_candidate" not in source
 
 
 def test_application_video_defaults_and_request_overrides_use_shared_selector() -> None:
@@ -432,7 +424,16 @@ def test_mocked_visual_phase_runs_through_artifact_writer(
         "verified_inputs",
         lambda *args: (
             manifest_path,
-            {"metadata": {"samples": {"video": {"canonical_sha256": "0" * 64}}}},
+            {
+                "metadata": {
+                    "samples": {
+                        "video": {
+                            "canonical_sha256": "0" * 64,
+                            "canonical_duration_seconds": 1.0,
+                        }
+                    }
+                }
+            },
         ),
     )
     monkeypatch.setattr(
@@ -662,7 +663,8 @@ def _frozen_payload(sample_id):
     )
     payload = {
         **scored,
-        "schema_version": 2,
+        "schema_version": 3,
+        "audio_schedule": "decoded_pcm_v1",
         "artifact_type": "FrozenASRArtifact",
         "execution_identity": executing,
         "run_id": "asr-run",

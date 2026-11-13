@@ -37,9 +37,15 @@ class AppController:
         progress: Callable[[ProgressEvent], None] | None = None,
     ) -> tuple[DocumentRecord, bool]:
         checksum = hashlib.sha256(content).hexdigest()
-        if checksum in records:
-            return DocumentRecord.from_dict(records[checksum]), False
         safe_name = Path(filename).name or "upload.bin"
+        record_key = hashlib.sha256(f"{safe_name}\0{checksum}".encode()).hexdigest()
+        for value in records.values():
+            if (
+                value.get("filename") == safe_name
+                and value.get("checksum") == checksum
+                and value.get("status") == DocumentStatus.READY.value
+            ):
+                return DocumentRecord.from_dict(value), False
         maximum = self.pipeline.extraction.settings.extraction.maximum_upload_bytes
         if len(content) > maximum:
             record = DocumentRecord(
@@ -48,7 +54,7 @@ class AppController:
                 DocumentStatus.FAILED,
                 error=f"Upload exceeds the configured {maximum / (1024**2):.0f} MiB limit.",
             )
-            records[checksum] = record.to_dict()
+            records[record_key] = record.to_dict()
             return record, True
         suffix = Path(safe_name).suffix[:16]
         path: Path | None = None
@@ -77,11 +83,11 @@ class AppController:
             stale = [
                 key
                 for key, value in records.items()
-                if key != checksum and str(value.get("filename")) == safe_name
+                if key != record_key and str(value.get("filename")) == safe_name
             ]
             for key in stale:
                 del records[key]
-        records[checksum] = record.to_dict()
+        records[record_key] = record.to_dict()
         return record, True
 
     def query(self, text: str, *, top_k: int | None = None) -> PipelineQueryResult:

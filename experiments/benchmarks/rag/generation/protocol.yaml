@@ -1,5 +1,5 @@
 schema_version: 1
-protocol_version: generation-v4
+protocol_version: generation-v5
 seed: 42
 models:
   falcon-h1-tiny-r-90m-control: tiiuae/Falcon-H1-Tiny-R-90M

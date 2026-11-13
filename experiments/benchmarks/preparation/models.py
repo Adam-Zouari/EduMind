@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
-import sys
 from collections.abc import Mapping, Sequence
+from fnmatch import fnmatch
 from importlib.metadata import version
 from pathlib import Path
 
@@ -18,9 +19,26 @@ from edumind.common.artifacts import (
     sha256_file,
     stable_hash,
 )
+from edumind.common.models import (
+    directory_manifest_hash as _directory_manifest_hash,
+)
+from edumind.common.models import (
+    model_lock_schema,
+    validate_model_entry,
+)
+from edumind.common.models import (
+    verify_directory_manifest as _verify_directory_manifest,
+)
+from edumind.common.models import (
+    verify_system_component as _verify_system_component,
+)
 from edumind.extraction.extractors.document import DOCLING_VERSION
 from edumind.rag.contracts import PRODUCTION_EMBEDDING_MODEL
 from experiments.benchmarks.common.selection import SelectionEntry, selection_entries
+from experiments.benchmarks.preparation.docling_pins import (
+    FILE_COMPONENTS,
+    HF_COMPONENTS,
+)
 
 MODEL_COMPONENTS = frozenset(
     {"embedding", "reranker", "generator", "asr", "document_extraction"}
@@ -42,6 +60,15 @@ APP_CANDIDATES = (
     "Qwen/Qwen3-1.7B",
     "openai/whisper-small.en",
 )
+# Application controls are not benchmark promotions. This pin is the historical
+# Qwen3-1.7B row's candidate_revision in selection_evidence.csv (decision=exclude).
+APP_GENERATOR = SelectionEntry(
+    "generator",
+    "Qwen/Qwen3-1.7B",
+    "application-control",
+    "b9352fbb8ce704292730cf54b3b1dceb2a808738",
+    "https://huggingface.co/Qwen/Qwen3-1.7B",
+)
 DOCLING_STANDARD = "docling-standard"
 DOCLING_APP_COMPONENTS = ("layout", "tableformer", "rapidocr")
 DOCLING_BENCHMARK_COMPONENTS = (
@@ -54,15 +81,22 @@ DOCLING_BENCHMARK_COMPONENTS = (
 )
 
 
-def prepare_app_models(root: Path, *, dry_run: bool = False) -> list[Path]:
+def prepare_app_models(
+    root: Path, *, dry_run: bool = False, output_path: Path | None = None
+) -> list[Path]:
     """Prepare only the provisional production controls."""
-    output = root / "data/benchmarks/models/selected.json"
+    output = (
+        output_path
+        if output_path is not None
+        else root / "data/benchmarks/models/selected.json"
+    )
     prepare_selected_models(
         output,
         root / "data/benchmarks/downloads/models",
         APP_CANDIDATES,
         docling_components=DOCLING_APP_COMPONENTS,
         dry_run=dry_run,
+        application=True,
     )
     return [output]
 
@@ -74,9 +108,12 @@ def prepare_selected_models(
     *,
     docling_components: Sequence[str] = (),
     dry_run: bool = False,
+    application: bool = False,
 ) -> Path:
     """Download only approved immutable snapshots into the project model directory."""
     entries = {entry.candidate: entry for entry in selection_entries()}
+    if application:
+        entries[APP_GENERATOR.candidate] = APP_GENERATOR
     unknown = sorted(set(selected) - set(entries))
     if unknown:
         raise ValueError(
@@ -90,12 +127,6 @@ def prepare_selected_models(
     # Keep the caller's normal HF_HOME so an existing `hf auth login` remains
     # available. Only transient Hub cache files belong in the project cache.
     os.environ["HF_HUB_CACHE"] = str(huggingface_home / "hub")
-    try:
-        from huggingface_hub import snapshot_download
-    except ModuleNotFoundError as exc:
-        raise RuntimeError(
-            "huggingface-hub is required; install requirements/benchmarks.lock"
-        ) from exc
     cache_directory.mkdir(parents=True, exist_ok=True)
     for candidate in selected:
         entry = entries[candidate]
@@ -103,12 +134,11 @@ def prepare_selected_models(
         ignore_patterns = snapshot_ignore_patterns(entry.component)
         downloaded: list[dict[str, str]] = []
         for repository, revision, role in snapshots:
-            local_directory = cache_directory / repository.replace("/", "--")
-            snapshot_download(
-                repo_id=repository,
-                revision=revision,
-                local_dir=local_directory,
-                ignore_patterns=ignore_patterns or None,
+            local_directory = _prepare_snapshot(
+                cache_directory,
+                repository,
+                revision,
+                ignore_patterns,
             )
             downloaded.append(
                 {
@@ -168,6 +198,7 @@ def preparation_plan(
     selected: Sequence[str], docling_components: Sequence[str] = ()
 ) -> list[dict[str, object]]:
     entries = {entry.candidate: entry for entry in selection_entries()}
+    entries[APP_GENERATOR.candidate] = APP_GENERATOR
     plan = [
         {
             "candidate": candidate,
@@ -186,6 +217,16 @@ def preparation_plan(
                 "component": "document_extraction",
                 "runtime_version": DOCLING_VERSION,
                 "subcomponents": list(docling_components),
+                "component_pins": {
+                    name: {
+                        "repository": HF_COMPONENTS[name][0],
+                        "revision": HF_COMPONENTS[name][1],
+                    }
+                    if name in HF_COMPONENTS
+                    else FILE_COMPONENTS[name]
+                    for name in docling_components
+                    if name != "tesseract-cli"
+                },
             }
         )
     return plan
@@ -201,7 +242,7 @@ def load_selected_model_lock(
             "app-models` for the controls or the stage-specific model preparation command"
         )
     payload = json.loads(path.read_text(encoding="utf-8"))
-    schema_version = int(payload.get("schema_version", 0))
+    model_lock_schema(payload)
     raw_models = payload.get("models", {})
     if not isinstance(raw_models, Mapping) or not raw_models:
         raise RuntimeError(f"Model lock is empty or malformed: {path}")
@@ -221,6 +262,8 @@ def load_selected_model_lock(
         candidate = str(raw_candidate)
         if requested and candidate not in requested:
             continue
+        if candidate == APP_GENERATOR.candidate and not requested:
+            continue  # Application-only entries coexist without entering a roster.
         if candidate != DOCLING_STANDARD and candidate not in approved:
             raise RuntimeError(
                 f"Model lock contains a candidate outside the approved selection: {candidate}"
@@ -234,9 +277,14 @@ def load_selected_model_lock(
                     f"Docling lock revision must be {DOCLING_VERSION}, received "
                     f"{entry['revision']}"
                 )
-            if schema_version >= 3 and "tesseract-cli" in entry.get(
-                "prepared_components", []
+            if (
+                not isinstance(entry.get("component_models"), Mapping)
+                or not entry["component_models"]
             ):
+                raise RuntimeError(
+                    "Docling lock lacks immutable component pins; prepare a separate lock/cache before authoritative execution"
+                )
+            if "tesseract-cli" in entry.get("prepared_components", []):
                 system_components = entry.get("system_components")
                 if not isinstance(system_components, Mapping):
                     raise RuntimeError(
@@ -272,37 +320,7 @@ def load_selected_model_lock(
                 raise RuntimeError(
                     f"Model lock revision is inconsistent with selection evidence: {candidate}"
                 )
-        model_path = entry.get("model_path")
-        if model_path and not Path(str(model_path)).exists():
-            raise RuntimeError(f"Prepared model path no longer exists: {model_path}")
-        if schema_version >= 3 and model_path:
-            _verify_directory_manifest(
-                Path(str(model_path)),
-                entry.get("model_cache_manifest_sha256"),
-                f"{candidate} primary model",
-            )
-        submodels = entry.get("submodels", [])
-        if isinstance(submodels, Sequence) and not isinstance(submodels, (str, bytes)):
-            for submodel in submodels:
-                if (
-                    isinstance(submodel, Mapping)
-                    and not Path(str(submodel.get("model_path", ""))).exists()
-                ):
-                    raise RuntimeError(
-                        f"Prepared submodel path no longer exists: {submodel.get('model_path')}"
-                    )
-                if schema_version >= 3 and isinstance(submodel, Mapping):
-                    _verify_directory_manifest(
-                        Path(str(submodel.get("model_path", ""))),
-                        submodel.get("cache_manifest_sha256"),
-                        f"{candidate} {submodel.get('role', 'submodel')}",
-                    )
-        if schema_version >= 3 and entry.get("paddle_cache_path"):
-            _verify_directory_manifest(
-                Path(str(entry["paddle_cache_path"])),
-                entry.get("paddle_cache_manifest_sha256"),
-                f"{candidate} Paddle components",
-            )
+        validate_model_entry(entry, candidate)
         result[candidate] = entry
     missing = sorted(requested - set(result))
     if missing:
@@ -334,17 +352,177 @@ def snapshot_specs(entry: SelectionEntry) -> tuple[tuple[str, str, str], ...]:
     return ((entry.candidate, revision, "primary"),)
 
 
+def _prepare_snapshot(
+    cache_directory: Path,
+    repository: str,
+    revision: str,
+    ignore_patterns: Sequence[str] = (),
+) -> Path:
+    """Publish only a complete inventory authenticated against the pinned Hub tree.
+
+    Hub's local fallback is not proof of revision. Verify both its returned
+    snapshot identity and each upstream git-blob/LFS digest before copying bytes
+    into the project-owned revision directory. Old downloads are never removed.
+    """
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise RuntimeError(
+            f"An immutable commit is required for {repository}: {revision}"
+        )
+    target = cache_directory / repository.replace("/", "--") / revision
+    receipt = target.with_name(revision + ".complete.json")
+    identity = {
+        "repository": repository,
+        "revision": revision,
+        "ignore_patterns": list(ignore_patterns),
+    }
+    if receipt.is_file():
+        completed = json.loads(receipt.read_text(encoding="utf-8"))
+        if completed.get("identity") != identity:
+            raise RuntimeError(
+                f"Prepared snapshot policy differs; use a separate cache: {target}"
+            )
+        _verify_directory_manifest(target, completed.get("manifest_sha256"), repository)
+        _verify_hub_inventory(target, completed["files"])
+        return target
+    if target.exists():
+        raise RuntimeError(
+            f"Uncompleted snapshot cannot be relabelled: {target}; retain it and use a separate cache"
+        )
+    from huggingface_hub import HfApi, snapshot_download
+
+    info = HfApi().model_info(repository, revision=revision, files_metadata=True)
+    if info.sha != revision:
+        raise RuntimeError(f"Hub resolved a different revision for {repository}")
+    inventory = []
+    for sibling in info.siblings:
+        name = sibling.rfilename
+        if any(fnmatch(name, pattern) for pattern in ignore_patterns):
+            continue
+        relative = Path(name)
+        if (
+            relative.is_absolute()
+            or ".." in relative.parts
+            or ".cache" in relative.parts
+            or "\\" in name
+        ):
+            raise RuntimeError(f"Unsafe Hub snapshot path: {name}")
+        lfs = sibling.lfs
+        checksum = (
+            (
+                lfs.get("sha256")
+                if isinstance(lfs, Mapping)
+                else getattr(lfs, "sha256", None)
+            )
+            if lfs
+            else sibling.blob_id
+        )
+        algorithm = "sha256" if lfs else "git-sha1"
+        if (
+            type(sibling.size) is not int
+            or sibling.size < 0
+            or not isinstance(checksum, str)
+            or not re.fullmatch(r"[0-9a-f]{64}" if lfs else r"[0-9a-f]{40}", checksum)
+        ):
+            raise RuntimeError(
+                f"Hub lacks immutable file metadata for {repository}/{name}"
+            )
+        inventory.append(
+            {
+                "path": name,
+                "size": sibling.size,
+                "algorithm": algorithm,
+                "digest": checksum,
+            }
+        )
+    if not inventory:
+        raise RuntimeError(f"Hub snapshot inventory is empty: {repository}")
+    hub_cache = cache_directory.parent / "huggingface/hub"
+    downloaded = Path(
+        snapshot_download(
+            repo_id=repository,
+            revision=revision,
+            cache_dir=hub_cache,
+            ignore_patterns=list(ignore_patterns) or None,
+        )
+    )
+    expected = (
+        hub_cache
+        / ("models--" + repository.replace("/", "--"))
+        / "snapshots"
+        / revision
+    )
+    if downloaded.resolve() != expected.resolve():
+        raise RuntimeError(
+            f"Hub returned an unverifiable snapshot revision for {repository}: {downloaded}"
+        )
+    _verify_hub_inventory(downloaded, inventory)
+    partial = target.with_name(revision + ".partial")
+    partial.mkdir(parents=True, exist_ok=True)
+    for item in inventory:
+        destination = partial / item["path"]
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(downloaded / item["path"], destination)
+    _verify_hub_inventory(partial, inventory)
+    partial.replace(target)
+    atomic_write_json(
+        receipt,
+        {
+            "schema_version": 1,
+            "identity": identity,
+            "files": inventory,
+            "manifest_sha256": _directory_manifest_hash(target),
+            "snapshot_size_bytes": _snapshot_size_bytes(target),
+        },
+    )
+    return target
+
+
+def _verify_hub_inventory(
+    directory: Path, inventory: Sequence[Mapping[str, object]]
+) -> None:
+    expected = {item["path"] for item in inventory}
+    actual = {
+        p.relative_to(directory).as_posix() for p in directory.rglob("*") if p.is_file()
+    }
+    if not expected or actual != expected:
+        raise RuntimeError(
+            f"Prepared snapshot has missing, mixed or stale excluded files: {directory}"
+        )
+    for item in inventory:
+        path = directory / str(item["path"])
+        if path.stat().st_size != item["size"]:
+            raise RuntimeError(f"Prepared snapshot file size differs: {path}")
+        if item["algorithm"] == "sha256":
+            digest = sha256_file(path)
+        elif item["algorithm"] == "git-sha1":
+            hasher = hashlib.sha1(usedforsecurity=False)
+            hasher.update(f"blob {item['size']}\0".encode())
+            with path.open("rb") as handle:
+                for block in iter(lambda: handle.read(1024 * 1024), b""):
+                    hasher.update(block)
+            digest = hasher.hexdigest()
+        else:
+            raise RuntimeError("Unsupported snapshot digest algorithm")
+        if digest != item["digest"]:
+            raise RuntimeError(f"Prepared snapshot file content differs: {path}")
+
+
 def _merge_model_lock(path: Path, updates: Mapping[str, Mapping[str, object]]) -> None:
     existing: dict[str, object] = {}
-    allowed = {entry.candidate for entry in selection_entries()} | {DOCLING_STANDARD}
     if path.is_file():
         payload = json.loads(path.read_text(encoding="utf-8"))
+        model_lock_schema(payload)
         models = payload.get("models") if isinstance(payload, Mapping) else None
         if not isinstance(models, Mapping):
             raise ValueError(f"Existing model lock is malformed: {path}")
-        existing.update(
-            {str(name): value for name, value in models.items() if str(name) in allowed}
-        )
+        existing.update(models)
+    # Never upgrade untouched legacy entries into schema 3 without integrity.
+    # Do not hash unrelated/missing snapshots: only their structure is in scope.
+    for candidate, entry in existing.items():
+        if candidate not in updates:
+            validate_model_entry(entry, str(candidate), verify=False)
+    for candidate, entry in updates.items():
+        validate_model_entry(entry, candidate)
     existing.update(
         {
             candidate: {
@@ -376,40 +554,118 @@ def _prepare_docling_standard(
         raise RuntimeError(
             f"Docling {DOCLING_VERSION} is required, but {installed} is installed"
         )
-    docling_directory = cache_directory / "docling-standard"
-    downloadable = [
-        component
-        for component in components
-        if component not in {"easyocr", "rapidocr", "tesseract-cli"}
-    ]
-    cli_name = "docling-tools.exe" if os.name == "nt" else "docling-tools"
-    cli_path = Path(sys.executable).resolve().parent / cli_name
-    if not cli_path.is_file():
+    unknown = set(components) - set(DOCLING_BENCHMARK_COMPONENTS)
+    if unknown:
+        raise ValueError(f"Unknown Docling components: {sorted(unknown)}")
+    previous = {}
+    if output_path.is_file():
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        model_lock_schema(payload)
+        previous = payload.get("models", {}).get(DOCLING_STANDARD, {})
+    if previous:
+        validate_model_entry(previous, DOCLING_STANDARD)
+        if not previous.get("component_models"):
+            raise RuntimeError(
+                "Legacy Docling bundle lacks immutable component pins; retain it and prepare a separate lock/cache"
+            )
+    desired = sorted(set(components) | set(previous.get("prepared_components", [])))
+    if previous and set(desired) == set(previous["prepared_components"]):
+        return
+    bundle_id = stable_hash(
+        {
+            "package": installed,
+            "components": desired,
+            "hf": HF_COMPONENTS,
+            "files": FILE_COMPONENTS,
+        }
+    )
+    docling_directory = cache_directory / "docling-bundles" / bundle_id
+    partial = docling_directory.with_name(bundle_id + ".partial")
+    if docling_directory.exists():
         raise RuntimeError(
-            f"The pinned Docling CLI is missing beside Python: {cli_path}"
+            f"Unpublished Docling bundle already exists; retain it and use a separate cache: {docling_directory}"
         )
-    command = [str(cli_path), "models", "download", *downloadable]
-    command.extend(["--output-dir", str(docling_directory)])
-    subprocess.run(command, check=True)
-    if "easyocr" in components:
-        _prepare_easyocr_english(docling_directory)
-    if "rapidocr" in components:
-        # Docling's generic CLI fetches four backend/language combinations. The
-        # benchmark freezes exactly ONNX Runtime + English, so prepare only that set.
-        from docling.models.stages.ocr.rapid_ocr_model import RapidOcrModel
+    partial.mkdir(parents=True, exist_ok=True)
+    component_models = {}
+    expected_bundle_files = set()
+    systems = dict(previous.get("system_components", {}))
+    for component in desired:
+        if component == "tesseract-cli":
+            if component not in systems:
+                systems.update(_prepare_system_components((component,)))
+            _verify_system_component(systems[component], "Tesseract CLI")
+            continue
+        old_component = previous.get("component_models", {}).get(component)
+        if old_component:
+            folder = old_component.get("directory", old_component.get("folder"))
+            if not isinstance(folder, str) or Path(folder).name != folder:
+                raise RuntimeError(f"Invalid Docling component directory: {component}")
+            prepared = Path(previous["model_path"]) / folder
+            _verify_directory_manifest(
+                prepared, old_component.get("manifest_sha256"), component
+            )
+            shutil.copytree(prepared, partial / folder, dirs_exist_ok=True)
+            expected_bundle_files.update(
+                f"{folder}/{p.relative_to(prepared).as_posix()}"
+                for p in prepared.rglob("*")
+                if p.is_file()
+            )
+            component_models[component] = dict(old_component)
+            continue
+        if component in HF_COMPONENTS:
+            repository, revision = HF_COMPONENTS[component]
+            prepared = _prepare_snapshot(cache_directory, repository, revision)
+            target = partial / repository.replace("/", "--")
+            shutil.copytree(prepared, target, dirs_exist_ok=True)
+            expected_bundle_files.update(
+                f"{target.name}/{p.relative_to(prepared).as_posix()}"
+                for p in prepared.rglob("*")
+                if p.is_file()
+            )
+            component_models[component] = {
+                "repository": repository,
+                "revision": revision,
+                "directory": target.name,
+                "manifest_sha256": _directory_manifest_hash(target),
+            }
+        else:
+            pin = FILE_COMPONENTS[component]
+            target = partial / pin["folder"]
+            if component == "easyocr":
+                _prepare_easyocr_english(partial)
+            else:
+                from docling.models.stages.ocr.rapid_ocr_model import RapidOcrModel
 
-        RapidOcrModel.download_models(
-            backend="onnxruntime",
-            lang="english",
-            local_dir=docling_directory / RapidOcrModel._model_repo_folder,
-            force=False,
-            progress=True,
-        )
-    if not docling_directory.is_dir() or not any(docling_directory.rglob("*")):
-        raise RuntimeError(
-            "Docling model preparation produced an empty artifact directory"
-        )
-    system_components = _prepare_system_components(components)
+                RapidOcrModel.download_models(
+                    backend="onnxruntime",
+                    lang="english",
+                    local_dir=target,
+                    force=False,
+                    progress=True,
+                )
+            expected = pin["files"]
+            actual = {
+                p.relative_to(target).as_posix(): sha256_file(p)
+                for p in target.rglob("*")
+                if p.is_file()
+            }
+            if actual != expected:
+                raise RuntimeError(
+                    f"Docling {component} differs from the pinned file inventory"
+                )
+            component_models[component] = {
+                **pin,
+                "manifest_sha256": _directory_manifest_hash(target),
+            }
+            expected_bundle_files.update(f"{target.name}/{name}" for name in expected)
+    # Preserve verified systems/preparation metadata; construct a new bundle,
+    # never mutate a directory referenced by the previous completed lock.
+    actual_bundle_files = {
+        p.relative_to(partial).as_posix() for p in partial.rglob("*") if p.is_file()
+    }
+    if actual_bundle_files != expected_bundle_files:
+        raise RuntimeError("Docling bundle contains stale/unaccounted component files")
+    partial.replace(docling_directory)
     _merge_model_lock(
         output_path,
         {
@@ -419,28 +675,13 @@ def _prepare_docling_standard(
                 "model": "standard-pipeline-artifacts",
                 "revision": installed,
                 "model_path": str(docling_directory),
-                "prepared_components": list(components),
-                "system_components": system_components,
+                "runtime_version": installed,
+                "prepared_components": desired,
+                "component_models": component_models,
+                "system_components": systems,
                 "preparation": {
-                    "command": command,
-                    "docling_cli_sha256": sha256_file(cli_path),
-                    "easyocr": {
-                        "languages": ["en"],
-                        "detection_model": "craft",
-                        "recognition_model": "english_g2",
-                        "downloader": (
-                            "docling.models.stages.ocr.easyocr_model."
-                            "EasyOcrModel.download_models"
-                        ),
-                    },
-                    "rapidocr": {
-                        "backend": "onnxruntime",
-                        "language": "english",
-                        "downloader": (
-                            "docling.models.stages.ocr.rapid_ocr_model."
-                            "RapidOcrModel.download_models"
-                        ),
-                    },
+                    **previous.get("preparation", {}),
+                    "component_policy": "immutable-components-v1",
                 },
                 "model_cache_manifest_sha256": _directory_manifest_hash(
                     docling_directory
@@ -526,39 +767,6 @@ def _snapshot_size_bytes(directory: Path) -> int:
     return sum(sizes)
 
 
-def _directory_manifest_hash(directory: Path) -> str:
-    """Hash every prepared file name and digest, independent of absolute location."""
-
-    if not directory.is_dir():
-        raise RuntimeError(f"Prepared model directory is missing: {directory}")
-    files = [path for path in directory.rglob("*") if path.is_file()]
-    if not files:
-        raise RuntimeError(f"Prepared model directory is empty: {directory}")
-    return stable_hash(
-        [
-            {
-                "path": path.relative_to(directory).as_posix(),
-                "size": path.stat().st_size,
-                "sha256": sha256_file(path),
-            }
-            for path in sorted(
-                files, key=lambda value: value.relative_to(directory).as_posix()
-            )
-        ]
-    )
-
-
-def _verify_directory_manifest(directory: Path, expected: object, label: str) -> None:
-    if not isinstance(expected, str) or not expected:
-        raise RuntimeError(f"Model lock lacks a cache-manifest checksum for {label}")
-    actual = _directory_manifest_hash(directory)
-    if actual != expected:
-        raise RuntimeError(
-            f"Prepared cache manifest checksum mismatch for {label}: "
-            f"expected {expected}, computed {actual}"
-        )
-
-
 def _prepare_system_components(components: Sequence[str]) -> dict[str, object]:
     result: dict[str, object] = {}
     if "tesseract-cli" not in components:
@@ -597,22 +805,3 @@ def _prepare_system_components(components: Sequence[str]) -> dict[str, object]:
         "english_data_sha256": sha256_file(english_data),
     }
     return result
-
-
-def _verify_system_component(value: object, label: str) -> None:
-    if not isinstance(value, Mapping):
-        raise RuntimeError(f"Model lock lacks the {label} identity")
-    path = Path(str(value.get("path", "")))
-    checksum = str(value.get("sha256", ""))
-    if not path.is_file() or not checksum or sha256_file(path) != checksum:
-        raise RuntimeError(f"Prepared {label} executable is missing or changed")
-    if not str(value.get("version", "")).strip():
-        raise RuntimeError(f"Model lock lacks the {label} version")
-    english_data = Path(str(value.get("english_data_path", "")))
-    english_checksum = str(value.get("english_data_sha256", ""))
-    if (
-        not english_data.is_file()
-        or not english_checksum
-        or sha256_file(english_data) != english_checksum
-    ):
-        raise RuntimeError(f"Prepared {label} English model data is missing or changed")

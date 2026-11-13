@@ -7,7 +7,7 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
-from edumind.common.artifacts import stable_hash
+from edumind.common.artifacts import sha256_file, stable_hash
 from edumind.common.onnx_placement import cuda_shape_session, verified_cuda_graph
 
 from ..contracts import (
@@ -118,7 +118,42 @@ class DoclingExtractor:
                 },
             )
         elif ocr_engine == "tesseract":
-            ocr_options = TesseractCliOcrOptions(lang=["eng"], mode=ocr_mode)
+            prepared = options.get("system_components", {}).get("tesseract-cli", {})
+            paths = {}
+            for name, checksum_name in (
+                ("path", "sha256"),
+                ("english_data_path", "english_data_sha256"),
+            ):
+                raw_path, checksum = prepared.get(name), prepared.get(checksum_name)
+                if (
+                    not isinstance(raw_path, str)
+                    or not raw_path
+                    or not isinstance(checksum, str)
+                    or not checksum
+                ):
+                    raise ValueError(
+                        "Tesseract requires exact prepared executable and English data identities"
+                    )
+                path = Path(raw_path)
+                if (
+                    not path.is_absolute()
+                    or not path.is_file()
+                    or sha256_file(path) != checksum
+                ):
+                    raise ValueError(
+                        "Prepared Tesseract executable or English data is missing or changed"
+                    )
+                paths[name] = path.resolve()
+            if paths["english_data_path"].name != "eng.traineddata":
+                raise ValueError(
+                    "Prepared Tesseract English data must be eng.traineddata"
+                )
+            ocr_options = TesseractCliOcrOptions(
+                lang=["eng"],
+                mode=ocr_mode,
+                tesseract_cmd=str(paths["path"]),
+                path=str(paths["english_data_path"].parent),
+            )
         elif ocr_engine == "easyocr":
             ocr_options = EasyOcrOptions(
                 lang=["en"],

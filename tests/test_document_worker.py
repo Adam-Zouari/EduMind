@@ -287,7 +287,20 @@ def test_setup_failures_preserve_explicit_unexecuted_rows(
     json.dumps(result, allow_nan=False)
 
 
-@pytest.mark.parametrize("failure_kind", ["schema", "serialization", "sync", "request"])
+@pytest.mark.parametrize(
+    "failure_kind",
+    [
+        "schema",
+        "serialization",
+        "sync",
+        "request",
+        "object",
+        "cycle",
+        "key",
+        "nan",
+        "inf",
+    ],
+)
 def test_recoverable_attempt_failures_are_json_safe_and_remaining_attempts_run(
     lifecycle, monkeypatch, failure_kind
 ):
@@ -314,6 +327,22 @@ def test_recoverable_attempt_failures_are_json_safe_and_remaining_attempts_run(
                 raise RuntimeError("synchronization failed")
 
         monkeypatch.setattr(worker, "synchronize", sync)
+    elif failure_kind in {"object", "cycle", "key", "nan", "inf"}:
+
+        def malformed_native(document):
+            data = document.to_dict()
+            cycle = []
+            cycle.append(cycle)
+            data["metadata"]["rejected-marker"] = {
+                "object": object(),
+                "cycle": cycle,
+                "key": {object(): "raw-fragment"},
+                "nan": float("nan"),
+                "inf": float("inf"),
+            }[failure_kind]
+            return SimpleNamespace(to_dict=lambda: data)
+
+        lifecycle.runtime.behaviors[2] = malformed_native
     else:
         lifecycle.runtime.behaviors[2] = RuntimeError("request failed")
     result = worker.execute(lifecycle.payload)
@@ -328,6 +357,10 @@ def test_recoverable_attempt_failures_are_json_safe_and_remaining_attempts_run(
     assert all("produced_document" not in row for row in result["attempts"][1:])
     assert lifecycle.runtime.calls == 4
     json.dumps(result, allow_nan=False)
+    if failure_kind in {"object", "cycle", "key", "nan", "inf"}:
+        assert "diagnostic" in json.dumps(
+            result["attempts"][0]["produced_document"]["metadata"]
+        )
 
 
 def test_after_placement_failure_preserves_attempts_outside_resource_scope(
@@ -349,6 +382,63 @@ def test_after_placement_failure_preserves_attempts_outside_resource_scope(
     assert result["placement_after"]["status"] == "offload_detected"
     assert lifecycle.events[-2:] == ["monitor_stop", "placement"]
     assert result["operational"]["peak_process_tree_ram_mb"] == 12
+    assert result["monitoring_completed"] is True
+    assert result["resource_measurement_scope"] == "complete_lifecycle"
+
+
+def test_rejected_paddle_block_is_inspectable_but_not_scored():
+    rejected, warnings = [], []
+    blocks = _paddle_blocks(
+        {
+            "page_index": 2,
+            "parsing_res_list": [
+                {
+                    "block_id": "broken",
+                    "block_label": "table",
+                    "block_content": '<table><tr><td rowspan="999999999">REJECTED-UNIQUE</td></tr></table>',
+                },
+                {
+                    "block_id": "good",
+                    "block_label": "text",
+                    "block_content": "valid block",
+                },
+            ],
+        },
+        rejected=rejected,
+        warnings=warnings,
+    )
+    assert [block["text"] for block in blocks] == ["valid block"]
+    assert rejected[0]["page_number"] == 3
+    assert rejected[0]["native_block"]["block_id"] == "broken"
+    assert "REJECTED-UNIQUE" in json.dumps(rejected, allow_nan=False)
+    assert rejected[0]["error"]
+    assert warnings[0].code == "paddle_block_conversion_failed"
+
+
+def test_rejected_diagnostic_is_bounded():
+    from experiments.benchmarks.extraction.evidence import rejected_diagnostic
+
+    payload = {"x" * 1000: ["y" * 1000] * 1000}
+    encoded = json.dumps(
+        rejected_diagnostic(payload, max_nodes=10, max_text=100), allow_nan=False
+    )
+    assert len(encoded) < 2000
+
+
+def test_native_document_to_dict_cycle_keeps_raw_metadata_diagnostic(lifecycle):
+    from dataclasses import replace
+
+    def malformed(document):
+        cycle = []
+        cycle.append(cycle)
+        return replace(document, metadata={"marker": "native-cycle", "cycle": cycle})
+
+    lifecycle.runtime.behaviors[2] = malformed
+    result = worker.execute(lifecycle.payload)
+    assert [row["success"] for row in result["attempts"]] == [False, True, True]
+    rejected = result["attempts"][0]["produced_document"]
+    assert rejected["metadata"]["marker"] == "native-cycle"
+    assert "cycle" in json.dumps(rejected, allow_nan=False)
 
 
 def test_cleanup_error_cannot_mask_original_load_failure(lifecycle, monkeypatch):

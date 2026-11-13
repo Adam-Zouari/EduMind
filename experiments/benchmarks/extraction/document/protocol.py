@@ -63,6 +63,7 @@ class DocumentProtocol:
             options.update(mapping(self.parser["granite"], "parser.granite"))
         elif engine == "paddleocr-vl-1.6":
             options.update(mapping(self.parser["paddle"], "parser.paddle"))
+            options["batch_size"] = 1
         return options
 
     def validate_candidate_factors(self, factors: Mapping[str, str]) -> None:

@@ -1021,7 +1021,24 @@ def test_candidate_emits_new_metrics_and_auditable_top_twenty(monkeypatch) -> No
     assert aggregate["quality.overall.alpha_ndcg_at_3"] == 1.0
     assert aggregate["validity.quality.overall.eligible_question_count"] == 1.0
     assert aggregate["workload.embedding_matrix_bytes"] == 25 * 2 * 4
-    assert operational["corpus_build_source_tokens_per_second"] == 1.0
+    assert "corpus_build_source_tokens_per_second" not in operational
+    assert _parameters["corpus_build"]["source_tokens_per_second"] == 1.0
+    assert _parameters["corpus_build"]["completed_seconds"] == 2.0
+    assert (
+        _parameters["corpus_build"]["workload_reference"]["owner"]
+        == "comparison-parent"
+    )
+    assert _parameters["embedding_dimension"] == index.vectors.shape[1]
+    assert _parameters["stored_vector_dtype"] == str(index.vectors.dtype)
+    assert _parameters["embedding_output"]["shape"] == list(index.vectors.shape)
+    for name in (
+        "document_count",
+        "answerable_query_count",
+        "unanswerable_query_count",
+        "source_tokens",
+        "embedding_dimension",
+    ):
+        assert f"workload.{name}" not in aggregate
     assert _parameters["manifest_checksum"] == "checksum"
     assert _parameters["manifest_fingerprint"]
     assert _parameters["quality_cutoffs"] == (3, 5)
@@ -1046,6 +1063,28 @@ def test_candidate_emits_new_metrics_and_auditable_top_twenty(monkeypatch) -> No
         "validation_report",
         "resources",
     }
+
+
+def test_fixed_workload_is_parent_plan_metadata_and_matches_manifest(monkeypatch):
+    from experiments.benchmarks.rag.chunking_embedding import run
+
+    monkeypatch.setattr(run, "TiktokenOffsetTokenizer", lambda *_: WordTokenizer())
+    manifest = _manifest()
+    plan = run._plan(
+        CHUNKING_PROTOCOL, manifest, ("fixture|embedding",), "smoke", "cpu", "float32"
+    )
+    inventory = plan.settings["input_inventory"]
+    assert inventory["corpus_document_count"] == sum(
+        row.get("kind") == "document" for row in manifest.samples
+    )
+    assert inventory["answerable_query_count"] == 1
+    assert inventory["source_tokens"] == sum(
+        WordTokenizer().count(row["text"])
+        for row in manifest.samples
+        if row.get("kind") == "document"
+    )
+    assert inventory["manifest_fingerprint"] == manifest.fingerprint
+    assert inventory["evaluation_tokenizer"] == WordTokenizer.name
 
 
 def test_measured_query_failure_runs_every_repetition(monkeypatch) -> None:

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from edumind.common.artifacts import atomic_write_json
 from edumind.common.paths import PROJECT_ROOT
+from edumind.rag.tokenizers import TiktokenOffsetTokenizer
 from experiments.benchmarks.common.arguments import (
     LIFECYCLE_PROFILES,
     default_decision_path,
@@ -38,6 +39,7 @@ from experiments.benchmarks.rag.chunking_embedding.benchmark import (
     directions_for,
     preflight_in_fresh_process,
     run_in_fresh_process,
+    workload_inventory,
 )
 from experiments.benchmarks.rag.chunking_embedding.metrics import paired_quality
 from experiments.benchmarks.rag.chunking_embedding.protocol import (
@@ -373,6 +375,10 @@ def _plan(protocol, manifest, candidates, profile, device, dtype):
             if protocol.unfrozen_ci_policies
             else "authoritative_if_complete_and_valid",
             "chunking_embedding_protocol": protocol.meta.worker_payload(),
+            "input_inventory": workload_inventory(
+                manifest,
+                TiktokenOffsetTokenizer(protocol.tokenizer.removeprefix("tiktoken:")),
+            ),
         },
     )
 

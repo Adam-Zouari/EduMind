@@ -11,6 +11,14 @@ class InvalidIndexState(RuntimeError):
     """The server index cannot be trusted for the requested benchmark trial."""
 
 
+class DimensionMismatch(ValueError):
+    """Attributable adapter-side rejection, not proof of server rejection."""
+
+
+class UnsupportedConfiguration(ValueError):
+    """An explicitly attributable unsupported setting, never a transport outage."""
+
+
 @dataclass(frozen=True)
 class Config:
     dimension: int
@@ -58,6 +66,7 @@ class Adapter(Protocol):
     def delete(self, identifiers: Sequence[str]) -> None: ...
     def delete_document(self, source_id: str) -> int: ...
     def count(self) -> int: ...
+    def fetch(self, identifiers: Sequence[str]) -> list[Record]: ...
     def index_info(self) -> Mapping[str, object]: ...
     def close(self) -> None: ...
 
@@ -65,7 +74,7 @@ class Adapter(Protocol):
 def ensure_dimension(config: Config, records: Sequence[Record]) -> None:
     for record in records:
         if len(record.vector) != config.dimension:
-            raise ValueError(
+            raise DimensionMismatch(
                 f"Vector {record.identifier} has dimension {len(record.vector)}; "
                 f"expected {config.dimension}"
             )

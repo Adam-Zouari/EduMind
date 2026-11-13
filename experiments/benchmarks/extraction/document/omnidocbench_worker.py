@@ -4,40 +4,75 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
 import sys
 from pathlib import Path
 
+SCHEMA_VERSION = 2
+NORMALIZATION = (
+    "omnidocbench.normalized_html_table@193627ae9e97d89188468ed1ee3b7a856ff76044"
+)
+EXACT_MATCH_POLICY = "cdm_exact_counts_v1"
+
 
 def main(input_path: Path, output_path: Path) -> None:
     sys.path.insert(0, "/opt/omnidocbench")
     sys.path.insert(0, "/opt/omnidocbench/src")
     payload = json.loads(input_path.read_text(encoding="utf-8"))
-    result: dict[str, list[object]] = {"tables": [], "formulas": []}
+    result = {
+        "schema_version": SCHEMA_VERSION,
+        "tables": [],
+        "formulas": [],
+        "table_evidence": [],
+        "provenance": {
+            "normalization": NORMALIZATION,
+            "exact_match_policy": EXACT_MATCH_POLICY,
+            "wrapper_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        },
+    }
 
     tables = payload.get("tables", [])
     if tables:
         from lxml.etree import ParserError
         from metrics.table_metric import TEDS
+        from src.core.preprocess.data_preprocess import normalized_html_table
 
         full = TEDS(structure_only=False)
         structure = TEDS(structure_only=True)
         for pair in tables:
-            reference = str(pair.get("reference", ""))
-            prediction = str(pair.get("prediction", ""))
-            if not reference or not prediction:
-                result["tables"].append([0.0, 0.0])
-                continue
+            reference = pair["reference"]
+            prediction = pair["prediction"]
+            if not isinstance(reference, str) or not isinstance(prediction, str):
+                raise ValueError("Official table inputs must be strings")
+            normalized_reference = normalized_html_table(reference)
+            normalized_prediction = normalized_html_table(prediction)
+            result["table_evidence"].append(
+                {
+                    "reference": reference,
+                    "prediction": prediction,
+                    "normalized_reference": normalized_reference,
+                    "normalized_prediction": normalized_prediction,
+                }
+            )
             # Validate the reference separately so a malformed prediction is a
             # quality zero, not confused with a broken reference or evaluator.
-            if full.evaluate(_html(reference), _html(reference)) != 1.0:
+            if (
+                not normalized_reference
+                or full.evaluate(normalized_reference, normalized_reference) != 1.0
+            ):
                 raise ValueError("Invalid official table reference")
+            if not normalized_prediction:
+                result["tables"].append([0.0, 0.0])
+                continue
             try:
                 scores = [
-                    float(full.evaluate(_html(prediction), _html(reference))),
-                    float(structure.evaluate(_html(prediction), _html(reference))),
+                    float(full.evaluate(normalized_prediction, normalized_reference)),
+                    float(
+                        structure.evaluate(normalized_prediction, normalized_reference)
+                    ),
                 ]
             except (ValueError, ParserError, ZeroDivisionError):
                 scores = [0.0, 0.0]
@@ -58,7 +93,15 @@ def main(input_path: Path, output_path: Path) -> None:
             if not reference.strip():
                 raise ValueError("Invalid official formula reference: empty expression")
             if not prediction.strip():
-                result["formulas"].append(0.0)
+                result["formulas"].append(
+                    {
+                        "similarity": 0.0,
+                        "status": "missing_prediction",
+                        "tp": None,
+                        "gt_tokens": None,
+                        "pred_tokens": None,
+                    }
+                )
                 continue
             identifier = hashlib.sha256(
                 f"{reference}\0{prediction}".encode()
@@ -121,15 +164,32 @@ def _score_formula(evaluator, renderer, reference, prediction, identifier):
         )
     if metrics.get("cdm_eval_error"):
         raise RuntimeError(f"CDM evaluation failed: {metrics['cdm_eval_error']}")
-    if type(metrics.get("gt_tokens")) is not int or metrics["gt_tokens"] <= 0:
+    if type(metrics.get("gt_tokens")) is int and metrics["gt_tokens"] == 0:
         raise RuntimeError("Invalid official formula reference: rendered no tokens")
-    return float(metrics["F1_score"])
-
-
-def _html(value: str) -> str:
-    return (
-        value if "<body" in value.casefold() else f"<html><body>{value}</body></html>"
-    )
+    similarity = metrics.get("F1_score")
+    if (
+        type(similarity) not in (int, float)
+        or not math.isfinite(similarity)
+        or not 0 <= similarity <= 1
+    ):
+        raise RuntimeError("CDM evaluator returned invalid similarity")
+    counts = {name: metrics.get(name) for name in ("tp", "gt_tokens", "pred_tokens")}
+    # Failed prediction rendering is a reconstruction zero, not invented counts.
+    if (
+        type(counts["pred_tokens"]) is int
+        and counts["pred_tokens"] == 0
+        and type(counts["gt_tokens"]) is int
+        and counts["gt_tokens"] > 0
+        and similarity == 0
+    ):
+        return {
+            "similarity": 0.0,
+            "status": "invalid_prediction",
+            "tp": None,
+            "gt_tokens": counts["gt_tokens"],
+            "pred_tokens": 0,
+        }
+    return {"similarity": float(similarity), "status": "evaluated", **counts}
 
 
 if __name__ == "__main__":

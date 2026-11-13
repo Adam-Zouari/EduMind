@@ -296,6 +296,11 @@ def test_paddle_sets_framework_device_before_building_pipeline(
     events = []
     paddle_env = SimpleNamespace(is_cuda_available=lambda: True)
     monkeypatch.setitem(sys.modules, "paddlex.utils", SimpleNamespace(env=paddle_env))
+    monkeypatch.setitem(
+        sys.modules,
+        "paddlex.inference",
+        SimpleNamespace(load_pipeline_config=lambda _: {"batch_size": 64}),
+    )
     monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(__version__="pinned"))
     monkeypatch.setitem(
         sys.modules,
@@ -310,7 +315,7 @@ def test_paddle_sets_framework_device_before_building_pipeline(
     def build(**options):
         events.append(options["device"])
         assert paddle_env.is_cuda_available() is (device == "cuda")
-        return object()
+        return SimpleNamespace(_merged_paddlex_config=options["paddlex_config"])
 
     monkeypatch.setitem(sys.modules, "paddleocr", SimpleNamespace(PaddleOCRVL=build))
     monkeypatch.setattr(adapters, "version", lambda _package: "3.7.0")

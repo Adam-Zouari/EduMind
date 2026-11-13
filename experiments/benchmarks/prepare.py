@@ -15,6 +15,8 @@ from experiments.benchmarks.preparation.datasets import (
 from experiments.benchmarks.preparation.evaluators import prepare_evaluators
 from experiments.benchmarks.preparation.fixtures import prepare_smoke_fixtures
 from experiments.benchmarks.preparation.models import (
+    APP_CANDIDATES,
+    DOCLING_APP_COMPONENTS,
     DOCLING_BENCHMARK_COMPONENTS,
     EMBEDDING_COMPONENTS,
     EXTRACTION_COMPONENTS,
@@ -77,7 +79,11 @@ def main() -> int:
         print(
             json.dumps(
                 preparation_plan(
-                    selected_model_names(MODEL_COMPONENTS),
+                    tuple(
+                        dict.fromkeys(
+                            (*selected_model_names(MODEL_COMPONENTS), *APP_CANDIDATES)
+                        )
+                    ),
                     DOCLING_BENCHMARK_COMPONENTS,
                 ),
                 indent=2,
@@ -88,22 +94,81 @@ def main() -> int:
         parser.error("target is required unless --list is used")
     if arguments.target != "smoke-fixtures" and arguments.modality != "all":
         parser.error("--modality is only valid with smoke-fixtures")
+    if arguments.target == "app-models" and arguments.candidate:
+        parser.error("app-models has a fixed provisional control set")
+    if arguments.target == "assets" and arguments.plan is None:
+        parser.error("assets requires --plan")
+    if arguments.target == "rag-selection" and not all(
+        (arguments.qasper_manifest, arguments.structured_manifest, arguments.output)
+    ):
+        parser.error(
+            "rag-selection requires --qasper-manifest, --structured-manifest, and --output"
+        )
+    if arguments.dry_run:
+        # Dispatch must stop before *any* mutating preparation helper. Input
+        # paths are described, not opened or repaired by a planning invocation.
+        models = None
+        if arguments.target == "app-models":
+            models = preparation_plan(APP_CANDIDATES, DOCLING_APP_COMPONENTS)
+        elif arguments.target.endswith("-models"):
+            components = {
+                "embedding-models": EMBEDDING_COMPONENTS,
+                "rag-models": RAG_COMPONENTS,
+                "extraction-models": EXTRACTION_COMPONENTS,
+                "all-models": MODEL_COMPONENTS,
+            }[arguments.target]
+            selected = tuple(arguments.candidate or selected_model_names(components))
+            entries = {entry.candidate: entry for entry in selection_entries()}
+            if any(
+                name not in entries or entries[name].component not in components
+                for name in selected
+            ):
+                parser.error(
+                    "Requested candidate is not included in this benchmark target"
+                )
+            models = preparation_plan(
+                selected,
+                DOCLING_BENCHMARK_COMPONENTS
+                if arguments.target in {"extraction-models", "all-models"}
+                and (
+                    not arguments.candidate
+                    or any(
+                        entries[name].component == "document_extraction"
+                        for name in selected
+                    )
+                )
+                else (),
+            )
+        print(
+            json.dumps(
+                {
+                    "target": arguments.target,
+                    "dry_run": True,
+                    "models": models,
+                    "inputs": {
+                        name: str(value)
+                        for name in (
+                            "plan",
+                            "qasper_manifest",
+                            "structured_manifest",
+                            "output",
+                            "modality",
+                        )
+                        if (value := getattr(arguments, name)) is not None
+                    },
+                },
+                indent=2,
+            )
+        )
+        return 0
 
     if arguments.target == "app-models":
-        if arguments.candidate:
-            parser.error("app-models has a fixed provisional control set")
-        outputs = prepare_app_models(root, dry_run=arguments.dry_run)
+        outputs = prepare_app_models(
+            root, dry_run=arguments.dry_run, output_path=arguments.output
+        )
     elif arguments.target == "qasper":
         outputs = prepare_qasper(arguments.output or root / "data/benchmarks/rag")
     elif arguments.target == "rag-selection":
-        if (
-            not arguments.qasper_manifest
-            or not arguments.structured_manifest
-            or not arguments.output
-        ):
-            parser.error(
-                "rag-selection requires --qasper-manifest, --structured-manifest, and --output"
-            )
         outputs = [
             prepare_rag_selection_manifest(
                 arguments.qasper_manifest,
@@ -112,8 +177,6 @@ def main() -> int:
             )
         ]
     elif arguments.target == "assets":
-        if arguments.plan is None:
-            parser.error("assets requires --plan")
         outputs = prepare_public_assets(
             arguments.plan, arguments.output or root / "data/benchmarks/raw"
         )

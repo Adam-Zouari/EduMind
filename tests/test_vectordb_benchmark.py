@@ -16,7 +16,8 @@ from experiments.benchmarks.vectordb.protocol import (
     DEFAULT_PROTOCOL_PATH,
     load_protocol,
 )
-from experiments.benchmarks.vectordb.run import COMPOSE, _config
+from experiments.benchmarks.vectordb.run import COMPOSE
+from experiments.benchmarks.vectordb.selection import make_config
 from experiments.benchmarks.vectordb.workload import Corpus, exact_ids
 
 
@@ -51,7 +52,7 @@ def test_chroma_accepts_numpy_vectors_without_numpy_scalar_lists():
 
     protocol = load_protocol()
     adapter = object.__new__(Chroma)
-    adapter.config = _config("chroma", 2, protocol, **protocol.smoke_hnsw)
+    adapter.config = make_config("chroma", 2, protocol, **protocol.smoke_hnsw)
     calls = []
 
     def upsert(**kwargs):
@@ -76,7 +77,7 @@ def test_chroma_applies_http_limits_and_closes_transport(monkeypatch):
     import httpx
 
     protocol = load_protocol()
-    config = _config("chroma", 2, protocol, **protocol.smoke_hnsw)
+    config = make_config("chroma", 2, protocol, **protocol.smoke_hnsw)
     transport = httpx.Client(transport=httpx.MockTransport(lambda request: None))
     admin_transport = httpx.Client(transport=httpx.MockTransport(lambda request: None))
     calls = []
@@ -110,7 +111,7 @@ def test_chroma_applies_http_limits_and_closes_transport(monkeypatch):
 def test_weaviate_reset_uses_current_client_hnsw_api():
     protocol = load_protocol()
     adapter = object.__new__(Weaviate)
-    adapter.config = _config("weaviate", 2, protocol, **protocol.smoke_hnsw)
+    adapter.config = make_config("weaviate", 2, protocol, **protocol.smoke_hnsw)
     calls = []
     adapter.client = SimpleNamespace(
         collections=SimpleNamespace(
@@ -130,7 +131,7 @@ def test_weaviate_reset_uses_current_client_hnsw_api():
 def test_weaviate_verifies_named_vector_hnsw_settings(mismatch):
     protocol = load_protocol()
     adapter = object.__new__(Weaviate)
-    adapter.config = _config("weaviate", 2, protocol, **protocol.smoke_hnsw)
+    adapter.config = make_config("weaviate", 2, protocol, **protocol.smoke_hnsw)
     index = SimpleNamespace(
         vector_index_type=lambda: "hnsw",
         skip=False,
@@ -170,10 +171,28 @@ def test_qdrant_resumes_paused_optimizers_without_bypassing_readiness(monkeypatc
 
     protocol = load_protocol()
     adapter = object.__new__(Qdrant)
-    adapter.config = _config("qdrant", 2, protocol, **protocol.smoke_hnsw)
+    adapter.config = make_config("qdrant", 2, protocol, **protocol.smoke_hnsw)
     adapter.models = models
     states = iter(
-        SimpleNamespace(status=status, points_count=35, indexed_vectors_count=count)
+        SimpleNamespace(
+            status=status,
+            points_count=35,
+            indexed_vectors_count=count,
+            config=SimpleNamespace(
+                params=SimpleNamespace(
+                    vectors=SimpleNamespace(
+                        size=2,
+                        distance="Cosine",
+                        hnsw_config=SimpleNamespace(
+                            m=adapter.config.m,
+                            ef_construct=adapter.config.ef_construction,
+                            full_scan_threshold=10,
+                        ),
+                    )
+                ),
+                optimizer_config=SimpleNamespace(indexing_threshold=1),
+            ),
+        )
         for status, count in [("grey", 40), ("grey", 40), ("yellow", 30), ("green", 35)]
     )
     updates = []
@@ -204,7 +223,7 @@ def test_conformance_closes_client_on_initial_failure(monkeypatch):
         ),
     )
     protocol = load_protocol()
-    config = _config("chroma", 2, protocol, **protocol.smoke_hnsw)
+    config = make_config("chroma", 2, protocol, **protocol.smoke_hnsw)
     with pytest.raises(RuntimeError, match="reset failed"):
         conformance.check("chroma", config, COMPOSE, protocol)
     assert events == ["closed"]

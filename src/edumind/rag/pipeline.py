@@ -17,6 +17,7 @@ from .embedder import Embedder
 from .errors import RAGConfigurationError
 from .ingest_normalization import normalize_ingest_document
 from .llm_generator import HuggingFaceGenerator
+from .provenance import project_locations
 from .text_chunker import TextChunker, TokenChunkingStrategy
 from .tokenizers import OffsetTokenizer, TiktokenOffsetTokenizer
 from .types import (
@@ -165,7 +166,7 @@ class RAGPipeline:
             if len(packed) >= limit:
                 break
             overhead = self.tokenizer.count(
-                f"[{len(packed) + 1}] source={candidate.source}; page={candidate.page}\n"
+                f"[{len(packed) + 1}] source={candidate.source}; {candidate.location}\n"
             )
             available = token_budget - used - overhead
             if available <= 0:
@@ -176,11 +177,25 @@ class RAGPipeline:
                 truncated = self.tokenizer.truncate(candidate.document, available)
                 if not truncated.strip():
                     break
+                if not candidate.document.startswith(truncated):
+                    raise ValueError(
+                        "Context truncation must preserve an exact source prefix"
+                    )
+                start = int(candidate.metadata.get("start", 0))
+                end = start + len(truncated)
                 candidate = replace(
                     candidate,
                     document=truncated,
                     token_count=self.tokenizer.count(truncated),
-                    metadata={**candidate.metadata, "context_truncated": True},
+                    metadata={
+                        **candidate.metadata,
+                        "context_truncated": True,
+                        "start": start,
+                        "end": end,
+                        "source_locations": project_locations(
+                            candidate.metadata.get("source_locations", []), start, end
+                        ),
+                    },
                 )
             packed.append(candidate)
             used += overhead + candidate.token_count
@@ -304,6 +319,7 @@ class RAGPipeline:
                     "source": document.source_name,
                     "file_path": document.source_path,
                     "format_type": document.source_kind.value,
+                    "segments": document.to_dict()["segments"],
                     "metadata": {
                         **document.metadata,
                         "source_checksum": document.source_checksum,

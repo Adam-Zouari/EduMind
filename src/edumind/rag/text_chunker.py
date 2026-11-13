@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from edumind.common.artifacts import stable_hash
 
 from .contracts import ChunkingStrategy
+from .provenance import project_locations
 from .tokenizers import OffsetTokenizer
 from .types import ChunkRecord, IngestDocument, build_chunk_id
 
@@ -86,6 +87,7 @@ class TextChunker:
                 "start": start,
                 "end": end,
                 "token_count": tokens,
+                "source_locations": project_locations(document.segments, start, end),
             }
             chunks.append(
                 ChunkRecord(

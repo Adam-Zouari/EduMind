@@ -12,6 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
+from edumind.common.artifacts import stable_hash
 from edumind.rag.errors import RAGConfigurationError
 from experiments.benchmarks.common.contracts import (
     BenchmarkPlan,
@@ -57,7 +58,6 @@ OPERATIONAL_DIRECTIONS = {
     "operational.chunking_seconds": "min",
     "operational.chunk_embedding_seconds": "min",
     "operational.corpus_build_seconds": "min",
-    "operational.corpus_build_source_tokens_per_second": "max",
     "operational.query_latency_ms_p50": "min",
     "operational.query_latency_ms_p95": "min",
     "operational.query_embedding_latency_ms_p50": "min",
@@ -322,7 +322,10 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
         tokenizer = TiktokenOffsetTokenizer(
             protocol.tokenizer.removeprefix("tiktoken:")
         )
-    source_tokens = sum(tokenizer.count(str(row["text"])) for row in documents)
+    input_inventory = plan.settings.get("input_inventory") or workload_inventory(
+        manifest, tokenizer
+    )
+    source_tokens = input_inventory["source_tokens"]
     spec = (
         index.embedding_spec
         if index is not None
@@ -339,15 +342,6 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
     # Shape, finiteness, norms, dtype and contiguity are validated once in build_index.
     matrix_bytes = index.vectors.nbytes if index is not None else None
     workload = {
-        "workload.document_count": float(len(documents)),
-        "workload.answerable_query_count": float(len(questions)),
-        "workload.unanswerable_query_count": float(
-            sum(
-                row.get("kind") == "question" and not row.get("answerable")
-                for row in manifest.samples
-            )
-        ),
-        "workload.source_tokens": float(source_tokens),
         "workload.chunk_count": float(len(chunks)) if generation_complete else None,
         "workload.indexed_token_occurrences": float(sum(lengths))
         if generation_complete
@@ -358,7 +352,6 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
         "workload.chunk_tokens_p95": float(np.percentile(lengths, 95))
         if generation_complete and lengths
         else None,
-        "workload.embedding_dimension": float(spec.dimension),
         "workload.embedding_matrix_bytes": float(matrix_bytes)
         if matrix_bytes is not None
         else None,
@@ -623,9 +616,6 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
                 f"{phase}_seconds": phase_seconds.get(f"{phase}_seconds")
                 for phase in BUILD_PHASES
             },
-            "corpus_build_source_tokens_per_second": source_tokens / build_seconds
-            if build_seconds and math.isfinite(build_seconds)
-            else None,
         }
     )
     validity = {
@@ -729,6 +719,23 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
             "repeatability_support": repeatability_support,
             "latency_support": latency_support,
             "workload_support": workload_support,
+            "corpus_build": {
+                "source_tokens_per_second": source_tokens / build_seconds
+                if build_seconds and math.isfinite(build_seconds)
+                else None,
+                "completed_seconds": build_seconds,
+                "workload_reference": {
+                    "owner": "comparison-parent",
+                    "artifact": "plan.json",
+                    "json_pointer": "/settings/input_inventory",
+                    "sha256": stable_hash(input_inventory),
+                },
+            },
+            "embedding_output": {
+                "status": "verified" if index is not None else "unavailable",
+                "shape": list(index.vectors.shape) if index is not None else None,
+                "dtype": str(index.vectors.dtype) if index is not None else None,
+            },
             "completeness": completeness,
             "reporting_readiness": {
                 "authoritative_ready": plan.profile != "smoke"
@@ -1117,6 +1124,7 @@ def _parameters(
         "chunking_contract": chunking_contract,
         "embedding": embedding_name,
         "embedding_contract": asdict(spec),
+        "embedding_dimension": spec.dimension,
         "embedding_batch_size": protocol.embedding_batch_size,
         "model_revision": entry.get("revision"),
         "model_path": entry.get("model_path"),
@@ -1147,4 +1155,21 @@ def _parameters(
         "package_versions": package_versions(
             ("numpy", "sentence-transformers", "tiktoken", "torch", "transformers")
         ),
+    }
+
+
+def workload_inventory(manifest, tokenizer):
+    """Fixed input facts, owned by the comparison rather than its candidates."""
+    documents = [row for row in manifest.samples if row.get("kind") == "document"]
+    return {
+        "manifest_checksum": manifest.checksum,
+        "manifest_fingerprint": manifest.fingerprint,
+        "evaluation_tokenizer": tokenizer.name,
+        "corpus_document_count": len(documents),
+        "answerable_query_count": len(answerable_questions(manifest)),
+        "unanswerable_query_count": sum(
+            row.get("kind") == "question" and not row.get("answerable")
+            for row in manifest.samples
+        ),
+        "source_tokens": sum(tokenizer.count(str(row["text"])) for row in documents),
     }

@@ -6,11 +6,12 @@ import time
 import uuid
 from collections.abc import Mapping, Sequence
 
-from .base import Config, Hit, Record, ensure_dimension
+from .base import Config, Hit, InvalidIndexState, Record, ensure_dimension
 
 
 class Qdrant:
     def __init__(self, config: Config) -> None:
+        import httpx
         from qdrant_client import QdrantClient, models
 
         self.config = config
@@ -18,6 +19,10 @@ class Qdrant:
         self.client = QdrantClient(
             url="http://127.0.0.1:6333",
             timeout=self.config.request_timeout_seconds,
+            limits=httpx.Limits(
+                max_connections=self.config.connection_pool_limit,
+                max_keepalive_connections=self.config.connection_pool_limit,
+            ),
         )
 
     def health(self) -> bool:
@@ -132,11 +137,52 @@ class Qdrant:
     def count(self) -> int:
         return int(self.client.count(self.config.collection, exact=True).count)
 
+    def fetch(self, identifiers):
+        if not identifiers:
+            return []
+        points = self.client.retrieve(
+            self.config.collection,
+            ids=[str(_uuid(value)) for value in identifiers],
+            with_payload=True,
+            with_vectors=True,
+        )
+        result = []
+        for point in points:
+            payload = dict(point.payload)
+            result.append(
+                Record(
+                    payload.pop("edumind_id"),
+                    point.vector,
+                    payload.pop("text"),
+                    payload,
+                )
+            )
+        return result
+
     def index_info(self) -> Mapping[str, object]:
         deadline = time.monotonic() + self.config.index_readiness_timeout_seconds
         resumed = False
         while True:
             info = self.client.get_collection(self.config.collection)
+            config = getattr(info, "config", None)
+            if config is None:
+                raise InvalidIndexState(
+                    "Qdrant effective configuration is unverifiable"
+                )
+            vectors = config.params.vectors
+            hnsw = getattr(vectors, "hnsw_config", None)
+            if (
+                getattr(vectors, "size", None) != self.config.dimension
+                or str(getattr(vectors, "distance", "")).casefold().split(".")[-1]
+                != "cosine"
+                or hnsw is None
+                or hnsw.m != self.config.m
+                or hnsw.ef_construct != self.config.ef_construction
+                or hnsw.full_scan_threshold != self.config.qdrant_full_scan_threshold
+                or config.optimizer_config.indexing_threshold
+                != self.config.qdrant_indexing_threshold
+            ):
+                raise InvalidIndexState("Qdrant configuration mismatch")
             status = str(info.status).casefold()
             points = int(info.points_count or 0)
             indexed = int(info.indexed_vectors_count or 0)
@@ -148,7 +194,7 @@ class Qdrant:
                     optimizers_config=self.models.OptimizersConfigDiff(),
                 )
                 resumed = True
-            if "green" in status and (not points or indexed >= points):
+            if "green" in status:
                 return {
                     "type": "hnsw",
                     "status": status,

@@ -10,13 +10,13 @@ from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.data_validation import verify_report, write_report
 from experiments.benchmarks.common.datasets import load_manifest
 
-from .metrics import load_reference_data, validate_reference
+from .metrics import _formula_result, load_reference_data, validate_reference
 
 
 def requirements(protocol, profile):
     return {
         "normalization": "NFC-prose-v1",
-        "reference_schema": "document-v3",
+        "reference_schema": "document-v4",
         "counts": dict(protocol.sample_counts.get(profile, {})),
     }
 
@@ -110,7 +110,7 @@ def validate(path, profile, protocol):
             timeout_seconds=protocol.evaluator_timeout_seconds,
         )
         if any(value != (1.0, 1.0) for value in tables) or any(
-            value != 1.0 for value in formulas
+            _formula_result(value)["exact_match"] != 1.0 for value in formulas
         ):
             raise ValueError(
                 "Document references cannot be reconstructed by the pinned official evaluators"

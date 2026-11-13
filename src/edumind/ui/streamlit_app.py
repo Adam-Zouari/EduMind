@@ -116,7 +116,7 @@ def _render_query(controller: AppController) -> None:
         )
         st.subheader("Cited evidence")
         for index, hit in enumerate(result.hits, start=1):
-            with st.expander(f"[{index}] {hit.source} · page {hit.page}"):
+            with st.expander(f"[{index}] {hit.source} · {hit.location}"):
                 st.write(hit.document)
                 st.caption(
                     f"{hit.retrieval_method} · rank {hit.rank} · {hit.token_count} tokens"

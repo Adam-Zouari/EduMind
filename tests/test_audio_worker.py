@@ -121,6 +121,47 @@ def _preflight(lifecycle):
     return state, payload
 
 
+@pytest.mark.parametrize("ram,vram", [(123, 456), (None, None), (0, 0)])
+def test_late_telemetry_gap_preserves_observed_peaks_and_completed_outputs(
+    lifecycle, monkeypatch, ram, vram
+):
+    _state, payload = lifecycle
+    payload["device"] = "cuda"
+
+    def metrics(_self):
+        error = RuntimeError("late telemetry gap")
+        error.resource_evidence = {
+            "peak_process_tree_ram_mb": ram,
+            "peak_vram_mb": vram,
+        }
+        raise error
+
+    monkeypatch.setattr(worker.ResourceMonitor, "metrics", metrics)
+    result = worker.execute(payload)
+    assert result["metrics"]["peak_process_tree_ram_mb"] == ram
+    assert result["metrics"]["peak_vram_mb"] == vram
+    assert result["samples"][0]["first_attempt_success"]
+    assert result["execution_error"]["phase"] == "telemetry"
+    assert result["monitoring_completed"]
+    assert result["resource_measurement_scope"] == "complete_lifecycle"
+    saved = json.loads(Path(result["timings"][0]["prediction"]["path"]).read_text())
+    assert saved["transcript"] == "hello"
+
+
+def test_cpu_telemetry_gap_keeps_vram_inapplicable(lifecycle, monkeypatch):
+    _state, payload = lifecycle
+
+    def metrics(_self):
+        error = RuntimeError("telemetry gap")
+        error.resource_evidence = {"peak_process_tree_ram_mb": 12, "peak_vram_mb": 999}
+        raise error
+
+    monkeypatch.setattr(worker.ResourceMonitor, "metrics", metrics)
+    result = worker.execute(payload)
+    assert result["metrics"]["peak_process_tree_ram_mb"] == 12
+    assert result["metrics"]["peak_vram_mb"] is None
+
+
 def test_preflight_shares_lifecycle_without_warmup_or_quality(lifecycle):
     state, payload = _preflight(lifecycle)
     result = worker.execute(payload)

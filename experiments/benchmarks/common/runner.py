@@ -97,6 +97,7 @@ def run_benchmark(
     candidate_metric_contracts: Mapping[str, Sequence[str]] | None = None,
     candidate_run_names: Mapping[str, str] | None = None,
     candidate_run_types: Mapping[str, str] | None = None,
+    csv_artifact_tables: Sequence[str] = (),
 ) -> BenchmarkResult:
     if not plan.candidates:
         raise ValueError("A benchmark plan must contain at least one candidate")
@@ -159,6 +160,7 @@ def run_benchmark(
             if path.is_file()
         },
         "seed": plan.seed,
+        "input_inventory": dict(plan.settings.get("input_inventory", {})),
         "engineer_decisions": {
             name: {"path": str(path.resolve()), "sha256": sha256_file(path)}
             for name, path in (decision_files or {}).items()
@@ -312,6 +314,7 @@ def run_benchmark(
                     decision_fingerprint,
                     (candidate_run_names or {}).get(candidate, candidate),
                     run_types.get(candidate, "quality-candidate"),
+                    tuple(csv_artifact_tables),
                 )
             )
 
@@ -519,6 +522,7 @@ def _run_candidate(
     decision_fingerprint,
     display_name,
     run_type,
+    csv_artifact_tables,
 ) -> CandidateResult:
     samples: list[SampleResult] = []
     metrics: dict[str, float | None] = {}
@@ -531,6 +535,7 @@ def _run_candidate(
     temporary_directory: Path | None = None
     resource_rows: list[dict[str, object]] = []
     artifact_tables: dict[str, object] = {}
+    resource_error: RuntimeError | None = None
     fingerprint = stable_hash({"run": run_fingerprint, "candidate": candidate})
     protocol_parameters = (
         {
@@ -622,13 +627,9 @@ def _run_candidate(
                     ),
                     **dict(monitor_options or {}),
                 )
-                evaluation_failed = False
                 try:
                     with _temporary_environment(temporary_directory), resources:
                         evaluated = evaluate()
-                except BaseException:
-                    evaluation_failed = True
-                    raise
                 finally:
                     resource_rows = resources.samples()
                     resource_parameters["vram_measurement_method"] = (
@@ -642,9 +643,20 @@ def _run_candidate(
                         resource_parameters["peak_vram_status"] = "inapplicable"
                     try:
                         operational.update(resources.metrics())
-                    except RuntimeError:
-                        if not evaluation_failed:
-                            raise
+                    except RuntimeError as exc:
+                        resource_error = exc
+                        evidence = dict(getattr(exc, "resource_evidence", {}))
+                        operational.update(
+                            {
+                                key: evidence[key]
+                                for key in ("peak_process_tree_ram_mb", "peak_vram_mb")
+                                if key in evidence
+                            }
+                        )
+                        resource_parameters["measurement.resource_status"] = (
+                            "incomplete"
+                        )
+                        resource_parameters["measurement.resource_error"] = str(exc)
             else:
                 with _temporary_environment(temporary_directory):
                     evaluated = evaluate()
@@ -722,6 +734,24 @@ def _run_candidate(
                         },
                         artifacts={"partial_quality": incomplete_quality},
                     )
+            if resource_error is not None:
+                raise CandidateExecutionError(
+                    str(resource_error),
+                    samples=tuple(samples),
+                    metrics=metrics,
+                    intervals=intervals,
+                    operational=operational,
+                    parameters=candidate_parameters,
+                    artifacts={
+                        **artifact_tables,
+                        "resource_measurement_failure": {
+                            "reason": str(resource_error),
+                            "evidence": dict(
+                                getattr(resource_error, "resource_evidence", {})
+                            ),
+                        },
+                    },
+                )
             _validate_required_metrics(
                 metrics,
                 operational,
@@ -733,7 +763,7 @@ def _run_candidate(
             if artifact_tables:
                 artifact_tables.setdefault(sample_artifact_name, _sample_rows(samples))
                 written = _persist_candidate_artifacts(
-                    directory, candidate, artifact_tables, tracking
+                    directory, candidate, artifact_tables, tracking, csv_artifact_tables
                 )
                 artifact_names.extend(path.name for path in written.values())
                 sample_artifact_path = written.get(sample_artifact_name)
@@ -810,7 +840,7 @@ def _run_candidate(
                 )
                 artifact_payloads["validation_report"] = report
             written = _persist_candidate_artifacts(
-                directory, candidate, artifact_payloads, tracking
+                directory, candidate, artifact_payloads, tracking, csv_artifact_tables
             )
             artifact_names.extend(path.name for path in written.values())
             tracking.parameters(
@@ -923,11 +953,26 @@ def _persist_candidate_artifacts(
     candidate: str,
     payloads: Mapping[str, object],
     tracking,
+    csv_tables: Sequence[str] = (),
 ) -> dict[str, Path]:
     paths = {
         name: _write_candidate_artifact(directory, candidate, name, payload)
         for name, payload in payloads.items()
     }
+    for name in csv_tables:
+        if name not in paths:
+            continue  # An earlier failure may precede this table's construction.
+        source = paths[name]
+        if source.suffix != ".parquet":
+            raise TypeError(f"CSV export requires a row table: {name}")
+        frame = pd.read_parquet(source)
+        destination = source.with_suffix(".csv")
+        frame.to_csv(destination, index=False)
+        # Compare every serialized cell; preserve empty strings and literal NA.
+        restored = pd.read_csv(destination, dtype=str, keep_default_na=False)
+        expected = frame.fillna("").astype(str)
+        pd.testing.assert_frame_equal(expected, restored)
+        paths[name + "_csv"] = destination
     for path in paths.values():
         tracking.artifact(path)
     return paths

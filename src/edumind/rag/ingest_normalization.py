@@ -46,5 +46,12 @@ def normalize_ingest_document(document: Mapping[str, object]) -> IngestDocument:
         )
     )
     return IngestDocument(
-        text, source_id, source, format_type, file_path, metadata, filters
+        text,
+        source_id,
+        source,
+        format_type,
+        file_path,
+        metadata,
+        filters,
+        tuple(dict(segment) for segment in document.get("segments", ())),
     )

@@ -104,6 +104,11 @@ class FixtureJudge:
                         {"id": "source-1", "quote": "chemical energy"}
                     ],
                     "support_reason": "Fixture source entails claim",
+                    "cited_supported": "E1" in response["citations"],
+                    "cited_support_sources": [{"id": "E1", "quote": "chemical energy"}]
+                    if "E1" in response["citations"]
+                    else [],
+                    "cited_support_reason": "Fixture cited-subset check",
                     "correctness_reason": "Fixture reference verifies claim",
                     "gold_matches": [
                         {
@@ -465,12 +470,19 @@ def test_warmup_seeds_and_request_event_origin_do_not_change_model_ttft(
 
 def test_stress_timeout_cannot_qualify(inputs, monkeypatch):
     raw, plan = execute(inputs, monkeypatch, Backend(failure="timeout"), preflight=True)
+    manifest = replace(
+        inputs[1],
+        samples=tuple(
+            {**r, "preflight_stress": True} if r.get("kind") == "question" else r
+            for r in inputs[1].samples
+        ),
+    )
     assert "stress_inference_incomplete" in raw["error"]
     monkeypatch.setattr(evaluate, "run_json_worker", lambda *a, **k: raw)
     report = _probe_candidate(
         "qwen3-0.6b-direct",
         lambda _: evaluate.run_in_fresh_process(
-            "qwen3-0.6b-direct", inputs[1], {}, plan, inputs[0], preflight=True
+            "qwen3-0.6b-direct", manifest, {}, plan, inputs[0], preflight=True
         ),
     )
     assert report["status"] == "blocked"
@@ -479,13 +491,20 @@ def test_stress_timeout_cannot_qualify(inputs, monkeypatch):
 def test_typed_offload_is_hardware_exclusion(inputs, monkeypatch):
     backend = Backend(placement="offload_detected")
     raw, plan = execute(inputs, monkeypatch, backend, preflight=True)
+    manifest = replace(
+        inputs[1],
+        samples=tuple(
+            {**r, "preflight_stress": True} if r.get("kind") == "question" else r
+            for r in inputs[1].samples
+        ),
+    )
     assert raw["failure_class"] == "offload_detected"
     assert not backend.calls
     monkeypatch.setattr(evaluate, "run_json_worker", lambda *a, **k: raw)
     report = _probe_candidate(
         "qwen3-0.6b-direct",
         lambda _: evaluate.run_in_fresh_process(
-            "qwen3-0.6b-direct", inputs[1], {}, plan, inputs[0], preflight=True
+            "qwen3-0.6b-direct", manifest, {}, plan, inputs[0], preflight=True
         ),
     )
     assert (report["status"], report["reason_code"]) == ("excluded", "offload_detected")
@@ -686,6 +705,8 @@ def test_terminated_worker_recovers_completed_predictions_and_inflight_outcome(
         resource_status="unavailable",
         operational={},
     )
+    raw["schedule"].update(device="cuda", dtype="float16")
+    raw["schedule_checksum"] = stable_hash(raw["schedule"])
     last = raw["records"][-1]
     last["attempts"][0] = evaluate._empty_attempt(42)
     raw["in_flight"] = {"question_id": last["question"]["id"], "seed": 42}
@@ -708,7 +729,12 @@ def test_terminated_worker_recovers_completed_predictions_and_inflight_outcome(
     failure = captured.value
     saved = failure.artifacts["generation_evidence"]
     assert saved["records"][0]["attempts"][0]["outcome"] == "completed"
-    assert saved["records"][-1]["attempts"][0]["outcome"] == "runtime_error"
+    assert saved["records"][-1]["attempts"][0]["outcome"] == "infrastructure_error"
+    assert (
+        saved["records"][-1]["attempts"][0]["failure"]["type"]
+        == "WorkerResourceLimitError"
+    )
+    assert failure.metrics["reliability.runtime_error_rate"] is None
     assert saved["records"][-1]["attempts"][0]["raw_text"] is None
     assert failure.parameters["measurement.resource_scope"] == "partial"
     assert failure.parameters["prediction_evidence"]["sha256"]
@@ -809,14 +835,14 @@ def test_missing_ttft_instrumentation_suppresses_only_affected_intervals(inputs)
 def test_calibrated_judge_contract_transport_replay_and_staleness(inputs, tmp_path):
     # Synthetic calibration exercises sealing only; it is not selection evidence.
     contract = {
-        "schema_version": 1,
+        "schema_version": 2,
         "identity": {
             "model_id": "test-only",
             "revision": "fixture",
             "decoding": {"temperature": 0},
         },
         "prompts": {"response": "Fixture labeling", "pair": "Fixture comparison"},
-        "rubric": "Fixture only",
+        "rubric": {"response": "Fixture response only", "pair": "Fixture pair only"},
         "label_schema": LABEL_SCHEMA,
         "retry": {"maximum_attempts": 1, "timeout_seconds": 2},
         "calibration": {"path": "calibration.json", "sha256": "pending"},
@@ -826,9 +852,17 @@ def test_calibrated_judge_contract_transport_replay_and_staleness(inputs, tmp_pa
     )
     human_path = tmp_path / "human.json"
     atomic_write_json(
-        human_path, {"split": "development", "items": [{"test_only": True}]}
+        human_path,
+        {
+            "schema_version": 2,
+            "label_schema": LABEL_SCHEMA,
+            "split": "development",
+            "items": [{"test_only": True}],
+        },
     )
     calibration = {
+        "schema_version": 2,
+        "label_schema": LABEL_SCHEMA,
         "split": "development",
         "contract_checksum": checksum,
         "reviewed_by": "test-only",
@@ -858,12 +892,21 @@ def test_calibrated_judge_contract_transport_replay_and_staleness(inputs, tmp_pa
     judged = SemanticJudge(path, transport).response(question, response)
     assert judged["status"] == "evaluated"
     records = tmp_path / "replies.json"
-    atomic_write_json(records, {"contract_checksum": checksum, "responses": replies})
+    atomic_write_json(
+        records,
+        {
+            "schema_version": 2,
+            "label_schema": LABEL_SCHEMA,
+            "contract_checksum": checksum,
+            "contract_sha256": sha256_file(path),
+            "responses": replies,
+        },
+    )
     assert (
         replay_judge(path, records).response(question, response)["labels"]
         == judged["labels"]
     )
-    contract["rubric"] = "Changed fixture rubric"
+    contract["rubric"]["response"] = "Changed fixture rubric"
     atomic_write_json(path, contract)
     with pytest.raises(ValueError, match="bind this exact contract"):
         load_judge_contract(path)

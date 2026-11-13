@@ -25,7 +25,10 @@ from experiments.benchmarks.extraction.audio.evaluate import (
     validate_prediction,
 )
 from experiments.benchmarks.extraction.audio.protocol import protocol_from_worker
-from experiments.benchmarks.extraction.evidence import retain_prediction
+from experiments.benchmarks.extraction.evidence import (
+    observed_resources,
+    retain_prediction,
+)
 from experiments.benchmarks.extraction.scoring import attempt_rates, source_id
 
 
@@ -61,6 +64,8 @@ def execute(payload):
     parameters = {}
     phase = "load"
     before = after = None
+    resource_evidence = {}
+    monitoring_completed = False
     monitor = ResourceMonitor(require_vram=device == "cuda", device=device)
     lifecycle_started = time.perf_counter()
     try:
@@ -169,6 +174,7 @@ def execute(payload):
                         )
                         timing["prediction"] = prediction
             phase = "telemetry"
+        monitoring_completed = True
         phase = "placement_after"
         after = (
             inspect_model_placement(*runtime.placement_models(), expected_device="cuda")
@@ -178,6 +184,7 @@ def execute(payload):
         if after and after["status"] != "qualified":
             raise RuntimeError("ASR inference changed CUDA weight placement")
     except Exception as exc:  # noqa: BLE001 - preserve completed observations
+        resource_evidence.update(getattr(exc, "resource_evidence", {}))
         before = getattr(exc, "placement_report", before)
         execution_error = {
             "phase": phase,
@@ -218,8 +225,9 @@ def execute(payload):
             "phase": "telemetry",
             "error": f"{type(exc).__name__}: {exc}",
         }
-        execution_error["resource_evidence"] = getattr(exc, "resource_evidence", {})
-        resources = {"peak_process_tree_ram_mb": None, "peak_vram_mb": None}
+        resource_evidence.update(getattr(exc, "resource_evidence", {}))
+        execution_error["resource_evidence"] = resource_evidence
+        resources = observed_resources(resource_evidence, device=device)
     if device == "cpu":
         resources["peak_vram_mb"] = None
     elif resources["peak_vram_mb"] is None:
@@ -241,6 +249,10 @@ def execute(payload):
             "parameters": parameters,
             "timings": timing_rows,
             "execution_error": execution_error,
+            "monitoring_completed": monitoring_completed,
+            "resource_measurement_scope": "complete_lifecycle"
+            if monitoring_completed
+            else "partial_lifecycle",
         }
         if placement and placement["status"] != "qualified":
             return evidence
@@ -285,6 +297,11 @@ def execute(payload):
     timing_rows.sort(key=lambda row: (row["sample_id"], row["repetition"]))
     sample_rows = []
     scoring_evidence = {
+        "monitoring_completed": monitoring_completed,
+        "resource_measurement_scope": "complete_lifecycle"
+        if monitoring_completed
+        else "partial_lifecycle",
+        "resource_evidence": resource_evidence,
         **resources,
         "cold_model_load_seconds": cold,
         "execution_error": execution_error,
@@ -403,6 +420,9 @@ def execute(payload):
         minimum_latency_sources=protocol.minimum_latency_ci_sources,
     )
     return {
+        "monitoring_completed": monitoring_completed,
+        "resource_measurement_scope": scoring_evidence["resource_measurement_scope"],
+        "resource_evidence": resource_evidence,
         "samples": sample_rows,
         "timings": timing_rows,
         "metrics": metrics,
@@ -422,6 +442,9 @@ def execute(payload):
         "placement_after": after,
         "execution_error": execution_error,
         "parameters": {
+            "resource_measurement_scope": scoring_evidence[
+                "resource_measurement_scope"
+            ],
             **parameters,
             "protocol_version": protocol.meta.version,
             "protocol_checksum": protocol.meta.checksum,

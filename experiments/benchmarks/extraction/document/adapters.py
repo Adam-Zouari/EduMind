@@ -29,6 +29,7 @@ from edumind.extraction.structured import (
     build_docling_document,
     build_structured_document,
 )
+from experiments.benchmarks.extraction.evidence import rejected_diagnostic
 
 
 class ExperimentalDocumentExtractor:
@@ -67,7 +68,8 @@ class ExperimentalDocumentExtractor:
                     warnings=warnings,
                     seconds=time.perf_counter() - started,
                 )
-            elements, warnings = self._paddle_vl(request)
+            rejected = []
+            elements, warnings = self._paddle_vl(request, rejected=rejected)
         except MissingDependencyError:
             raise
         except Exception as exc:
@@ -82,6 +84,7 @@ class ExperimentalDocumentExtractor:
             metadata={
                 "engine": self.engine,
                 "engine_revision": request.profile.engine_revision,
+                "rejected_native_blocks": rejected,
             },
             warnings=warnings,
             seconds=time.perf_counter() - started,
@@ -158,7 +161,7 @@ class ExperimentalDocumentExtractor:
         return self._runtimes[key]
 
     def _paddle_vl(
-        self, request: ExtractionRequest
+        self, request: ExtractionRequest, *, rejected=None
     ) -> tuple[list[dict[str, object]], tuple[ExtractionWarning, ...]]:
         runtime = self._paddle_runtime(request)
         elements: list[dict[str, object]] = []
@@ -173,6 +176,7 @@ class ExperimentalDocumentExtractor:
                 warnings=warnings,
                 fallback_page_number=page_count,
                 segment_offset=len(elements),
+                rejected=rejected,
             )
             elements.extend(blocks)
         if not page_count:
@@ -195,6 +199,7 @@ class ExperimentalDocumentExtractor:
             _ = torch.__version__
             import paddle
             from paddleocr import PaddleOCRVL
+            from paddlex.inference import load_pipeline_config
         except (ImportError, ModuleNotFoundError) as exc:
             raise MissingDependencyError("PaddleX OCR extras are required") from exc
         paddleocr_version = version("paddleocr")
@@ -223,12 +228,32 @@ class ExperimentalDocumentExtractor:
                     paddle_env, "is_cuda_available", return_value=False
                 )
             with capability_check:
-                self._runtimes[key] = PaddleOCRVL(
+                batch_size = request.options.get("batch_size", 1)
+                if type(batch_size) is not int or batch_size != 1:
+                    raise ValueError("Paddle inference requires frozen batch size one")
+                config = load_pipeline_config("PaddleOCR-VL-1.6")
+                _set_paddle_batches(config, batch_size)
+                runtime = PaddleOCRVL(
                     pipeline_version=str(request.options["pipeline_version"]),
                     vl_rec_backend=str(request.options["recognition_backend"]),
                     vl_rec_model_dir=str(model_path),
                     device="gpu" if request.profile.device == "cuda" else "cpu",
+                    paddlex_config=config,
                 )
+                expected = _paddle_batches(config)
+                actual = _paddle_batches(getattr(runtime, "_merged_paddlex_config", {}))
+                if (
+                    actual != expected
+                    or not expected
+                    or any(
+                        type(value) is not int or value != batch_size
+                        for value in actual.values()
+                    )
+                ):
+                    raise RuntimeError(
+                        "Paddle initialized inference batches differ from the frozen contract"
+                    )
+                self._runtimes[key] = runtime
         return self._runtimes[key]
 
 
@@ -238,6 +263,7 @@ def _paddle_blocks(
     warnings: list[ExtractionWarning] | None = None,
     fallback_page_number: int = 1,
     segment_offset: int = 0,
+    rejected: list | None = None,
 ) -> list[dict[str, object]]:
     """Read native Paddle blocks; do not infer structure from rendered Markdown."""
 
@@ -256,8 +282,22 @@ def _paddle_blocks(
         raise ValueError("Paddle page result must contain a native parsing block list")
     page_size = _page_size(value)
     result: list[dict[str, object]] = []
+
+    def reject(index, raw, error):
+        if rejected is not None:
+            rejected.append(
+                {
+                    "page_number": page_number,
+                    "page_index": raw_page_index,
+                    "block_index": index,
+                    "native_block": rejected_diagnostic(raw),
+                    "error": str(error),
+                }
+            )
+
     for index, raw in enumerate(raw_blocks):
         if not isinstance(raw, Mapping):
+            reject(index, raw, "block is not an object")
             if warnings is not None:
                 warnings.append(
                     ExtractionWarning(
@@ -302,30 +342,7 @@ def _paddle_blocks(
             if kind == "table":
                 rows, cells = _parse_table_html(native_content)
                 if not cells:
-                    # Keep the candidate alive and make the degraded conversion explicit.
-                    fallback = _plain_html_text(native_content)
-                    rows = [[fallback]] if fallback else [[]]
-                    cells = (
-                        [
-                            {
-                                "text": fallback,
-                                "row": 0,
-                                "column": 0,
-                                "row_span": 1,
-                                "column_span": 1,
-                            }
-                        ]
-                        if fallback
-                        else []
-                    )
-                    if warnings is not None:
-                        warnings.append(
-                            ExtractionWarning(
-                                "paddle_table_html_malformed",
-                                f"Paddle table block {index} had no parseable cells",
-                                segment_index=segment_offset + len(result),
-                            )
-                        )
+                    raise ValueError("table HTML had no parseable cells")
                 text = "\n".join("\t".join(cell for cell in row) for row in rows)
                 structured.update(
                     {"rows": rows, "cells": cells, "html": native_content}
@@ -336,6 +353,7 @@ def _paddle_blocks(
             try:
                 box = _paddle_box(raw.get("block_bbox"), page_size)
             except (TypeError, ValueError) as exc:
+                reject(index, raw, exc)
                 box = None
                 if warnings is not None:
                     warnings.append(
@@ -361,6 +379,7 @@ def _paddle_blocks(
                 }
             )
         except (TypeError, ValueError) as exc:
+            reject(index, raw, exc)
             if warnings is not None:
                 warnings.append(
                     ExtractionWarning(
@@ -370,6 +389,26 @@ def _paddle_blocks(
                     )
                 )
     return result
+
+
+def _paddle_batches(config, prefix=""):
+    result = {}
+    if isinstance(config, Mapping):
+        for name, value in config.items():
+            path = f"{prefix}.{name}" if prefix else str(name)
+            if name == "batch_size":
+                result[path] = value
+            elif isinstance(value, Mapping):
+                result.update(_paddle_batches(value, path))
+    return result
+
+
+def _set_paddle_batches(config, batch_size):
+    for name, value in config.items():
+        if name == "batch_size":
+            config[name] = batch_size
+        elif isinstance(value, Mapping):
+            _set_paddle_batches(value, batch_size)
 
 
 # A parser-output allocation guard, not a limit on model/device memory.
@@ -470,21 +509,6 @@ def _parse_table_html(value: str) -> tuple[list[list[str]], list[dict[str, objec
     parser.feed(value)
     parser.close()
     return parser.rows, parser.cells
-
-
-def _plain_html_text(value: str) -> str:
-    class _TextParser(HTMLParser):
-        def __init__(self) -> None:
-            super().__init__(convert_charrefs=True)
-            self.parts: list[str] = []
-
-        def handle_data(self, data: str) -> None:
-            self.parts.append(data)
-
-    parser = _TextParser()
-    parser.feed(value)
-    parser.close()
-    return " ".join(" ".join(parser.parts).split())
 
 
 def _positive_span(value: str | None) -> int:

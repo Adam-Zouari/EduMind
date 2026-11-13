@@ -13,6 +13,7 @@ from edumind.common.artifacts import sha256_file
 from edumind.common.gpu import release_runtime_memory
 from edumind.common.model_placement import inspect_model_placement
 
+from .errors import GenerationInputError, failure_evidence
 from .metrics import REFUSAL, parse_response
 from .protocol import GENERATOR_LOADERS
 
@@ -175,7 +176,7 @@ class LocalBackend:
             int(encoded["input_ids"].shape[-1]) != prepared["prompt_tokens"]
             or prepared["max_new_tokens"] <= 0
         ):
-            raise ValueError("Native input changed or has no output capacity")
+            raise GenerationInputError("Native input changed or has no output capacity")
         encoded = {key: value.to(self.device) for key, value in encoded.items()}
         events, token_ids, first_put = [], [], True
         backend = self
@@ -222,7 +223,7 @@ class LocalBackend:
                 "Pinned backend has no observable EOS termination contract"
             )
         started = time.perf_counter()
-        error = None
+        error = failure = None
         try:
             with torch.inference_mode():
                 started = time.perf_counter()
@@ -239,6 +240,7 @@ class LocalBackend:
             self.synchronize()
         except Exception as exc:  # noqa: BLE001 - retain backend failures and emitted token events
             error = f"{type(exc).__name__}: {exc}"
+            failure = failure_evidence(exc, "generation")
         elapsed = time.perf_counter() - started
         # Record the first real terminal cause; EOS at the last permitted token wins
         # over context exhaustion, and late parsing does not manufacture a timeout.
@@ -251,10 +253,20 @@ class LocalBackend:
             ),
             None,
         )
+        capacity_at = (
+            events[prepared["max_new_tokens"] - 1] - call_offset
+            if len(events) >= prepared["max_new_tokens"]
+            else None
+        )
         if error:
             outcome, finish = "runtime_error", "backend_exception"
         elif eos_at is not None and eos_at <= self.protocol.streamer_timeout_seconds:
             outcome, finish = "completed", "eos"
+        elif (
+            capacity_at is not None
+            and capacity_at < self.protocol.streamer_timeout_seconds
+        ):
+            outcome, finish = "context_limit", "context_boundary"
         elif stop.reached or elapsed >= self.protocol.streamer_timeout_seconds:
             outcome, finish = "timeout", "timeout"
         elif len(token_ids) >= prepared["max_new_tokens"]:
@@ -271,6 +283,7 @@ class LocalBackend:
             "outcome": outcome,
             "finish_reason": finish,
             "error": error,
+            "failure": failure,
             "raw_text": raw,
             "visible_text": visible,
             "reasoning_text": reasoning,

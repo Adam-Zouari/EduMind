@@ -66,8 +66,6 @@ def directions_for(manifest: DatasetManifest, protocol: RetrievalProtocol):
         for suffix in (
             "eligible_question_count",
             "eligible_document_count",
-            "alpha_ndcg_eligible_question_count",
-            "alpha_ndcg_eligible_document_count",
         )
     }
     sampled = (
@@ -126,13 +124,10 @@ def reference_counts(questions):
         rows = [
             q for q in questions if scope == "overall" or q["evidence_type"] == scope
         ]
-        for family in ("", "alpha_ndcg_"):
-            counts[f"validity.quality.{scope}.{family}eligible_question_count"] = float(
-                len(rows)
-            )
-            counts[f"validity.quality.{scope}.{family}eligible_document_count"] = float(
-                len({str(q["document_id"]) for q in rows})
-            )
+        counts[f"validity.quality.{scope}.eligible_question_count"] = float(len(rows))
+        counts[f"validity.quality.{scope}.eligible_document_count"] = float(
+            len({str(q["document_id"]) for q in rows})
+        )
     return counts
 
 

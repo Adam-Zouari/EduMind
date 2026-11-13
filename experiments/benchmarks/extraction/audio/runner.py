@@ -444,6 +444,14 @@ def run(
                 "before": output["placement_before"],
                 "after": output["placement_after"],
             }
+            artifacts["resource_coverage"] = {
+                name: output.get(name)
+                for name in (
+                    "monitoring_completed",
+                    "resource_measurement_scope",
+                    "resource_evidence",
+                )
+            }
             if worker_error is not None:
                 artifacts["worker_error"] = worker_error.resource_evidence
             if output.get("execution_error") or worker_error is not None:

@@ -73,7 +73,16 @@ class ProtocolMetadata:
         return self.artifact_payload()
 
     def validate_worker_payload(self, value: object) -> None:
-        payload = mapping(value, f"{self.name} worker protocol")
+        payload = strict_object(
+            value,
+            f"{self.name} worker protocol",
+            {"schema_version", "protocol_version", "checksum", "resolved"},
+        )
+        if (
+            integer(payload["schema_version"], "worker schema_version", minimum=1)
+            != self.schema_version
+        ):
+            raise ValueError(f"{self.name} worker protocol schema version mismatch")
         if payload.get("protocol_version") != self.version:
             raise ValueError(f"{self.name} protocol version mismatch")
         if payload.get("checksum") != self.checksum:

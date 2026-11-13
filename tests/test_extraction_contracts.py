@@ -60,7 +60,26 @@ def test_official_scores_keep_document_boundaries_and_content_scores(monkeypatch
     monkeypatch.setattr(
         metrics,
         "score_official_metrics",
-        lambda *_args, **_kwargs: ([(0.2, 0.4), (0.6, 0.8), (1, 1)], [0.5, 0, 1]),
+        lambda *_args, **_kwargs: (
+            [(0.2, 0.4), (0.6, 0.8), (1, 1)],
+            [
+                {
+                    "similarity": 0.5,
+                    "status": "evaluated",
+                    "tp": 1,
+                    "gt_tokens": 2,
+                    "pred_tokens": 2,
+                },
+                {"similarity": 0, "status": "invalid_prediction"},
+                {
+                    "similarity": 1,
+                    "status": "evaluated",
+                    "tp": 2,
+                    "gt_tokens": 2,
+                    "pred_tokens": 2,
+                },
+            ],
+        ),
     )
     apply_official_metrics(records, timeout_seconds=1)
     assert records[0].metrics == {}
@@ -197,7 +216,14 @@ def test_official_scorer_timeout_removes_only_its_own_container(tmp_path, monkey
     (source / official.OMNIDOCBENCH_IMAGE_LOCK).write_text("{}")
     monkeypatch.setattr(official, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(
-        official, "official_image_digest", lambda: "image@sha256:fixture"
+        official,
+        "official_evaluator_identity",
+        lambda: {
+            "source_revision": official.OMNIDOCBENCH_REVISION,
+            "image_digest": "image@sha256:fixture",
+            "source_manifest_sha256": "0" * 64,
+            "image_lock_sha256": "0" * 64,
+        },
     )
     commands = []
 
@@ -1135,7 +1161,7 @@ def test_cdm_bad_predicted_latex_is_quality_zero_and_empty_reference_render_is_n
     assert (
         _score_formula(
             SimpleNamespace(evaluate=evaluate), renderer, "x", r"\bad", "fixture"
-        )
+        )["similarity"]
         == 0
     )
     evaluator = SimpleNamespace(
@@ -1180,7 +1206,10 @@ def test_cdm_missing_template_dependency_is_distinct_from_bad_prediction_input(
         ):
             _score_formula(evaluator, renderer, "x", "bad", "fixture")
     else:
-        assert _score_formula(evaluator, renderer, "x", "bad", "fixture") == 0
+        assert (
+            _score_formula(evaluator, renderer, "x", "bad", "fixture")["similarity"]
+            == 0
+        )
 
 
 @pytest.mark.parametrize("reference_tokens,expected", [(1, 0.0), (0, None)])
@@ -1232,9 +1261,9 @@ def test_cdm_worker_checks_reference_tokens_before_emitting_quality(
         assert not output_path.exists()
     else:
         worker.main(input_path, output_path)
-        assert json.loads(output_path.read_text(encoding="utf-8"))["formulas"] == [
-            expected
-        ]
+        formula = json.loads(output_path.read_text(encoding="utf-8"))["formulas"][0]
+        assert formula["similarity"] == expected
+        assert formula["status"] == "invalid_prediction"
 
 
 def test_official_host_preserves_cdm_infrastructure_failure_as_unavailable(
@@ -1250,7 +1279,14 @@ def test_official_host_preserves_cdm_infrastructure_failure_as_unavailable(
     (source / official.OMNIDOCBENCH_IMAGE_LOCK).write_text("{}")
     monkeypatch.setattr(official, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(
-        official, "official_image_digest", lambda: "image@sha256:fixture"
+        official,
+        "official_evaluator_identity",
+        lambda: {
+            "source_revision": official.OMNIDOCBENCH_REVISION,
+            "image_digest": "image@sha256:fixture",
+            "source_manifest_sha256": "0" * 64,
+            "image_lock_sha256": "0" * 64,
+        },
     )
 
     def failed(command, **_kwargs):
@@ -1455,6 +1491,7 @@ def test_workers_preserve_designated_quality_and_all_measured_attempts(
 
 def test_data_verification_reuses_sealed_report_without_running_full_validator(
     tmp_path,
+    monkeypatch,
 ):
     import json
 
@@ -1463,6 +1500,15 @@ def test_data_verification_reuses_sealed_report_without_running_full_validator(
     from experiments.benchmarks.extraction.document.validation import (
         prepare_report,
         verified_inputs,
+    )
+    from experiments.benchmarks.preparation import evaluators
+
+    # This fixture has no reconstruction task. Evaluator corruption/resealing
+    # has separate preparation regressions; do not depend on local prepared state.
+    monkeypatch.setattr(
+        evaluators,
+        "evaluator_identity",
+        lambda _source: {"fixture": "no-reconstruction-task"},
     )
 
     manifest = json.loads(

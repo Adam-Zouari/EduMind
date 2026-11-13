@@ -33,6 +33,7 @@ from experiments.benchmarks.extraction.document.profiles import (
     parse_document_profile,
 )
 from experiments.benchmarks.extraction.document.protocol import protocol_from_worker
+from experiments.benchmarks.extraction.evidence import rejected_diagnostic
 from experiments.benchmarks.extraction.registry import build_experiment_registry
 
 
@@ -348,7 +349,7 @@ def execute(payload):
         applicable = (
             {"image_scale", "load_in_8bit"}
             if profile.runtime_engine == "docling-vlm-granite-258m"
-            else {"pipeline_version", "recognition_backend"}
+            else {"pipeline_version", "recognition_backend", "batch_size"}
         )
         parser_options = {
             key: value for key, value in parser_options.items() if key in applicable
@@ -404,6 +405,7 @@ def execute(payload):
     execution_error = failure = None
     phase, phase_started = "resources", time.perf_counter()
     resource_evidence = {}
+    monitoring_completed = False
 
     def record_failure(exc):
         nonlocal execution_error, failure, measured_batch_seconds
@@ -426,7 +428,15 @@ def execute(payload):
 
     def extract_payload(request, evidence=None):
         document = extractor.extract(request, request.source_kind)
-        data = document.to_dict()
+        try:
+            data = document.to_dict()
+        except Exception:
+            if evidence is not None and isinstance(document, ExtractedDocument):
+                evidence["produced_document"] = {
+                    field.name: getattr(document, field.name)
+                    for field in fields(ExtractedDocument)
+                }
+            raise
         if evidence is not None:
             evidence["produced_document"] = data
         synchronize(backend_device, profile.runtime_engine)
@@ -498,6 +508,10 @@ def execute(payload):
                             "produced_document", None
                         )  # completed output already retained
                     except Exception as exc:  # noqa: BLE001 - preserve every recoverable attempt
+                        if "produced_document" in row:
+                            row["produced_document"] = rejected_diagnostic(
+                                row["produced_document"]
+                            )
                         row.update(
                             success=False,
                             document=None,
@@ -509,6 +523,7 @@ def execute(payload):
                     finally:
                         row["latency_seconds"] = time.perf_counter() - started
                 measured_batch_seconds = time.perf_counter() - batch_started
+            monitoring_completed = True
             # Extraction resource scope ends before qualification inspection.
             phase, phase_started = "placement_after", time.perf_counter()
             if (preflight or device == "cuda") and model_backed:
@@ -577,6 +592,10 @@ def execute(payload):
         },
         "resource_samples": monitor.samples() if monitor else [],
         "resource_evidence": resource_evidence,
+        "monitoring_completed": monitoring_completed,
+        "resource_measurement_scope": "complete_lifecycle"
+        if monitoring_completed
+        else "partial_lifecycle",
         "placement_before": before,
         "placement_after": after,
         "gpu_identity": monitor.gpu_identity if monitor else {},

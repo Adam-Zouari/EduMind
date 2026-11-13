@@ -107,18 +107,29 @@ class VectorStore:
             include=["documents", "metadatas", "embeddings"],
         )
         previous_ids = list(previous.get("ids") or [])
-        self.collection.delete(where={SOURCE_ID: source_id})
+        # Resolve the server limit before touching existing data.
+        batch_size = self._batch_size()
         try:
-            self._upsert(chunks)
-        except Exception:
             self.collection.delete(where={SOURCE_ID: source_id})
-            if previous_ids:
-                self.collection.upsert(
-                    ids=previous_ids,
-                    documents=previous.get("documents") or [],
-                    metadatas=previous.get("metadatas") or [],
-                    embeddings=previous.get("embeddings"),
-                )
+            self._upsert(chunks)
+        except Exception as original:
+            try:
+                self.collection.delete(where={SOURCE_ID: source_id})
+                if previous_ids:
+                    self._upsert_payload(
+                        {
+                            "ids": previous_ids,
+                            "documents": previous.get("documents"),
+                            "metadatas": previous.get("metadatas"),
+                            "embeddings": previous.get("embeddings"),
+                        },
+                        batch_size,
+                    )
+            except Exception as restoration:  # noqa: BLE001 - retain both write failures
+                raise ExceptionGroup(
+                    "Document replacement failed and rollback failed",
+                    [original, restoration],
+                ) from original
             raise
         return len(previous_ids)
 
@@ -199,8 +210,9 @@ class VectorStore:
         )
 
     def _upsert(self, chunks: Sequence[ChunkRecord]) -> None:
-        for offset in range(0, len(chunks), 5000):
-            batch = chunks[offset : offset + 5000]
+        batch_size = self._batch_size()
+        for offset in range(0, len(chunks), batch_size):
+            batch = chunks[offset : offset + batch_size]
             if any(chunk.embedding is None for chunk in batch):
                 raise ValueError("Every indexed chunk requires an embedding")
             self.collection.upsert(
@@ -208,6 +220,25 @@ class VectorStore:
                 embeddings=cast(Any, [chunk.embedding for chunk in batch]),
                 documents=[chunk.text for chunk in batch],
                 metadatas=cast(Any, [self._serialize(chunk) for chunk in batch]),
+            )
+
+    def _batch_size(self) -> int:
+        getter = getattr(self.client, "get_max_batch_size", None)
+        limit = getter() if callable(getter) else 5000
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise RAGConfigurationError("Chroma reported an invalid maximum batch size")
+        return min(5000, limit)
+
+    def _upsert_payload(self, payload: dict[str, Any], batch_size: int) -> None:
+        count = len(payload["ids"])
+        for offset in range(0, count, batch_size):
+            self.collection.upsert(
+                **{
+                    key: value
+                    if value is None or count <= batch_size
+                    else value[offset : offset + batch_size]
+                    for key, value in payload.items()
+                }
             )
 
     @staticmethod

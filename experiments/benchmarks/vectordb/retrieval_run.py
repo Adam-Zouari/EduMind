@@ -1,417 +1,503 @@
-"""Compare complete retrieval across selected vector-database finalists."""
+"""Frozen full-stack retrieval within the database/configuration comparison.
+
+The comparison imports this module; there is no separate retrieval-selection CLI.
+"""
 
 from __future__ import annotations
 
-import argparse
-import json
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
+from collections import defaultdict
 
 import numpy as np
 
-from edumind.common.paths import PROJECT_ROOT
-from experiments.benchmarks.common.arguments import default_decision_path
-from experiments.benchmarks.common.contracts import BenchmarkPlan, SampleResult
-from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
+from edumind.common.artifacts import sha256_file
+from experiments.benchmarks.common.contracts import (
+    CandidateExecutionError,
+    SampleResult,
+)
+from experiments.benchmarks.common.datasets import evidence_units, load_manifest
 from experiments.benchmarks.common.decisions import load_engineer_decision
-from experiments.benchmarks.common.runner import run_benchmark
-from experiments.benchmarks.preparation.models import (
-    load_selected_model_lock,
-    model_revisions,
-)
-from experiments.benchmarks.rag.chunking_embedding.protocol import (
-    DEFAULT_PROTOCOL_PATH as DEFAULT_CHUNKING_PROTOCOL_PATH,
-)
-from experiments.benchmarks.rag.chunking_embedding.protocol import (
-    load_protocol as load_chunking_protocol,
-)
-from experiments.benchmarks.rag.evaluation import (
-    build_index,
-    reranker_for,
-    retrieval_metrics,
-    retrieval_quality_directions,
-)
-from experiments.benchmarks.rag.methods import reciprocal_rank_fusion
-from experiments.benchmarks.rag.retrieval_reranking.protocol import (
-    DEFAULT_PROTOCOL_PATH as DEFAULT_RETRIEVAL_PROTOCOL_PATH,
-)
-from experiments.benchmarks.rag.retrieval_reranking.protocol import (
-    load_protocol as load_retrieval_protocol,
-)
-from experiments.benchmarks.vectordb.adapters import Config, Record, create
-from experiments.benchmarks.vectordb.conformance import _finish_index
-from experiments.benchmarks.vectordb.docker_metrics import image_lock, verify_image
-from experiments.benchmarks.vectordb.protocol import (
-    DEFAULT_PROTOCOL_PATH as DEFAULT_VECTOR_PROTOCOL_PATH,
-)
-from experiments.benchmarks.vectordb.protocol import (
-    VectorDatabaseProtocol,
-)
-from experiments.benchmarks.vectordb.protocol import (
-    load_protocol as load_vector_protocol,
+from experiments.benchmarks.rag.chunking_embedding.metrics import (
+    covered_unit_ids,
+    score_question,
 )
 
+from .docker_metrics import DockerMonitor
+from .integration import SelectedServer
+from .metrics import interval, mean, percentile, repeatability
+from .selection import candidate_config
 
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Compare complete retrieval on DB finalists"
+
+def prepare_integration(spec, parent, profile, corpora):
+    from experiments.benchmarks.preparation.models import load_selected_model_lock
+    from experiments.benchmarks.rag.chunking_embedding.protocol import (
+        load_protocol as chunking,
     )
-    parser.add_argument("--database-selection", type=Path)
-    parser.add_argument("--embedding-selection", type=Path)
-    parser.add_argument("--retrieval-selection", type=Path)
-    parser.add_argument(
-        "--profile",
-        choices=("validation",),
-        default="validation",
+    from experiments.benchmarks.rag.evaluation import build_index, reranker_for
+    from experiments.benchmarks.rag.retrieval_reranking.protocol import (
+        load_protocol as retrieval,
     )
-    parser.add_argument("--device", choices=("cpu", "cuda"))
-    parser.add_argument("--dtype", choices=("float32", "float16", "bfloat16"))
-    parser.add_argument("--protocol", type=Path, default=DEFAULT_VECTOR_PROTOCOL_PATH)
-    parser.add_argument(
-        "--retrieval-protocol", type=Path, default=DEFAULT_RETRIEVAL_PROTOCOL_PATH
+    from experiments.benchmarks.rag.retrieval_reranking.validation import verify_inputs
+
+    chunking_protocol = chunking(parent / spec["chunking_protocol"])
+    retrieval_protocol = retrieval(parent / spec["retrieval_protocol"])
+    manifest_file = parent / spec["manifest"]
+    verify_inputs(
+        manifest_file, profile, retrieval_protocol, chunking_protocol=chunking_protocol
     )
-    parser.add_argument(
-        "--chunking-protocol", type=Path, default=DEFAULT_CHUNKING_PROTOCOL_PATH
+    embedding_decision = load_engineer_decision(
+        parent / spec["embedding_selection"],
+        exact=1,
+        expected_source=("rag", "chunking-embedding", "validation"),
+        expected_protocols={"chunking_embedding": chunking_protocol.meta.checksum},
     )
-    parser.add_argument("--no-mlflow", action="store_true")
-    arguments = parser.parse_args()
-    arguments.database_selection = (
-        arguments.database_selection
-        or default_decision_path("vector-database", "validation")
+    embedding = embedding_decision.selected_candidates[0]
+    retrieval_decision = load_engineer_decision(
+        parent / spec["retrieval_selection"],
+        exact=1,
+        expected_source=("rag", "retrieval-reranking", "validation"),
+        expected_protocols={"retrieval": retrieval_protocol.meta.checksum},
     )
-    arguments.embedding_selection = (
-        arguments.embedding_selection
-        or default_decision_path("chunking-embedding", "locked")
-    )
-    arguments.retrieval_selection = (
-        arguments.retrieval_selection
-        or default_decision_path("retrieval-reranking", "locked")
-    )
-    vector_protocol = load_vector_protocol(arguments.protocol)
-    retrieval_protocol = load_retrieval_protocol(arguments.retrieval_protocol)
-    chunking_protocol = load_chunking_protocol(arguments.chunking_protocol)
-    vector_execution = vector_protocol.profile(arguments.profile)
-    retrieval_execution = retrieval_protocol.profile(arguments.profile)
-    device = arguments.device or retrieval_execution.device
-    dtype = arguments.dtype or retrieval_execution.dtype
-    if retrieval_execution.hardware_required and (device, dtype) != (
-        retrieval_execution.device,
-        retrieval_execution.dtype,
-    ):
-        parser.error(
-            f"{arguments.profile} complete retrieval requires "
-            f"--device {retrieval_execution.device} --dtype {retrieval_execution.dtype}"
-        )
-    database_decision = load_engineer_decision(
-        arguments.database_selection,
-        minimum=1,
-        maximum=vector_protocol.shortlist_limit,
-        expected_source=("vectordb-server-v4", "dense-ann", "development"),
-    )
-    database_payload = _payload(database_decision.source_summary)
-    embedding = _single_selection(arguments.embedding_selection, "chunking-embedding")
-    retrieval = _single_selection(arguments.retrieval_selection, "retrieval-reranking")
-    candidates = database_decision.selected_candidates
-    chunker_name, embedding_name = embedding.split("|", 1)
-    manifest = load_manifest(
-        PROJECT_ROOT / "data/benchmarks/rag/rag-selection-validation.json"
-    )
-    require_manifest_split(manifest, "validation", {"validation"})
-    model_lock = load_selected_model_lock(
-        PROJECT_ROOT / "data/benchmarks/models/selected.json"
-    )
-    revisions = model_revisions(model_lock)
-    vector_revisions = image_lock()
+    selected = retrieval_decision.selected_candidates[0]
+    provenance = {
+        "chunking_embedding_candidate": embedding,
+        "retrieval_candidate": selected,
+        "model_lock_sha256": sha256_file(parent / spec["model_lock"]),
+        "chunking_protocol_checksum": chunking_protocol.meta.checksum,
+        "retrieval_protocol_checksum": retrieval_protocol.meta.checksum,
+        "embedding_source_run_id": embedding_decision.source_run_id,
+        "retrieval_source_run_id": retrieval_decision.source_run_id,
+        "embedding_decision_sha256": sha256_file(parent / spec["embedding_selection"]),
+        "retrieval_decision_sha256": sha256_file(parent / spec["retrieval_selection"]),
+    }
+    model_lock = load_selected_model_lock(parent / spec["model_lock"])
+    chunker, embedding_name = embedding.split("|", 1)
+    execution = retrieval_protocol.profile(profile)
+    manifest = load_manifest(manifest_file)
     index = build_index(
         manifest,
-        chunker_name,
+        chunker,
         embedding_name,
         model_lock,
-        with_bm25=True,
-        device=device,
-        dtype=dtype,
+        with_bm25=selected.split("|", 1)[0] in {"bm25", "rrf"},
+        device=execution.device,
+        dtype=execution.dtype,
         chunking_protocol=chunking_protocol,
         retrieval_protocol=retrieval_protocol,
     )
-    if index.bm25 is None:
-        raise RuntimeError("Complete retrieval requires the BM25 index")
-    bm25 = index.bm25
-    by_id = {chunk.identifier: position for position, chunk in enumerate(index.chunks)}
-    plan = BenchmarkPlan(
-        "vectordb-server-v4",
-        "complete-retrieval",
-        arguments.profile,
-        manifest.name,
-        candidates,
-        seed=vector_protocol.meta.seed,
-        repetitions=vector_execution.repetitions,
-        bootstrap_resamples=vector_execution.bootstrap_resamples,
-        warmups=vector_execution.warmups,
-        settings={
-            "device": device,
-            "dtype": dtype,
-        },
-    )
-
-    def evaluate(candidate):
-        verify_image(
-            candidate,
-            vector_revisions[f"image:{candidate}"],
-            timeout_seconds=vector_protocol.docker_storage_timeout_seconds,
+    frozen = corpora[spec["corpus"]]
+    if (
+        tuple(chunk.identifier for chunk in index.chunks) != frozen.ids
+        or tuple(chunk.text for chunk in index.chunks) != frozen.texts
+        or index.vectors.shape != frozen.vectors.shape
+        or not np.array_equal(index.vectors, frozen.vectors)
+    ):
+        raise ValueError(
+            "Integration corpus/vectors differ from the sealed selected-model inputs"
         )
-        reranker = reranker_for(
-            retrieval,
-            model_lock,
-            device=device,
-            dtype=dtype,
-            retrieval_protocol=retrieval_protocol,
-        )
-        config = _config(
-            database_payload,
-            candidate,
-            index.vectors.shape[1],
-            vector_protocol,
-        )
-        adapter = create(candidate, config)
-        try:
-            adapter.reset()
-            adapter.upsert(
-                [
-                    Record(
-                        chunk.identifier,
-                        index.vectors[position],
-                        chunk.text,
-                        {
-                            "source_id": chunk.document_id,
-                            "document_id": chunk.document_id,
-                            "start": chunk.start,
-                            "end": chunk.end,
-                            "token_count": chunk.tokens,
-                            "chunking_fingerprint": chunker_name,
-                            "embedding_fingerprint": embedding_name,
-                        },
-                    )
-                    for position, chunk in enumerate(index.chunks)
-                ]
-            )
-            _finish_index(adapter)
-            adapter.index_info()
-            samples, latencies = [], []
-            questions = [
-                row
-                for row in manifest.samples
-                if row.get("kind") == "question"
-                and row.get("answerable")
-                and row.get("evidence")
-            ]
-
-            def retrieve(question):
-                query = str(question["question"])
-                started = time.perf_counter()
-                query_vector = index.embedder.embed_query(query)
-                dense = [
-                    by_id[hit.identifier]
-                    for hit in adapter.search(
-                        query_vector, retrieval_protocol.pool_size
-                    )
-                ]
-                lexical = [
-                    position
-                    for position, _ in bm25.rank(query, retrieval_protocol.pool_size)
-                ]
-                first_stage = retrieval.split("|", 1)[0]
-                if first_stage == "dense":
-                    order = dense
-                elif first_stage == "bm25":
-                    order = lexical
-                elif first_stage == "rrf":
-                    order = reciprocal_rank_fusion(
-                        [dense, lexical],
-                        retrieval_protocol.pool_size,
-                        retrieval_protocol.rrf_constant,
-                        weights=retrieval_protocol.rrf_weights,
-                        tie_keys={
-                            position: chunk.identifier
-                            for position, chunk in enumerate(index.chunks)
-                        },
-                    )
-                else:
-                    raise ValueError(f"Unsupported retrieval stack: {retrieval}")
-                if reranker is not None:
-                    local = reranker.rank(
-                        query, [index.chunks[position].text for position in order]
-                    )
-                    order = [order[position] for position in local]
-                return order, time.perf_counter() - started
-
-            questions = questions[
-                : int(
-                    vector_protocol.workloads["validation"]["selected_real_query_limit"]
-                )
-            ]
-            for question in questions[: plan.warmups]:
-                retrieve(question)
-            for question in questions:
-                measured = [retrieve(question) for _ in range(plan.repetitions)]
-                orders = [value[0] for value in measured]
-                item_latencies = [value[1] for value in measured]
-                order = orders[0]
-                selected = [
-                    index.chunks[position]
-                    for position in order[: max(retrieval_protocol.quality_cutoffs)]
-                ]
-                latency = float(np.median(item_latencies))
-                latencies.extend(item_latencies)
-                metrics, tokens = retrieval_metrics(
-                    question,
-                    selected,
-                    index.chunks,
-                    index.tokenizer,
-                    cutoffs=retrieval_protocol.quality_cutoffs,
-                )
-                metrics["determinism"] = float(all(value == order for value in orders))
-                samples.append(
-                    SampleResult(
-                        str(question["id"]),
-                        metrics,
-                        latency,
-                        {"retrieved_tokens": tokens},
-                    )
-                )
-            operational = {
-                "p50_latency_seconds": float(np.median(latencies)),
-                "p95_latency_seconds": float(np.quantile(latencies, 0.95)),
-            }
-            concurrency_values = vector_protocol.concurrency_levels(arguments.profile)
-            for concurrency in concurrency_values:
-                started = time.perf_counter()
-                errors = 0
-                concurrent_latencies = []
-                with ThreadPoolExecutor(max_workers=concurrency) as pool:
-                    futures = [
-                        pool.submit(retrieve, question)
-                        for _ in range(plan.repetitions)
-                        for question in questions
-                    ]
-                    for future in as_completed(futures):
-                        try:
-                            concurrent_latencies.append(future.result()[1])
-                        except Exception:  # noqa: BLE001 - count failed requests
-                            errors += 1
-                elapsed = time.perf_counter() - started
-                count = len(questions) * plan.repetitions
-                operational[f"throughput_concurrency_{concurrency}_qps"] = count / max(
-                    elapsed, 1e-9
-                )
-                operational[f"error_rate_concurrency_{concurrency}"] = errors / count
-                if concurrent_latencies:
-                    operational[f"p95_concurrency_{concurrency}_seconds"] = float(
-                        np.quantile(concurrent_latencies, 0.95)
-                    )
-                    operational[f"p99_concurrency_{concurrency}_seconds"] = float(
-                        np.quantile(concurrent_latencies, 0.99)
-                    )
-            return (
-                samples,
-                operational,
-                {
-                    "target_concurrency_success": float(
-                        operational[f"error_rate_concurrency_{concurrency_values[-1]}"]
-                        == 0.0
-                    )
-                },
-            )
-        finally:
-            adapter.close()
-
-    result = run_benchmark(
-        plan,
-        evaluate,
-        dataset_checksum=manifest.fingerprint,
-        directions={
-            **retrieval_quality_directions(retrieval_protocol.quality_cutoffs),
-            "operational.p50_latency_seconds": "min",
-            "operational.p95_latency_seconds": "min",
-            "target_concurrency_success": "max",
-        },
-        primary_metric="ndcg_at_5",
-        revisions={**revisions, **vector_revisions},
-        decision_files={
-            "database": arguments.database_selection,
-            "embedding": arguments.embedding_selection,
-            "retrieval": arguments.retrieval_selection,
-        },
-        protocols={
-            "vector_database": vector_protocol.meta,
-            "retrieval": retrieval_protocol.meta,
-            "chunking_embedding": chunking_protocol.meta,
-        },
-        no_mlflow=arguments.no_mlflow,
-    )
-    print(
-        json.dumps(
-            {"run_id": result.run_id, "artifacts": str(result.artifact_directory)},
-            indent=2,
-        )
-    )
-    return 0 if result.complete else 2
-
-
-def _payload(path: Path):
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _single_selection(path: Path, stage: str) -> str:
-    return load_engineer_decision(
-        path,
-        exact=1,
-        expected_source=("rag", stage, "validation"),
-    ).selected_candidates[0]
-
-
-def _config(
-    payload,
-    candidate,
-    dimension,
-    protocol: VectorDatabaseProtocol,
-):
-    row = next(
-        value for value in payload["candidates"] if value.get("candidate") == candidate
-    )
-    operational = row.get("operational", {})
-    prefixes = [
-        key.removesuffix(".selected_m")
-        for key in operational
-        if key.endswith(".selected_m")
-        and ("validation-real-selected" in key or f"d{dimension}" in key)
+    questions = [
+        row
+        for row in manifest.samples
+        if row.get("kind") == "question" and row.get("answerable")
     ]
-    if not prefixes:
-        raise ValueError(f"No selected HNSW configuration for dimension {dimension}")
-    prefix = next(
-        (value for value in prefixes if "validation-real-selected" in value),
-        prefixes[0],
-    )
-    selected = {
-        key.removeprefix(prefix + "."): int(value)
-        for key, value in operational.items()
-        if key.startswith(prefix + ".selected_")
+    if not questions or {str(row["id"]) for row in questions} != set(frozen.query_ids):
+        raise ValueError(
+            "Integration question allocation differs from sealed vector queries"
+        )
+    return {
+        "index": index,
+        "questions": questions,
+        "retrieval": selected,
+        "model_lock": model_lock,
+        "retrieval_protocol": retrieval_protocol,
+        "reranker_factory": lambda: reranker_for(
+            selected,
+            model_lock,
+            device=execution.device,
+            dtype=execution.dtype,
+            retrieval_protocol=retrieval_protocol,
+        ),
+        "spec": spec,
+        "source_groups": dict(zip(frozen.query_ids, frozen.source_groups, strict=True)),
+        "integration_provenance": provenance,
     }
-    return Config(
-        dimension,
-        selected["selected_m"],
-        selected["selected_ef_construction"],
-        selected["selected_ef_search"],
-        upsert_batch_size=protocol.upsert_batch_sizes[candidate],
-        request_timeout_seconds=protocol.request_timeout_seconds,
-        connection_pool_limit=protocol.connection_pool_limit,
-        index_readiness_timeout_seconds=protocol.index_readiness_timeout_seconds,
-        index_readiness_poll_seconds=protocol.index_readiness_poll_seconds,
-        index_verification_limit=protocol.index_verification_limit,
-        qdrant_full_scan_threshold=protocol.qdrant_full_scan_threshold,
-        qdrant_indexing_threshold=protocol.qdrant_indexing_threshold,
+
+
+def evaluate_integration(candidate, prepared, protocol, profile, *, evidence_sink=None):
+    index, questions, spec = prepared["index"], prepared["questions"], prepared["spec"]
+    database, config = candidate_config(
+        protocol, candidate, int(index.vectors.shape[1])
     )
+    server = SelectedServer(
+        database,
+        config,
+        index,
+        prepared["retrieval"],
+        prepared["retrieval_protocol"],
+        reranker=prepared["reranker_factory"](),
+    )
+    cid = "integration-" + spec["corpus"]
+    try:
+        requests, rankings, problems, monitoring = _execute_integration(
+            server, questions, spec, protocol, profile, cid, database
+        )
+    finally:
+        server.close()
+    evidence = {
+        "candidate": candidate,
+        "requests": requests,
+        "rankings": rankings,
+        "problems": problems,
+        "monitoring": monitoring,
+        "questions": questions,
+        "spec": spec,
+        "retrieval": prepared["retrieval"],
+        "source_groups": prepared.get("source_groups", {}),
+        "integration_provenance": prepared.get("integration_provenance", {}),
+        "chunks": [
+            {
+                key: getattr(chunk, key)
+                for key in (
+                    "identifier",
+                    "document_id",
+                    "text",
+                    "start",
+                    "end",
+                    "tokens",
+                )
+            }
+            for chunk in index.chunks
+        ],
+        "metadata": [dict(row.metadata) for row in server.records],
+        "tokenizer": getattr(index.tokenizer, "name", "tiktoken:cl100k_base"),
+    }
+    if evidence_sink is not None:
+        evidence_sink(evidence)
+    return score_integration_evidence(
+        evidence, protocol, profile, tokenizer=index.tokenizer
+    )
+
+
+def score_integration_evidence(evidence, protocol, profile, *, tokenizer):
+    """Re-evaluate original pools/rankings only; never regenerate retrieval."""
+    from types import SimpleNamespace
+
+    prepared = evidence
+    spec, questions = evidence["spec"], evidence["questions"]
+    index = SimpleNamespace(
+        chunks=[SimpleNamespace(**row) for row in evidence["chunks"]],
+        tokenizer=tokenizer,
+    )
+    server = SimpleNamespace(
+        records=[SimpleNamespace(metadata=row) for row in evidence["metadata"]],
+        close=lambda: None,
+    )
+    requests, rankings, monitoring = (
+        evidence["requests"],
+        evidence["rankings"],
+        evidence["monitoring"],
+    )
+    query_rows, pair_rows, samples, problems = [], [], [], list(evidence["problems"])
+    execution = protocol.profile(profile)
+    cid = "integration-" + spec["corpus"]
+    try:
+        for question in questions:
+            attempts = [
+                row for row in requests if row["query_id"] == str(question["id"])
+            ]
+            first = next(
+                row["evidence"]
+                for row in rankings
+                if row["query_id"] == str(question["id"]) and row["attempt"] == 1
+            )
+            metrics = {
+                f"quality.{name}_at_{k}": None
+                for name in ("ndcg", "evidence_unit_recall", "evidence_token_precision")
+                for k in (3, 5)
+            }
+            metrics["diagnostic.candidate_pool_evidence_unit_recall_at_20"] = None
+            units = evidence_units(question)
+            if first.get("pool") is not None:
+                pool = [index.chunks[i] for i in first["pool"]]
+                metrics["diagnostic.candidate_pool_evidence_unit_recall_at_20"] = len(
+                    set().union(*(covered_unit_ids(chunk, units) for chunk in pool))
+                ) / len(units)
+            if first.get("ranking") is not None:
+                eligible = [
+                    chunk
+                    for chunk, record in zip(index.chunks, server.records, strict=True)
+                    if all(
+                        record.metadata.get(key) == value
+                        for key, value in spec.get("filters", {}).items()
+                    )
+                ]
+                try:
+                    score = score_question(
+                        question,
+                        [index.chunks[i] for i in first["ranking"]],
+                        eligible,
+                        index.tokenizer,
+                        cutoffs=(3, 5),
+                        alpha=0.5,
+                    )
+                    metrics.update(
+                        {
+                            "quality." + key: value
+                            for key, value in score.metrics.items()
+                            if not key.startswith("alpha_")
+                        }
+                    )
+                except (ValueError, TypeError, KeyError) as exc:
+                    problems.append(
+                        f"Integration scoring integrity {question['id']}: {type(exc).__name__}: {exc}"
+                    )
+            repeated = repeatability(
+                [
+                    {
+                        **row,
+                        "status": "success"
+                        if row["ids"] is not None and not row["filter_violation"]
+                        else row["status"]
+                        if row["status"] == "not_executed"
+                        else "failed",
+                    }
+                    for row in attempts
+                ],
+                execution.repetitions,
+            )
+            if prepared["retrieval"].split("|", 1)[0] != "bm25":
+                metrics["diagnostic.ranking_repeatability"] = repeated["value"]
+                pair_rows.extend(
+                    {"query_id": str(question["id"]), **pair}
+                    for pair in repeated["pairs"]
+                )
+            latency = percentile(
+                [
+                    row["latency_seconds"]
+                    for row in attempts
+                    if row["status"] == "success"
+                ],
+                0.5,
+            )
+            group = prepared.get("source_groups", {}).get(str(question["id"])) or str(
+                question.get("independent_source_id")
+                or question.get("source_group_id")
+                or question["document_id"]
+            )
+            query_rows.append(
+                {
+                    "query_id": str(question["id"]),
+                    "document_id": str(question["document_id"]),
+                    "source_group": group,
+                    "metrics": metrics,
+                    "latency_seconds": latency,
+                }
+            )
+            samples.append(
+                SampleResult(
+                    cid + ":" + str(question["id"]),
+                    {
+                        key + ".condition." + cid: value
+                        for key, value in metrics.items()
+                    },
+                    latency,
+                    {
+                        "source_group": group,
+                        "document_id": str(question["document_id"]),
+                        "condition": cid,
+                    },
+                )
+            )
+            if any(
+                value is None
+                for key, value in metrics.items()
+                if key.startswith("quality.")
+            ):
+                problems.append(
+                    f"Incomplete first integration quality: {question['id']}"
+                )
+    finally:
+        server.close()
+    grouped = defaultdict(list)
+    for row in query_rows:
+        grouped[row["source_group"]].append(row)
+    groups = list(grouped.values())
+    aggregates, intervals, statuses = {}, {}, {}
+    names = {key for row in query_rows for key in row["metrics"]}
+    for name in names:
+
+        def statistic(draw, name=name):
+            documents = []
+            # Retain duplicate draw copies as distinct sources/documents.
+            for source in draw:
+                docs = defaultdict(list)
+                for row in source:
+                    docs[row["document_id"]].append(row["metrics"].get(name))
+                documents.extend(mean(values) for values in docs.values())
+            return mean(documents)
+
+        key = name + ".condition." + cid
+        bounds = interval(
+            groups,
+            statistic,
+            protocol=protocol,
+            profile=profile,
+            metric=key,
+            unit="reviewed_source_group",
+        )
+        aggregates[key], intervals[key] = bounds["estimate"], bounds
+        aggregates[key + ".sample_count"] = len(
+            {
+                row["document_id"]
+                for row in query_rows
+                if row["metrics"].get(name) is not None
+            }
+        )
+        aggregates[key + ".independent_source_count"] = bounds[
+            "contributing_source_count"
+        ]
+        statuses[key] = {
+            "status": "incomplete"
+            if any(row["metrics"].get(name) is None for row in query_rows)
+            else "scored",
+            "ci": bounds,
+        }
+    for q in (0.5, 0.95):
+        name = f"operational.full_stack_retrieval_latency_ms_p{int(q * 100)}"
+        key = name + ".condition." + cid
+        bounds = interval(
+            groups,
+            lambda draw, q=q: percentile(
+                [
+                    row["latency_seconds"] * 1000
+                    for group in draw
+                    for row in group
+                    if row["latency_seconds"] is not None
+                ],
+                q,
+            ),
+            protocol=protocol,
+            profile=profile,
+            metric=key,
+            unit="reviewed_source_group",
+        )
+        aggregates[key], intervals[key] = bounds["estimate"], bounds
+        aggregates[key + ".sample_count"] = sum(
+            row["latency_seconds"] is not None for row in query_rows
+        )
+        aggregates[key + ".independent_source_count"] = bounds[
+            "contributing_source_count"
+        ]
+    artifacts = {
+        "integration_requests": requests,
+        "integration_rankings": rankings,
+        "integration_query_metrics": query_rows,
+        "integration_repeatability": pair_rows,
+        "integration_metric_statuses": statuses,
+        "integration_validation": {
+            "status": "failed" if problems else "passed",
+            "problems": problems,
+            "monitoring": monitoring,
+        },
+        "integration_resources": monitoring["samples"] + monitoring["checkpoints"],
+    }
+    usable = [row["bytes"] for row in monitoring["samples"] if row["bytes"] is not None]
+    aggregates["operational.peak_server_ram_bytes.scope.server-lifecycle"] = (
+        max(usable) if usable else None
+    )
+    if problems:
+        raise CandidateExecutionError(
+            "; ".join(problems),
+            samples=tuple(samples),
+            metrics=aggregates,
+            intervals=intervals,
+            artifacts=artifacts,
+        )
+    return (
+        samples,
+        {},
+        aggregates,
+        {
+            "retrieval_stack": prepared["retrieval"],
+            "integration_provenance": prepared.get("integration_provenance", {}),
+        },
+        intervals,
+        artifacts,
+    )
+
+
+def _execute_integration(server, questions, spec, protocol, profile, cid, database):
+    """Finish the resource window before evidence scoring or bootstrap."""
+    monitor = DockerMonitor(
+        database,
+        interval_seconds=protocol.docker_monitor_interval_seconds,
+        stats_timeout_seconds=protocol.docker_stats_timeout_seconds,
+        storage_timeout_seconds=protocol.docker_storage_timeout_seconds,
+        helper_timeout_seconds=protocol.docker_helper_timeout_seconds,
+        monitor_memory=protocol.monitor_server_memory,
+        monitor_storage=protocol.monitor_storage,
+    )
+    requests, rankings, problems = [], [], []
+    ready = False
+    with monitor:
+        try:
+            server.prepare()
+            checkpoint = monitor.checkpoint("integration-" + spec["corpus"])
+            if protocol.monitor_storage and not checkpoint["complete"]:
+                problems.append(
+                    "Missing integration completed-build storage checkpoint"
+                )
+            server.retrieve(questions[0], filters=spec.get("filters"))
+            ready = True
+        except Exception as exc:  # noqa: BLE001 - preserve explicit unexecuted schedules
+            problems.append(
+                f"Integration preparation/warmup: {type(exc).__name__}: {exc}"
+            )
+        for question in questions:
+            for attempt in range(1, protocol.profile(profile).repetitions + 1):
+                evidence = {}
+                row = {
+                    "condition": cid,
+                    "query_id": str(question["id"]),
+                    "attempt": attempt,
+                    "status": "not_executed",
+                    "error": "preparation_failed" if not ready else None,
+                    "latency_seconds": None,
+                    "filter_violation": None,
+                    "ids": None,
+                }
+                if ready:
+                    started = time.perf_counter()
+                    try:
+                        result = server.retrieve(
+                            question, filters=spec.get("filters"), evidence=evidence
+                        )
+                        row.update(
+                            status="success",
+                            latency_seconds=result["latency_seconds"],
+                            error=None,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - retain completed upstream stages
+                        row.update(
+                            status="failed",
+                            error=f"{type(exc).__name__}: {exc}",
+                            elapsed_to_failure_seconds=time.perf_counter() - started,
+                        )
+                row.update(
+                    ids=evidence.get("database_ids"),
+                    filter_violation=evidence.get("filter_violation"),
+                    database_executed=evidence.get("database_executed", False),
+                    database_latency_seconds=evidence.get("database_latency_seconds"),
+                )
+                requests.append(row)
+                rankings.append({**row, "evidence": evidence})
+    monitoring = monitor.evidence()
+    if protocol.monitor_server_memory and monitoring["coverage"] != "complete":
+        problems.append("Incomplete integration server telemetry")
+    return requests, rankings, problems, monitoring
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(
+        "The separate retrieval CLI is retired; use experiments.benchmarks.vectordb.run"
+    )

@@ -86,6 +86,16 @@ class RetrievalProtocol:
     def profile(self, name: str) -> ExecutionProfile:
         return self.meta.profile(name)
 
+    def validate_composition(self, chunking_protocol) -> int:
+        """Resolve the one embedding control before loading or qualification."""
+        if self.embedding_batch_size != chunking_protocol.embedding_batch_size:
+            raise ValueError(
+                "Composed embedding_batch_size conflicts between retrieval and chunking protocols"
+            )
+        if self.embedding_batch_size != 1 or self.reranker_batch_size != 1:
+            raise ValueError("Composed retrieval inference requires batch size 1")
+        return self.embedding_batch_size
+
     def maximum_tokens(self, reranker_alias: str) -> int:
         try:
             return self.reranker_maximum_tokens[reranker_alias]

@@ -486,6 +486,9 @@ def run_visual_benchmark(
                         {
                             **item,
                             "canonical_sha256": canonical_checksums[str(item["id"])],
+                            "canonical_duration_seconds": validation["metadata"][
+                                "samples"
+                            ][str(item["id"])]["canonical_duration_seconds"],
                         }
                         for item in items
                     ],
@@ -515,6 +518,10 @@ def run_visual_benchmark(
                 },
                 expected_ffmpeg_version=ffmpeg_version,
                 expected_canonical_checksums=canonical_checksums,
+                expected_canonical_durations={
+                    sample_id: metadata["canonical_duration_seconds"]
+                    for sample_id, metadata in validation["metadata"]["samples"].items()
+                },
             )
             frozen.update(path=path, checksum=checksum, artifact=artifact)
             rows = artifact["videos"]
@@ -627,6 +634,14 @@ def run_visual_benchmark(
             for row in rows
         ]
         artifacts = {
+            "resource_coverage": {
+                name: output.get(name)
+                for name in (
+                    "monitoring_completed",
+                    "resource_measurement_scope",
+                    "resource_evidence",
+                )
+            },
             "samples": _flat_rows(rows, ("predictions",)),
             **{
                 name: output[name]

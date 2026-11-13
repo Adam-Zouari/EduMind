@@ -215,6 +215,12 @@ def evaluate_candidate(
         apply_official_metrics(
             evaluations, timeout_seconds=protocol.evaluator_timeout_seconds
         )
+        if any(
+            record.statuses.get("formulas.exact_match", {}).get("status")
+            == "incomplete"
+            for record in evaluations
+        ):
+            scorer_error = "Official CDM exact-count evidence is incomplete; similarity and raw predictions are retained"
     except RuntimeError as exc:
         scorer_error = str(exc)
         for evaluation in evaluations:
@@ -281,7 +287,7 @@ def evaluate_candidate(
     parameters = {
         **result["parameters"],
         "measurement.resource_scope": "partial"
-        if result.get("execution_error")
+        if result.get("resource_measurement_scope") != "complete_lifecycle"
         else "complete",
         "engine": profile.requested_engine,
         "engine_revision": entry.get("revision", "system"),
@@ -311,6 +317,31 @@ def evaluate_candidate(
         ),
     }
     artifacts = {
+        "resource_coverage": {
+            name: result.get(name)
+            for name in ("monitoring_completed", "resource_measurement_scope")
+        },
+        "official_evaluations": {
+            "schema_version": 2,
+            "provenance": next(
+                (
+                    record.official_provenance
+                    for record in evaluations
+                    if record.official_provenance
+                ),
+                {},
+            ),
+            "documents": [
+                {
+                    "sample_id": str(item["id"]),
+                    "table_pairs": record.table_pairs,
+                    "table_evidence": record.table_evidence,
+                    "formula_pairs": record.formula_pairs,
+                    "formula_evidence": record.formula_evidence,
+                }
+                for item, record in zip(items, evaluations, strict=True)
+            ],
+        },
         "samples": [
             {
                 "sample_id": sample.sample_id,

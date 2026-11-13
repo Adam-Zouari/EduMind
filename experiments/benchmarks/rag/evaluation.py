@@ -32,7 +32,7 @@ from experiments.benchmarks.rag.chunking_embedding.protocol import (
 from experiments.benchmarks.rag.chunking_embedding.strategies import (
     build_chunking_strategy,
 )
-from experiments.benchmarks.rag.methods import BM25, Reranker, reciprocal_rank_fusion
+from experiments.benchmarks.rag.methods import BM25, OutputIntegrityError, Reranker
 from experiments.benchmarks.rag.retrieval_reranking.protocol import RetrievalProtocol
 
 
@@ -66,12 +66,6 @@ class InputCompatibilityError(RuntimeError):
     def __init__(self, message: str, report: Mapping[str, object]) -> None:
         super().__init__(message)
         self.report = dict(report)
-
-
-class OutputIntegrityError(RuntimeError):
-    """An invalid model/vector/ranking is not an ordinary request failure."""
-
-    reason_code = "output_integrity_failed"
 
 
 def build_index(
@@ -114,6 +108,8 @@ def _build_index(
         raise ValueError("build_index requires explicit chunking/embedding settings")
     if with_bm25 and retrieval_protocol is None:
         raise ValueError("BM25 index construction requires explicit retrieval settings")
+    if retrieval_protocol is not None:
+        retrieval_protocol.validate_composition(chunking_protocol)
     progress = progress if progress is not None else {}
     phases = progress.setdefault("phase_seconds", {})
     load_started = time.perf_counter()
@@ -368,65 +364,6 @@ def _build_index(
         preflight,
         dict(phases),
     )
-
-
-def rank(
-    index: ExactIndex,
-    query: str,
-    method: str,
-    reranker: Reranker | None = None,
-    *,
-    retrieval_protocol: RetrievalProtocol | None = None,
-) -> list[int]:
-    if retrieval_protocol is None:
-        raise ValueError("Ranking requires explicit retrieval settings")
-    protocol = retrieval_protocol
-    retriever = method.split("|", 1)[0]
-    if retriever == "bm25":
-        if index.bm25 is None:
-            raise RuntimeError("This index was built without BM25")
-        base = [
-            identifier for identifier, _ in index.bm25.rank(query, protocol.pool_size)
-        ]
-        if reranker is None:
-            return base
-        local_order = reranker.rank(
-            query, [index.chunks[position].text for position in base]
-        )
-        return [base[position] for position in local_order]
-
-    if index.vectors is None or index.embedder is None:
-        raise RuntimeError("This index was built without dense vectors")
-    dense = [
-        position
-        for position, _ in dense_rank_with_scores(index, query, protocol.pool_size)
-    ]
-    if retriever == "dense":
-        base = dense
-    else:
-        if retriever != "rrf":
-            raise ValueError(f"Unsupported retrieval method: {method}")
-        if index.bm25 is None:
-            raise RuntimeError("This index was built without BM25")
-        lexical = [
-            identifier for identifier, _ in index.bm25.rank(query, protocol.pool_size)
-        ]
-        base = reciprocal_rank_fusion(
-            [dense, lexical],
-            protocol.pool_size,
-            protocol.rrf_constant,
-            weights=protocol.rrf_weights,
-            tie_keys={
-                position: chunk.identifier
-                for position, chunk in enumerate(index.chunks)
-            },
-        )
-    if reranker is None:
-        return base
-    local_order = reranker.rank(
-        query, [index.chunks[position].text for position in base]
-    )
-    return [base[position] for position in local_order]
 
 
 def dense_rank_with_scores(

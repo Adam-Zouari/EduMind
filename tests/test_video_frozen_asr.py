@@ -370,7 +370,12 @@ def test_video_validation_distinguishes_optional_timing_from_missing_review(
     monkeypatch.setattr(
         validation,
         "_media_metadata",
-        lambda *_: {"width": 640, "height": 360, "canonical_sha256": "fixture"},
+        lambda *_: {
+            "width": 640,
+            "height": 360,
+            "canonical_sha256": "fixture",
+            "canonical_duration_seconds": 1.0,
+        },
     )
     if mode == "untimed_allowed":
         assert (
@@ -502,6 +507,120 @@ def test_manifest_duration_tolerance_does_not_invent_pcm_or_fail_valid_tail(
     assert row["duration_seconds"] == 1.0
     assert row["canonical_duration_seconds"] == 0.97
     assert row["windows"][0]["input_duration_seconds"] == 0.97
+
+
+@pytest.mark.parametrize(
+    "manifest,pcm,count",
+    [
+        (30.0, 30.05, 2),
+        (30.05, 30.0, 1),
+        (30.0, 29.95, 1),
+        (30.0, 30.0, 1),
+        (30.0, 30.0000625, 2),
+        (58.0, 58.0000625, 3),
+    ],
+)
+def test_pcm_inventory_covers_tolerated_tails_without_padding(
+    environment, monkeypatch, manifest, pcm, count
+):
+    decode = worker._decode
+
+    def decoded(item, destination, protocol):
+        command = decode(item, destination, protocol)
+        _wav(destination, pcm)
+        return command
+
+    monkeypatch.setattr(worker, "_decode", decoded)
+    result = environment.run(items=[_item(duration=manifest)])
+    row = result["videos"][0]
+    assert row["success"]
+    assert row["duration_seconds"] == manifest
+    assert row["canonical_duration_seconds"] == pcm
+    assert row["scheduled_window_count"] == row["executed_window_count"] == count
+    assert row["windows"][-1]["end"] == pcm
+    assert all(
+        window["end"] - window["start"] == window["input_duration_seconds"]
+        for window in row["windows"]
+    )
+    assert result["metrics"]["attempt_failure_rate"] == 0
+
+
+def test_pcm_tail_failure_uses_canonical_window_denominator(environment, monkeypatch):
+    decode = worker._decode
+
+    def decoded(item, destination, protocol):
+        command = decode(item, destination, protocol)
+        _wav(destination, 30.05)
+        return command
+
+    monkeypatch.setattr(worker, "_decode", decoded)
+    environment.fail = "1"
+    result = environment.run(items=[_item(duration=30.0)])
+    row = result["videos"][0]
+    assert not row["success"]
+    assert row["scheduled_window_count"] == 2
+    assert row["failed_window_count"] == 1
+    assert result["metrics"]["attempt_failure_rate"] == 0.5
+
+
+def test_old_frozen_schedule_schema_is_rejected(tmp_path, environment, monkeypatch):
+    path = _artifact(tmp_path, environment, monkeypatch)
+    payload = json.loads(path.read_text())
+    payload["schema_version"] = 2
+    _reseal(path, payload)
+    with pytest.raises(ValueError, match="schema_version 3"):
+        _load(path)
+
+
+def test_reuse_rejects_manifest_length_window_for_longer_pcm(
+    tmp_path, environment, monkeypatch
+):
+    path = _artifact(tmp_path, environment, monkeypatch)
+    payload = json.loads(path.read_text())
+    payload["videos"][0]["canonical_duration_seconds"] = 1.05
+    _reseal(path, payload)
+    with pytest.raises(ValueError, match="window boundaries"):
+        _load(path)
+
+
+@pytest.mark.parametrize("pcm,valid", [(30.05, True), (29.95, False)])
+def test_reviewed_nonspeech_indices_use_sealed_pcm_windows(
+    tmp_path, monkeypatch, pcm, valid
+):
+    raw = copy.deepcopy(VIDEO.meta.resolved)
+    raw["datasets"].update(nonspeech_unit_type="asr_window", required_nonspeech_units=1)
+    protocol = protocol_from_mapping(raw)
+    items = []
+    for index in range(2):
+        source = tmp_path / f"video-{index}.wav"
+        _wav(source, 30 + index * 0.001)
+        items.append(
+            {
+                **_item(str(index), 30),
+                "source_path": str(source),
+                "asset_sha256": sha256_file(source),
+                "reference_transcript": "",
+                "reference_segments": [],
+                "reference_visual_text": [],
+                "visual_occurrences": [],
+                "nonspeech_window_indices": [1],
+            }
+        )
+    monkeypatch.setattr(
+        validation, "load_manifest", lambda _: SimpleNamespace(samples=items)
+    )
+    monkeypatch.setattr(validation, "media_duration", lambda _: 30)
+    monkeypatch.setattr(
+        validation,
+        "_media_metadata",
+        lambda *_args: {"canonical_duration_seconds": pcm},
+    )
+    if valid:
+        report = validation.validate(tmp_path / "manifest.json", "smoke", protocol)
+        assert report["samples"]["0"]["scheduled_window_count"] == 2
+    else:
+        with pytest.raises(ValueError, match="actual unique ASR windows"):
+            validation.validate(tmp_path / "manifest.json", "smoke", protocol)
 
 
 def test_decode_failure_is_not_three_failed_requests(environment):
@@ -1000,6 +1119,9 @@ def test_validation_rejects_missing_annotations_and_unreviewable_nonspeech(
         validation, "load_manifest", lambda *_: SimpleNamespace(samples=items)
     )
     monkeypatch.setattr(validation, "media_duration", lambda *_: 1.0)
+    monkeypatch.setattr(
+        validation, "_media_metadata", lambda *_: {"canonical_duration_seconds": 1.0}
+    )
     with pytest.raises(ValueError, match=match):
         validation.validate(tmp_path / "manifest", "smoke", protocol)
 

@@ -8,14 +8,17 @@ from collections.abc import Mapping
 from dataclasses import asdict
 from pathlib import Path
 
-from edumind.common.artifacts import stable_hash
+from edumind.common.artifacts import atomic_write_json, stable_hash
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.arguments import (
     LIFECYCLE_PROFILES,
     default_decision_path,
     execution_devices,
 )
-from experiments.benchmarks.common.contracts import BenchmarkPlan
+from experiments.benchmarks.common.contracts import (
+    BenchmarkPlan,
+    CandidateExecutionError,
+)
 from experiments.benchmarks.common.datasets import load_manifest, require_manifest_split
 from experiments.benchmarks.common.decisions import load_engineer_decision
 from experiments.benchmarks.common.preflight import (
@@ -45,6 +48,10 @@ from experiments.benchmarks.rag.retrieval_reranking.benchmark import (
 )
 from experiments.benchmarks.rag.retrieval_reranking.comparisons import (
     parent_artifact_builder,
+)
+from experiments.benchmarks.rag.retrieval_reranking.inventory import (
+    ARTIFACT,
+    inventory_reference,
 )
 from experiments.benchmarks.rag.retrieval_reranking.metrics import (
     directions_for,
@@ -85,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
 
     protocol = load_protocol(arguments.protocol)
     chunking_protocol = load_chunking_protocol(arguments.chunking_protocol)
+    protocol.validate_composition(chunking_protocol)
     execution_name = (
         "development" if arguments.profile == "preflight" else arguments.profile
     )
@@ -109,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
         "development" if arguments.profile == "preflight" else arguments.profile
     )
     require_manifest_split(manifest, manifest_profile, _split(manifest_profile))
-    verify_inputs(
+    data_report_path, _ = verify_inputs(
         manifest_path, manifest_profile, protocol, chunking_protocol=chunking_protocol
     )
     declared = owner_first(development_candidates())
@@ -268,6 +276,7 @@ def main(argv: list[str] | None = None) -> int:
                 qualification=qualification,
                 compare_finalists=arguments.compare_finalists,
                 no_mlflow=arguments.no_mlflow,
+                data_report_path=data_report_path,
             )
         )
     print(
@@ -307,6 +316,7 @@ def _run_evaluation(
     qualification,
     compare_finalists,
     no_mlflow,
+    data_report_path=None,
 ):
     plan = _plan(
         protocol,
@@ -343,11 +353,20 @@ def _run_evaluation(
     directions, required_metrics = directions_for(manifest, protocol)
     pool_collections: dict[str, dict[str, object]] = {}
     index_dependencies: dict[str, dict[str, object]] = {}
+    shared_inventory = {}
+    attempted_owners = set()
 
     def store_pool_collection(
         owner: str, evaluated, owner_child_run_id: str | None
     ) -> None:
-        artifacts = dict(evaluated[5])
+        artifacts = evaluated[5]
+        inventory = artifacts.pop("chunk_inventory", None)
+        if inventory is not None:
+            if shared_inventory and shared_inventory["sha256"] != inventory["sha256"]:
+                raise ValueError(
+                    "Candidates produced different canonical chunk inventories"
+                )
+            shared_inventory.update(inventory)
         rows = artifacts.get("pool_collection")
         index_build = artifacts.get("index_build")
         if not isinstance(rows, list) or not isinstance(index_build, Mapping):
@@ -374,6 +393,14 @@ def _run_evaluation(
             **index_identity,
             "rows": rows,
             "index_build": dict(index_build),
+            "chunk_inventory": inventory_reference(shared_inventory)
+            if shared_inventory
+            else None,
+            "usable": index_build.get("status") == "complete"
+            and dict(evaluated[5])
+            .get("validation_report", {})
+            .get("execution_accounting", {})
+            .get("integrity_complete", False),
             "preparation_mode": "owner-child"
             if owner_child_run_id is not None
             else "input-artifact",
@@ -391,10 +418,17 @@ def _run_evaluation(
 
     def evaluate(candidate_name: str, context: Mapping[str, object]):
         parsed = parse_candidate(candidate_name)
+        if parsed.reranker == "none":
+            attempted_owners.add(candidate_name)
         if (
             parsed.reranker != "none"
             and parsed.owner_identifier not in pool_collections
         ):
+            if parsed.owner_identifier in attempted_owners:
+                raise CandidateExecutionError(
+                    "Required pool owner failed without a usable collection; dependent execution blocked"
+                )
+            attempted_owners.add(parsed.owner_identifier)
             owner_result = run_in_fresh_process(
                 parsed.owner_identifier,
                 manifest,
@@ -412,22 +446,52 @@ def _run_evaluation(
                 owner_result,
                 None,
             )
-        evaluated = run_in_fresh_process(
-            candidate_name,
-            manifest,
-            model_lock,
-            plan,
-            device=device,
-            dtype=dtype,
-            frozen_pool_collection=pool_collections.get(parsed.owner_identifier),
-            child_run_id=str(context["mlflow_run_id"]),
-            index_dependencies=index_dependencies,
-        )
+        try:
+            evaluated = run_in_fresh_process(
+                candidate_name,
+                manifest,
+                model_lock,
+                plan,
+                device=device,
+                dtype=dtype,
+                frozen_pool_collection=pool_collections.get(parsed.owner_identifier),
+                child_run_id=str(context["mlflow_run_id"]),
+                index_dependencies=index_dependencies,
+            )
+        except CandidateExecutionError as exc:
+            if parsed.reranker == "none" and "pool_collection" in exc.artifacts:
+                store_pool_collection(
+                    candidate_name,
+                    (
+                        exc.samples,
+                        exc.operational,
+                        exc.metrics,
+                        exc.parameters,
+                        exc.intervals,
+                        exc.artifacts,
+                    ),
+                    str(context["mlflow_run_id"]),
+                )
+            raise
         if parsed.reranker == "none":
             store_pool_collection(
                 candidate_name, evaluated, str(context["mlflow_run_id"])
             )
         return evaluated
+
+    comparisons = parent_artifact_builder(
+        pool_collections,
+        directions,
+        compare_finalists=compare_finalists,
+    )
+
+    def parent_artifacts(directory, results, plan):
+        paths = list(comparisons(directory, results, plan))
+        if shared_inventory:
+            path = directory / ARTIFACT
+            atomic_write_json(path, shared_inventory)
+            paths.append(path)
+        return paths
 
     decision_files = {
         name: path
@@ -452,7 +516,8 @@ def _run_evaluation(
         decision_files=decision_files or None,
         input_artifacts={
             "manifest": manifest_path,
-            "data_validation_report": verify_inputs(
+            "data_validation_report": data_report_path
+            or verify_inputs(
                 manifest_path, profile, protocol, chunking_protocol=chunking_protocol
             )[0],
             "model_lock": model_lock_path,
@@ -481,11 +546,7 @@ def _run_evaluation(
         run_name_prefix=(f"smoke-{device}" if profile == "smoke" else profile),
         shuffle_candidates=False,
         evaluator_receives_context=True,
-        parent_artifact_builder=parent_artifact_builder(
-            pool_collections,
-            directions,
-            compare_finalists=compare_finalists,
-        ),
+        parent_artifact_builder=parent_artifacts,
         operational_maximums=(
             {"peak_vram_mb": protocol.authoritative_peak_vram_mb}
             if profile != "smoke"
@@ -509,6 +570,7 @@ def _plan(
     repetitions=None,
     bootstrap_resamples=None,
 ):
+    protocol.validate_composition(chunking_protocol)
     execution = protocol.profile(profile)
     return BenchmarkPlan(
         "rag",
@@ -610,6 +672,7 @@ def _qualification_identity(
     manifest,
     stress,
 ):
+    batch_size = protocol.validate_composition(chunking_protocol)
     execution = protocol.profile("development")
     return current_qualification_fingerprint(
         benchmark="retrieval-reranking",
@@ -622,7 +685,9 @@ def _qualification_identity(
         execution={
             "device": execution.device,
             "dtype": execution.dtype,
-            "batch_size": execution.batch_size,
+            "batch_size": batch_size,
+            "embedding_batch_size": batch_size,
+            "reranker_batch_size": protocol.reranker_batch_size,
             "vram_limit_mb": protocol.authoritative_peak_vram_mb,
             "chunker_embedding": selected_pair,
             "preflight": asdict(protocol.preflight),

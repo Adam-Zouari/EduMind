@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from hashlib import sha256
 
 import numpy as np
 
@@ -20,6 +22,42 @@ class Corpus:
     query_indices: np.ndarray
     metadata: tuple[Mapping[str, str], ...]
     fingerprint: str
+    identifiers: tuple[str, ...] = ()
+    texts: tuple[str, ...] = ()
+    query_ids: tuple[str, ...] = ()
+    source_groups: tuple[str, ...] = ()
+    provenance: Mapping[str, object] | None = None
+
+    @property
+    def ids(self):
+        return self.identifiers or tuple(
+            str(index) for index in range(len(self.vectors))
+        )
+
+    @property
+    def content_checksum(self):
+        return stable_hash(
+            {
+                "vectors": _array_identity(self.vectors),
+                "queries": _array_identity(self.queries),
+                "query_indices": _array_identity(self.query_indices),
+                "ids": self.ids,
+                "texts": self.texts,
+                "metadata": self.metadata,
+                "query_ids": self.query_ids,
+                "source_groups": self.source_groups,
+                "provenance": self.provenance,
+            }
+        )
+
+
+def _array_identity(value):
+    array = np.ascontiguousarray(value)
+    return {
+        "shape": array.shape,
+        "dtype": array.dtype.str,
+        "sha256": sha256(array.tobytes()).hexdigest(),
+    }
 
 
 def clustered(
@@ -89,7 +127,12 @@ def clustered(
 
 def records(corpus: Corpus) -> list[Record]:
     return [
-        Record(str(index), vector, f"benchmark record {index}", corpus.metadata[index])
+        Record(
+            corpus.ids[index],
+            vector,
+            corpus.texts[index] if corpus.texts else f"benchmark record {index}",
+            corpus.metadata[index],
+        )
         for index, vector in enumerate(corpus.vectors)
     ]
 
@@ -115,26 +158,113 @@ def exact_ids(
                 index
                 for index in indices
                 if all(
-                    corpus.metadata[int(index)].get(key) == str(value)
+                    corpus.metadata[int(index)].get(key) == value
                     for key, value in filters.items()
                 )
             ]
         )
     if not len(indices):
         return []
-    scores = corpus.vectors[indices] @ query
+    scores = cosine_scores(corpus.vectors[indices], query)
     count = min(limit, len(indices))
     boundary = np.partition(scores, len(scores) - count)[len(scores) - count]
     local = np.flatnonzero(scores >= boundary)
     local = local[np.lexsort((indices[local], -scores[local]))][:count]
     order = indices[local]
-    return [str(value) for value in order]
+    return [corpus.ids[int(value)] for value in order]
 
 
-def recall(hits: Sequence[Hit], expected: Sequence[str], limit: int) -> float:
+def recall(hits: Sequence[Hit], expected: Sequence[str], limit: int) -> float | None:
     expected_set = set(expected[:limit])
     if not expected_set:
-        return float(not hits)
+        return None
     return len({hit.identifier for hit in hits[:limit]} & expected_set) / len(
         expected_set
     )
+
+
+def cosine_scores(vectors, query):
+    """Canonical float64 cosine evaluator; backend rounded scores are not an oracle."""
+    vectors = np.asarray(vectors, dtype=np.float64)
+    query = np.asarray(query, dtype=np.float64)
+    norms = np.linalg.norm(vectors, axis=1) * np.linalg.norm(query)
+    if (
+        not np.isfinite(vectors).all()
+        or not np.isfinite(query).all()
+        or np.any(norms <= 0)
+    ):
+        raise ValueError("Exact-distance inputs must be finite and nonzero")
+    return (vectors @ query) / norms
+
+
+def validate_hits(hits, trusted, limit, filters=None):
+    """Execution validity and filter correctness are deliberately separate."""
+    if not isinstance(hits, (list, tuple)) or len(hits) > limit:
+        raise ValueError("Malformed search response or excess hits")
+    seen = set()
+    for hit in hits:
+        if (
+            not isinstance(hit, Hit)
+            or hit.identifier not in trusted
+            or hit.identifier in seen
+        ):
+            raise ValueError("Search contains duplicate/unknown IDs or malformed hits")
+        if (
+            isinstance(hit.score, bool)
+            or not isinstance(hit.score, (int, float, np.number))
+            or not math.isfinite(hit.score)
+        ):
+            raise ValueError("Search requires finite scores")
+        seen.add(hit.identifier)
+    return bool(filters) and any(
+        any(trusted[hit.identifier].get(key) != value for key, value in filters.items())
+        for hit in hits
+    )
+
+
+def tie_reference(corpus, query, limit=20, filters=None):
+    indices = [
+        i
+        for i, row in enumerate(corpus.metadata)
+        if all(row.get(key) == value for key, value in (filters or {}).items())
+    ]
+    count = min(limit, len(indices))
+    if not count:
+        return {
+            "effective_count": 0,
+            "cutoff_distance": None,
+            "strict_ids": [],
+            "boundary_ids": [],
+            "boundary_slots": 0,
+            "tolerance": 0.0,
+        }
+    distances = 1.0 - cosine_scores(corpus.vectors[indices], query)
+    cutoff = float(np.partition(distances, count - 1)[count - 1])
+    strict = [corpus.ids[indices[i]] for i in np.flatnonzero(distances < cutoff)]
+    boundary = [corpus.ids[indices[i]] for i in np.flatnonzero(distances == cutoff)]
+    return {
+        "effective_count": count,
+        "cutoff_distance": cutoff,
+        "strict_ids": strict,
+        "boundary_ids": boundary,
+        "boundary_slots": count - len(strict),
+        "tolerance": 0.0,
+    }
+
+
+def tie_recall(hits, reference, limit=20):
+    count = reference["effective_count"]
+    if not count:
+        return {"value": None, "status": "inapplicable", **reference}
+    returned = {hit.identifier for hit in hits[:limit]}
+    strict = len(returned & set(reference["strict_ids"]))
+    boundary = min(
+        reference["boundary_slots"], len(returned & set(reference["boundary_ids"]))
+    )
+    return {
+        **reference,
+        "strict_credit": strict,
+        "boundary_credit": boundary,
+        "value": (strict + boundary) / count,
+        "status": "scored",
+    }

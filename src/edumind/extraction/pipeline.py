@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 
+from edumind.common.artifacts import stable_hash
 from edumind.common.config import Settings, load_settings
 from edumind.common.gpu import release_runtime_memory
 from edumind.common.models import load_model_lock, require_model
@@ -149,34 +150,34 @@ class ExtractionPipeline:
             resolved_profile = (
                 profile or request.profile or DEFAULT_PROFILE_BY_KIND[kind]
             )
+            resolved_profile = replace(
+                resolved_profile,
+                options={**resolved_profile.options, **request.options},
+            )
             resolved_profile, prepared_options = self._prepare_profile(resolved_profile)
             request = replace(
                 request,
                 source_kind=kind,
                 mime_type=resolved_mime,
                 profile=resolved_profile,
-                options={
-                    **prepared_options,
-                    **resolved_profile.options,
-                    **request.options,
-                },
+                options=_resolved_options(resolved_profile.options, prepared_options),
             )
         else:
             path = Path(source)
             kind, resolved_mime = classify_source(path, mime_type)
             kind = source_kind or kind
             resolved_profile = profile or DEFAULT_PROFILE_BY_KIND[kind]
+            resolved_profile = replace(
+                resolved_profile,
+                options={**resolved_profile.options, **dict(options or {})},
+            )
             resolved_profile, prepared_options = self._prepare_profile(resolved_profile)
             request = ExtractionRequest.from_path(
                 path,
                 mime_type=resolved_mime,
                 source_kind=kind,
                 profile=resolved_profile,
-                options={
-                    **prepared_options,
-                    **resolved_profile.options,
-                    **dict(options or {}),
-                },
+                options=_resolved_options(resolved_profile.options, prepared_options),
             )
         should_cache = (
             self.settings.extraction.cache_enabled if use_cache is None else use_cache
@@ -191,7 +192,18 @@ class ExtractionPipeline:
         document = normalize_document(
             extractor.extract(request, kind), resolved_request_profile.normalization
         )
-        document = replace(document, extraction_seconds=time.perf_counter() - started)
+        document = replace(
+            document,
+            extraction_seconds=time.perf_counter() - started,
+            metadata={
+                **document.metadata,
+                "model_bundles": {
+                    key: value
+                    for key, value in request.options.items()
+                    if key.endswith(("model_bundle", "model_bundle_identity"))
+                },
+            },
+        )
         if should_cache:
             self.cache.put(request, document)
         return document
@@ -229,7 +241,11 @@ class ExtractionPipeline:
             )
         lock_path = self.settings.models.lock_path
         if not lock_path.is_file():
-            if profile.engine_revision == "from-lock":
+            if (
+                profile.engine_revision == "from-lock"
+                or profile.engine in LOCK_CANDIDATE_BY_ENGINE
+                or profile.engine.startswith("video-")
+            ):
                 raise RuntimeError(
                     f"Missing extraction model lock {lock_path}; run `python "
                     "-m experiments.benchmarks.prepare app-models`"
@@ -237,10 +253,6 @@ class ExtractionPipeline:
             return profile, {}
         models = load_model_lock(lock_path)
         if profile.engine.startswith("video-"):
-            if profile.options.get("audio_model_path") and profile.options.get(
-                "image_model_path"
-            ):
-                return profile, {}
             audio_engine = str(
                 profile.options.get("audio_candidate", "whisper-small-en-control")
             )
@@ -274,7 +286,23 @@ class ExtractionPipeline:
 
 def _lock_options(entry: Mapping[str, object]) -> dict[str, object]:
     return {
-        str(key): value
-        for key, value in entry.items()
-        if str(key).endswith("_path") or str(key).endswith("_dir")
+        "model_bundle_identity": stable_hash(entry),
+        "model_bundle": dict(entry),
+        **{
+            str(key): value
+            for key, value in entry.items()
+            if str(key).endswith(("_path", "_dir")) or key == "system_components"
+        },
     }
+
+
+def _resolved_options(
+    supplied: Mapping[str, object], prepared: Mapping[str, object]
+) -> dict[str, object]:
+    for key, value in prepared.items():
+        if key in supplied and supplied[key] != value:
+            raise RuntimeError(
+                f"Extraction option {key} disagrees with the verified model lock; "
+                "prepare the requested bundle before extraction."
+            )
+    return {**supplied, **prepared}

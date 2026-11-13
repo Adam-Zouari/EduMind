@@ -256,12 +256,20 @@ def test_rag_and_vector_behavior_comes_from_protocol(tmp_path) -> None:
 
     final_root = deepcopy(load_final_protocol().meta.resolved)
     final_root["selection"]["top_k"] = [2, 4]
-    final = load_final_protocol(_write_protocol(tmp_path, "final-behavior", final_root))
-    assert final.top_k == (2, 4)
+    with pytest.raises(ValueError, match="one frozen top-K"):
+        load_final_protocol(_write_protocol(tmp_path, "final-behavior", final_root))
 
     vector_root = deepcopy(load_vector_protocol().meta.resolved)
     vector_root["workloads"]["smoke"][0]["size"] = 321
-    vector_root["workloads"]["development"][1]["concurrency"] = [1, 4]
+    vector_root["workloads"]["development"] = [
+        {
+            "name": "reviewed-condition",
+            "size": 321,
+            "dimension": 768,
+            "queries": 5,
+            "concurrency": [1, 4],
+        }
+    ]
     vector_root["adapters"]["upsert_batch_sizes"]["chroma"] = 17
     vector_root["adapters"]["qdrant_indexing_threshold"] = 2
     vector_root["statistics"]["confidence_level"] = 0.9
@@ -269,17 +277,12 @@ def test_rag_and_vector_behavior_comes_from_protocol(tmp_path) -> None:
         _write_protocol(tmp_path, "vector-behavior", vector_root)
     )
     assert vector.workloads["smoke"][0]["size"] == 321
-    assert vector.concurrency_levels("development", "development-100k-d1024") == (
-        1,
-        4,
-    )
-    assert vector.concurrency_levels("development") == (1, 4, 8, 32)
+    assert vector.workloads["development"][0]["concurrency"] == [1, 4]
     assert vector.upsert_batch_sizes["chroma"] == 17
     assert vector.qdrant_indexing_threshold == 2
     assert vector.confidence_level == 0.9
-    assert vector.meta.resolved["hnsw"]["tie_breaking"] == (
-        "latency-then-m-then-ef-search-then-ef-construction"
-    )
+    assert "hnsw" not in vector.meta.resolved
+    assert vector.profile("locked").repetitions == 3
     assert _protocol_confidence_level({"vector_database": vector.meta}) == 0.9
 
 
@@ -292,8 +295,9 @@ def test_generation_modes_and_final_profiles_are_explicit() -> None:
     assert "development_screen" not in generation.meta.resolved
     assert "maximum_answer_tokens" not in generation.meta.resolved["generation"]
     final = load_final_protocol()
-    assert final.profile("development") == final.meta.profile("development")
-    assert final.profile("validation") == final.meta.profile("validation")
+    for retired in ("development", "validation"):
+        with pytest.raises(ValueError, match="no profile"):
+            final.profile(retired)
     assert final.profile("locked") == final.meta.profile("locked")
     with pytest.raises(ValueError, match="no profile 'standard'"):
         final.profile("standard")

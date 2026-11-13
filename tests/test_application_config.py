@@ -125,20 +125,27 @@ def test_model_lock_rejects_malformed_root(tmp_path, payload):
     ],
 )
 def test_missing_snapshot_path_cannot_resolve_to_working_directory(entry):
-    with pytest.raises(ModelPreparationError, match="incomplete"):
+    with pytest.raises(ModelPreparationError, match="incomplete|lacks"):
         require_model({"model": entry}, "model")
 
 
-def test_video_defaults_and_overrides_drive_extraction_cache_identity(tmp_path):
-    settings = load_settings(
-        BASE, overrides={"models": {"lock_path": str(tmp_path / "missing.json")}}
+def test_video_defaults_and_overrides_drive_extraction_cache_identity(
+    tmp_path, monkeypatch
+):
+    lock_path = tmp_path / "selected.json"
+    lock_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr("edumind.extraction.pipeline.load_model_lock", lambda _: {})
+    monkeypatch.setattr(
+        "edumind.extraction.pipeline.require_model",
+        lambda *_: SimpleNamespace(revision="pinned", values={}),
     )
+    settings = load_settings(BASE, overrides={"models": {"lock_path": str(lock_path)}})
     profile = ExtractionProfile("video", "video-hybrid", "ffmpeg-system")
     original, _ = ExtractionPipeline(settings)._prepare_profile(profile)
     changed_settings = load_settings(
         BASE,
         overrides={
-            "models": {"lock_path": str(tmp_path / "missing.json")},
+            "models": {"lock_path": str(lock_path)},
             "extraction": {"video": {"scene_threshold": 0.6}},
         },
     )

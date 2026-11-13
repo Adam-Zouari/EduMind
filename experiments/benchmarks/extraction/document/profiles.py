@@ -60,7 +60,10 @@ def parse_document_profile(candidate: str) -> DocumentProfile:
 
 def lock_paths(entry: Mapping[str, object]) -> dict[str, object]:
     return {
-        str(key): value
-        for key, value in entry.items()
-        if str(key).endswith("_path") or str(key).endswith("_dir")
+        "system_components": entry.get("system_components", {}),
+        **{
+            str(key): value
+            for key, value in entry.items()
+            if str(key).endswith("_path") or str(key).endswith("_dir")
+        },
     }

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import math
+import re
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +16,7 @@ from ..contracts import (
     ExtractedDocument,
     ExtractionRequest,
     ExtractionWarning,
+    SegmentKind,
     SourceKind,
 )
 from ..errors import ExtractionBackendError, MissingDependencyError
@@ -24,6 +27,8 @@ from .base import build_document
 class WhisperTranscript:
     text: str
     segments: tuple[Mapping[str, object], ...]
+    warnings: tuple[ExtractionWarning, ...] = ()
+    native_segments: tuple[Mapping[str, object], ...] = ()
 
 
 class WhisperExtractor:
@@ -35,7 +40,7 @@ class WhisperExtractor:
     def __init__(self, revision: str) -> None:
         self.revision = revision
         self._runtime: Any | None = None
-        self._runtime_key: tuple[Path, str] | None = None
+        self._runtime_key: tuple[Path, str, object] | None = None
 
     def extract(
         self, request: ExtractionRequest, kind: SourceKind
@@ -44,18 +49,23 @@ class WhisperExtractor:
             raise ValueError("Resolved extraction profile is required")
         started = time.perf_counter()
         try:
-            texts, timestamps = self._transcribe(request)
+            transcript = self._transcribe(request)
         except MissingDependencyError:
             raise
         except Exception as exc:
             raise ExtractionBackendError(
                 f"Audio extraction failed with {self.name}", detail=str(exc)
             ) from exc
-        return build_document(
+        texts = [str(segment["text"]) for segment in transcript.segments]
+        timestamps = [
+            (_optional_float(segment["start"]), _optional_float(segment["end"]))
+            for segment in transcript.segments
+        ]
+        document = build_document(
             request,
             kind,
             request.profile,
-            texts,
+            texts or ([transcript.text] if transcript.text else []),
             timestamps=timestamps,
             separators=" ",
             metadata={
@@ -63,8 +73,11 @@ class WhisperExtractor:
                 "model": self.model,
                 "engine_revision": request.profile.engine_revision,
                 "alignment_execution": "native",
+                "native_transcript": transcript.text,
+                "native_segments": list(transcript.native_segments),
             },
-            warnings=(
+            warnings=list(transcript.warnings)
+            + (
                 [
                     ExtractionWarning(
                         "incomplete_timestamp",
@@ -77,29 +90,29 @@ class WhisperExtractor:
             ),
             seconds=time.perf_counter() - started,
         )
+        return replace(
+            document,
+            segments=tuple(
+                replace(segment, kind=SegmentKind.AUDIO)
+                for segment in document.segments
+            ),
+        )
 
-    def _transcribe(
-        self, request: ExtractionRequest
-    ) -> tuple[list[str], list[tuple[float | None, float | None]]]:
+    def _transcribe(self, request: ExtractionRequest) -> WhisperTranscript:
         profile = request.profile
         assert profile is not None
         model_path = model_directory(request)
-        key = (model_path.resolve(), profile.device)
+        key = (
+            model_path.resolve(),
+            profile.device,
+            request.options.get("model_bundle_identity"),
+        )
         if self._runtime_key != key or self._runtime is None:
             if self._runtime is not None:
                 self.unload()
             self._runtime, _ = load_whisper_runtime(model_path, profile.device)
             self._runtime_key = key
-        transcript = transcribe_whisper(self._runtime, request.source_path)
-        if transcript.segments:
-            return (
-                [str(segment["text"]) for segment in transcript.segments],
-                [
-                    (_optional_float(segment["start"]), _optional_float(segment["end"]))
-                    for segment in transcript.segments
-                ],
-            )
-        return [transcript.text], []
+        return transcribe_whisper(self._runtime, request.source_path)
 
     def unload(self) -> None:
         """Release ASR before the independent video visual stage begins."""
@@ -167,12 +180,21 @@ def transcribe_whisper(
         return_timestamps=return_timestamps,
         generate_kwargs={"do_sample": do_sample},
     )
-    payload = result if isinstance(result, Mapping) else {}
+    if not isinstance(result, Mapping) or not isinstance(result.get("text"), str):
+        raise ValueError("Whisper response must be an object with string text")
+    payload = result
+    text = payload["text"].strip()
     chunks = payload.get("chunks", [])
     segments: list[Mapping[str, object]] = []
+    warnings: list[ExtractionWarning] = []
     if isinstance(chunks, Sequence) and not isinstance(chunks, (str, bytes)):
-        for chunk in chunks:
-            if not isinstance(chunk, Mapping):
+        for index, chunk in enumerate(chunks):
+            if not isinstance(chunk, Mapping) or not isinstance(chunk.get("text"), str):
+                warnings.append(
+                    ExtractionWarning(
+                        "malformed_chunk", f"Whisper chunk {index} lacked string text"
+                    )
+                )
                 continue
             stamp = chunk.get("timestamp")
             start: float | None = None
@@ -182,16 +204,58 @@ def transcribe_whisper(
                 and not isinstance(stamp, (str, bytes))
                 and len(stamp) == 2
             ):
-                start = _optional_float(stamp[0])
-                end = _optional_float(stamp[1])
+                try:
+                    start = _optional_float(stamp[0])
+                    end = _optional_float(stamp[1])
+                    if any(
+                        value is not None and (not math.isfinite(value) or value < 0)
+                        for value in (start, end)
+                    ) or (start is not None and end is not None and end < start):
+                        raise ValueError("Invalid timestamp range")
+                except (ValueError, TypeError, OverflowError):
+                    warnings.append(
+                        ExtractionWarning(
+                            "malformed_timestamp",
+                            f"Whisper chunk {index} had invalid boundaries; retained as untimed text",
+                        )
+                    )
+                    start, end = None, None
+            elif stamp is not None:
+                warnings.append(
+                    ExtractionWarning(
+                        "malformed_timestamp",
+                        f"Whisper chunk {index} had malformed boundaries; retained as untimed text",
+                    )
+                )
             segments.append(
                 {
-                    "text": str(chunk.get("text", "")).strip(),
+                    "text": chunk["text"].strip(),
                     "start": start,
                     "end": end,
                 }
             )
-    return WhisperTranscript(str(payload.get("text", "")).strip(), tuple(segments))
+    else:
+        warnings.append(
+            ExtractionWarning(
+                "malformed_chunks",
+                "Whisper chunks were not a sequence; retained native transcript without timestamps",
+            )
+        )
+    native_segments = tuple(segments)
+    lexical = lambda value: re.findall(r"\w+", value.casefold())
+    chunk_text = " ".join(str(segment["text"]) for segment in segments)
+    if lexical(text) != lexical(chunk_text):
+        warnings.append(
+            ExtractionWarning(
+                "transcript_chunk_mismatch",
+                "Whisper chunk text did not cover the native transcript; retained the complete native transcript without inferred timing",
+            )
+        )
+        # Keep both conflicting representations; never silently replace either one.
+        segments = [{"text": text, "start": None, "end": None}] if text else []
+    elif text and not segments:
+        segments = [{"text": text, "start": None, "end": None}]
+    return WhisperTranscript(text, tuple(segments), tuple(warnings), native_segments)
 
 
 def _assert_whisper_device(model: object, expected: str) -> None:
@@ -206,4 +270,8 @@ def _assert_whisper_device(model: object, expected: str) -> None:
 
 
 def _optional_float(value: object) -> float | None:
+    if value is not None and (
+        isinstance(value, bool) or not isinstance(value, (int, float))
+    ):
+        raise ValueError("Whisper boundaries must be numbers or null")
     return None if value is None else float(value)

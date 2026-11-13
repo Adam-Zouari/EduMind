@@ -65,6 +65,9 @@ def run_video_preflight(
             "canonical_sha256": validation["metadata"]["samples"][str(item["id"])][
                 "canonical_sha256"
             ],
+            "canonical_duration_seconds": validation["metadata"]["samples"][
+                str(item["id"])
+            ]["canonical_duration_seconds"],
         }
         for item in stress
     ]

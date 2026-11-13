@@ -1,8 +1,7 @@
-"""Generation execution and offline evaluation; no retrieval or live judge API.
+"""Fixed-context execution and offline scoring with explicit integration hooks.
 
-The old evaluate_candidate keyword interface is retained. Retrieved-context
-integration must migrate explicitly and fails closed instead of using lexical
-or HHEM scores. Raw generation finishes before any semantic judging begins.
+Final owns live retrieval and its lifecycle; it reuses scoring hooks rather than
+the standalone fixed-context entrypoint. Generation ends before semantic judging.
 """
 
 import json
@@ -13,7 +12,7 @@ from dataclasses import asdict
 from pathlib import Path
 from uuid import uuid4
 
-from edumind.common.artifacts import atomic_write_json, sha256_file
+from edumind.common.artifacts import atomic_write_json, sha256_file, stable_hash
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.contracts import (
     BenchmarkPlan,
@@ -21,11 +20,25 @@ from experiments.benchmarks.common.contracts import (
     SampleResult,
 )
 from experiments.benchmarks.common.process import (
+    WorkerExecutionError,
+    WorkerMeasurementError,
     benchmark_objects_from_payload,
     run_json_worker,
 )
 from experiments.benchmarks.common.resources import ResourceMonitor
 
+from .errors import (
+    GenerationInfrastructureError,
+    GenerationInputError,
+    failure_evidence,
+)
+from .evidence import (
+    retain_schedule,
+    seal_execution,
+    validate_execution_context,
+    validate_schedule,
+    write_new_json,
+)
 from .judge import load_judge_contract
 from .metrics import (
     BASE_KEYS,
@@ -207,6 +220,14 @@ def execute_generation(
         "placement_after": None,
         "operational": {},
     }
+    result["schedule"] = retain_schedule(
+        candidate, manifest, model_lock, plan, protocol, questions
+    )
+    result["schedule_checksum"] = stable_hash(result["schedule"])
+    if evidence_directory is not None:
+        write_new_json(
+            Path(evidence_directory) / "generation_schedule.json", result["schedule"]
+        )
     backend = monitor = None
 
     def checkpoint():
@@ -249,7 +270,7 @@ def execute_generation(
         ]
         checkpoint()
         if result["input_compatibility"]["status"] != "passed":
-            raise ValueError(
+            raise GenerationInputError(
                 "input_context_overflow: complete native prompt leaves no output capacity"
             )
         if not preflight and plan.profile != "smoke":
@@ -271,6 +292,7 @@ def execute_generation(
                 raise ValueError(
                     "preflight_input_envelope_exceeded: select a longer reviewed development stress input and requalify"
                 )
+        result["phase"] = "monitoring"
         monitor = (
             monitor_factory(
                 interval_seconds=protocol.preflight.telemetry_interval_seconds,
@@ -354,6 +376,8 @@ def execute_generation(
                         result["in_flight"] = {"question_id": q["id"], "seed": seed}
                         checkpoint()
                         started = time.perf_counter()
+                        attempt_stage = "input_validation"
+                        attempt = None
                         try:
                             request = backend.prepare(q)
                             if request["prompt_tokens"] != next(
@@ -361,10 +385,11 @@ def execute_generation(
                                 for c in checks
                                 if c["question_id"] == q["id"]
                             ):
-                                raise ValueError(
+                                raise GenerationInputError(
                                     "Native prompt changed after compatibility verification"
                                 )
                             preparation_seconds = time.perf_counter() - started
+                            attempt_stage = "generation"
                             attempt = backend.infer(request, seed)
                             # Events use request-relative time; model TTFT stays
                             # relative to generation, not prompt preparation.
@@ -396,13 +421,43 @@ def execute_generation(
                                 set(response["citations"]) - {
                                     b["id"] for b in q["blocks"]
                                 }
-                        except Exception as exc:  # noqa: BLE001 - retain arbitrary backend failures
+                        except Exception as exc:
+                            failure = failure_evidence(exc, attempt_stage)
+                            infrastructure = isinstance(
+                                exc,
+                                (WorkerExecutionError, GenerationInfrastructureError),
+                            )
+                            input_error = (
+                                isinstance(exc, GenerationInputError)
+                                or attempt_stage == "input_validation"
+                            )
                             attempt = {
-                                **_empty_attempt(seed),
-                                "outcome": "runtime_error",
+                                **(attempt or _empty_attempt(seed)),
+                                "outcome": "infrastructure_error"
+                                if infrastructure
+                                else "input_rejected"
+                                if input_error
+                                else "runtime_error",
                                 "error": f"{type(exc).__name__}: {exc}",
-                                "finish_reason": "backend_exception",
+                                "failure": failure,
+                                "finish_reason": None
+                                if infrastructure or input_error
+                                else "backend_exception",
                             }
+                            if infrastructure or input_error:
+                                attempt["elapsed_seconds"] = (
+                                    time.perf_counter() - started
+                                )
+                                record["attempts"][index] = attempt
+                                result.update(
+                                    failure_stage="infrastructure"
+                                    if infrastructure
+                                    else "input_validation",
+                                    failure=failure,
+                                )
+                                result.pop("in_flight", None)
+                                checkpoint()
+                                raise
                         elapsed = time.perf_counter() - started
                         attempt = {
                             **attempt,
@@ -424,20 +479,32 @@ def execute_generation(
         result["phase"] = "finished"
     except Exception as exc:  # noqa: BLE001 - preserve lifecycle and placement evidence
         result["error"] = f"{type(exc).__name__}: {exc}"
+        result.setdefault(
+            "failure_stage",
+            getattr(
+                exc,
+                "failure_stage",
+                "monitoring"
+                if isinstance(exc, WorkerMeasurementError)
+                else result["phase"],
+            ),
+        )
+        result.setdefault("failure", failure_evidence(exc, result["failure_stage"]))
         if isinstance(exc, GenerationPlacementError):
             result.update(failure_class=exc.reason_code, placement=exc.report)
     finally:
         # Stop the generator monitor and release weights BEFORE offline judging.
         if monitor is not None:
-            result["resource_samples"] = monitor.samples()
-            result["vram_measurement_method"] = monitor.vram_measurement_method
-            result["gpu_identity"] = dict(getattr(monitor, "gpu_identity", {}))
             try:
+                result["resource_samples"] = monitor.samples()
+                result["vram_measurement_method"] = monitor.vram_measurement_method
+                result["gpu_identity"] = dict(getattr(monitor, "gpu_identity", {}))
                 resource = monitor.metrics()
                 result["resource_status"] = "observed"
-            except RuntimeError as exc:
+            except Exception as exc:  # noqa: BLE001 - late telemetry cannot erase outputs
                 resource = getattr(exc, "resource_evidence", {})
                 result["resource_error"] = str(exc)
+                result["resource_failure"] = failure_evidence(exc, "monitoring")
             result["operational"] = {
                 "peak_ram_mib": resource.get("peak_process_tree_ram_mb"),
                 "peak_vram_mib": resource.get("peak_vram_mb")
@@ -447,17 +514,62 @@ def execute_generation(
             if plan.settings["device"] == "cpu":
                 result["vram_measurement_method"] = "not-applicable"
         if backend is not None:
-            backend.close()
+            try:
+                backend.close()
+            except Exception as exc:  # noqa: BLE001 - retain completed outputs on cleanup failure
+                result["cleanup_failure"] = failure_evidence(exc, "cleanup")
+                if result["error"] is None:
+                    result.update(
+                        phase="cleanup",
+                        error=f"{type(exc).__name__}: {exc}",
+                        failure_stage="cleanup",
+                    )
+        if result["error"]:
+            for record in result["records"]:
+                for attempt in record["attempts"]:
+                    if attempt["outcome"] == "not_executed":
+                        attempt["error"] = "lifecycle_aborted: " + result["error"]
         checkpoint()
     return result
 
 
-def score_execution(raw, protocol, profile, *, judge=None):
-    """Offline rescoring of retained generator evidence; injectable/replay judge."""
+def score_execution(
+    raw,
+    protocol,
+    profile,
+    *,
+    judge=None,
+    record_validator=validate_schedule,
+    question_selector=None,
+    citation_identity=None,
+    attempt_scorer=score_attempt,
+    execution_predicate=None,
+    pair_failure_predicate=None,
+):
+    """Offline scoring, with explicit Final-owned schedule/stage integration.
+
+    Standalone always uses validate_schedule. Final supplies its own validator
+    returning the complete independently frozen record inventory, a selector
+    (record, attempt) -> live question, optional stable citation identities, and
+    a scorer (question, attempt, judgment) applying Final's stage eligibility.
+    None of these hooks invokes the standalone sufficient-gold validator.
+    """
+    scheduled_records = record_validator(raw, protocol, profile)
+    if (
+        record_validator is validate_schedule
+        and judge is not None
+        and protocol.judge_contract_path is not None
+        and judge.contract.get("contract_sha256")
+        != raw["schedule"]["evaluator"]["contract_sha256"]
+    ):
+        raise ValueError("Saved execution and semantic judge identity mismatch")
     records = []
-    for record in raw["records"]:
+    for record in scheduled_records:
         q, attempts = record["question"], []
         for attempt in record["attempts"]:
+            attempt_question = (
+                question_selector(record, attempt) if question_selector else q
+            )
             response, _ = (
                 parse_response(attempt.get("visible_text", ""))
                 if attempt["outcome"] == "completed"
@@ -466,18 +578,30 @@ def score_execution(raw, protocol, profile, *, judge=None):
             judgment = None
             if response is not None and q["answerable"] and judge is not None:
                 try:
-                    judgment = judge.response(q, response)
+                    judgment = judge.response(attempt_question, response)
                 except Exception as exc:  # noqa: BLE001 - evaluator failures are not model failures
                     judgment = {
                         "status": "unavailable",
                         "reason": f"{type(exc).__name__}: {exc}",
                     }
-            attempts.append(score_attempt(q, attempt, judgment))
+            scored_attempt = attempt_scorer(attempt_question, attempt, judgment)
+            if execution_predicate is not None:
+                scored_attempt["execution_accounted"] = bool(
+                    execution_predicate(record, attempt)
+                )
+            attempts.append(scored_attempt)
         records.append(
             {
+                **record,
                 "question": q,
                 "attempts": attempts,
-                "pairs": score_pairs(q, attempts, judge),
+                "pairs": score_pairs(
+                    q,
+                    attempts,
+                    judge,
+                    citation_identity=citation_identity,
+                    executed_failure=pair_failure_predicate,
+                ),
             }
         )
     execution = protocol.profile(profile)
@@ -501,6 +625,15 @@ def score_execution(raw, protocol, profile, *, judge=None):
         row["evidence_complete"] for key, row in summary.items() if key in BASE_KEYS
     )
     problems = []
+    execution_complete = all(
+        execution_predicate(r, a)
+        if execution_predicate
+        else a["outcome"] in {"completed", "runtime_error", "timeout", "context_limit"}
+        for r in records
+        for a in r["attempts"]
+    )
+    if not execution_complete:
+        problems.append("Required frozen question/seed execution incomplete")
     if not lifecycle_complete:
         problems.append(raw.get("error") or "Generator lifecycle incomplete")
     if raw.get("resource_status") != "observed":
@@ -517,7 +650,7 @@ def score_execution(raw, protocol, profile, *, judge=None):
             or value < 0
         ):
             problems.append(f"Required {field} telemetry unavailable")
-    instrumentation_issues = _instrumentation_issues(raw)
+    instrumentation_issues = _instrumentation_issues({"records": scheduled_records})
     if instrumentation_issues:
         problems.append("Required timing/token instrumentation incomplete")
     if profile != "smoke":
@@ -550,8 +683,7 @@ def score_execution(raw, protocol, profile, *, judge=None):
         )
     metrics = {
         key: None
-        if (key.startswith("quality.") or ".quality." in key)
-        and not value["evidence_complete"]
+        if not key.startswith("workload.") and not value["evidence_complete"]
         else value["value"]
         for key, value in summary.items()
         if not key.startswith("operational.")
@@ -568,6 +700,9 @@ def score_execution(raw, protocol, profile, *, judge=None):
         else "authoritative_contract",
         "result_status": "incomplete" if problems else "complete",
         "quality_complete": quality_complete,
+        "execution_complete": execution_complete,
+        "schedule_checksum": raw.get("schedule_checksum"),
+        "execution_id": raw.get("schedule", {}).get("execution_id"),
         "mode": raw["mode"],
         "model_id": raw["model_id"],
         "measured_seeds": list(protocol.measured_seeds[: execution.repetitions]),
@@ -592,6 +727,7 @@ def score_execution(raw, protocol, profile, *, judge=None):
                 "question_id": r["question"]["id"],
                 "seed": a["seed"],
                 "outcome": a["outcome"],
+                "failure": a.get("failure"),
                 "finish_reason": a.get("finish_reason"),
                 "elapsed_seconds": a.get("elapsed_seconds"),
                 **a.get("timing", {}),
@@ -697,6 +833,12 @@ def run_in_fresh_process(
                 raw.update(
                     phase="interrupted", error=str(exc), monitoring_complete=False
                 )
+                raw["failure_stage"] = (
+                    "monitoring"
+                    if isinstance(exc, WorkerMeasurementError)
+                    else "infrastructure"
+                )
+                raw["failure"] = failure_evidence(exc, raw["failure_stage"])
                 in_flight = raw.get("in_flight")
                 if in_flight:
                     for record in raw["records"]:
@@ -706,12 +848,24 @@ def run_in_fresh_process(
                                 and attempt["seed"] == in_flight["seed"]
                             ):
                                 attempt.update(
-                                    outcome="runtime_error",
+                                    outcome="infrastructure_error",
                                     error=str(exc),
-                                    finish_reason="worker_terminated",
+                                    finish_reason=None,
+                                    failure=raw["failure"],
                                 )
                 raw["_worker_supervision"] = getattr(exc, "resource_evidence", {})
                 raw = _merge_supervision(raw)
+                validate_execution_context(
+                    raw, candidate, manifest, model_lock, plan, protocol
+                )
+                atomic_write_json(checkpoint, raw)
+                if not preflight:
+                    _retain_execution(raw, evidence_directory)
+                    if judge is not None and hasattr(judge, "with_journal"):
+                        judge = judge.with_journal(
+                            evidence_directory / "judge-journal",
+                            _evaluation_identity(raw),
+                        )
                 exc.artifacts["generation_evidence"] = raw
                 exc.parameters["prediction_evidence"] = {
                     "path": str(checkpoint.resolve()),
@@ -737,6 +891,7 @@ def run_in_fresh_process(
                     }
         raise
     raw = _merge_supervision(raw)
+    validate_execution_context(raw, candidate, manifest, model_lock, plan, protocol)
     checkpoint = evidence_directory / "generation_progress.json"
     if checkpoint.is_file():
         raw["prediction_evidence"] = {
@@ -767,7 +922,29 @@ def run_in_fresh_process(
             "resolved_decoder": raw.get("resolved_decoder"),
             "prediction_evidence": raw.get("prediction_evidence"),
         }
+    _retain_execution(raw, evidence_directory)
+    if judge is not None and hasattr(judge, "with_journal"):
+        judge = judge.with_journal(
+            evidence_directory / "judge-journal", _evaluation_identity(raw)
+        )
     return score_execution(raw, protocol, plan.profile, judge=judge)
+
+
+def _evaluation_identity(raw):
+    return {
+        "execution_id": raw["schedule"]["execution_id"],
+        "schedule_checksum": raw["schedule_checksum"],
+        "prediction_identity": stable_hash(raw),
+    }
+
+
+def _retain_execution(raw, directory):
+    path = Path(directory) / "generation_schedule.json"
+    if not path.exists():
+        write_new_json(path, raw["schedule"])
+    elif json.loads(path.read_text(encoding="utf-8")) != raw["schedule"]:
+        raise ValueError("Worker returned a changed frozen schedule")
+    return seal_execution(raw, directory)
 
 
 def evaluate_candidate(
@@ -792,10 +969,10 @@ def evaluate_candidate(
     profile="smoke",
     qualified_input_envelope=None,
 ):
-    """Protocol-driven Python entrypoint; live retrieved-context composition is deferred."""
+    """Standalone fixed-evidence entrypoint; Final owns its live request lifecycle."""
     if final_index is not None or retrieval_method != "frozen" or top_k is not None:
         raise ValueError(
-            "Retrieved generation integration is deferred: migrate prompt schema, live input gate, timing and calibrated judge explicitly; no legacy semantic fallback"
+            "Standalone generation cannot accept a retrieval index: Final owns live prompt preparation, input checks, and timing through explicit scoring hooks"
         )
     if question_scope != "all":
         raise ValueError(

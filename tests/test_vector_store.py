@@ -145,6 +145,73 @@ def test_failed_document_replacement_restores_numpy_embeddings(monkeypatch) -> N
     assert restored[0]["ids"] == previous["ids"]
 
 
+@pytest.mark.parametrize("server_limit", [5461, 997])
+def test_late_batch_failure_restores_large_document_with_server_limits(server_limit):
+    from edumind.rag.types import ChunkRecord
+
+    count = 6000
+    vectors = np.arange(count * 2, dtype=float).reshape(count, 2)
+    previous = {
+        "ids": [f"old-{i}" for i in range(count)],
+        "documents": [f"old text {i}" for i in range(count)],
+        "metadatas": [{"source": "old", "position": i} for i in range(count)],
+        "embeddings": vectors,
+    }
+    data = {}
+    batches = []
+    failed = False
+
+    def upsert(**payload):
+        nonlocal failed
+        assert len(payload["ids"]) <= server_limit
+        batches.append(list(payload["ids"]))
+        if payload["ids"][0].startswith("new") and len(batches) == 2 and not failed:
+            failed = True
+            raise RuntimeError("later batch failed")
+        for i, identity in enumerate(payload["ids"]):
+            data[identity] = (
+                payload["documents"][i],
+                payload["metadatas"][i],
+                payload["embeddings"][i],
+            )
+
+    store = _store(SimpleNamespace(get_max_batch_size=lambda: server_limit))
+    store.collection = SimpleNamespace(
+        get=lambda **kw: previous, delete=lambda **kw: data.clear(), upsert=upsert
+    )
+    chunks = [
+        ChunkRecord(
+            f"new-{i}", "old", "new text", i, count, 0, 8, 2, embedding=[1.0, 0.0]
+        )
+        for i in range(count)
+    ]
+    with pytest.raises(RuntimeError, match="later batch failed"):
+        store.replace_document("old", chunks)
+    assert list(data) == previous["ids"]
+    assert [data[key][0] for key in data] == previous["documents"]
+    assert [data[key][1] for key in data] == previous["metadatas"]
+    np.testing.assert_array_equal(np.array([data[key][2] for key in data]), vectors)
+
+
+def test_replacement_and_restoration_errors_are_both_retained(monkeypatch):
+    original, restoration = RuntimeError("original write"), OSError("restore write")
+    store = _store(None)
+    store.collection = SimpleNamespace(
+        get=lambda **kw: {
+            "ids": ["old"],
+            "documents": ["text"],
+            "metadatas": [{}],
+            "embeddings": np.array([[1.0]]),
+        },
+        delete=lambda **kw: None,
+        upsert=lambda **kw: (_ for _ in ()).throw(restoration),
+    )
+    monkeypatch.setattr(store, "_upsert", lambda _: (_ for _ in ()).throw(original))
+    with pytest.raises(ExceptionGroup) as error:
+        store.replace_document("old", [])
+    assert error.value.exceptions == (original, restoration)
+
+
 def test_dot_product_collection_uses_chromas_inner_product_space() -> None:
     calls = []
     store = _store(

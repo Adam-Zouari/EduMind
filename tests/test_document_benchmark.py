@@ -150,11 +150,12 @@ def test_post_inference_failure_keeps_completed_first_quality(
     monkeypatch, worker_result
 ):
     worker_result["execution_error"] = {"phase": "placement_after", "error": "offload"}
+    worker_result["resource_measurement_scope"] = "complete_lifecycle"
     with pytest.raises(CandidateExecutionError) as failure:
         evaluate(monkeypatch, worker_result)
     assert failure.value.samples[0].metrics["text.content_f1"] == 1
     assert failure.value.samples[0].metrics["reliability.attempt_failure_rate"] == 0
-    assert failure.value.parameters["measurement.resource_scope"] == "partial"
+    assert failure.value.parameters["measurement.resource_scope"] == "complete"
 
 
 def test_document_prediction_is_saved_outside_worker_temporary_files(
@@ -172,6 +173,68 @@ def test_document_prediction_is_saved_outside_worker_temporary_files(
         saved["attempts"][0]["output_fingerprint"]
         == worker_result["attempts"][0]["output_fingerprint"]
     )
+
+
+def test_completed_worker_window_and_quality_survive_integrity_failure_in_mlflow(
+    monkeypatch, worker_result, tmp_path, request
+):
+    from experiments.benchmarks.common.runner import run_benchmark
+
+    mlflow = pytest.importorskip("mlflow")
+    previous = mlflow.get_tracking_uri()
+    request.addfinalizer(lambda: mlflow.set_tracking_uri(previous))
+    uri = "sqlite:///" + (tmp_path / "tracking.db").as_posix()
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
+    client = mlflow.tracking.MlflowClient(tracking_uri=uri)
+    client.create_experiment(
+        "EduMind / document-resource-repair",
+        artifact_location=(tmp_path / "mlruns").as_uri(),
+    )
+    worker_result.update(
+        execution_error={"phase": "placement_after", "error": "offload"},
+        monitoring_completed=True,
+        resource_measurement_scope="complete_lifecycle",
+    )
+    result = run_benchmark(
+        BenchmarkPlan(
+            "extraction",
+            "document-resource-repair",
+            "smoke",
+            "fixture",
+            ("parser",),
+            42,
+            1,
+            0,
+            1,
+        ),
+        lambda _candidate: evaluate(monkeypatch, worker_result),
+        dataset_checksum="test-fixture",
+        directions={"text.content_f1": "max"},
+        primary_metric="text.content_f1",
+        monitor_resources=False,
+        paired_comparisons=False,
+        artifact_root=tmp_path / "artifacts",
+    )
+    candidate = result.candidates[0]
+    saved = client.get_run(candidate.mlflow_run_id)
+    assert saved.info.status == "FAILED"
+    assert saved.data.metrics["text.content_f1"] == 1
+    assert saved.data.metrics["operational.peak_process_tree_ram_mb"] == 10
+    assert "operational.peak_vram_mb" not in saved.data.metrics
+    assert saved.data.params["measurement.resource_scope"] == "complete"
+    outputs = json.loads(
+        Path(
+            client.download_artifacts(candidate.mlflow_run_id, "outputs.json")
+        ).read_text(encoding="utf-8")
+    )
+    coverage = json.loads(
+        Path(
+            client.download_artifacts(candidate.mlflow_run_id, "resource_coverage.json")
+        ).read_text(encoding="utf-8")
+    )
+    assert outputs["attempts"][0]["document"]["text"] == "alpha"
+    assert coverage["monitoring_completed"] is True
+    assert coverage["resource_measurement_scope"] == "complete_lifecycle"
 
 
 def test_supervisor_telemetry_failure_retains_completed_worker_output(

@@ -12,6 +12,39 @@ import numpy as np
 from edumind.common.model_placement import inspect_model_placement
 
 
+class OutputIntegrityError(RuntimeError):
+    """Rejected output, with optional bounded, unscored native evidence."""
+
+    reason_code = "output_integrity_failed"
+
+    def __init__(self, message: str, *, diagnostic=None) -> None:
+        super().__init__(message)
+        self.diagnostic = diagnostic
+
+
+def _score_fragment(value, *, limit=64):
+    """Do not serialize NaN/Inf as JSON numbers or unbounded model responses."""
+    try:
+        array = np.asarray(value)
+    except (ValueError, TypeError):
+        return {"shape": None, "values": [str(value)[:1024]], "truncated": True}
+    values = []
+    for item in array.flat:
+        if len(values) == limit:
+            break
+        if isinstance(item, (float, np.floating)):
+            values.append(float(item) if np.isfinite(item) else str(item))
+        elif isinstance(item, (int, np.integer, bool, np.bool_)):
+            values.append(item.item() if hasattr(item, "item") else item)
+        else:
+            values.append(str(item)[:256])
+    return {
+        "shape": list(array.shape),
+        "values": values,
+        "truncated": array.size > limit,
+    }
+
+
 class BM25:
     def __init__(
         self,
@@ -194,19 +227,29 @@ class Reranker:
                     f"{self.model_name} input exceeds {self.maximum_length} tokens; "
                     "truncation is forbidden"
                 )
-        scores = np.asarray(
-            self.model.predict(
-                [(query, document) for document in documents],
-                batch_size=self.batch_size,
-                show_progress_bar=False,
-                activation_fn=torch.nn.Identity(),
-                apply_softmax=False,
-                convert_to_numpy=True,
-            ),
-            dtype=float,
-        ).reshape(-1)
+        native = self.model.predict(
+            [(query, document) for document in documents],
+            batch_size=self.batch_size,
+            show_progress_bar=False,
+            activation_fn=torch.nn.Identity(),
+            apply_softmax=False,
+            convert_to_numpy=True,
+        )
+        fragment = _score_fragment(native)
+        try:
+            scores = np.asarray(native, dtype=float)
+        except (ValueError, TypeError) as exc:
+            raise OutputIntegrityError(
+                "Reranker returned malformed scores", diagnostic=fragment
+            ) from exc
+        # CrossEncoder may return a single-logit column, but never multiple logits
+        # or a differently shaped tensor that happens to have the same size.
+        if scores.shape == (len(documents), 1):
+            scores = scores[:, 0]
         if scores.shape != (len(documents),) or not np.isfinite(scores).all():
-            raise RuntimeError("Reranker returned malformed or non-finite scores")
+            raise OutputIntegrityError(
+                "Reranker returned malformed or non-finite scores", diagnostic=fragment
+            )
         return sorted(
             [(index, float(scores[index])) for index in range(len(documents))],
             key=lambda row: (-row[1], row[0]),

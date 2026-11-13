@@ -1,4 +1,4 @@
-"""Aggregate per-sample metrics and confidence intervals."""
+"""Diagnostic sample means; authoritative estimators belong to their benchmark."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import math
 from collections.abc import Sequence
 
 from .contracts import SampleResult
-from .metrics import paired_bootstrap_interval
 
 
 def aggregate_samples(
@@ -38,27 +37,21 @@ def aggregate_samples(
         metrics[name] = sum(values) / len(values) if values else None
         if not resamples:
             continue
-        if len(values) < 2:
-            intervals[name] = {
-                "estimate": metrics[name],
-                "lower": None,
-                "upper": None,
-                "confidence": confidence,
-                "sample_count": len(values),
-                "reason": "insufficient_independent_support",
-            }
-            continue
-        interval = paired_bootstrap_interval(
-            values,
-            resamples=resamples,
-            seed=seed,
-            confidence=confidence,
-        )
+        # This legacy tuple boundary does not declare source grouping, estimator,
+        # or reviewed support. A row count must never fabricate those contracts.
         intervals[name] = {
-            "estimate": interval.estimate,
-            "lower": interval.lower,
-            "upper": interval.upper,
-            "confidence": interval.confidence,
+            "estimate": metrics[name],
+            "lower": None,
+            "upper": None,
+            "confidence": confidence,
             "sample_count": len(values),
+            "eligible_count": len(observed),
+            "unavailable_count": len(observed) - len(values),
+            "requested_resamples": resamples,
+            "defined_resamples": 0,
+            "undefined_resamples": 0,
+            "resampling_performed": False,
+            "degenerate": False,
+            "reason": "benchmark_estimator_required",
         }
     return metrics, intervals

@@ -38,7 +38,7 @@ def requirements(protocol, profile):
         "overlap_seconds": protocol.overlap_seconds,
         "nonspeech_unit_type": protocol.nonspeech_unit_type,
         "required_nonspeech_units": protocol.required_nonspeech_units,
-        "reference_schema": "video-v2",
+        "reference_schema": "video-v3-decoded-pcm-schedule",
         "canonical_audio": {
             "sample_rate_hz": 16000,
             "channels": 1,
@@ -167,8 +167,10 @@ def validate(path, profile, protocol):
             raise ValueError(
                 "Visible reference lines and occurrence annotations must describe the same complete units"
             )
+        media = _media_metadata(source, duration, protocol)
+        pcm_duration = media["canonical_duration_seconds"]
         windows = _window_starts(
-            duration, protocol.window_length_seconds, protocol.overlap_seconds
+            pcm_duration, protocol.window_length_seconds, protocol.overlap_seconds
         )
         if (
             protocol.nonspeech_unit_type == "whole_video"
@@ -201,7 +203,7 @@ def validate(path, profile, protocol):
                         "Reviewed nonspeech windows cannot be verified against untimed speech"
                     )
                 start = windows[index]
-                end = min(duration, start + protocol.window_length_seconds)
+                end = min(pcm_duration, start + protocol.window_length_seconds)
                 if any(
                     normalize_transcript(segment["text"])
                     and float(segment["start"]) < end
@@ -216,7 +218,7 @@ def validate(path, profile, protocol):
             "duration_seconds": duration,
             "actual_duration_seconds": actual_duration,
             "scheduled_window_count": len(windows),
-            **_media_metadata(source, duration, protocol),
+            **media,
         }
     if (
         protocol.required_nonspeech_units is not None

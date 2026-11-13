@@ -228,13 +228,21 @@ def test_snapshot_size_rejects_missing_or_empty_snapshots(
 def test_model_lock_writes_measured_size_and_preserves_existing_entries(
     tmp_path, candidate
 ) -> None:
-    from experiments.benchmarks.preparation.models import _merge_model_lock
+    from experiments.benchmarks.preparation.models import (
+        _directory_manifest_hash,
+        _merge_model_lock,
+    )
 
     root = tmp_path / "snapshot"
     root.mkdir()
     (root / "weights.bin").write_bytes(b"pinned")
     path = tmp_path / "selected.json"
-    previous = {"revision": "previous", "model_path": "unavailable-but-unrequested"}
+    previous = {
+        "revision": "previous",
+        "model_path": "unavailable-but-unrequested",
+        # Structurally valid; an unrequested directory is deliberately not read.
+        "model_cache_manifest_sha256": "0" * 64,
+    }
     path.write_text(
         json.dumps({"models": {"openai/whisper-small.en": previous}}),
         encoding="utf-8",
@@ -242,7 +250,7 @@ def test_model_lock_writes_measured_size_and_preserves_existing_entries(
     entry = {
         "revision": "unchanged",
         "model_path": str(root),
-        "model_cache_manifest_sha256": "unchanged-cache-checksum",
+        "model_cache_manifest_sha256": _directory_manifest_hash(root),
         "snapshot_size_bytes": 999,
     }
     _merge_model_lock(path, {candidate: entry})
@@ -252,17 +260,21 @@ def test_model_lock_writes_measured_size_and_preserves_existing_entries(
     assert entry["snapshot_size_bytes"] == 999  # Do not mutate the caller's input.
 
     (root / "weights.bin").write_bytes(b"updated")
+    entry["model_cache_manifest_sha256"] = _directory_manifest_hash(root)
     _merge_model_lock(path, {candidate: entry})
     models = json.loads(path.read_text(encoding="utf-8"))["models"]
     assert models[candidate]["snapshot_size_bytes"] == 7
 
 
 def test_stage_model_lock_ignores_unrequested_missing_models(tmp_path) -> None:
+    from experiments.benchmarks.preparation.models import _directory_manifest_hash
+
     entries = {entry.candidate: entry for entry in selection_entries()}
     requested = entries["openai/whisper-small.en"]
     unrelated = entries[PRODUCTION_EMBEDDING_MODEL]
     requested_directory = tmp_path / "whisper"
     requested_directory.mkdir()
+    (requested_directory / "weights.bin").write_bytes(b"test-only snapshot bytes")
 
     def lock_entry(entry, model_path):
         repository, revision, _ = snapshot_specs(entry)[0]
@@ -271,6 +283,11 @@ def test_stage_model_lock_ignores_unrequested_missing_models(tmp_path) -> None:
             "revision": revision,
             "selection_revision": entry.revision,
             "model_path": str(model_path),
+            "model_cache_manifest_sha256": (
+                _directory_manifest_hash(model_path)
+                if model_path.is_dir()
+                else "0" * 64
+            ),
         }
 
     path = tmp_path / "selected.json"

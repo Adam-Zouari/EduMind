@@ -133,6 +133,29 @@ def lifecycle(monkeypatch):
     return state
 
 
+@pytest.mark.parametrize("ram,vram", [(123, 456), (None, None), (0, 0)])
+def test_visual_telemetry_gap_preserves_worker_observations(
+    lifecycle, monkeypatch, ram, vram
+):
+    lifecycle.device = "cuda"
+
+    def metrics(_self):
+        error = RuntimeError("late telemetry gap")
+        error.resource_evidence = {
+            "peak_process_tree_ram_mb": ram,
+            "peak_vram_mb": vram,
+        }
+        raise error
+
+    monkeypatch.setattr(worker.ResourceMonitor, "metrics", metrics)
+    result = lifecycle.run()
+    assert result["operational"]["peak_visual_process_tree_ram_mb"] == ram
+    assert result["operational"]["peak_visual_vram_mb"] == vram
+    assert result["samples"][0]["visual_content_f1"] == 1
+    assert result["execution_error"]["phase"] == "telemetry"
+    assert result["resource_measurement_scope"] == "complete_lifecycle"
+
+
 def test_failed_first_attempt_stays_null_and_all_repetitions_run(lifecycle):
     lifecycle.failures.add("0-1")
     result = lifecycle.run()
@@ -152,6 +175,19 @@ def test_later_failure_preserves_first_quality(lifecycle):
     assert result["samples"][0]["visual_content_f1"] == 1
     assert result["samples"][0]["failed_attempt_count"] == 1
     assert result["execution_error"] is None
+
+
+def test_visual_worker_never_loads_or_transcribes_asr(lifecycle, monkeypatch):
+    from experiments.benchmarks.extraction.audio import adapters
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Visual worker attempted ASR loading/transcription")
+
+    monkeypatch.setattr(adapters, "build_runtime", forbidden)
+    monkeypatch.setattr(worker, "build_runtime", forbidden, raising=False)
+    result = lifecycle.run()
+    assert all(row["success"] for row in result["timings"])
+    assert result["samples"][0]["visual_content_f1"] == 1
 
 
 def test_lifecycle_observations_do_not_receive_statistical_suffixes(lifecycle):

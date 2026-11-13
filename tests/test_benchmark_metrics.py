@@ -382,6 +382,7 @@ def test_paddle_image_tables_formulas_and_recoverable_html_are_canonical() -> No
     from edumind.extraction import ExtractionWarning
 
     warnings: list[ExtractionWarning] = []
+    rejected = []
     blocks = _paddle_blocks(
         {
             "page_index": None,
@@ -398,6 +399,7 @@ def test_paddle_image_tables_formulas_and_recoverable_html_are_canonical() -> No
             ],
         },
         warnings=warnings,
+        rejected=rejected,
     )
     assert all(block["page_number"] == 1 for block in blocks)
     assert blocks[0]["text"] == "A\tB\n1\t2"
@@ -405,8 +407,9 @@ def test_paddle_image_tables_formulas_and_recoverable_html_are_canonical() -> No
     assert len(blocks[0]["structured_content"]["cells"]) == 4
     assert blocks[1]["text"] == r"\frac{x}{y}"
     assert blocks[1]["structured_content"]["latex"] == r"\frac{x}{y}"
-    assert blocks[2]["structured_content"]["rows"] == [["broken"]]
-    assert warnings[0].code == "paddle_table_html_malformed"
+    assert len(blocks) == 2
+    assert rejected[0]["native_block"]["block_content"] == "<table><tr>broken"
+    assert warnings[0].code == "paddle_block_conversion_failed"
 
 
 def test_paddle_malformed_block_is_skipped_with_a_conversion_warning() -> None:

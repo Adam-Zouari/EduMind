@@ -12,6 +12,7 @@ import pytest
 from edumind.common.artifacts import stable_hash
 from edumind.common.paths import PROJECT_ROOT
 from edumind.rag.contracts import PRODUCTION_EMBEDDING_MODEL, EmbeddingSpec
+from edumind.rag.errors import RAGConfigurationError
 from edumind.rag.tokenizers import TiktokenOffsetTokenizer
 from experiments.benchmarks.common.contracts import (
     BenchmarkPlan,
@@ -30,7 +31,11 @@ from experiments.benchmarks.rag.chunking_embedding.protocol import (
 from experiments.benchmarks.rag.chunking_embedding.strategies import (
     build_chunking_strategy,
 )
-from experiments.benchmarks.rag.evaluation import Chunk, ExactIndex
+from experiments.benchmarks.rag.evaluation import (
+    Chunk,
+    ExactIndex,
+    OutputIntegrityError,
+)
 from experiments.benchmarks.rag.methods import reciprocal_rank_fusion_with_scores
 from experiments.benchmarks.rag.retrieval_reranking import (
     benchmark as retrieval_benchmark,
@@ -223,7 +228,7 @@ def test_pool_recall_requires_complete_evidence_unit() -> None:
 def test_reranker_must_return_exact_pool_permutation() -> None:
     pool = [(0, 0.9), (1, 0.8), (2, 0.7)]
     _require_permutation([(2, 3.0), (0, 2.0), (1, 1.0)], pool, "q1")
-    with pytest.raises(ValueError, match="not a pool permutation"):
+    with pytest.raises(OutputIntegrityError, match="not a pool permutation"):
         _require_permutation([(2, 3.0), (2, 2.0), (1, 1.0)], pool, "q1")
 
 
@@ -1273,5 +1278,465 @@ def test_small_corpus_pool_size_is_exact_not_padded():
     rows = [(i, float(i)) for i in range(12)]
     retrieval_benchmark._require_pool(rows, index, default_protocol(), "q1")
     index.chunks = _fixture_index().chunks
-    with pytest.raises(ValueError, match="Incomplete query pool"):
+    with pytest.raises(OutputIntegrityError, match="Incomplete query pool"):
         retrieval_benchmark._require_pool(rows, index, default_protocol(), "q1")
+
+
+@pytest.mark.parametrize(
+    "failure", ["shape", "adapter_shape", "zero_norm", "nonfinite", "length", "runtime"]
+)
+def test_later_typed_contract_failure_keeps_first_quality_but_fails_integrity(
+    monkeypatch, failure
+):
+    index = _fixture_index()
+    index.bm25 = None
+    index.vectors = np.tile(np.eye(1, 768, dtype=np.float32), (30, 1))
+
+    class Embedder:
+        calls = 0
+
+        def input_token_counts(self, texts, **kwargs):
+            self.calls += 1
+            return [9000 if failure == "length" and self.calls == 2 else 10]
+
+        def embed_query(self, query):
+            if self.calls == 2:
+                if failure == "shape":
+                    return np.ones((1, 768))
+                if failure == "adapter_shape":
+                    raise RAGConfigurationError("Embedding contract shape mismatch")
+                if failure == "zero_norm":
+                    return np.zeros(768)
+                if failure == "nonfinite":
+                    return np.full(768, np.nan)
+                if failure == "runtime":
+                    raise RuntimeError(
+                        "malformed non-finite truncation in external service message"
+                    )
+            return np.eye(1, 768)[0]
+
+    index.embedder = Embedder()
+    if failure == "runtime":
+        evaluated = _rr_evaluate(monkeypatch, index=index, candidate="dense|none")
+    else:
+        with pytest.raises(CandidateExecutionError) as caught:
+            _rr_evaluate(monkeypatch, index=index, candidate="dense|none")
+        error = caught.value
+        evaluated = (
+            error.samples,
+            error.operational,
+            error.metrics,
+            error.parameters,
+            error.intervals,
+            error.artifacts,
+        )
+    report = evaluated[5]["validation_report"]
+    assert index.embedder.calls == 3
+    assert evaluated[2]["quality.overall.ndcg_at_3"] == 1.0
+    assert report["execution_accounting"]["execution_complete"]
+    assert report["execution_accounting"]["integrity_complete"] is (
+        failure == "runtime"
+    )
+    assert report["attempt_checks"][1]["integrity_error"] is (failure != "runtime")
+    assert [row["status"] for row in evaluated[5]["timings"]] == [
+        "success",
+        "failed",
+        "success",
+    ]
+
+
+@pytest.mark.parametrize("source", ["dense", "bm25"])
+@pytest.mark.parametrize("failure", ["nonfinite", "short", "duplicate", "range"])
+def test_rrf_rejects_each_bad_source_before_fusion(monkeypatch, source, failure):
+    index = _fixture_index()
+    good = [(i, float(i)) for i in range(20)]
+    bad = list(good)
+    if failure == "nonfinite":
+        bad[0] = (0, np.nan)
+    elif failure == "short":
+        bad = bad[:1]
+    elif failure == "duplicate":
+        bad[-1] = bad[0]
+    else:
+        bad[-1] = (30, 0.0)
+    monkeypatch.setattr(
+        index.bm25, "rank", lambda *a: bad if source == "bm25" else good
+    )
+    monkeypatch.setattr(
+        retrieval_benchmark,
+        "dense_rank_with_scores",
+        lambda *a, **kw: bad if source == "dense" else good,
+    )
+    monkeypatch.setattr(
+        retrieval_benchmark,
+        "reciprocal_rank_fusion_with_scores",
+        lambda *a, **kw: pytest.fail("invalid source reached fusion"),
+    )
+    with pytest.raises(OutputIntegrityError):
+        retrieval_benchmark._first_stage(index, "query", "rrf", default_protocol())
+
+
+def test_rrf_small_corpus_uses_complete_sources_without_padding(monkeypatch):
+    index = _fixture_index()
+    index.chunks = index.chunks[:4]
+    rows = [(i, float(i)) for i in range(4)]
+    monkeypatch.setattr(index.bm25, "rank", lambda *a: rows)
+    monkeypatch.setattr(
+        retrieval_benchmark, "dense_rank_with_scores", lambda *a, **kw: rows
+    )
+    assert (
+        len(retrieval_benchmark._first_stage(index, "query", "rrf", default_protocol()))
+        == 4
+    )
+
+
+def test_evaluator_preserves_dense_build_when_bm25_construction_fails(monkeypatch):
+    from dataclasses import replace
+
+    from test_rag_evaluation import Embedder
+
+    from experiments.benchmarks.rag import evaluation
+
+    spec = replace(_fixture_index().embedding_spec, dimension=2)
+    monkeypatch.setattr(evaluation, "embedding_spec", lambda *a, **kw: spec)
+    monkeypatch.setattr(evaluation, "Embedder", Embedder)
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("interrupted BM25 build")
+
+    monkeypatch.setattr(evaluation, "BM25", fail)
+    with pytest.raises(CandidateExecutionError) as caught:
+        evaluate_candidate(
+            "rrf|none",
+            _fixture_manifest(),
+            _rr_lock(),
+            _rr_plan(),
+            device="cpu",
+            dtype="float32",
+            frozen_pool_collection=None,
+            child_run_id="run",
+        )
+    error = caught.value
+    artifact = error.artifacts["index_build"]
+    dense = artifact["dependencies"]["dense"]
+    assert artifact["status"] == "incomplete"
+    assert set(artifact["dependencies"]) == {"dense"}
+    assert dense["build_seconds"] >= 0
+    assert dense["size_bytes"] == 2 * 4
+    assert artifact["phase_elapsed_to_failure_seconds"]["bm25_index_build_seconds"] >= 0
+    assert error.metrics["storage.dense_index_size_bytes"] == 8
+    assert error.metrics["storage.index_size_bytes"] is None
+    assert error.operational.get("index_build_seconds") is None
+
+
+@pytest.mark.parametrize(
+    "native", [np.full(20, np.nan), np.ones((2, 10)), ["bad"] * 20]
+)
+def test_actual_reranker_adapter_retains_rejected_native_fragment(
+    monkeypatch, tmp_path, native
+):
+    from experiments.benchmarks.rag.methods import Reranker
+
+    owner = _rr_evaluate(monkeypatch, preparation_only=True)
+    adapter = Reranker("fixture", "revision", ".", maximum_length=8192)
+    adapter.model = SimpleNamespace(
+        predict=lambda *a, **kw: native,
+        tokenizer=lambda *a, **kw: {"input_ids": [1, 2]},
+    )
+    monkeypatch.setattr(retrieval_benchmark, "_reranker", lambda *a, **kw: adapter)
+    with pytest.raises(CandidateExecutionError) as caught:
+        _rr_evaluate(monkeypatch, candidate="bm25|ettin-150m", frozen=_frozen(owner))
+    error = caught.value
+    assert not error.artifacts["validation_report"]["execution_accounting"][
+        "integrity_complete"
+    ]
+    rows = error.artifacts["rankings"]
+    path = tmp_path / "rankings.parquet"
+    pd.DataFrame(rows).to_parquet(path, index=False)
+    saved = pd.read_parquet(path)
+    rejected = saved[saved.representation == "rejected_native"]
+    assert len(rejected) == 3
+    for raw in rejected.raw_output_json:
+        fragment = json.loads(raw, parse_constant=lambda value: pytest.fail(value))
+        assert fragment["shape"] == list(np.asarray(native).shape)
+        assert len(fragment["values"]) <= 64
+    assert (saved.representation == "retrieval").any()
+    assert error.metrics["quality.overall.ndcg_at_3"] is None
+
+
+def test_pool_recall_never_substitutes_later_pool_for_owner_or_consumer(monkeypatch):
+    index, calls = _fixture_index(), 0
+    original = index.bm25.rank
+
+    def fail_first(*args):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("first retrieval failed")
+        return original(*args)
+
+    monkeypatch.setattr(index.bm25, "rank", fail_first)
+    with pytest.raises(CandidateExecutionError) as caught:
+        _rr_evaluate(monkeypatch, index=index)
+    error = caught.value
+    assert error.metrics[default_protocol().pool_recall_metric] is None
+    assert error.intervals[default_protocol().pool_recall_metric]["estimate"] is None
+    rows = error.artifacts["pool_collection"]
+    assert {row["repetition"] for row in rows} == {2}
+    assert {row["designated_first_status"] for row in rows} == {"failed"}
+    assert len(error.artifacts["timings"]) == 3
+    owner = (
+        error.samples,
+        error.operational,
+        error.metrics,
+        error.parameters,
+        error.intervals,
+        error.artifacts,
+    )
+    monkeypatch.setattr(
+        retrieval_benchmark, "_reranker", lambda *a, **kw: _FixtureReranker()
+    )
+    child = _rr_evaluate(
+        monkeypatch, index=index, candidate="bm25|ettin-150m", frozen=_frozen(owner)
+    )
+    assert default_protocol().pool_recall_metric not in child[2]
+    assert (
+        child[3]["pool_collection_checksum"]
+        == error.parameters["pool_collection_checksum"]
+    )
+    assert len(child[5]["timings"]) == 3
+
+
+def test_no_duplicate_alpha_eligibility_but_metric_specific_support_survives(
+    monkeypatch,
+):
+    evaluated = _rr_evaluate(monkeypatch)
+    assert not any("alpha_ndcg_eligible" in key for key in evaluated[2])
+    directions, _ = directions_for(_fixture_manifest(), default_protocol())
+    assert not any("alpha_ndcg_eligible" in key for key in directions)
+    support = evaluated[5]["validation_report"]["metric_support"]
+    for name in default_protocol().quality_metrics:
+        assert support[f"quality.overall.{name}"]["eligible_question_count"] == 1
+        assert support[f"quality.overall.{name}"]["scored_question_count"] == 1
+
+
+def test_full_inventory_recomputes_semantic_ideals_without_models(
+    monkeypatch, tmp_path
+):
+    from edumind.common.artifacts import atomic_write_json
+    from experiments.benchmarks.rag.chunking_embedding.metrics import score_question
+    from experiments.benchmarks.rag.retrieval_reranking.inventory import (
+        canonical_inventory,
+        chunks_from_inventory,
+    )
+
+    manifest, index = _fixture_manifest(), _fixture_index()
+    index.chunking_contract = {
+        "name": "semantic",
+        "fingerprint": "retained-semantic-boundaries",
+    }
+    index.chunking_fingerprint = "retained-semantic-boundaries"
+    first = index.chunks[0]
+    index.chunks[25] = Chunk(
+        "doc:25", "doc", first.text, first.start, first.end, first.tokens
+    )
+    inventory = canonical_inventory(index, manifest)
+    path = tmp_path / "chunk_inventory.json"
+    atomic_write_json(path, inventory)
+    monkeypatch.setattr(
+        retrieval_benchmark,
+        "build_index",
+        lambda *a, **kw: pytest.fail("rescoring rebuilt semantic boundaries"),
+    )
+    saved = json.loads(path.read_text())
+    chunks = chunks_from_inventory(saved, manifest, expected_sha256=inventory["sha256"])
+    assert len(chunks) == 30
+    question = manifest.samples[1]
+    restored = score_question(
+        question, chunks[:20], chunks, index.tokenizer, cutoffs=(3, 5), alpha=0.5
+    )
+    expected = score_question(
+        question,
+        index.chunks[:20],
+        index.chunks,
+        index.tokenizer,
+        cutoffs=(3, 5),
+        alpha=0.5,
+    )
+    pool_only = score_question(
+        question, chunks[:20], chunks[:20], index.tokenizer, cutoffs=(3, 5), alpha=0.5
+    )
+    assert restored.metrics == expected.metrics
+    assert restored.metrics["ndcg_at_3"] != pool_only.metrics["ndcg_at_3"]
+    assert restored.metrics["alpha_ndcg_at_3"] != pool_only.metrics["alpha_ndcg_at_3"]
+    saved["chunks"][25]["start"] = 1
+    with pytest.raises(OutputIntegrityError, match="Stale or changed"):
+        chunks_from_inventory(saved, manifest, expected_sha256=inventory["sha256"])
+    from dataclasses import replace
+
+    with pytest.raises(OutputIntegrityError, match="Stale or changed"):
+        chunks_from_inventory(
+            inventory,
+            replace(manifest, checksum="changed-reference"),
+            expected_sha256=inventory["sha256"],
+        )
+
+
+def test_composed_batch_controls_reject_before_loading(monkeypatch):
+    payload = deepcopy(default_chunking_protocol().meta.resolved)
+    payload["index"]["embedding_batch_size"] = 2
+    for profile in payload["profiles"].values():
+        profile["batch_size"] = 2
+    changed = chunking_protocol_from_mapping(payload)
+    plan = _rr_plan()
+    from dataclasses import replace
+
+    plan = replace(
+        plan,
+        settings={
+            **plan.settings,
+            "chunking_embedding_protocol": changed.meta.worker_payload(),
+        },
+    )
+    monkeypatch.setattr(
+        retrieval_benchmark,
+        "build_index",
+        lambda *a, **kw: pytest.fail("conflicting settings loaded models"),
+    )
+    with pytest.raises(ValueError, match="embedding_batch_size conflicts"):
+        evaluate_candidate(
+            "bm25|none",
+            _fixture_manifest(),
+            _rr_lock(),
+            plan,
+            device="cpu",
+            dtype="float32",
+            frozen_pool_collection=None,
+            child_run_id="run",
+        )
+    with pytest.raises(ValueError, match="embedding_batch_size conflicts"):
+        retrieval_benchmark._preflight_candidate(
+            "bm25|none", _fixture_manifest(), _rr_lock(), plan
+        )
+    with pytest.raises(ValueError, match="embedding_batch_size conflicts"):
+        retrieval_run._qualification_identity(
+            default_protocol(),
+            changed,
+            ("bm25|none",),
+            f"token-256-32|{PRODUCTION_EMBEDDING_MODEL}",
+            _rr_lock(),
+            _fixture_manifest(),
+            _fixture_manifest(),
+        )
+
+
+def test_parent_retains_one_inventory_and_failed_owner_pool_without_reexecution(
+    monkeypatch, tmp_path
+):
+    from functools import partial
+
+    import mlflow
+
+    from edumind.common.artifacts import atomic_write_json
+    from experiments.benchmarks.common import runner
+
+    settings = _settings(
+        profile="smoke", warmups=0, repetitions=3, bootstrap_resamples=0
+    )
+    protocol = protocol_from_settings(settings)
+    chunking = chunking_protocol_from_mapping(
+        settings["chunking_embedding_protocol"]["resolved"]
+    )
+    manifest, index = _fixture_manifest(), _fixture_index()
+    calls = []
+    original = index.bm25.rank
+
+    def rank(*args):
+        if not calls:
+            calls.append("failed")
+            raise RuntimeError("recoverable first attempt")
+        calls.append("success")
+        return original(*args)
+
+    monkeypatch.setattr(index.bm25, "rank", rank)
+    monkeypatch.setattr(retrieval_benchmark, "build_index", lambda *a, **kw: index)
+    monkeypatch.setattr(
+        retrieval_benchmark, "_reranker", lambda *a, **kw: _FixtureReranker()
+    )
+    executions = []
+
+    def worker(candidate, manifest, lock, plan, **kwargs):
+        executions.append((candidate, kwargs.get("preparation_only", False)))
+        return evaluate_candidate(candidate, manifest, lock, plan, **kwargs)
+
+    monkeypatch.setattr(retrieval_run, "run_in_fresh_process", worker)
+    monkeypatch.setattr(
+        retrieval_run,
+        "run_benchmark",
+        partial(runner.run_benchmark, artifact_root=tmp_path / "artifacts"),
+    )
+    inputs = tmp_path / "inputs.json"
+    atomic_write_json(inputs, {"test": "mocked-input-identity"})
+    old_uri = mlflow.get_tracking_uri()
+    mlflow.set_tracking_uri(f"sqlite:///{(tmp_path / 'tracking.db').as_posix()}")
+    try:
+        result = retrieval_run._run_evaluation(
+            protocol,
+            chunking,
+            manifest,
+            inputs,
+            ("bm25|none", "bm25|ettin-150m"),
+            f"token-256-32|{PRODUCTION_EMBEDDING_MODEL}",
+            None,
+            _rr_lock(),
+            inputs,
+            "smoke",
+            "cpu",
+            "float32",
+            shortlist=None,
+            embedding_selection=None,
+            qualification_path=None,
+            qualification=None,
+            compare_finalists=False,
+            no_mlflow=False,
+            data_report_path=inputs,
+        )
+        assert executions == [("bm25|none", False), ("bm25|ettin-150m", False)]
+        assert len(calls) == 6
+        assert [row.status for row in result.candidates] == ["failed", "success"]
+        path = result.artifact_directory / "chunk_inventory.json"
+        inventory = json.loads(path.read_text())
+        assert len(inventory["chunks"]) == 30
+        assert len(list(result.artifact_directory.rglob("chunk_inventory.json"))) == 1
+        assert all(
+            row.parameters["chunk_inventory"]["sha256"] == inventory["sha256"]
+            for row in result.candidates
+        )
+        owner, child = result.candidates
+        pool_key = protocol.pool_recall_metric
+        assert owner.metrics[pool_key] is None
+        assert pool_key not in child.metrics
+        client = mlflow.MlflowClient()
+        assert pool_key not in client.get_run(owner.mlflow_run_id).data.metrics
+        parent = next(
+            run
+            for run in client.search_runs(
+                [
+                    client.get_experiment_by_name(
+                        "EduMind / Retrieval–Reranking"
+                    ).experiment_id
+                ]
+            )
+            if "mlflow.parentRunId" not in run.data.tags
+        )
+        assert "chunk_inventory.json" in {
+            item.path for item in client.list_artifacts(parent.info.run_id)
+        }
+        pool_files = list(result.artifact_directory.rglob("pool_collection.parquet"))
+        assert len(pool_files) == 1
+        pool = pd.read_parquet(pool_files[0])
+        assert set(pool.repetition) == {2}
+        assert set(pool.designated_first_status) == {"failed"}
+    finally:
+        mlflow.end_run()
+        mlflow.set_tracking_uri(old_uri)

@@ -3,6 +3,7 @@
 import json
 from dataclasses import asdict
 from pathlib import Path
+from uuid import uuid4
 
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.arguments import (
@@ -11,7 +12,10 @@ from experiments.benchmarks.common.arguments import (
     execution_devices,
     parser,
 )
-from experiments.benchmarks.common.contracts import BenchmarkPlan
+from experiments.benchmarks.common.contracts import (
+    BenchmarkPlan,
+    CandidateExecutionError,
+)
 from experiments.benchmarks.common.data_validation import (
     manifest_path as default_manifest_path,
 )
@@ -31,46 +35,12 @@ from experiments.benchmarks.preparation.models import (
     model_revisions,
 )
 
-from .evaluate import run_in_fresh_process
-from .judge import load_judge_contract, replay_judge
-from .metrics import BASE_KEYS, GENERATION_DIRECTIONS, OPERATIONAL_KEYS, PRIMARY_METRICS
+from .evaluate import _evaluation_identity, run_in_fresh_process, score_execution
+from .evidence import load_execution, save_evaluation
+from .judge import configured_judge, load_judge_contract, replay_judge
+from .metrics import GENERATION_DIRECTIONS, PRIMARY_METRICS, required_ci_policy_keys
 from .protocol import DEFAULT_PROTOCOL_PATH, load_protocol
 from .validation import questions_from_manifest, verify_inputs
-
-
-def required_ci_policy_keys(questions):
-    """Reference-only support-policy inventory, frozen before candidate outputs."""
-    result = []
-    slices = {
-        "": questions,
-        **{
-            f"slice.{name}.": [q for q in questions if q["answerable"] == answerable]
-            for name, answerable in (("answerable", True), ("unanswerable", False))
-        },
-        **{
-            f"slice.{name}.": [q for q in questions if q["evidence_type"] == name]
-            for name in ("text", "table", "formula", "mixed")
-        },
-    }
-    for prefix, subset in slices.items():
-        if not subset:
-            continue
-        answerable = any(q["answerable"] for q in subset)
-        unanswerable = any(not q["answerable"] for q in subset)
-        for key in (*BASE_KEYS, *OPERATIONAL_KEYS):
-            if (
-                key.startswith("quality.")
-                or key
-                in {
-                    "validity.response_validity_rate",
-                    "repeatability.citation_agreement",
-                }
-            ) and not answerable:
-                continue
-            if key == "validity.refusal_validity_rate" and not unanswerable:
-                continue
-            result.append(prefix + key)
-    return tuple(result)
 
 
 def _selected_candidates(
@@ -200,13 +170,47 @@ def main(argv=None):
     argument_parser.add_argument("--inventory", type=Path, action="append")
     argument_parser.add_argument("--preflight-report", type=Path)
     argument_parser.add_argument("--preflight-run-id")
+    transport_options = argument_parser.add_mutually_exclusive_group()
+    transport_options.add_argument(
+        "--judge-transport",
+        type=Path,
+        help="Explicit command-adapter JSON configuration; no judge/provider is chosen automatically",
+    )
     argument_parser.add_argument(
+        "--resume-execution",
+        type=Path,
+        help="Evaluate a sealed generation_execution.json only; never loads a generator or consumes locked inputs again",
+    )
+    argument_parser.add_argument(
+        "--evaluation-output",
+        type=Path,
+        help="New directory for versioned saved-output evaluation",
+    )
+    transport_options.add_argument(
         "--judge-records",
         type=Path,
         help="Replay existing replies bound to the configured calibrated judge; never calls a live API",
     )
     arguments = argument_parser.parse_args(argv)
     protocol = load_protocol(arguments.protocol)
+    if arguments.resume_execution is not None:
+        if any(
+            (
+                arguments.manifest,
+                arguments.shortlist,
+                arguments.preflight_report,
+                arguments.preflight_run_id,
+                arguments.device,
+                arguments.dtype,
+                arguments.inventory,
+            )
+        ):
+            argument_parser.error(
+                "Evaluation recovery cannot override generation inputs, selection, or device"
+            )
+        return resume_evaluation(arguments, protocol)
+    if arguments.evaluation_output is not None:
+        argument_parser.error("--evaluation-output requires --resume-execution")
     profile = "development" if arguments.profile == "preflight" else arguments.profile
     execution = protocol.profile(profile)
     try:
@@ -248,16 +252,16 @@ def main(argv=None):
                 "ci_support_policy_pending: freeze per-metric/slice source support before comparison: "
                 + ", ".join(sorted(missing))
             )
-        if arguments.judge_records is None:
+        if arguments.judge_records is None and arguments.judge_transport is None:
             raise ValueError(
-                "judge_transport_unconfigured: provide local --judge-records or inject a calibrated judge through the Python API"
+                "judge_transport_unconfigured: configure --judge-transport for automatic offline judging"
             )
-    if arguments.judge_records is not None:
+    if arguments.judge_records is not None or arguments.judge_transport is not None:
         if arguments.profile == "preflight":
             argument_parser.error(
                 "Preflight is hardware-only and must not judge quality"
             )
-        judge = replay_judge(protocol.judge_contract_path, arguments.judge_records)
+        judge = _judge(arguments, protocol)
     model_lock_path = PROJECT_ROOT / "data/benchmarks/models/selected.json"
     model_lock = load_selected_model_lock(
         model_lock_path, candidates=tuple(dict.fromkeys(protocol.models.values()))
@@ -364,8 +368,10 @@ def main(argv=None):
             inputs.update(
                 judge_contract=protocol.judge_contract_path,
                 judge_calibration=Path(judge.contract["calibration_path"]),
-                judge_records=arguments.judge_records,
             )
+            inputs[
+                "judge_transport" if arguments.judge_transport else "judge_records"
+            ] = arguments.judge_transport or arguments.judge_records
         results.append(
             run_benchmark(
                 plan,
@@ -418,6 +424,59 @@ def main(argv=None):
         )
     )
     return 0 if all(r.complete for r in results) else 2
+
+
+def _judge(arguments, protocol):
+    if arguments.judge_transport is not None:
+        return configured_judge(protocol.judge_contract_path, arguments.judge_transport)
+    if arguments.judge_records is not None:
+        return replay_judge(protocol.judge_contract_path, arguments.judge_records)
+    return None
+
+
+def resume_evaluation(arguments, protocol):
+    """No manifest/model-lock resolution, qualification, inference or lock writes."""
+    raw, provenance = load_execution(arguments.resume_execution, protocol)
+    judge = _judge(arguments, protocol)
+    if raw["schedule"]["profile"] != "smoke" and judge is None:
+        raise ValueError(
+            "judge_transport_unconfigured: evaluation recovery requires the frozen judge"
+        )
+    directory = (
+        arguments.evaluation_output
+        or Path(arguments.resume_execution).parent / "evaluations" / uuid4().hex
+    )
+    directory.mkdir(parents=True, exist_ok=False)
+    if judge is not None:
+        judge = judge.with_journal(
+            Path(arguments.resume_execution).parent / "judge-journal",
+            _evaluation_identity(raw),
+        )
+    provenance.update(
+        evaluation_id=directory.name,
+        evaluator=raw["schedule"]["evaluator"],
+        evaluation_only=True,
+    )
+    result, failure = None, None
+    try:
+        result = score_execution(raw, protocol, raw["schedule"]["profile"], judge=judge)
+    except CandidateExecutionError as exc:
+        failure = exc
+    save_evaluation(
+        directory / "evaluation.json", result, failure, provenance=provenance
+    )
+    print(
+        json.dumps(
+            {
+                "complete": failure is None,
+                "evaluation_only": True,
+                "artifacts": str(directory),
+                "prediction_identity": provenance["prediction_sha256"],
+            },
+            indent=2,
+        )
+    )
+    return 0 if failure is None else 2
 
 
 if __name__ == "__main__":

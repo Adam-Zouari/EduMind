@@ -6,6 +6,9 @@ import json
 import re
 import subprocess
 import threading
+import time
+from importlib.metadata import PackageNotFoundError, version
+from itertools import pairwise
 
 from edumind.common.paths import PROJECT_ROOT
 
@@ -52,9 +55,15 @@ class DockerMonitor:
         self.helper_timeout_seconds = helper_timeout_seconds
         self.monitor_memory = monitor_memory
         self.monitor_storage = monitor_storage
+        self.samples = []
+        self.checkpoints = []
+        self.started_at = None
+        self.ended_at = None
 
     def __enter__(self):
+        self.started_at = time.time()
         if self.monitor_memory:
+            self._sample()
             self.thread = threading.Thread(target=self._run, daemon=True)
             self.thread.start()
         return self
@@ -67,12 +76,10 @@ class DockerMonitor:
             self.thread.join()
         if self.monitor_memory:
             self._sample()
+        self.ended_at = time.time()
 
-    def metrics(self) -> dict[str, float]:
-        result = {}
-        if self.sampled:
-            result["peak_server_memory_bytes"] = float(self.peak_bytes)
-        storage = (
+    def checkpoint(self, corpus_id, *, complete=True):
+        value = (
             _storage_bytes(
                 self.candidate,
                 timeout_seconds=self.storage_timeout_seconds,
@@ -81,15 +88,53 @@ class DockerMonitor:
             if self.monitor_storage
             else None
         )
-        if storage is not None:
-            result["persistent_storage_bytes"] = float(storage)
+        row = {
+            "corpus_id": corpus_id,
+            "timestamp": time.time(),
+            "checkpoint": "completed-build" if complete else "partial-build",
+            "apparent_bytes": value,
+            "method": "du-apparent-bytes",
+            "complete": complete and value is not None,
+        }
+        self.checkpoints.append(row)
+        return row
+
+    def metrics(self) -> dict[str, float]:
+        result = {}
+        if self.sampled:
+            result["peak_server_memory_bytes"] = float(self.peak_bytes)
         return result
+
+    def evidence(self):
+        usable = [row for row in self.samples if row["bytes"] is not None]
+        timestamps = [row["timestamp"] for row in self.samples]
+        return {
+            "samples": self.samples,
+            "checkpoints": self.checkpoints,
+            "started_at": self.started_at,
+            "ended_at": self.ended_at,
+            "coverage": "complete"
+            if self.samples and len(usable) == len(self.samples) and self.ended_at
+            else "partial"
+            if usable
+            else "unavailable",
+            "sample_count": len(usable),
+            "gap_count": len(self.samples) - len(usable),
+            "interval_seconds": self.interval_seconds,
+            "observed_max_gap_seconds": max(
+                (right - left for left, right in pairwise(timestamps)),
+                default=None,
+            ),
+            "method": "docker-stats-cli-cache-subtracted",
+            "scope": "server-lifecycle",
+        }
 
     def _run(self) -> None:
         while not self.stop_event.wait(self.interval_seconds):
             self._sample()
 
     def _sample(self) -> None:
+        sample = {"timestamp": time.time(), "bytes": None, "error": None}
         try:
             process = subprocess.run(
                 [
@@ -110,8 +155,12 @@ class DockerMonitor:
                 if value is not None:
                     self.sampled = True
                     self.peak_bytes = max(self.peak_bytes, value)
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            return
+                    sample["bytes"] = value
+            if sample["bytes"] is None:
+                sample["error"] = process.stderr.strip() or "unusable stats response"
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            sample["error"] = str(exc)
+        self.samples.append(sample)
 
 
 def _storage_bytes(
@@ -158,7 +207,7 @@ def _helper_storage_bytes(candidate: str, *, timeout_seconds: float) -> int | No
                 f"type=volume,source={VOLUMES[candidate]},target=/volume,readonly",
                 image,
                 "du",
-                "-sk",
+                "-sb",
                 "/volume",
             ],
             capture_output=True,
@@ -177,7 +226,7 @@ def _helper_storage_bytes(candidate: str, *, timeout_seconds: float) -> int | No
     match = (
         re.match(r"(\d+)", process.stdout.strip()) if process.returncode == 0 else None
     )
-    return int(match.group(1)) * 1024 if match else None
+    return int(match.group(1)) if match else None
 
 
 def verify_image(
@@ -222,13 +271,38 @@ def image_lock() -> dict[str, str]:
             f"Missing {path}; run `python -m experiments.benchmarks.prepare vectordb`"
         )
     payload = json.loads(path.read_text(encoding="utf-8"))
+    if (
+        set(payload) != {"schema_version", "images", "clients"}
+        or type(payload.get("schema_version")) is not int
+        or payload["schema_version"] != 1
+    ):
+        raise RuntimeError("Unsupported vector deployment-lock schema")
     images = payload.get("images")
     expected_images = {"chroma", "qdrant", "weaviate", "pgvector", "inspector"}
     if not isinstance(images, dict) or set(images) != expected_images:
         raise RuntimeError("Vector database image lock is malformed or incomplete")
+    if any(
+        not isinstance(value, str)
+        or not re.fullmatch(r"[^\s@]+@sha256:[0-9a-f]{64}", value)
+        for value in images.values()
+    ):
+        raise RuntimeError("Vector image lock requires immutable SHA256 digests")
     clients = payload.get("clients")
-    if not isinstance(clients, dict) or not clients:
+    if not isinstance(clients, dict) or set(clients) != {
+        "chromadb-client",
+        "qdrant-client",
+        "weaviate-client",
+        "psycopg",
+        "psycopg-pool",
+    }:
         raise RuntimeError("Vector database client lock is malformed or incomplete")
+    for name, expected in clients.items():
+        try:
+            actual = version(name)
+        except PackageNotFoundError as exc:
+            raise RuntimeError(f"Missing locked vector client: {name}") from exc
+        if actual != expected:
+            raise RuntimeError(f"Vector client {name} is {actual}, expected {expected}")
     return {
         **{f"image:{name}": str(value) for name, value in images.items()},
         **{f"client:{name}": str(value) for name, value in clients.items()},

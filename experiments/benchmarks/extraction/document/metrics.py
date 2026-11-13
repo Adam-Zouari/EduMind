@@ -135,6 +135,9 @@ class DocumentEvaluation:
     table_pairs: list[tuple[str, str]] = field(default_factory=list)
     formula_pairs: list[tuple[str, str]] = field(default_factory=list)
     reference_counts: dict[str, int] = field(default_factory=dict)
+    formula_evidence: list[dict] = field(default_factory=list)
+    table_evidence: list[dict] = field(default_factory=list)
+    official_provenance: dict = field(default_factory=dict)
 
 
 def load_reference(item: Mapping[str, object]) -> ReferenceDocument:
@@ -406,14 +409,25 @@ def apply_official_metrics(
 
     table_pairs = [pair for record in records for pair in record.table_pairs]
     formula_pairs = [pair for record in records for pair in record.formula_pairs]
-    table_results, formula_results = score_official_metrics(
-        table_pairs, formula_pairs, timeout_seconds=timeout_seconds
-    )
+    transport_evidence = {}
+    try:
+        table_results, formula_results = score_official_metrics(
+            table_pairs,
+            formula_pairs,
+            timeout_seconds=timeout_seconds,
+            evidence=transport_evidence,
+        )
+    finally:
+        for record in records:
+            record.official_provenance.update(transport_evidence.get("provenance", {}))
     if len(table_results) != len(table_pairs) or len(formula_results) != len(
         formula_pairs
     ):
         raise RuntimeError("Official evaluator returned an incomplete result")
-    values = [value for pair in table_results for value in pair] + formula_results
+    formula_evidence = [_formula_result(value) for value in formula_results]
+    values = [value for pair in table_results for value in pair] + [
+        value["similarity"] for value in formula_evidence
+    ]
     if any(not np.isfinite(value) or not 0 <= value <= 1 for value in values):
         raise RuntimeError("Official evaluator returned invalid scores")
     table_offset = 0
@@ -422,25 +436,75 @@ def apply_official_metrics(
         table_count = len(record.table_pairs)
         if table_count:
             official = table_results[table_offset : table_offset + table_count]
+            record.table_evidence.extend(
+                transport_evidence.get("table_evidence", [])[
+                    table_offset : table_offset + table_count
+                ]
+            )
             teds, teds_s = zip(*official, strict=True)
             record.metrics["tables.teds"] = float(np.mean(teds))
             record.metrics["tables.teds_s"] = float(np.mean(teds_s))
             table_offset += table_count
         formula_count = len(record.formula_pairs)
         if formula_count:
-            formula_scores = formula_results[
-                formula_offset : formula_offset + formula_count
-            ]
+            evidence = formula_evidence[formula_offset : formula_offset + formula_count]
+            record.formula_evidence.extend(evidence)
             record.metrics["formulas.recognition_similarity"] = float(
-                np.mean(formula_scores)
+                np.mean([value["similarity"] for value in evidence])
             )
-            record.metrics["formulas.exact_match"] = float(
-                np.mean([value == 1.0 for value in formula_scores])
+            exact = [value["exact_match"] for value in evidence]
+            record.metrics["formulas.exact_match"] = (
+                float(np.mean(exact))
+                if all(value is not None for value in exact)
+                else None
             )
+            if record.metrics["formulas.exact_match"] is None:
+                record.statuses["formulas.exact_match"] = {
+                    "status": "incomplete",
+                    "reason": "cdm_counts_unavailable",
+                }
             formula_offset += formula_count
         for name, value in record.metrics.items():
             if value is not None:
                 record.statuses[name] = {"status": "scored", "reason": None}
+
+
+def _formula_result(value):
+    """Preserve rounded official similarity independently of strict count evidence."""
+    record = (
+        dict(value)
+        if isinstance(value, Mapping)
+        else {"similarity": value, "status": "legacy_similarity_only"}
+    )
+    similarity = record.get("similarity")
+    if (
+        type(similarity) not in (int, float)
+        or not np.isfinite(similarity)
+        or not 0 <= similarity <= 1
+    ):
+        raise RuntimeError("Official evaluator returned invalid formula similarity")
+    record.update(exact_match=None, exact_match_policy="cdm_exact_counts_v1")
+    counts = [record.get(name) for name in ("tp", "gt_tokens", "pred_tokens")]
+    if record.get("status") in {"missing_prediction", "invalid_prediction"}:
+        if similarity != 0:
+            raise RuntimeError(
+                "Missing/invalid formula prediction must have zero similarity"
+            )
+        record["exact_match"] = 0.0
+    elif (
+        record.get("status") == "evaluated"
+        and all(type(count) is int and count >= 0 for count in counts)
+        and counts[1] > 0
+        and counts[0] <= min(counts[1:])
+    ):
+        record["exact_match"] = float(counts[0] == counts[1] == counts[2] > 0)
+    else:
+        record["counts_status"] = "unavailable"
+    record["similarity_status"] = "scored"
+    record["exact_match_status"] = (
+        "scored" if record["exact_match"] is not None else "unavailable"
+    )
+    return record
 
 
 def score_document(
@@ -547,8 +611,23 @@ def score_document(
                     element_matching_threshold,
                 )
     expected_content = bool(
-        normalized_tokens(reference.text)
-        or any(_usable_element(e) for e in reference.elements)
+        ("text" in reference.capabilities and normalized_tokens(reference.text))
+        or (
+            "pages" in reference.capabilities
+            and any(normalized_tokens(text) for text in reference.pages.values())
+        )
+        or any(
+            _usable_element(e)
+            for e in reference.elements
+            if reference.capabilities
+            & {"reading_order", "hierarchy", "layout_boxes", "element_types"}
+            or e.kind is SegmentKind.TABLE
+            and "tables" in reference.capabilities
+            or e.kind is SegmentKind.FORMULA
+            and "formulas" in reference.capabilities
+            or e.page_number is not None
+            and "pages" in reference.capabilities
+        )
     )
     observed_content = bool(
         document is not None
@@ -809,7 +888,14 @@ def _reference_from_mapping(payload: Mapping[str, object]) -> ReferenceDocument:
     raw_capabilities = payload.get("reference_capabilities")
     if raw_capabilities is not None:
         _validate_capability_list(raw_capabilities, payload.get("id"))
-    text = _canonical(str(payload.get("text", payload.get("reference", ""))))
+    raw_text = payload.get("text", payload.get("reference", ""))
+    if (raw_capabilities is None or "text" in raw_capabilities) and not isinstance(
+        raw_text, str
+    ):
+        raise ValueError(
+            "Claimed reference text must be a string, including verified blanks"
+        )
+    text = _canonical(raw_text) if isinstance(raw_text, str) else ""
     raw_pages = payload.get("pages", payload.get("reference_page_texts", []))
     if raw_capabilities is not None and "pages" not in raw_capabilities:
         raw_pages = []
@@ -851,19 +937,27 @@ def _reference_from_mapping(payload: Mapping[str, object]) -> ReferenceDocument:
             if not isinstance(value, Mapping):
                 raise ValueError("Reference elements must be objects")
             kind = _kind(value.get("kind", "text"))
+            element_text = value.get("text", "")
+            if not isinstance(element_text, str):
+                raise ValueError("Reference element text must be a string")
             elements.append(
                 ReferenceElement(
                     element_id=str(
                         value.get("id", value.get("element_id", f"ref-{index}"))
                     ),
                     kind=kind,
-                    text=_canonical(str(value.get("text", ""))),
+                    text=_canonical(element_text),
                     order=int(value.get("order", index)),
                     page_number=_optional_int(value.get("page_number")),
                     bounding_box=_box(value.get("bounding_box"))
-                    if raw_capabilities is None or "layout_boxes" in raw_capabilities
+                    if raw_capabilities is None
+                    or "layout_boxes" in raw_capabilities
+                    or (kind is SegmentKind.TABLE and "tables" in raw_capabilities)
+                    or (kind is SegmentKind.FORMULA and "formulas" in raw_capabilities)
                     else None,
-                    parent_id=_optional_string(value.get("parent_id")),
+                    parent_id=_optional_string(value.get("parent_id"))
+                    if raw_capabilities is None or "hierarchy" in raw_capabilities
+                    else None,
                     hierarchy_level=_optional_int(value.get("hierarchy_level")),
                     parent_annotated="parent_id" in value,
                     level_annotated="hierarchy_level" in value,
@@ -1436,12 +1530,16 @@ def _kind(value: object) -> SegmentKind:
 
 
 def _box(value: object) -> tuple[float, float, float, float] | None:
+    if value is None:
+        return None
     if (
         not isinstance(value, Sequence)
         or isinstance(value, (str, bytes))
         or len(value) != 4
     ):
-        return None
+        raise ValueError("Reference boxes require four explicit coordinates")
+    if any(type(item) not in (int, float) for item in value):
+        raise ValueError("Reference box coordinates must be numbers")
     result = tuple(float(item) for item in value)
     if not _valid_box(result):
         raise ValueError("Reference boxes must use normalized coordinates")
@@ -1459,7 +1557,13 @@ def _optional_int(value: object) -> int | None:
 
 
 def _optional_string(value: object) -> str | None:
-    return None if value in (None, "") else str(value)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(
+            "Reference string annotations must be nonempty strings or explicit null"
+        )
+    return value
 
 
 def _reference_payload(item: Mapping[str, object]) -> Mapping[str, object]:

@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from edumind.common.artifacts import stable_hash
+from edumind.rag.errors import RAGConfigurationError
 from experiments.benchmarks.common.contracts import (
     BenchmarkPlan,
     CandidateExecutionError,
@@ -44,6 +45,7 @@ from experiments.benchmarks.rag.chunking_embedding.protocol import (
 from experiments.benchmarks.rag.evaluation import (
     ExactIndex,
     InputCompatibilityError,
+    OutputIntegrityError,
     build_index,
     dense_rank_with_scores,
     synchronize,
@@ -54,6 +56,7 @@ from experiments.benchmarks.rag.methods import (
 )
 
 from . import metrics as m
+from .inventory import canonical_inventory, chunk_rows, inventory_reference
 from .metrics import (
     pool_evidence_unit_recall,
 )
@@ -78,6 +81,7 @@ def evaluate_candidate(
 ):
     protocol = protocol_from_settings(plan.settings)
     chunking = chunking_protocol_from_settings(plan.settings)
+    protocol.validate_composition(chunking)
     protocol.validate_execution(
         plan.profile,
         seed=plan.seed,
@@ -135,7 +139,10 @@ def evaluate_candidate(
     )
     progress, errors, native = {}, [], {}
     index = reranker = None
-    pools, pool_metadata, identity, index_build = {}, {}, {}, {}
+    pools, pool_metadata, identity = {}, {}, {}
+    index_build = None
+    inventory = None
+    pool_observations = {}
     cold = None
     window_complete = False
     model_backed = candidate.model_backed or chunker == "semantic"
@@ -171,6 +178,7 @@ def evaluate_candidate(
                     f"Retrieval smoke fixture must produce exactly {protocol.smoke_expected_chunk_count} chunks"
                 )
             identity = _index_identity(index, candidate)
+            inventory = canonical_inventory(index, manifest)
             index_build = _index_build_artifact(index, candidate, identity)
             index_build = _reference_dependencies(index_build, index_dependencies or {})
             reranker = _reranker(
@@ -201,6 +209,11 @@ def evaluate_candidate(
                     )
                     _require_pool(pool, index, protocol, str(question["id"]))
                     pools[str(question["id"])] = pool
+                    pool_observations[str(question["id"])] = {
+                        "source": "input-preparation",
+                        "repetition": None,
+                        "designated_first_status": "not_measured",
+                    }
             elif candidate.reranker != "none":
                 pools, pool_metadata = _load_pool_collection(
                     candidate,
@@ -247,6 +260,22 @@ def evaluate_candidate(
                             )
                             break
                     finally:
+                        if candidate.reranker == "none" and row.get("pool_verified"):
+                            qid = str(q["id"])
+                            pools.setdefault(qid, row["retrieval_ranking"])
+                            pool_observations.setdefault(
+                                qid,
+                                {
+                                    "source": "measured-attempt",
+                                    "repetition": row["repetition"],
+                                    "designated_first_status": next(
+                                        r["status"]
+                                        for r in attempts
+                                        if r["question_id"] == qid
+                                        and r["repetition"] == 1
+                                    ),
+                                },
+                            )
                         if row["repetition"] == 1 and row.get("native_input"):
                             native[str(q["id"])] = row["native_input"]
                 if device == "cuda" and model_backed:
@@ -336,9 +365,11 @@ def evaluate_candidate(
         if candidate.reranker == "none":
             values[protocol.pool_recall_metric] = (
                 pool_evidence_unit_recall(
-                    q, [index.chunks[pos] for pos, _ in pools[qid]]
+                    q, [index.chunks[pos] for pos, _ in first["retrieval_ranking"]]
                 )
-                if index is not None and qid in pools
+                if index is not None
+                and first is not None
+                and first.get("pool_verified")
                 else None
             )
         repeat = m.repeatability(rows, plan.repetitions)
@@ -413,6 +444,7 @@ def evaluate_candidate(
                         "rank": rank,
                         "chunk_id": index.chunks[pos].identifier,
                         "score": score,
+                        **pool_observations[qid],
                     }
                 )
     checksum = (
@@ -493,7 +525,8 @@ def evaluate_candidate(
         aggregate.update(_storage_metrics(index, candidate, reranker))
         if candidate.reranker == "none" and candidate.retriever != "rrf":
             operational["index_build_seconds"] = (
-                index_build.get("dependencies", {})
+                (index_build or {})
+                .get("dependencies", {})
                 .get(candidate.retriever, {})
                 .get("build_seconds")
             )
@@ -517,7 +550,11 @@ def evaluate_candidate(
         if index
         else 0.0,
         "validity.nonfinite_score_count": float(
-            sum("non-finite" in str(r.get("error", "")).lower() for r in attempts)
+            sum(
+                r.get("integrity_error", False)
+                and "non-finite" in str(r.get("error", "")).lower()
+                for r in attempts
+            )
         ),
         "validity.exact_pool_permutation": 0.0
         if any(r.get("permutation_checked") is False for r in integrity_rows)
@@ -542,7 +579,9 @@ def evaluate_candidate(
             for name in names
             if support[name]["eligible_question_count"]
         ),
-        "integrity_complete": not integrity_rows and bool(checked) and not errors,
+        "integrity_complete": not integrity_rows
+        and (preparation_only or bool(checked))
+        and not errors,
     }
     if not preparation_only:
         if not accounting["execution_complete"]:
@@ -592,6 +631,7 @@ def evaluate_candidate(
             "measurement.resource_scope": resource_evidence["scope"],
             "vram_measurement_method": monitor.vram_measurement_method,
             "preparation_only": preparation_only,
+            "chunk_inventory": inventory_reference(inventory) if inventory else None,
             "execution_accounting": accounting,
             "prediction_evidence": {
                 "artifact": "rankings.parquet",
@@ -651,6 +691,8 @@ def evaluate_candidate(
         "validation_report": report,
     }
     if candidate.reranker == "none":
+        if inventory is not None:
+            artifacts["chunk_inventory"] = inventory
         if index_build is None:
             index_build = _interrupted_index_artifact(progress, candidate)
             for name, observation in index_build["dependencies"].items():
@@ -714,6 +756,7 @@ def _attempt(index, reranker, candidate, q, pool, protocol, device, row):
             candidate.retriever,
             protocol,
             timings=component_timings,
+            outputs=row,
         )
         row["retrieval_ranking"] = live
         _require_pool(live, index, protocol, str(q["id"]))
@@ -740,7 +783,9 @@ def _attempt(index, reranker, candidate, q, pool, protocol, device, row):
                 or count <= 0
                 for count in counts
             ):
-                raise ValueError("Malformed native reranker token counts")
+                raise InputCompatibilityError(
+                    "Malformed native reranker token counts", row["native_input"]
+                )
             row["native_input"]["total"] = sum(counts)
             if any(count > reranker.maximum_length for count in counts):
                 raise InputCompatibilityError(
@@ -781,6 +826,8 @@ def _attempt(index, reranker, candidate, q, pool, protocol, device, row):
             full_stack_latency_ms=(time.perf_counter() - started) * 1000,
         )
     except Exception as exc:
+        if isinstance(exc, OutputIntegrityError) and exc.diagnostic is not None:
+            row["rejected_native_output"] = exc.diagnostic
         row.update(
             error=f"{type(exc).__name__}: {exc}",
             elapsed_to_failure_ms=(time.perf_counter() - started) * 1000,
@@ -788,11 +835,10 @@ def _attempt(index, reranker, candidate, q, pool, protocol, device, row):
             phase_elapsed_to_failure_ms=(time.perf_counter() - phase_started) * 1000,
         )
         row["integrity_error"] = isinstance(
-            exc, (ValueError, IndexError, TypeError)
-        ) or any(
-            word in str(exc).lower()
-            for word in ("non-finite", "malformed", "incomplete ranking", "truncat")
+            exc, (OutputIntegrityError, InputCompatibilityError, RAGConfigurationError)
         )
+        if isinstance(exc, InputCompatibilityError):
+            row["input_validation"] = exc.report
         raise
 
 
@@ -814,6 +860,9 @@ def _ranking_rows(row, index):
         ("final", row.get("ranking")),
         ("retrieval", row.get("retrieval_ranking")),
         ("local_reranker", row.get("local_reranker_output")),
+        ("rejected_native", row.get("rejected_native_output")),
+        ("dense_source", row.get("dense_source_ranking")),
+        ("bm25_source", row.get("bm25_source_ranking")),
     ):
         if output is None:
             continue
@@ -993,6 +1042,7 @@ def execute_payload(payload: dict[str, object]) -> dict[str, object]:
 def _preflight_candidate(candidate_name, manifest, model_lock, plan):
     protocol = protocol_from_settings(plan.settings)
     chunking_protocol = chunking_protocol_from_settings(plan.settings)
+    protocol.validate_composition(chunking_protocol)
     seed_deterministically(plan.seed)
     candidate = parse_candidate(candidate_name)
     chunker_name, embedding_name = split_candidate(
@@ -1091,16 +1141,28 @@ def _first_stage(
     protocol: RetrievalProtocol,
     *,
     timings: dict[str, float] | None = None,
+    outputs: dict | None = None,
 ) -> list[tuple[int, float]]:
     if retriever == "dense":
         return dense_rank_with_scores(index, query, protocol.pool_size, timings=timings)
     if index.bm25 is None:
         raise RuntimeError("BM25 state is unavailable")
     lexical = index.bm25.rank(query, protocol.pool_size)
+    if outputs is not None:
+        outputs["retrieval_ranking"] = lexical
     if retriever == "bm25":
         return lexical
     dense = dense_rank_with_scores(index, query, protocol.pool_size, timings=timings)
-    return reciprocal_rank_fusion_with_scores(
+    if outputs is not None:
+        outputs["dense_source_ranking"] = dense
+        outputs["bm25_source_ranking"] = lexical
+    _require_pool(
+        dense, index, protocol, "RRF dense source", depth=protocol.rrf_source_depth
+    )
+    _require_pool(
+        lexical, index, protocol, "RRF BM25 source", depth=protocol.rrf_source_depth
+    )
+    fused = reciprocal_rank_fusion_with_scores(
         [[position for position, _ in dense], [position for position, _ in lexical]],
         protocol.pool_size,
         protocol.rrf_constant,
@@ -1109,6 +1171,8 @@ def _first_stage(
             position: chunk.identifier for position, chunk in enumerate(index.chunks)
         },
     )
+    _require_pool(fused, index, protocol, "RRF fused output")
+    return fused
 
 
 def _reranker(
@@ -1151,6 +1215,10 @@ def _load_pool_collection(
     if frozen_pool_collection is None:
         raise ValueError(
             f"{candidate.identifier} requires its owner's frozen pool collection"
+        )
+    if frozen_pool_collection.get("usable") is False:
+        raise OutputIntegrityError(
+            "Frozen pool owner failed integrity; dependent execution blocked"
         )
     rows = frozen_pool_collection.get("rows")
     if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
@@ -1235,7 +1303,7 @@ def _require_same_pool(
     question_id: str,
 ) -> None:
     if [position for position, _ in observed] != [position for position, _ in expected]:
-        raise ValueError(f"First-stage pool mismatch for {question_id}")
+        raise OutputIntegrityError(f"First-stage pool mismatch for {question_id}")
 
 
 def _require_permutation(
@@ -1243,6 +1311,10 @@ def _require_permutation(
     pool: Sequence[tuple[int, float]],
     question_id: str,
 ) -> None:
+    if not isinstance(observed, (list, tuple)) or any(
+        not isinstance(row, (list, tuple)) or len(row) != 2 for row in observed
+    ):
+        raise OutputIntegrityError(f"Malformed reranker output for {question_id}")
     observed_ids = [position for position, _ in observed]
     pool_ids = [position for position, _ in pool]
     if (
@@ -1255,17 +1327,30 @@ def _require_permutation(
         or len(observed_ids) != len(pool_ids)
         or sorted(observed_ids) != sorted(pool_ids)
     ):
-        raise ValueError(f"Reranker output is not a pool permutation for {question_id}")
+        raise OutputIntegrityError(
+            f"Reranker output is not a pool permutation for {question_id}"
+        )
 
 
 def _require_finite_scores(rows: Sequence[tuple[int, float]]) -> None:
-    if any(not np.isfinite(score) for _, score in rows):
-        raise ValueError("Ranking contains non-finite scores")
+    if any(
+        isinstance(score, (bool, np.bool_))
+        or not isinstance(score, (int, float, np.integer, np.floating))
+        or not np.isfinite(score)
+        for _, score in rows
+    ):
+        raise OutputIntegrityError("Ranking contains malformed or non-finite scores")
 
 
-def _require_pool(rows, index, protocol, question_id):
-    if len(rows) != min(protocol.pool_size, len(index.chunks)):
-        raise ValueError(f"Incomplete query pool for {question_id}")
+def _require_pool(rows, index, protocol, question_id, *, depth=None):
+    if not isinstance(rows, (list, tuple)) or any(
+        not isinstance(row, (list, tuple)) or len(row) != 2 for row in rows
+    ):
+        raise OutputIntegrityError(f"Malformed query pool for {question_id}")
+    if len(rows) != min(
+        protocol.pool_size if depth is None else depth, len(index.chunks)
+    ):
+        raise OutputIntegrityError(f"Incomplete query pool for {question_id}")
     ids = [position for position, _ in rows]
     if any(
         isinstance(pos, bool)
@@ -1273,10 +1358,12 @@ def _require_pool(rows, index, protocol, question_id):
         or not 0 <= pos < len(index.chunks)
         for pos in ids
     ) or len(set(ids)) != len(ids):
-        raise ValueError(f"Invalid/duplicate chunk IDs in pool for {question_id}")
+        raise OutputIntegrityError(
+            f"Invalid/duplicate chunk IDs in pool for {question_id}"
+        )
     _require_finite_scores(rows)
     if any(not index.tokenizer.spans(index.chunks[pos].text) for pos in ids):
-        raise ValueError(f"Token-free chunk in pool for {question_id}")
+        raise OutputIntegrityError(f"Token-free chunk in pool for {question_id}")
 
 
 def _storage_metrics(index, candidate, reranker=None):
@@ -1378,9 +1465,7 @@ def _index_identity(index: ExactIndex, candidate: RetrievalCandidate) -> dict[st
     )
     identity: dict[str, str] = {
         "retriever": candidate.retriever,
-        "chunks_sha256": stable_hash(
-            [{"id": chunk.identifier, "text": chunk.text} for chunk in index.chunks]
-        ),
+        "chunks_sha256": stable_hash(chunk_rows(index.chunks)),
     }
     if dense_sha is not None:
         identity["dense_index_sha256"] = dense_sha

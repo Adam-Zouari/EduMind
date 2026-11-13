@@ -33,7 +33,7 @@ def _objects(value, label, fields, *, allow_empty=False):
     return rows
 
 
-def questions_from_manifest(manifest):
+def questions_from_manifest(manifest, *, require_supplied_evidence=True):
     """Validate references and build deterministic evaluator-only coverage maps."""
     if manifest.task != "rag":
         raise ValueError("Generation requires a RAG manifest")
@@ -74,9 +74,12 @@ def questions_from_manifest(manifest):
             if sha256(item["text"].encode("utf-8")).hexdigest() != item["sha256"]:
                 raise ValueError("Verification material checksum mismatch")
         blocks = _objects(
-            row.get("supplied_evidence"),
+            row.get("supplied_evidence")
+            if require_supplied_evidence
+            else row.get("supplied_evidence", []),
             "supplied_evidence",
             {"id", "text", "intervals"},
+            allow_empty=not require_supplied_evidence,
         )
         units = evidence_units(row)
         for block in blocks:
@@ -119,7 +122,10 @@ def questions_from_manifest(manifest):
         gold_ids = [unit.identifier for unit in units]
         covered = {unit for block in blocks for unit in block["gold_unit_ids"]}
         if answerable and (
-            not accepted or not claims or not gold_ids or not set(gold_ids) <= covered
+            not accepted
+            or not claims
+            or not gold_ids
+            or (require_supplied_evidence and not set(gold_ids) <= covered)
         ):
             raise ValueError(
                 "Answerable generation requires accepted answers, required gold claims, and sufficient supplied evidence"

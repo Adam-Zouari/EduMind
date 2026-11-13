@@ -65,6 +65,7 @@ class IngestDocument:
     file_path: str | None = None
     metadata: RawMetadata = field(default_factory=dict)
     filter_metadata: FilterMetadata = field(default_factory=dict)
+    segments: tuple[Mapping[str, object], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -98,7 +99,29 @@ class RetrievalHit:
 
     @property
     def page(self) -> str:
+        pages = list(
+            dict.fromkeys(
+                str(item["page_number"])
+                for item in self.metadata.get("source_locations", [])
+                if item.get("page_number") is not None
+            )
+        )
+        if pages:
+            return ",".join(pages)
         return str(self.metadata.get("page_number", self.metadata.get("page", "N/A")))
+
+    @property
+    def location(self) -> str:
+        locations = self.metadata.get("source_locations", [])
+        times = list(
+            dict.fromkeys(
+                f"{item.get('timestamp_start', '?')}–{item.get('timestamp_end', '?')}s"
+                for item in locations
+                if item.get("timestamp_start") is not None
+                or item.get("timestamp_end") is not None
+            )
+        )
+        return f"page={self.page}" + (f"; time={', '.join(times)}" if times else "")
 
 
 @dataclass(frozen=True)

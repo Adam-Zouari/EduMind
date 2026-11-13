@@ -165,6 +165,8 @@ def parent_artifact_builder(
                             "prepared_for_manifest_fingerprint"
                         ),
                         "index_build": record.get("index_build"),
+                        "chunk_inventory": record.get("chunk_inventory"),
+                        "usable": record.get("usable"),
                         "input_pool_rows": record.get("rows")
                         if record.get("owner_child_run_id") is None
                         else None,

@@ -179,7 +179,8 @@ def create_frozen_asr_artifact(
             "Frozen ASR worker returned conflicting provenance", result
         )
     artifact = {
-        "schema_version": 2,
+        "schema_version": 3,
+        "audio_schedule": "decoded_pcm_v1",
         "artifact_type": "FrozenASRArtifact",
         "run_id": producer_run_id or "local-" + uuid.uuid4().hex,
         "manifest_checksum": manifest_checksum,
@@ -216,6 +217,7 @@ def load_frozen_asr_artifact(
     expected_durations=None,
     expected_ffmpeg_version=None,
     expected_canonical_checksums=None,
+    expected_canonical_durations=None,
 ):
     path = Path(path)
     checksum = sha256_file(path)
@@ -224,11 +226,13 @@ def load_frozen_asr_artifact(
     payload = json.loads(path.read_text(encoding="utf-8"))
     if (
         not isinstance(payload, Mapping)
-        or payload.get("schema_version") != 2
+        or type(payload.get("schema_version")) is not int
+        or payload.get("schema_version") != 3
+        or payload.get("audio_schedule") != "decoded_pcm_v1"
         or payload.get("artifact_type") != "FrozenASRArtifact"
     ):
         raise ValueError(
-            "Frozen ASR requires schema_version 2; regenerate historical artifacts"
+            "Frozen ASR requires schema_version 3 decoded-PCM schedules; regenerate historical artifacts"
         )
     if payload.get("artifact_content_sha256") != stable_hash(
         {
@@ -380,8 +384,26 @@ def load_frozen_asr_artifact(
         ):
             raise ValueError("Frozen ASR video duration differs from validated inputs")
         windows = row.get("windows")
+        pcm_duration = row.get("canonical_duration_seconds")
+        if pcm_duration is not None and (
+            not _finite(pcm_duration)
+            or pcm_duration <= 0
+            or abs(pcm_duration - duration)
+            > video_protocol.manifest_duration_tolerance_seconds
+        ):
+            raise ValueError(
+                "Frozen ASR decoded video lacks a valid complete canonical checksum/duration"
+            )
+        if expected_canonical_durations is not None and (
+            not isinstance(expected_canonical_durations, Mapping)
+            or pcm_duration != expected_canonical_durations.get(row["sample_id"])
+        ):
+            raise ValueError("Frozen ASR canonical duration differs from sealed inputs")
+        schedule_duration = (
+            pcm_duration if _finite(pcm_duration) and pcm_duration > 0 else duration
+        )
         expected = _window_starts(
-            duration,
+            schedule_duration,
             float(settings["window_length_seconds"]),
             float(settings["overlap_seconds"]),
         )
@@ -416,7 +438,8 @@ def load_frozen_asr_artifact(
                 or window["start"] != expected[index]
                 or window["end"]
                 != min(
-                    duration, expected[index] + float(settings["window_length_seconds"])
+                    schedule_duration,
+                    expected[index] + float(settings["window_length_seconds"]),
                 )
                 or type(window.get("executed")) is not bool
                 or (
@@ -475,7 +498,7 @@ def load_frozen_asr_artifact(
             validate_prediction(
                 row["transcript"],
                 row["segments"],
-                duration,
+                schedule_duration,
                 timestamp_tolerance_seconds,
             )
         elif not row.get("error"):

@@ -173,7 +173,8 @@ def precision_recall_f1(
     recall_denominator = true_positive + false_negative
     precision = true_positive / precision_denominator if precision_denominator else 0.0
     recall = true_positive / recall_denominator if recall_denominator else 0.0
-    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    f1_denominator = 2 * true_positive + false_positive + false_negative
+    f1 = 2 * true_positive / f1_denominator if f1_denominator else 0.0
     return float(precision), float(recall), float(f1)
 
 

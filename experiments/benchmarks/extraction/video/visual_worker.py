@@ -37,6 +37,7 @@ from experiments.benchmarks.extraction.document.worker import (
     synchronize,
     validate_document_payload,
 )
+from experiments.benchmarks.extraction.evidence import observed_resources
 from experiments.benchmarks.extraction.registry import build_experiment_registry
 from experiments.benchmarks.extraction.scoring import (
     attempt_rates,
@@ -156,6 +157,8 @@ def execute(payload):
     )
     cold = before = after = extractor = execution_error = None
     initialized_options = {}
+    resource_evidence = {}
+    monitoring_completed = False
     phase = "initialize_frame"
     lifecycle_started = time.perf_counter()
     try:
@@ -268,6 +271,7 @@ def execute(payload):
                                 }
                             )
                 phase = "telemetry"
+            monitoring_completed = True
             phase = "placement_after"
             after = (
                 inspect_model_placement(extractor, expected_device=device)
@@ -277,6 +281,7 @@ def execute(payload):
             if after and after["status"] != "qualified":
                 raise RuntimeError("Visual inference changed CUDA weight placement")
     except Exception as exc:  # noqa: BLE001 - retain completed and unexecuted observations
+        resource_evidence.update(getattr(exc, "resource_evidence", {}))
         before = getattr(exc, "placement_report", before)
         execution_error = {
             "phase": phase,
@@ -302,7 +307,8 @@ def execute(payload):
             "phase": "telemetry",
             "error": _error_text(exc),
         }
-        resources = {"peak_process_tree_ram_mb": None, "peak_vram_mb": None}
+        resource_evidence.update(getattr(exc, "resource_evidence", {}))
+        resources = observed_resources(resource_evidence, device=device)
     if device == "cpu":
         resources["peak_vram_mb"] = None
     elif resources["peak_vram_mb"] is None:
@@ -331,8 +337,10 @@ def execute(payload):
         "gpu_identity": monitor.gpu_identity,
         "placement_before": before,
         "placement_after": after,
+        "resource_evidence": resource_evidence,
+        "monitoring_completed": monitoring_completed,
         "resource_measurement_scope": "partial_lifecycle"
-        if execution_error
+        if not monitoring_completed
         else "complete_lifecycle",
     }
     if preflight:
@@ -519,6 +527,7 @@ def execute(payload):
         "operational": operational,
         "intervals": intervals,
         "parameters": {
+            "resource_measurement_scope": evidence["resource_measurement_scope"],
             "initialized_pipeline_options": initialized_options,
             "candidate": candidate.candidate,
             "strategy": candidate.strategy,

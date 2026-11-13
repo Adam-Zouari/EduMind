@@ -11,7 +11,9 @@ from experiments.benchmarks.common.datasets import load_manifest, require_manife
 
 REPORT_ROOT = PROJECT_ROOT / "artifacts/benchmarks/data-validation"
 PROFILES = ("smoke", "development", "validation", "locked")
-RAG_BENCHMARKS = frozenset({"chunking-embedding", "retrieval-reranking", "generation"})
+RAG_BENCHMARKS = frozenset(
+    {"chunking-embedding", "retrieval-reranking", "generation", "final-rag"}
+)
 
 
 def manifest_path(benchmark, profile):
@@ -76,7 +78,20 @@ def input_identity(
     if benchmark == "document":
         # Reference renderability was certified under this evaluator identity.
         evaluator = PROJECT_ROOT / "data/benchmarks/evaluators/OmniDocBench"
-        for name in (".edumind-revision", ".edumind-image.json"):
+        from experiments.benchmarks.preparation.evaluators import evaluator_identity
+
+        if evaluator.exists():
+            # Hash actual mounted content, not only its revision marker. This
+            # rejects corruption before candidate execution/report reuse.
+            requirements = {
+                **requirements,
+                "official_evaluator": evaluator_identity(evaluator),
+            }
+        for name in (
+            ".edumind-revision",
+            ".edumind-image.json",
+            ".edumind-source.json",
+        ):
             source = evaluator / name
             if source.is_file():
                 files[str(source)] = sha256_file(source)

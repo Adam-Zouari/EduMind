@@ -10,7 +10,7 @@ from edumind.common.artifacts import atomic_write_json, local_file_lock, stable_
 
 from .contracts import ExtractedDocument, ExtractionRequest
 
-CACHE_SCHEMA = 1
+CACHE_SCHEMA = 2
 
 
 class ExtractionCache:

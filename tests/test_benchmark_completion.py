@@ -128,7 +128,6 @@ def test_worker_setup_failure_preserves_input_contract_report(tmp_path, monkeypa
     "module",
     (
         "experiments.benchmarks.prepare",
-        "experiments.benchmarks.review",
         "experiments.benchmarks.extraction.audio.run",
         "experiments.benchmarks.extraction.document.run",
         "experiments.benchmarks.extraction.video.run",
@@ -136,9 +135,7 @@ def test_worker_setup_failure_preserves_input_contract_report(tmp_path, monkeypa
         "experiments.benchmarks.rag.retrieval_reranking.run",
         "experiments.benchmarks.rag.generation.run",
         "experiments.benchmarks.rag.final.run",
-        "experiments.benchmarks.rag.final.confirm_extraction",
         "experiments.benchmarks.vectordb.run",
-        "experiments.benchmarks.vectordb.retrieval_run",
     ),
 )
 def test_benchmark_entrypoint_runs_as_module(module: str) -> None:

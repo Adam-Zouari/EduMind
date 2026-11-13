@@ -19,6 +19,7 @@ QUALITY = (
     "citation_precision",
     "citation_recall",
     "citation_f1",
+    "citation_support",
 )
 PRIMARY_METRICS = tuple(
     "quality." + name
@@ -70,6 +71,41 @@ GENERATION_DIRECTIONS = {
         for key in ("cold_model_load_seconds", "peak_ram_mib", "peak_vram_mib")
     },
 }
+
+
+def required_ci_policy_keys(questions):
+    """Reference-only support-policy inventory, frozen before candidate outputs."""
+    result = []
+    slices = {
+        "": questions,
+        **{
+            f"slice.{name}.": [q for q in questions if q["answerable"] == answerable]
+            for name, answerable in (("answerable", True), ("unanswerable", False))
+        },
+        **{
+            f"slice.{name}.": [q for q in questions if q["evidence_type"] == name]
+            for name in ("text", "table", "formula", "mixed")
+        },
+    }
+    for prefix, subset in slices.items():
+        if not subset:
+            continue
+        answerable = any(q["answerable"] for q in subset)
+        unanswerable = any(not q["answerable"] for q in subset)
+        for key in (*BASE_KEYS, *OPERATIONAL_KEYS):
+            if (
+                key.startswith("quality.")
+                or key
+                in {
+                    "validity.response_validity_rate",
+                    "repeatability.citation_agreement",
+                }
+            ) and not answerable:
+                continue
+            if key == "validity.refusal_validity_rate" and not unanswerable:
+                continue
+            result.append(prefix + key)
+    return tuple(result)
 
 
 def cell(value=None, status="unavailable", reason=None):
@@ -127,6 +163,8 @@ def score_attempt(question, attempt, judgment=None):
         "context_limit",
         "not_executed",
         "missing_outcome",
+        "infrastructure_error",
+        "input_rejected",
     }:
         raise ValueError(f"Unknown generation outcome: {outcome}")
     response, schema_error = (
@@ -134,7 +172,12 @@ def score_attempt(question, attempt, judgment=None):
         if outcome == "completed"
         else (None, None)
     )
-    executed = outcome not in {"not_executed", "missing_outcome"}
+    executed = outcome not in {
+        "not_executed",
+        "missing_outcome",
+        "infrastructure_error",
+        "input_rejected",
+    }
     missing = cell(status="incomplete", reason=outcome)
     unavailable = cell(
         reason="output_unavailable" if outcome != "completed" else "malformed_output"
@@ -218,6 +261,7 @@ def score_attempt(question, attempt, judgment=None):
             )
             for name in QUALITY[:5]:
                 metrics["quality." + name] = cell(reason="judge_unavailable")
+            metrics["quality.citation_support"] = cell(reason="judge_unavailable")
             if labels is not None:
                 claims = labels["claims"]
                 counts["generated_claim_count"] = len(claims)
@@ -232,6 +276,13 @@ def score_attempt(question, attempt, judgment=None):
                 )
                 metrics["quality.faithfulness"] = (
                     cell(sum(claim["supported"] for claim in claims) / len(claims))
+                    if claims
+                    else cell(status="inapplicable", reason="no_generated_claims")
+                )
+                metrics["quality.citation_support"] = (
+                    cell(
+                        sum(claim["cited_supported"] for claim in claims) / len(claims)
+                    )
                     if claims
                     else cell(status="inapplicable", reason="no_generated_claims")
                 )
@@ -270,14 +321,37 @@ def score_attempt(question, attempt, judgment=None):
     }
 
 
-def score_pairs(question, attempts, judge=None):
+def score_pairs(
+    question, attempts, judge=None, *, citation_identity=None, executed_failure=None
+):
+    """Final may supply citation_identity(attempt) -> set of stable identities.
+
+    Missing mappings must raise; they leave citation evaluation unavailable,
+    never an empty-set agreement. Other pair metrics remain independent.
+    """
     result = []
     for left, right in combinations(attempts, 2):
         values, judgment = {}, None
-        missing = bool(
-            {"not_executed", "missing_outcome"} & {left["outcome"], right["outcome"]}
+        failures = tuple(
+            bool(executed_failure and executed_failure(a)) for a in (left, right)
         )
-        valid = left["response"] is not None and right["response"] is not None
+        known_failure = any(failures)
+        missing = any(
+            a["outcome"]
+            in {
+                "not_executed",
+                "missing_outcome",
+                "infrastructure_error",
+                "input_rejected",
+            }
+            and not known
+            for a, known in zip((left, right), failures, strict=True)
+        )
+        valid = (
+            not known_failure
+            and left["response"] is not None
+            and right["response"] is not None
+        )
         for key in REPEAT_KEYS:
             values[key] = (
                 cell(status="incomplete", reason="not_executed")
@@ -288,12 +362,25 @@ def score_pairs(question, attempts, judge=None):
             a, b = left["response"], right["response"]
             same_status = a["status"] == b["status"]
             values[REPEAT_KEYS[0]] = cell(float(same_status))
-            union = set(a["citations"]) | set(b["citations"])
-            values[REPEAT_KEYS[1]] = cell(
-                len(set(a["citations"]) & set(b["citations"])) / len(union)
-                if union
-                else 1.0
-            )
+            try:
+                ac = (
+                    set(citation_identity(left))
+                    if citation_identity
+                    else set(a["citations"])
+                )
+                bc = (
+                    set(citation_identity(right))
+                    if citation_identity
+                    else set(b["citations"])
+                )
+                union = ac | bc
+                values[REPEAT_KEYS[1]] = cell(
+                    len(ac & bc) / len(union) if union else 1.0
+                )
+            except (ValueError, KeyError, TypeError) as exc:
+                values[REPEAT_KEYS[1]] = cell(
+                    reason=f"citation_identity_unavailable: {exc}"
+                )
             if same_status:
                 if judge is not None:
                     try:
@@ -386,7 +473,12 @@ def _measurement_coverage(attempt):
     latency = attempt.get("response") is None or _valid_number(
         timing.get("latency_seconds")
     )
-    executed = attempt["outcome"] not in {"not_executed", "missing_outcome"}
+    executed = attempt.get("execution_accounted") is True or attempt["outcome"] not in {
+        "not_executed",
+        "missing_outcome",
+        "infrastructure_error",
+        "input_rejected",
+    }
     return {
         key: executed
         and (
@@ -530,14 +622,11 @@ def aggregate(
     Numeric support requirements are supplied by reviewed protocol inputs.
     """
     minimum_ci_sources = minimum_ci_sources or {}
-    records = [
-        {
-            **r,
-            "statistics": question_statistics(r)[0],
-            "support": question_statistics(r)[1],
-        }
-        for r in records
-    ]
+    prepared = []
+    for record in records:
+        statistics, support = question_statistics(record)
+        prepared.append({**record, "statistics": statistics, "support": support})
+    records = prepared
     results = {}
     slices = {
         "": records,
@@ -567,7 +656,14 @@ def aggregate(
             else:
                 eligible = subset
                 complete = all(
-                    a["outcome"] not in {"not_executed", "missing_outcome"}
+                    a.get("execution_accounted") is True
+                    or a["outcome"]
+                    not in {
+                        "not_executed",
+                        "missing_outcome",
+                        "infrastructure_error",
+                        "input_rejected",
+                    }
                     for r in eligible
                     for a in r["attempts"]
                 )
@@ -611,12 +707,18 @@ def aggregate(
                 "contributing_sources": len(contributing_sources),
                 "scheduled_attempts": sum(len(r["attempts"]) for r in eligible),
                 "executed_attempts": sum(
-                    a["outcome"] not in {"not_executed", "missing_outcome"}
+                    a["outcome"]
+                    not in {
+                        "not_executed",
+                        "missing_outcome",
+                        "infrastructure_error",
+                        "input_rejected",
+                    }
                     for r in eligible
                     for a in r["attempts"]
                 ),
                 "failed_attempts": sum(
-                    a["outcome"] not in {"completed", "not_executed", "missing_outcome"}
+                    a["outcome"] in {"runtime_error", "timeout", "context_limit"}
                     for r in eligible
                     for a in r["attempts"]
                 ),
@@ -633,6 +735,21 @@ def aggregate(
                 if key in BASE_KEYS
                 else None,
                 "claim_free_observations": claim_free,
+                "infrastructure_interrupted_attempts": sum(
+                    a["outcome"] == "infrastructure_error"
+                    for r in eligible
+                    for a in r["attempts"]
+                ),
+                "input_rejected_attempts": sum(
+                    a["outcome"] == "input_rejected"
+                    for r in eligible
+                    for a in r["attempts"]
+                ),
+                "unexecuted_attempts": sum(
+                    a["outcome"] in {"not_executed", "missing_outcome"}
+                    for r in eligible
+                    for a in r["attempts"]
+                ),
             }
             ci = {
                 "estimate": value,

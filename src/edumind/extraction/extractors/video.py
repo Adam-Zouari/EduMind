@@ -14,13 +14,14 @@ from ..contracts import (
     ExtractedDocument,
     ExtractedSegment,
     ExtractionRequest,
+    ExtractionWarning,
     Extractor,
+    SegmentKind,
     SourceKind,
 )
 from ..errors import ExtractionBackendError
 from ..video_policy import KeyframePolicy, frame_command
 from .audio import WhisperExtractor
-from .base import build_document
 from .document import DoclingExtractor
 
 
@@ -111,7 +112,7 @@ class VideoExtractor:
                 frames = self._extract_frames(
                     request.source_path, directory, keyframe_policy
                 )
-                visual_segments: list[tuple[str, float | None]] = []
+                visual_documents: list[tuple[ExtractedDocument, float | None]] = []
                 image_engine = str(
                     request.options.get("image_engine", "docling-standard")
                 )
@@ -147,34 +148,103 @@ class VideoExtractor:
                         profile=image_profile,
                         options=image_options,
                     )
-                    text = image_extractor.extract(
-                        image_request, SourceKind.IMAGE
-                    ).text.strip()
-                    if text:
-                        visual_segments.append((text, timestamp))
+                    document = image_extractor.extract(image_request, SourceKind.IMAGE)
+                    visual_documents.append((document, timestamp))
         except Exception as exc:
             raise ExtractionBackendError(
                 "Video extraction failed", detail=str(exc)
             ) from exc
 
-        texts = [segment.text for segment in audio.segments] + [
-            item[0] for item in visual_segments
+        parts = [(audio, "audio", None)] + [
+            (document, f"frame-{index}", timestamp)
+            for index, (document, timestamp) in enumerate(visual_documents)
         ]
-        timestamps = [
-            (segment.timestamp_start, segment.timestamp_end)
-            for segment in audio.segments
-        ] + [(timestamp, timestamp) for _, timestamp in visual_segments]
-        separators = [
-            " " if index < len(audio.segments) else "\n"
-            for index in range(1, len(texts))
-        ]
-        result = build_document(
-            request,
-            kind,
-            request.profile,
-            texts,
-            timestamps=timestamps,
-            separators=separators,
+        pieces: list[str] = []
+        segments: list[ExtractedSegment] = []
+        warnings: list[ExtractionWarning] = []
+        native_documents = []
+        offset = 0
+        for document, identity, timestamp in parts:
+            if pieces:
+                pieces.append("\n")
+                offset += 1
+            modality = "audio" if identity == "audio" else "visual"
+            native = {
+                "modality": modality,
+                "native_document_id": identity,
+                "frame_timestamp": timestamp,
+                "native_profile": document.profile.fingerprint,
+                "native_source_checksum": document.source_checksum,
+                "native_document_metadata": dict(document.metadata),
+            }
+            native_documents.append(native)
+            originals = document.segments or (
+                (ExtractedSegment(document.text, 0, len(document.text)),)
+                if document.text
+                else ()
+            )
+            base_index = len(segments)
+            for segment in originals:
+                segments.append(
+                    replace(
+                        segment,
+                        start=offset + segment.start,
+                        end=offset + segment.end,
+                        order=len(segments),
+                        element_id=f"{identity}:{segment.element_id}"
+                        if segment.element_id
+                        else None,
+                        parent_id=f"{identity}:{segment.parent_id}"
+                        if segment.parent_id
+                        else None,
+                        kind=(
+                            SegmentKind.AUDIO
+                            if modality == "audio"
+                            else SegmentKind.VISUAL_TEXT
+                        )
+                        if segment.kind is SegmentKind.TEXT
+                        else segment.kind,
+                        timestamp_start=timestamp
+                        if modality == "visual"
+                        else segment.timestamp_start,
+                        timestamp_end=timestamp
+                        if modality == "visual"
+                        else segment.timestamp_end,
+                        metadata={
+                            **segment.metadata,
+                            **native,
+                            "native_kind": segment.kind.value,
+                            "native_start": segment.start,
+                            "native_end": segment.end,
+                            "native_element_id": segment.element_id,
+                            "native_parent_id": segment.parent_id,
+                            "native_order": segment.order,
+                        },
+                    )
+                )
+            warnings.extend(
+                replace(
+                    warning,
+                    message=f"{identity}"
+                    + (f" at {timestamp}s" if timestamp is not None else "")
+                    + f": {warning.message}",
+                    segment_index=base_index + warning.segment_index
+                    if warning.segment_index is not None
+                    else None,
+                )
+                for warning in document.warnings
+            )
+            pieces.append(document.text)
+            offset += len(document.text)
+        return ExtractedDocument(
+            source_name=request.source_path.name,
+            source_path=str(request.source_path),
+            source_kind=kind,
+            source_checksum=request.checksum,
+            mime_type=request.mime_type,
+            profile=request.profile,
+            text="".join(pieces),
+            segments=tuple(segments),
             metadata={
                 "keyframe_policy": {
                     "strategy": keyframe_policy.strategy,
@@ -187,14 +257,14 @@ class VideoExtractor:
                 "audio_engine": audio_engine,
                 "image_engine": image_engine,
                 "audio_segment_count": len(audio.segments),
-                "visual_segment_count": len(visual_segments),
+                "visual_segment_count": sum(
+                    segment.metadata["modality"] == "visual" for segment in segments
+                ),
+                "native_documents": native_documents,
             },
-            warnings=list(audio.warnings),
-            seconds=time.perf_counter() - started,
+            warnings=tuple(warnings),
+            extraction_seconds=time.perf_counter() - started,
         )
-        # The final document owns new offsets; local audio offsets are intentionally rebuilt.
-        assert all(isinstance(segment, ExtractedSegment) for segment in result.segments)
-        return result
 
     def _extract_frames(
         self, source: Path, directory: Path, policy: KeyframePolicy

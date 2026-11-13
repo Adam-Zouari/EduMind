@@ -10,6 +10,8 @@ from pathlib import Path
 from experiments.benchmarks.common.data_validation import PROFILES, manifest_path
 
 PACKAGES = {
+    "final-rag": "experiments.benchmarks.rag.final",
+    "vectordb": "experiments.benchmarks.vectordb",
     **{
         name: f"experiments.benchmarks.extraction.{name}"
         for name in ("document", "audio", "video")
@@ -24,7 +26,9 @@ PACKAGES = {
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("benchmark", choices=(*PACKAGES, "all"))
-    parser.add_argument("--profile", choices=(*PROFILES, "all"), default="all")
+    parser.add_argument(
+        "--profile", choices=(*PROFILES, "preflight", "all"), default="all"
+    )
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--protocol", type=Path)
     parser.add_argument("--chunking-protocol", type=Path)
@@ -55,7 +59,14 @@ def main():
         protocol = protocol_module.load_protocol(
             args.protocol or protocol_module.DEFAULT_PROTOCOL_PATH
         )
-        for profile in profiles:
+        applicable = (
+            ("smoke", "preflight", "locked") if benchmark == "final-rag" else PROFILES
+        )
+        for profile in applicable if args.profile == "all" else profiles:
+            if profile not in applicable:
+                if args.benchmark != "all":
+                    parser.error(f"{benchmark} has no {profile} data profile")
+                continue
             options = (
                 {"controls_path": args.reliability_manifest}
                 if benchmark == "audio"
@@ -71,7 +82,12 @@ def main():
                     args.chunking_protocol or DEFAULT_PROTOCOL_PATH
                 )
             path, report = validator.prepare_report(
-                args.manifest or manifest_path(benchmark, profile),
+                args.manifest
+                or (
+                    validator.manifest_path(profile)
+                    if benchmark in {"vectordb", "final-rag"}
+                    else manifest_path(benchmark, profile)
+                ),
                 profile,
                 protocol,
                 inventory=args.inventory,

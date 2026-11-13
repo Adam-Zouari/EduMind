@@ -48,6 +48,7 @@ class HuggingFaceGenerator:
         self._tokenizer: Any | None = None
         self._processor: Any | None = None
         self._torch: Any | None = None
+        self._lifecycle_lock = threading.RLock()
 
     def health_check(self) -> bool:
         path = Path(self.profile.model_path)
@@ -92,6 +93,12 @@ class HuggingFaceGenerator:
     def _generate_measured(
         self, query: str, context: str, system_prompt: str | None
     ) -> GenerationMeasurement:
+        with self._lifecycle_lock:
+            return self._generate_owned(query, context, system_prompt)
+
+    def _generate_owned(
+        self, query: str, context: str, system_prompt: str | None
+    ) -> GenerationMeasurement:
         load_seconds = self._ensure_loaded()
         assert (
             self._model is not None
@@ -130,7 +137,7 @@ class HuggingFaceGenerator:
             self._torch.cuda.manual_seed_all(self.profile.seed)
             self._torch.cuda.reset_peak_memory_stats()
 
-        from transformers import TextIteratorStreamer
+        from transformers import StoppingCriteriaList, TextIteratorStreamer
 
         streamer = TextIteratorStreamer(
             self._tokenizer,
@@ -139,12 +146,16 @@ class HuggingFaceGenerator:
             timeout=self.profile.streamer_timeout_seconds,
         )
         errors: list[BaseException] = []
+        cancelled = threading.Event()
         generation_options: dict[str, object] = {
             **encoded,
             "streamer": streamer,
             "max_new_tokens": self.profile.maximum_answer_tokens,
             "do_sample": self.profile.do_sample,
             "pad_token_id": self._tokenizer.eos_token_id,
+            "stopping_criteria": StoppingCriteriaList(
+                [lambda *_args, **_kwargs: cancelled.is_set()]
+            ),
         }
         if self.profile.do_sample:
             generation_options["temperature"] = self.profile.temperature
@@ -158,23 +169,38 @@ class HuggingFaceGenerator:
                 streamer.on_finalized_text("", stream_end=True)
 
         started = time.perf_counter()
-        worker = threading.Thread(target=run, name="edumind-hf-generation", daemon=True)
+        worker = threading.Thread(target=run, name="edumind-hf-generation")
         worker.start()
         first_token_at: float | None = None
         pieces: list[str] = []
-        for text in streamer:
-            if text and first_token_at is None:
-                first_token_at = time.perf_counter()
-            pieces.append(text)
-        worker.join()
+        consumer_error: BaseException | None = None
+        try:
+            for text in streamer:
+                if text and first_token_at is None:
+                    first_token_at = time.perf_counter()
+                pieces.append(text)
+        except BaseException as exc:  # noqa: BLE001 - cancellation/join also owns interrupts
+            consumer_error = exc
+        finally:
+            # HF checks this between decoding steps. Never relinquish model ownership
+            # before the worker has actually stopped, even during a slow native call.
+            cancelled.set()
+            worker.join()
         finished = time.perf_counter()
         if errors:
             raise GenerationError(
                 f"Generation failed for {self.profile.model_name}: {errors[0]}"
             ) from errors[0]
+        if consumer_error is not None:
+            if not isinstance(consumer_error, Exception):
+                raise consumer_error
+            raise GenerationError(
+                f"Generation stream failed for {self.profile.model_name}: "
+                f"{type(consumer_error).__name__}: {consumer_error}"
+            ) from consumer_error
 
         raw_answer = "".join(pieces).strip()
-        answer, reasoning_text = _visible_answer(raw_answer)
+        answer, reasoning_text = _visible_answer(raw_answer, prompt=prompt)
         generated_tokens = len(
             self._tokenizer.encode(raw_answer, add_special_tokens=False)
         )
@@ -252,11 +278,12 @@ class HuggingFaceGenerator:
         return torch, model, tokenizer, None
 
     def unload(self) -> None:
-        self._model = None
-        self._tokenizer = None
-        self._processor = None
-        self._torch = None
-        release_runtime_memory()
+        with self._lifecycle_lock:
+            self._model = None
+            self._tokenizer = None
+            self._processor = None
+            self._torch = None
+            release_runtime_memory()
 
     def runtime_memory(self) -> dict[str, float]:
         if self._torch is None or not self.profile.device.startswith("cuda"):
@@ -271,16 +298,25 @@ class HuggingFaceGenerator:
     @staticmethod
     def build_context(results: Sequence[RetrievalHit]) -> str:
         return "\n\n".join(
-            f"[{index}] source={hit.source}; page={hit.page}\n{hit.document}"
+            f"[{index}] source={hit.source}; {hit.location}\n{hit.document}"
             for index, hit in enumerate(results, start=1)
         )
 
 
-def _visible_answer(text: str) -> tuple[str, str]:
-    reasoning = re.findall(
-        r"<think>(.*?)</think>", text, flags=re.DOTALL | re.IGNORECASE
-    )
-    visible = re.sub(
-        r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE
-    ).strip()
-    return visible or text.strip(), "\n".join(reasoning).strip()
+def _visible_answer(text: str, *, prompt: str = "") -> tuple[str, str]:
+    # The provisional Qwen chat template can open thinking in its generation
+    # prefix. Direct mode instead ends with an already closed, empty think block.
+    depth = int(prompt.rstrip().lower().endswith("<think>"))
+    lowered = text.lower()
+    if "</think>" in lowered and "<think>" not in lowered:
+        depth = 1
+    visible: list[str] = []
+    reasoning: list[str] = []
+    for piece in re.split(r"(</?think>)", text, flags=re.IGNORECASE):
+        if piece.lower() == "<think>":
+            depth += 1
+        elif piece.lower() == "</think>":
+            depth = max(0, depth - 1)
+        else:
+            (reasoning if depth else visible).append(piece)
+    return "".join(visible).strip(), "".join(reasoning).strip()

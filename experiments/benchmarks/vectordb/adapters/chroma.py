@@ -109,6 +109,22 @@ class Chroma:
     def count(self) -> int:
         return int(self._collection().count())
 
+    def fetch(self, identifiers):
+        if not identifiers:
+            return []
+        result = self._collection().get(
+            ids=list(identifiers), include=["embeddings", "documents", "metadatas"]
+        )
+        return [
+            Record(
+                identifier,
+                result["embeddings"][i],
+                result["documents"][i],
+                result["metadatas"][i],
+            )
+            for i, identifier in enumerate(result["ids"])
+        ]
+
     def index_info(self) -> Mapping[str, object]:
         value = getattr(self._collection(), "configuration", None)
         if not isinstance(value, Mapping):

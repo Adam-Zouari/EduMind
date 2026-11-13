@@ -271,6 +271,15 @@ def run_preflight(
         raise ValueError(f"Unknown preflight benchmark: {benchmark}")
     if not candidates or len(set(candidates)) != len(candidates):
         raise ValueError("Preflight candidates must be non-empty and unique")
+    envelope = context.get("input_envelope")
+    if (
+        not isinstance(envelope, Mapping)
+        or not isinstance(envelope.get("stress_manifest_checksum"), str)
+        or not envelope["stress_manifest_checksum"]
+    ):
+        raise ValueError(
+            "Preflight context requires its canonical input-envelope dataset checksum"
+        )
     groups = qualification_groups(candidates, required_groups)
     run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     directory = artifact_root / benchmark / "preflight" / run_id
@@ -328,7 +337,9 @@ def run_preflight(
                 "phase": "preflight",
                 "run_type": "preflight",
                 "device": "cuda",
-                "dataset_checksum": context.get("stress_manifest_checksum", ""),
+                "dataset_checksum": context["input_envelope"][
+                    "stress_manifest_checksum"
+                ],
                 "qualification.fingerprint": fingerprint,
                 "decision.fingerprint": decision_fingerprint,
                 **protocol_tags,
@@ -376,7 +387,9 @@ def run_preflight(
                         "run_type": "preflight",
                         "device": "cuda",
                         "candidate": candidate,
-                        "dataset_checksum": context.get("stress_manifest_checksum", ""),
+                        "dataset_checksum": context["input_envelope"][
+                            "stress_manifest_checksum"
+                        ],
                         "qualification.fingerprint": fingerprint,
                         "decision.fingerprint": decision_fingerprint,
                         **protocol_tags,

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1, "name": "vector-controlled-smoke", "split": "smoke",
+  "corpora": [{
+    "id": "fixture", "vectors": [[1.0,0.0],[0.0,1.0],[-1.0,0.0]],
+    "queries": [[1.0,0.0],[0.0,1.0]], "query_ids": ["q1","q2"],
+    "query_sources": ["synthetic-a","synthetic-b"],
+    "provenance": {"kind":"synthetic-smoke"},
+    "records": [
+      {"id":"a", "text":"fixture alpha", "metadata":{"source_id":"doc-a"}},
+      {"id":"b", "text":"fixture beta", "metadata":{"source_id":"doc-b"}},
+      {"id":"c", "text":"fixture gamma", "metadata":{"source_id":"doc-c"}}
+    ]
+  }],
+  "conditions": [
+    {"id":"serial", "corpus":"fixture", "mode":"controlled", "filters":{}, "query_ids":["q1","q2"], "concurrency":1, "windows":1, "warmup_requests":1},
+    {"id":"filtered", "corpus":"fixture", "mode":"controlled", "filters":{"source_id":"doc-a"}, "query_ids":["q1"], "concurrency":1, "windows":1, "warmup_requests":1},
+    {"id":"empty", "corpus":"fixture", "mode":"controlled", "filters":{"source_id":"missing"}, "query_ids":["q1"], "concurrency":1, "windows":1, "warmup_requests":1},
+    {"id":"load", "corpus":"fixture", "mode":"load", "filters":{}, "query_ids":["q1","q2"], "concurrency":2, "windows":1, "warmup_requests":2}
+  ],
+  "operations": [{"id":"doc-a", "corpus":"fixture", "source_id":"doc-a",
+    "replacement":[{"id":"a-new", "vector":[0.0,-1.0], "text":"replacement", "metadata":{"source_id":"doc-a"}}],
+    "insert":[{"id":"insert", "vector":[1.0,1.0], "text":"insert fixture", "metadata":{"source_id":"new-doc"}}]
+  }],
+  "integration": {}, "review": {}
+}

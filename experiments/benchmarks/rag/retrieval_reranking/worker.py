@@ -2,20 +2,10 @@
 
 from __future__ import annotations
 
-import time
-
-WORKER_STARTED_AT = time.perf_counter()
-
 from experiments.benchmarks.common.process import json_worker_main
 from experiments.benchmarks.rag.retrieval_reranking.benchmark import (
     execute_payload,
 )
 
-
-def execute_with_start(payload: dict[str, object]) -> dict[str, object]:
-    payload["worker_started_at"] = WORKER_STARTED_AT
-    return execute_payload(payload)
-
-
 if __name__ == "__main__":
-    raise SystemExit(json_worker_main(execute_with_start))
+    raise SystemExit(json_worker_main(execute_payload))

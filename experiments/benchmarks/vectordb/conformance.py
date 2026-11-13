@@ -1,96 +1,82 @@
-"""Correctness checks run against real servers before timing them."""
+"""Isolated correctness probes; none of these timings are workload startup."""
 
 from __future__ import annotations
 
 import subprocess
 import time
-from collections.abc import Mapping
-from contextlib import ExitStack
-from pathlib import Path
 
-import numpy as np
-
-from .adapters import Adapter, Config, Record, create
-from .protocol import VectorDatabaseProtocol
-from .workload import clustered, records
+from .adapters import Record, create
+from .adapters.base import DimensionMismatch
+from .workload import clustered, records, validate_hits
 
 
-def check(
-    name: str,
-    config: Config,
-    compose: Path,
-    protocol: VectorDatabaseProtocol,
-) -> tuple[Adapter, Mapping[str, float]]:
+def check(name, config, compose, protocol):
+    from .integration import verify_inventory
+
     corpus = clustered(
         protocol.conformance["size"],
         config.dimension,
         protocol.conformance["dimension_query_count"],
-        seed=protocol.conformance["seed"],
+        protocol.conformance["seed"],
         settings=protocol.synthetic,
     )
-    with ExitStack() as resources:
-        adapter = create(name, config)
-        resources.callback(adapter.close)
+    adapter = create(name, config)
+    report = {}
+    expected = records(corpus)
+    try:
         adapter.reset()
-        adapter.upsert(records(corpus))
+        adapter.upsert(expected)
         _finish_index(adapter)
-        flags = {
-            "health_correctness": float(adapter.health()),
-            "cosine_correctness": float(
-                adapter.search(corpus.vectors[0], 1)[0].identifier == "0"
-            ),
-            "compound_filter_correctness": _compound(
-                adapter,
-                corpus.vectors[0],
-                limit=protocol.conformance["search_limit"],
-                filter_names=protocol.conformance["compound_filters"],
-            ),
-            "empty_filter_correctness": float(
-                not adapter.search(
-                    corpus.vectors[0],
-                    protocol.conformance["search_limit"],
-                    {str(protocol.conformance["empty_filter"]): "missing"},
-                )
-            ),
-            "ann_index_verified": float(bool(adapter.index_info())),
-            "dimension_rejection_correctness": _dimension_rejection(adapter, config),
+        report["inventory"] = verify_inventory(adapter, expected)
+        report["index"] = {"status": "passed", "details": adapter.index_info()}
+        if not adapter.health():
+            raise ValueError("Server health failed")
+        trusted = {row.identifier: row.metadata for row in expected}
+        hits = adapter.search(corpus.vectors[0], 1)
+        validate_hits(hits, trusted, 1)
+        report["cosine"] = {
+            "status": "passed" if hits and hits[0].identifier == "0" else "failed"
         }
-        original_count = adapter.count()
-        adapter.upsert(
-            [Record("0", corpus.vectors[1], "replacement", corpus.metadata[0])]
+        filters = {str(key): "0" for key in protocol.conformance["compound_filters"]}
+        hits = adapter.search(
+            corpus.vectors[0], protocol.conformance["search_limit"], filters
         )
-        flags["duplicate_id_correctness"] = float(adapter.count() == original_count)
-        deleted = adapter.delete_document("doc-0")
-        adapter.upsert(
-            [
-                Record(
-                    "replacement-0",
-                    corpus.vectors[0],
-                    "replacement",
-                    {**corpus.metadata[0], "source_id": "doc-0"},
-                )
-            ]
+        violation = validate_hits(
+            hits, trusted, protocol.conformance["search_limit"], filters
         )
-        replacement_hits = adapter.search(
+        report["compound_filter"] = {
+            "status": "passed" if hits and not violation else "failed"
+        }
+        filters = {protocol.conformance["empty_filter"]: "missing"}
+        hits = adapter.search(
+            corpus.vectors[0], protocol.conformance["search_limit"], filters
+        )
+        violation = validate_hits(
+            hits, trusted, protocol.conformance["search_limit"], filters
+        )
+        report["empty_filter"] = {"status": "failed" if violation else "passed"}
+        report["dimension_rejection"] = _dimension_rejection(adapter, config)
+        replacement = Record("0", corpus.vectors[1], "replacement", corpus.metadata[0])
+        adapter.upsert([replacement])
+        expected[0] = replacement
+        report["unique_id_replacement"] = verify_inventory(adapter, expected)
+        source_id = corpus.metadata[0]["source_id"]
+        adapter.delete_document(source_id)
+        expected = [row for row in expected if row.metadata["source_id"] != source_id]
+        replacement = Record(
+            "replacement-0",
             corpus.vectors[0],
-            protocol.conformance["search_limit"],
-            {"source_id": "doc-0"},
+            "replacement",
+            {**corpus.metadata[0], "source_id": source_id},
         )
-        flags["replacement_correctness"] = float(
-            deleted == protocol.synthetic.records_per_document
-            and [hit.identifier for hit in replacement_hits] == ["replacement-0"]
-        )
+        adapter.upsert([replacement])
+        expected.append(replacement)
+        report["document_replacement"] = verify_inventory(adapter, expected)
         adapter.delete(["replacement-0"])
-        flags["deletion_correctness"] = float(
-            not adapter.search(
-                corpus.vectors[0],
-                protocol.conformance["search_limit"],
-                {"source_id": "doc-0"},
-            )
-        )
-        persisted_count = adapter.count()
-        resources.close()
-        restarted_at = time.perf_counter()
+        expected.pop()
+        report["deletion"] = verify_inventory(adapter, expected)
+        adapter.close()
+        adapter = None
         _restart(name, compose, timeout_seconds=protocol.docker_restart_timeout_seconds)
         adapter = _wait_for_adapter(
             name,
@@ -98,53 +84,48 @@ def check(
             timeout_seconds=protocol.index_readiness_timeout_seconds,
             poll_seconds=protocol.index_readiness_poll_seconds,
         )
-        resources.callback(adapter.close)
-        flags["restart_readiness_seconds"] = time.perf_counter() - restarted_at
-        flags["restart_persistence_correctness"] = float(
-            adapter.count() == persisted_count
-        )
-        flags["ann_index_verified_after_restart"] = float(bool(adapter.index_info()))
-        cold_query_started = time.perf_counter()
-        adapter.search(corpus.vectors[0], protocol.conformance["search_limit"])
-        flags["process_cold_query_seconds"] = time.perf_counter() - cold_query_started
-        resources.pop_all()  # The caller owns the successfully checked adapter.
-        return adapter, flags
+        report["persistence"] = verify_inventory(adapter, expected)
+        report["index_after_restart"] = {
+            "status": "passed",
+            "details": adapter.index_info(),
+        }
+        if any(row.get("status") != "passed" for row in report.values()):
+            raise ValueError(f"Conformance failed/unverified: {report}")
+        return adapter, report
+    except BaseException:
+        if adapter is not None:
+            adapter.close()
+        raise
 
 
-def _compound(
-    adapter: Adapter,
-    query: np.ndarray,
-    *,
-    limit: int,
-    filter_names,
-) -> float:
-    filters = {str(name): "0" for name in filter_names}
-    hits = adapter.search(query, limit, filters)
-    return float(
-        bool(hits)
-        and all(
-            all(str(hit.metadata.get(name)) == "0" for name in filters) for hit in hits
-        )
-    )
-
-
-def _dimension_rejection(adapter: Adapter, config: Config) -> float:
+def _dimension_rejection(adapter, config):
     try:
         adapter.upsert(
             [Record("bad-dimension", [0.0] * (config.dimension + 1), "bad", {})]
         )
-    except Exception:  # noqa: BLE001 - any rejected dimension passes this gate
-        return 1.0
-    return 0.0
+    except DimensionMismatch as exc:
+        return {
+            "status": "passed",
+            "scope": "adapter",
+            "server_status": "unverified",
+            "reason": str(exc),
+        }
+    except Exception as exc:  # noqa: BLE001 - unknown rejection must remain unverified
+        return {
+            "status": "unverified",
+            "scope": "unknown",
+            "reason": f"{type(exc).__name__}: {exc}",
+        }
+    return {"status": "failed", "scope": "adapter"}
 
 
-def _finish_index(adapter: Adapter) -> None:
+def _finish_index(adapter):
     finish = getattr(adapter, "finish_index", None)
     if callable(finish):
         finish()
 
 
-def _restart(name: str, compose: Path, *, timeout_seconds: float) -> None:
+def _restart(name, compose, *, timeout_seconds):
     subprocess.run(
         ["docker", "compose", "-f", str(compose), "restart", name],
         check=True,
@@ -154,27 +135,18 @@ def _restart(name: str, compose: Path, *, timeout_seconds: float) -> None:
     )
 
 
-def _wait_for_adapter(
-    name: str,
-    config: Config,
-    *,
-    timeout_seconds: float,
-    poll_seconds: float,
-) -> Adapter:
+def _wait_for_adapter(name, config, *, timeout_seconds, poll_seconds):
     deadline = time.monotonic() + timeout_seconds
-    error: Exception | None = None
+    error = None
     while time.monotonic() < deadline:
         adapter = None
         try:
             adapter = create(name, config)
             if adapter.health():
                 return adapter
-        except Exception as exc:  # noqa: BLE001 - retry arbitrary adapter startup failures
+        except Exception as exc:  # noqa: BLE001 - retain bounded startup transport errors
             error = exc
         if adapter is not None:
             adapter.close()
         time.sleep(poll_seconds)
-    raise RuntimeError(f"{name} was not ready after restart: {error}")
-
-
-__all__ = ["_finish_index", "check"]
+    raise RuntimeError(f"{name} was not ready after start: {error}")

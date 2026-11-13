@@ -34,6 +34,7 @@ from experiments.benchmarks.extraction.audio.protocol import (
     protocol_from_worker as audio_protocol_from_worker,
 )
 from experiments.benchmarks.extraction.audio.worker import synchronize
+from experiments.benchmarks.extraction.evidence import observed_resources
 from experiments.benchmarks.extraction.media import (
     canonical_wav_duration,
     decode_canonical_audio,
@@ -77,6 +78,8 @@ def execute(payload):
     before = after = None
     cold = execution_error = None
     parameters = {}
+    monitoring_completed = False
+    resource_evidence = {}
     phase = "load"
     lifecycle_started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="edumind-video-asr-") as raw:
@@ -149,17 +152,19 @@ def execute(payload):
                             commands,
                         )
                     )
-                if device == "cuda":
-                    phase = "placement_after"
-                    after = inspect_model_placement(
-                        *runtime.placement_models(), expected_device=device
-                    )
-                    if after["status"] != "qualified":
-                        raise RuntimeError(
-                            "Frozen ASR weight placement changed during inference"
-                        )
                 phase = "telemetry"
+            monitoring_completed = True
+            if device == "cuda":
+                phase = "placement_after"
+                after = inspect_model_placement(
+                    *runtime.placement_models(), expected_device=device
+                )
+                if after["status"] != "qualified":
+                    raise RuntimeError(
+                        "Frozen ASR weight placement changed during inference"
+                    )
         except Exception as exc:  # noqa: BLE001 - preserve lifecycle observations
+            resource_evidence.update(getattr(exc, "resource_evidence", {}))
             before = getattr(exc, "placement_report", before)
             execution_error = {
                 "phase": phase,
@@ -194,16 +199,13 @@ def execute(payload):
     try:
         resources = monitor.metrics()
     except Exception as exc:  # noqa: BLE001 - retain partial telemetry
-        evidence = getattr(exc, "resource_evidence", {})
-        resources = {
-            name: evidence.get(name)
-            for name in ("peak_process_tree_ram_mb", "peak_vram_mb")
-        }
+        resource_evidence.update(getattr(exc, "resource_evidence", {}))
+        resources = observed_resources(resource_evidence, device=device)
         execution_error = execution_error or {
             "phase": "telemetry",
             "error": f"{type(exc).__name__}: {exc}",
         }
-        execution_error["resource_evidence"] = evidence
+        execution_error["resource_evidence"] = resource_evidence
     if device == "cpu":
         resources["peak_vram_mb"] = None
     elif (
@@ -236,8 +238,10 @@ def execute(payload):
         "gpu_identity": monitor.gpu_identity,
         "vram_measurement_method": monitor.vram_measurement_method,
         "parameters": parameters,
+        "resource_evidence": resource_evidence,
+        "monitoring_completed": monitoring_completed,
         "resource_measurement_scope": "partial_lifecycle"
-        if execution_error
+        if not monitoring_completed
         else "full_lifecycle",
     }
     if preflight:
@@ -627,10 +631,18 @@ def _transcribe_video(
             raise ValueError(
                 "Decoded video audio checksum differs from sealed validation"
             )
+        if (
+            item.get("canonical_duration_seconds") is not None
+            and canonical_duration != item["canonical_duration_seconds"]
+        ):
+            raise ValueError("Decoded video audio duration differs from sealed PCM")
+        planned = _window_records(
+            {**item, "canonical_duration_seconds": canonical_duration}, protocol
+        )
         for record in planned:
             index, start = record["index"], record["start"]
             window_duration = record["end"] - start
-            input_duration = min(window_duration, canonical_duration - start)
+            input_duration = window_duration
             window_started = time.perf_counter()
             output = None
             runtime.raw_prediction = None
@@ -704,7 +716,7 @@ def _transcribe_video(
             validate_prediction(
                 transcript,
                 segments,
-                duration,
+                canonical_duration,
                 audio_protocol.timestamp_tolerance_seconds,
             )
             synchronize(device)
@@ -748,7 +760,7 @@ def _transcribe_video(
 
 
 def _window_records(item, protocol):
-    duration = float(item["duration_seconds"])
+    duration = float(item.get("canonical_duration_seconds", item["duration_seconds"]))
     return [
         {
             "index": index,

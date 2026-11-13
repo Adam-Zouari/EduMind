@@ -6,11 +6,13 @@ import json
 import math
 from collections.abc import Mapping, Sequence
 
-from .base import Config, Hit, Record, ensure_dimension
+from .base import Config, Hit, InvalidIndexState, Record, ensure_dimension
 
 
 class PgVector:
     def __init__(self, config: Config) -> None:
+        if config.collection != "edumind_benchmark":
+            raise ValueError("pgvector supports only collection edumind_benchmark")
         from psycopg_pool import ConnectionPool
 
         self.config = config
@@ -87,7 +89,6 @@ class PgVector:
             connection.execute(f"SET LOCAL hnsw.ef_search = {self.config.ef_search}")
             if filters:
                 connection.execute("SET LOCAL hnsw.iterative_scan = 'strict_order'")
-            connection.execute("SET LOCAL enable_seqscan = off")
             rows = connection.execute(
                 "SELECT id, metadata, 1 - (embedding <=> %s::vector) AS score "
                 f"FROM edumind_benchmark{where} ORDER BY embedding <=> %s::vector LIMIT %s",
@@ -119,6 +120,14 @@ class PgVector:
                 ]
             )
 
+    def fetch(self, identifiers):
+        with self.pool.connection() as connection:
+            rows = connection.execute(
+                "SELECT id, embedding::text, text, metadata FROM edumind_benchmark WHERE id = ANY(%s)",
+                (list(identifiers),),
+            ).fetchall()
+        return [Record(str(row[0]), json.loads(row[1]), row[2], row[3]) for row in rows]
+
     def index_info(self) -> Mapping[str, object]:
         with self.pool.connection() as connection:
             rows = connection.execute(
@@ -126,18 +135,37 @@ class PgVector:
             ).fetchall()
         result = {str(name): str(definition) for name, definition in rows}
         if not any("USING hnsw" in definition for definition in result.values()):
-            raise RuntimeError("pgvector did not report HNSW")
+            raise InvalidIndexState("pgvector did not report HNSW")
+        definition = next(value for value in result.values() if "USING hnsw" in value)
+        import re
+
+        if (
+            "vector_cosine_ops" not in definition
+            or not re.search(rf"\bm\s*=\s*'?{self.config.m}'?\b", definition)
+            or not re.search(
+                rf"\bef_construction\s*=\s*'?{self.config.ef_construction}'?\b",
+                definition,
+            )
+        ):
+            raise InvalidIndexState("pgvector HNSW configuration mismatch")
         with self.pool.connection() as connection, connection.transaction():
-            connection.execute("SET LOCAL enable_seqscan=off")
+            dimensions = connection.execute(
+                "SELECT format_type(atttypid, atttypmod) FROM pg_attribute WHERE attrelid='edumind_benchmark'::regclass AND attname='embedding'"
+            ).fetchone()
+            if dimensions != (f"vector({self.config.dimension})",):
+                raise InvalidIndexState("pgvector dimension mismatch")
             explain = connection.execute(
                 "EXPLAIN SELECT id FROM edumind_benchmark "
                 "ORDER BY embedding <=> %s::vector "
                 f"LIMIT {self.config.index_verification_limit}",
                 ("[" + ",".join("0" for _ in range(self.config.dimension)) + "]",),
             ).fetchall()
-        if "Index Scan" not in " ".join(str(row[0]) for row in explain):
-            raise RuntimeError("PostgreSQL planner did not use the HNSW index")
-        return result
+        return {
+            "indexes": result,
+            "native_plan": [str(row[0]) for row in explain],
+            "ef_search": self.config.ef_search,
+            "dimension": self.config.dimension,
+        }
 
     def close(self) -> None:
         self.pool.close()
