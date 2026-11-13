@@ -34,7 +34,7 @@ as reporting context, not additional mandatory metrics.
 
 These definitions are the approved reporting contract. The
 [implementation status](methodology.md#implementation-status) distinguishes
-implemented reporting from pending reporting migrations and data-review
+implemented reporting from remaining data-review
 requirements. Historical runs retain their original contracts. Worked examples
 are illustrative, not measured results.
 
@@ -372,7 +372,7 @@ its complete available pool; record requested depth and actual size separately.
 An invalid or incomplete first pool leaves pool recall unavailable; a later
 pool cannot replace it. A verified first pool remains scoreable after downstream
 reranker failure. See [retrieval quality after downstream failure](../../metrics.md#retrieval-quality-after-downstream-failure)
-and the [pending first-pool reporting migration](methodology.md#implementation-status).
+and the [implemented first-pool reporting contract](methodology.md#implementation-status).
 
 ## Ranking consistency
 

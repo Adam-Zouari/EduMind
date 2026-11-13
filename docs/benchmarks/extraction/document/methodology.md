@@ -173,6 +173,14 @@ code enrichment disabled, canonical structured output, and native DOCX
 ingestion remain fixed. These settings define the common evaluation environment;
 they are not factors in the configuration screen.
 
+The Paddle adapter explicitly sets every exposed PaddleX inference batch control
+to one through `paddlex_config` and checks the initialized merged configuration;
+Document and Video retain those effective settings. Tesseract receives the exact
+prepared executable and English traineddata directory, with file checksums
+verified before converter reuse; PATH and `TESSDATA_PREFIX` are not execution
+identity substitutes. Real parser smoke verification remains a separate runtime
+prerequisite.
+
 Document extraction runs as an isolated workload without an artificial VRAM
 cap in any profile, including preflight. GPU-backed parser components must
 remain on the requested GPU without framework offloading or silent CPU fallback;
@@ -224,14 +232,20 @@ from the pinned official evaluator. The approved
 [ExpRate@CDM contract](metrics.md#formula-exact-match-expratecdm) derives exactness
 from its raw matched/reference/predicted character counts, not rounded CDM F1.
 
-**Implementation boundary:** the current project wrapper calls TEDS directly
-after adding an HTML/body envelope; it bypasses the required official HTML
-normalization. It also returns only rounded CDM F1, which the project currently
-tests for equality to one. Symmetric table normalization, raw-count transport,
-exact-count scoring, and their acceptance checks remain unimplemented changes.
-Authoritative results under these approved definitions require the wrapper
-migration and versioned evaluation provenance. The current scorer path remains
-outside that contract, and historical results retain their original definitions.
+**Implementation boundary:** the container worker now applies the complete pinned
+`normalized_html_table` transformation symmetrically, retains raw/scorer-facing
+table HTML, and emits CDM count/status records. Document aggregation implements
+`cdm_exact_counts_v1`, preserving independently available rounded similarity when
+counts are missing or malformed. Nonempty mocked-Docker tests exercise normalization,
+the worker/host interface, near-perfect-count exactness, and local/uploaded MLflow
+evidence. The version-2 scorer transport validates its schema and wrapper/policy
+identity rather than coercing formula records to scalars. Live acceptance on
+the pinned Docker image passes identical/equivalent tables, header-text/span
+perturbations, and formula identity, mismatch, missing and invalid predictions.
+The verified evaluator is available at the normal preparation path; the previous
+unsealed source is preserved separately. These checks establish scorer wiring,
+not model qualification or authoritative dataset results. Historical results
+retain their original definitions.
 
 The execution boundary is explicit:
 
@@ -251,8 +265,15 @@ OmniDocBench revision and immutable Docker image digest, the approved scorer con
 requires the normalization identity, project wrapper revision, and exact-count
 policy version. Retain raw and scorer-facing table HTML and per-formula counts
 with the existing prediction/evaluation artifacts; a scalar or checksum alone
-cannot reconstruct those comparisons. The current wrapper does not yet retain
-this added provenance; it is part of the pending migration.
+cannot reconstruct those comparisons. `official_evaluations.json` retains the
+verified source-content manifest, image digest/lock checksum, normalization/policy
+identity, wrapper checksum, raw/scorer-facing table HTML and checksums, and raw
+formula counts with separate similarity/exactness statuses. Source/image/wrapper
+identity is checked before and after scoring. Missing/malformed counts preserve
+similarity but leave required exactness incomplete, not a successful comparison.
+Runtime conformance checks identical/equivalent tables and header-text/span
+perturbations before candidates execute. Pinned-Docker acceptance has been
+verified, but each execution still requires the matching prepared identity.
 
 ## Benchmark workflow and selection
 
@@ -319,6 +340,14 @@ leave the affected evidence incomplete. See
 [execution accounting](../../metrics.md#execution-accounting-and-result-completeness)
 and [document-specific output coverage](metrics.md#scoring-inputs-eligibility-and-result-status).
 
+Rejected native payloads retain bounded JSON-safe diagnostics, including cycles,
+unsupported objects, invalid keys, and nonfinite values; these diagnostics never
+become repaired canonical predictions. Paddle block conversion keeps rejected
+native fragments and page/block identities in separate document metadata rather
+than scoring malformed HTML as a recovered table. Later recoverable attempts and
+blocks continue. Raw claimed reference fields are validated before coercion;
+`document-v4` reference requirements invalidate older validation seals.
+
 Repeatability Success Rate applies
 [shared pairwise repeatability](../../metrics.md#pairwise-repeatability) to each
 document's three scheduled pairs and its
@@ -337,6 +366,15 @@ actual measured batch interval, including failures. Loading, warmup, and offline
 scoring are outside warm latency and batch throughput. Loading and warmup are
 inside resource monitoring; offline scoring is outside extraction resource
 measurements, which stop after the final measured request.
+
+`resource_coverage` records monitoring completion independently of execution
+integrity. Observed peaks and completed first-output evidence survive a late
+telemetry or placement failure; missing observations remain null. A placement
+failure after monitoring stops retains a complete measurement window while still
+failing integrity. Regression coverage includes local and uploaded MLflow output,
+coverage, peak, and quality artifacts. Repaired batch execution is versioned as
+`document-v9`; refresh validation/qualification evidence rather than relabeling
+historical runs.
 
 Apply [shared confidence intervals](../../metrics.md#confidence-intervals)
 using reviewed independent-source groups, with every member document, page,

@@ -96,9 +96,9 @@ subject to hardware qualification**. It does not mean that the candidate has bee
 
 GPU-backed shortlisted candidates require local hardware qualification before
 authoritative quality evaluation. Vector-server candidates instead follow their
-CPU-only conformance and index-selection procedure. Where runner alignment is
-still pending, the benchmark methodology distinguishes that intended contract
-from currently executable behavior. Definitive hardware exclusions remain
+CPU-only conformance and index-selection procedure. Each benchmark's methodology
+separates implemented execution paths from outstanding data, calibration, and
+live-runtime requirements. Definitive hardware exclusions remain
 visible in qualification provenance rather than receiving a modified protocol.
 
 `benchmark_source_url` and `benchmark_source_revision` identify where a public score came from. `candidate_source_url` and `candidate_revision` identify the model, composite profile, or server EduMind intends to execute. These may point to different artifacts: an ASR leaderboard can establish WER while the model page establishes timestamp support and the exact checkpoint.
@@ -315,7 +315,7 @@ those settings. Vendor benchmark numbers do not rank these candidates because
 they do not hold EduMind's workload and environment constant. The
 [vector methodology](vectordb/methodology.md) defines this contract; its
 [implementation boundary](vectordb/methodology.md#implementation-status)
-identifies the pending runner migration.
+separates mocked implementation verification from real-service readiness.
 
 | Server | Benchmark profile | Why it is included | Evidence |
 |---|---|---|---|

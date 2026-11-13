@@ -29,9 +29,12 @@ Undefined values retain their reasons and support counts in artifacts under
 [metric status and MLflow storage](../metrics.md#metric-status-and-mlflow-storage).
 All numbers below illustrate arithmetic, not measured database results.
 
-The [implementation boundary](methodology.md#implementation-status) applies to
-this entire reporting contract. Historical keys and measurements must not be
-renamed to imply that these calculations already execute.
+The [implementation status](methodology.md#implementation-status) distinguishes
+the regression-tested driver and live pinned-server smoke coverage from the
+remaining reviewed-input/support requirements. Paired comparisons and sealed evaluation-only
+recovery are implemented. New driver
+artifacts use tie-aware @20 and explicit condition scopes; historical keys and
+measurements must not be renamed to imply that they used these calculations.
 
 ## Metric summary
 

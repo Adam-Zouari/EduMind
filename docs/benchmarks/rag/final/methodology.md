@@ -31,29 +31,22 @@ required by this contract.
 
 ### Implementation status
 
-The approved design is CPU/CUDA smoke, integrated preflight, and one locked
-evaluation of a single system. The current runner and protocol differ from it:
-
-- They expose smoke/development/validation/locked profiles, omit integrated
-  preflight, and combine component finalists and top-K values into multiple systems.
-- Their smoke path does not yet establish the complete selected-server workflow.
-- The locked command still requires a legacy human-review artifact. Removing
-  that dependency and its obsolete review workflow is pending implementation.
-
-These current paths do not establish conformance with the approved single-system
-contract and do not authorize another Final RAG selection stage.
+The runner exposes CPU/CUDA smoke, integrated preflight, and one locked
+evaluation of the same reviewed system. Its live path uses the selected server
+and configuration, validates the actual pool and reranker permutation, retains
+per-attempt contexts and stable citation identities, and reserves locked data
+before inference. The obsolete finalist matrix and human-review commands have
+been removed. Behavioral tests exercise the request, failure, retention, and
+reporting boundaries with injected servers and model backends.
 
 Judge calibration is pending as described in the
 [generation methodology](../generation/methodology.md#semantic-judge-contract).
-Final RAG's standalone data-validator/report-reuse interface is also pending.
-A matching server-backed execution trace, required metric coverage, and
-retained evaluation artifacts must be verified before claiming the complete
-contract is implemented. Examples on this page do not supply an authoritative
-manifest, winner, judge identity, or calibration result.
-
-Citation Support, stage-eligible failure accounting, stable citation identities,
-the attempt-table exports, and the live timing boundaries below are approved
-requirements, not claims of implemented behavior. Consult the
+Standalone data validation and sealed-report verification are available.
+A real selected-server/model execution, required metric coverage, and retained
+evaluation artifacts still require the reviewed composition, data, calibrated
+judge, prepared snapshots, and running services. Mocked tests do not establish
+hardware fit or authoritative results. Examples on this page supply none of
+those missing review inputs. Consult the
 [runbook](../../running.md) for executable commands and their current limitations.
 
 ## Frozen system
@@ -75,8 +68,7 @@ it cannot be silently treated as one-time startup.
 
 Validate the held-out inputs and frozen composition's requirements through the
 [shared data-validation workflow](../../data-validation.md) before execution.
-The proposed standalone/report interface remains pending implementation. Final
-RAG uses tiny smoke fixtures, separate reviewed development/stress inputs for
+Final RAG uses tiny smoke fixtures, separate reviewed development/stress inputs for
 integrated preflight, and untouched locked evaluation inputs. Data validation
 does not introduce another candidate comparison or authorize reviewing held-out
 answers during selection.
@@ -118,6 +110,13 @@ generator crash. Metric roles do not create an automatic winner, qualification
 gate, or weighted overall score. See the [failure denominators](metrics.md#request-failures-and-generation-stage-eligibility).
 
 ## Evaluation setup
+
+The composition verifies the database validation run's recorded chunking,
+embedding, retrieval, protocol and upstream-decision identities. Its model-lock
+checksum must match the lock used for Final execution. A database alias alone
+does not establish that the reviewed integration used the same selected stack;
+missing or changed lineage requires a new reviewed composition and supporting
+evidence before execution.
 
 ### Output and evidence trace
 
@@ -306,8 +305,8 @@ for questions, attempts, components, or the LLM judge.
 Component smoke, preflight, development, validation, and locked evidence stays
 in the component experiments and is linked through the frozen decisions.
 
-This is the approved target layout, subject to the
-[runner and artifact implementation gaps](#implementation-status).
+The runner uses this layout; [implementation status](#implementation-status)
+separates its mock verification from real-system readiness.
 
 ### Parent and child records
 

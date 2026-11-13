@@ -84,8 +84,8 @@ MLflow summary metrics.
 ## Scoring inputs, eligibility, and result status
 
 The [implementation status](methodology.md#implementation-status) distinguishes
-implemented scoring from pending judge calibration, Citation Support, and the
-automatic saved-output judging/recovery workflow. Judge identity,
+implemented scoring, Citation Support, and automatic saved-output judging/recovery
+from pending real judge calibration and runtime verification. Judge identity,
 calibration evidence, prompts, and retry policy must be frozen before an
 authoritative semantic report; the examples do not select a judge.
 
@@ -93,6 +93,9 @@ Generation quality uses all three scheduled seed outputs, not only attempt 1.
 A failed or structurally invalid required output leaves its dependent quality
 unavailable, not zero; see [failed or invalid outputs](../../metrics.md#failed-or-invalid-outputs).
 Record every seed's outcome and support even when its score is null.
+The frozen schedule is retained independently of prediction survivors. Missing
+questions/seeds keep execution incomplete; duplicate/unexpected IDs or changed
+input/model/protocol/evaluator identities are rejected before rescoring.
 
 | Case | Treatment |
 |---|---|

@@ -60,14 +60,14 @@ quality, and integrity coverage. Valid ranking changes are not a failure gate.
 The existing parent `paired_comparisons.json` contains the
 [overall-quality comparisons](#paired-comparison-artifact) described below.
 
-The approved target reporting contract still requires code migration: fixed
-corpus document/question/source-token counts
-move to parent workload metadata, embedding dimension becomes a child parameter
-verified against output shape, and derived Corpus-Build Throughput stays only
-in build evidence. The current runner still emits those candidate scalars.
-The scalar list below is the target contract, not a claim that this
-migration is implemented. Candidate-dependent descriptors and all execution,
-quality, and independent-source support counts remain required as applicable.
+Fixed corpus document/question/source-token counts are parent workload metadata
+in `plan.json` at `settings.input_inventory`. Embedding dimension and stored dtype
+are child parameters verified against output shape/dtype. Derived Corpus-Build
+Throughput stays only in `candidate.json`'s `corpus_build` evidence, referencing
+that parent inventory. None of these is emitted as a candidate comparison scalar.
+Candidate-dependent descriptors and all execution, quality, and independent-source
+support counts remain required. Shared-runner copying of the parent inventory
+into `provenance.json` is a separate integration task.
 
 Independent-source CI support requirements still need data review. Unfrozen
 support retains descriptive points with null bounds and an exploratory-readiness
@@ -149,7 +149,7 @@ data cannot guarantee every candidate's boundaries, vectors, or inference inputs
 Fixed corpus document/question/source-token counts are parent workload metadata,
 not candidate metrics. Embedding dimension and stored dtype are child parameters;
 runtime validation checks the produced vector shape and dtype. See
-[reporting placement](#results-and-mlflow-structure) and its migration boundary.
+[reporting placement](#results-and-mlflow-structure).
 
 The three bold metric families are primary and reviewed separately at both
 cutoffs. Apply the [shared retrieval-quality definitions](../../metrics.md#retrieval-evidence-quality)
@@ -439,9 +439,9 @@ every request error as a missing comparison.
 are parent artifacts. The chosen pair's
 locked result remains in this component experiment and cannot reopen selection.
 
-Under the approved, pending metadata migration, retain the verified document count,
+Retain the verified document count,
 answerable/unanswerable question counts, and fixed-tokenizer source-token count
-once in the parent's workload inventory in `provenance.json`, optionally also
+once in the parent's workload inventory in `plan.json` (`settings.input_inventory`), optionally also
 as searchable parent parameters. Keep their manifest/tokenizer identities and
 reference them from child build evidence. They are not required candidate
 scalar metrics. This placement does not replace expected/processed counts,
@@ -452,14 +452,13 @@ Each child is one planned pair. Its run name is the complete pair identifier,
 embedding contracts, model and tokenizer revisions and checksums, device, dtype,
 prefixes, pooling, normalization, evaluation tokenizer, evidence rule,
 `quality_cutoffs=[3,5]`, `artifact_top_k=20`, `alpha=0.5`, seed, warmups,
-repetitions, `repeatability_depth=5`, split, and manifest checksum. The approved
-parameter-only reporting also records embedding dimension alongside stored
+repetitions, `repeatability_depth=5`, split, and manifest checksum. The
+parameter-only reporting records embedding dimension alongside stored
 vector dtype, with actual shape/dtype verification retained in build validation.
 The child has no child runs for documents, questions, repetitions, or metrics.
 
-Under the approved target contract, a valid child logs the applicable scalars
-below. Moving the fixed metadata, dimension, and throughput out of the current
-scalar output still requires the migration noted above:
+A valid child logs the applicable scalars below; fixed metadata, dimension, and
+derived build throughput are retained separately as described above:
 
 ```text
 quality.overall.ndcg_at_3
@@ -558,7 +557,7 @@ and unexecuted attempts; a missing output is not a successful empty artifact.
 | `evidence_matches.parquet` | Trace from each question and evidence unit to the chunks that recovered it. |
 | `timings.parquet` | One row per query/attempt with outcome and embedding/search/enclosing durations and phase status, plus separate cold-load, chunking, chunk-embedding, total-build records and elapsed-to-failure. Each completed component enters its own latency cohort. |
 | `resources.parquet` | Timestamped process-tree RAM and raw assigned-device VRAM samples, with method, availability, and complete/partial window scope. |
-| `candidate.json` | Resolved contracts, run and metric statuses, fingerprint, complete or labelled partial aggregates, support, CI draw counts/degeneracy flags, operational values and measurement scope, and artifact references. Under the approved migration, its corpus-build evidence retains derived source-token throughput and the parent numerator reference, without a throughput scalar. |
+| `candidate.json` | Resolved contracts, run and metric statuses, fingerprint, complete or labelled partial aggregates, support, CI draw counts/degeneracy flags, operational values and measurement scope, and artifact references. Its `corpus_build` evidence retains derived source-token throughput, completed duration, and the checksummed parent numerator reference, without a throughput scalar. |
 | `validation_report.json` | Input-length and validity checks, counts, limits, checksums, and any errors. |
 
 Raw documents, model weights, and a full embedding matrix are not duplicated
@@ -603,8 +602,7 @@ document inside its reviewed source group. The artifact retains `lower`, `upper`
 counts, degeneracy, and unavailable-bound reasons. Unfrozen or insufficient CI
 support leaves a defined difference with null bounds; it does not establish
 authoritative advancement. See [insufficient confidence-interval support](../../metrics.md#insufficient-confidence-interval-support).
-Paired reporting is implemented, unlike the pending
-metadata/throughput migration.
+Paired reporting and parent-metadata/artifact-only throughput placement are implemented.
 
 The engineer approves up to three complete chunker/embedding pairs. No separate
 embedding winner or chunker winner is required. Advancement jointly reviews

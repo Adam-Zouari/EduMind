@@ -30,6 +30,12 @@ The runner implements the metric contract, grouped run structure, and execution
 flow below. Reviewed authoritative datasets and data-derived protocol selections
 remain separate prerequisites.
 
+Frozen-ASR artifacts use schema 3 with `audio_schedule=decoded_pcm_v1`. Older
+schemas are rejected and must be regenerated, not relabelled. Model-free
+regressions cover tolerated shorter/longer decoded durations, window boundaries,
+failure denominators, reviewed nonspeech-window indices, and stale schedule reuse.
+Real model/Docker qualification remains separate from these tests.
+
 ## Candidates and configurations
 
 Development compares nine configurations of three strategies:
@@ -224,6 +230,14 @@ reuse of an entire native segment's interval. The
 [spoken timestamp contract](metrics.md#spoken-timestamp-matching) explains this
 resolution limit and its effect on boundary-error interpretation.
 
+Build the window inventory from the sealed decoded PCM duration, not the video
+annotation duration. Keep `duration_seconds` (video/annotation) distinct from
+`canonical_duration_seconds` (actual supplied audio). A tolerated 30.05-second
+PCM stream for a 30-second video needs the window starting at 28 seconds; its
+tail is neither dropped nor padded. Review nonspeech indices against this same
+inventory, and verify the canonical duration again when decoding for execution.
+Changed schedules require new validation reports and frozen artifacts.
+
 The checksummed `FrozenASRArtifact` records the producing run ID, selected-model
 decision fingerprint, model-lock identity, manifest and composed protocol
 checksums, executing/scoring code and software-lock hashes, installed runtime
@@ -265,6 +279,13 @@ latency/RTF. Resource monitoring includes loading, warmup, and measured visual
 work, then ends before scoring. Docling's explicit
 `initialize_pipeline(InputFormat.IMAGE)` and Paddle's equivalent constructor
 readiness define cold visual initialization.
+
+Resource coverage is retained independently of execution integrity. Valid worker
+peaks survive telemetry failure, and a post-monitor placement failure keeps the
+completed window while failing integrity. Missing observations remain null;
+supervisor process-tree RAM never replaces the worker's lifecycle measurement.
+Visual Paddle execution uses and records the same batch-one configuration as
+the Document adapter.
 
 Repeatability applies the [shared pair rule](../../metrics.md#pairwise-repeatability)
 to canonical selected-frame times and structured visual

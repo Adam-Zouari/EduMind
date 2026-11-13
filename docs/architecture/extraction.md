@@ -34,8 +34,13 @@ than the text view.
 freezes every behavior-changing choice: engine revision, device, OCR/table/formula
 settings, routing, preprocessing, and normalization. The cache identity includes
 the profile fingerprint, resolved request options, source checksum, source kind,
-and MIME type. Renaming identical input reuses the extraction while returning
-the current source name and path.
+and MIME type, plus the complete verified model-bundle identity. Runtime verifies
+the requested model bytes before cache lookup, including both video components;
+changing a verified bundle invalidates the cache even at the same path/revision.
+The cache schema is now version 2; old entries are misses, not silently relabelled
+results. Renaming identical input reuses the extraction while returning the
+current source name and path. Document metadata retains the resolved bundle
+identities and their lock records.
 
 Production may request an optional cleanup profile. Extraction benchmarks request
 `normalization=none`, preserve candidate output, and use only the fixed prose
@@ -65,6 +70,19 @@ defines the benchmark lifecycle separately from production caching.
 Temporary video/audio/frame files are always cleaned. Optional backends and model
 weights load lazily; importing the package has no download or filesystem side
 effect.
+
+Whisper requires a native object with string transcript text. Malformed chunks
+or boundaries produce recoverable diagnostics. When chunk words do not cover the
+native transcript, production retains that entire transcript without inventing
+timestamps and keeps the parsed native chunks separately for inspection. Valid
+missing boundaries, including an untimed tail, remain allowed; explicit silence
+is distinct from a malformed response.
+
+Video composition retains complete frame documents until assembly, rather than
+flattening them immediately to text. Audio and visual segments retain modality,
+native kinds, structured content, local offsets/IDs, and document provenance.
+Frame-local IDs are namespaced, final offsets are rebuilt against the composed
+text, and warnings retain frame/time context and remapped segment indices.
 
 ## Model preparation and failure behavior
 

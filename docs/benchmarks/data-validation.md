@@ -10,9 +10,10 @@ still check transcripts, blank sources, evidence, and labels against the assets.
 
 **Implementation status:** standalone validation and sealed report verification
 are implemented for Document, ASR (`audio`), Video, Chunking–Embedding,
-Retrieval–Reranking, and Generation. Their runners require a matching successful
-report before execution. Final RAG and Vector Database retain the planned
-validator interfaces described under [Folder and command interface](#folder-and-command-interface).
+Retrieval–Reranking, Generation, Final RAG, and Vector Database. Their runners
+require a matching successful report before execution. The
+[folder and command interface](#folder-and-command-interface) distinguishes
+Final RAG's stress inputs and the database's prepared vector workload.
 
 ## Preparation and execution
 
@@ -40,7 +41,7 @@ invocation validates the applicable inputs for each profile, not one universal
 dataset that can replace their different manifests. `preflight` uses reviewed
 development/stress inputs, not validation or locked content; its stress-input
 requirements are checked alongside development inputs. Final RAG has no
-development evaluation profile; its planned validator checks separately declared
+development evaluation profile; its validator checks separately declared
 reviewed stress inputs for integrated preflight instead.
 
 ### Automatic validated-input verification before execution
@@ -137,8 +138,8 @@ experiments/benchmarks/
 │   ├── chunking_embedding/validation.py
 │   ├── retrieval_reranking/validation.py
 │   ├── generation/validation.py
-│   └── final/validation.py               # planned
-└── vectordb/validation.py                # planned
+│   └── final/validation.py
+└── vectordb/validation.py
 
 artifacts/benchmarks/data-validation/
 └── <benchmark>/<fingerprint>.json  # generated reports, not committed data
@@ -162,7 +163,7 @@ python -m experiments.benchmarks.validate all --profile smoke
 python -m experiments.benchmarks.validate all --profile all
 ```
 
-`all` currently coordinates extraction and the three implemented RAG validators. It reports missing
+`all` coordinates all eight benchmark validators. It reports missing
 authoritative inputs as failures, while `--profile smoke` checks their fixtures.
 Use `--manifest` and `--protocol` for a single benchmark/profile override;
 `--inventory` supplies the frozen cross-split manifests, and ASR also accepts
@@ -171,7 +172,7 @@ explicitly; use `--chunking-protocol` when its upstream protocol is not the
 project default. Verification hashes actual inputs and validates the
 report's content seal; it neither repairs inputs nor creates a passed report.
 
-Planned commands for the remaining benchmarks:
+Additional benchmark commands:
 
 ```powershell
 python -m experiments.benchmarks.validate final-rag --profile all
@@ -180,11 +181,11 @@ python -m experiments.benchmarks.validate vectordb --profile all
 
 `--profile smoke|development|validation|locked` chooses one applicable dataset;
 `all` validates every applicable dataset and the cross-split inventory. Final
-RAG's planned validator supports smoke and locked datasets; its `all` input check
+RAG's validator supports smoke and locked datasets; its `all` input check
 also validates the separately declared integrated-preflight stress inputs. This
 does not create Final RAG development or validation selection profiles. In the
-extended coordinator, suites without an applicable profile will be reported as
-not applicable. Missing required
+coordinator, an all-benchmark batch skips inapplicable profiles; an explicit
+unsupported benchmark/profile combination is rejected. Missing required
 authoritative data is an error, never a silent skip or a successful all-data
 report. This permits smoke checks while authoritative datasets are unpopulated.
 
@@ -246,7 +247,7 @@ declared shared holdout policy.
 | Retrieval and reranking | The same reviewed RAG inputs and selected upstream data identities. Runtime pool collection, chunk-content, and dense/BM25 index checksums remain artifact-integrity gates, not data annotations. |
 | Generation | Required facts, accepted answers, supplied evidence for answerable questions, unanswerable labels, and frozen context provenance. Judge calibration/readiness and predicted-output validation are separate gates. |
 | Final RAG | Smoke fixtures, reviewed integrated-preflight stress inputs, its untouched held-out canonical corpus/questions, and the frozen composition's input requirements. Check locked-source isolation from component selection and readiness inputs. Automatic checks cannot prove that a reviewer has never examined a holdout. |
-| Vector database | Representative corpus/growth provenance, query/source allocation and split isolation, vector shape/dtype/finiteness/nonzero norms, canonical chunk/document IDs and metadata, trusted filter eligibility, exact-distance inputs/tie policy, integration evidence, and prepared insert/replace/delete expectations. Synthetic stress inputs remain labelled. Readiness, actual responses and write visibility are runtime checks; this suite's standalone validator remains planned. |
+| Vector database | Representative corpus/growth provenance, query/source allocation and split isolation, vector shape/dtype/finiteness/nonzero norms, canonical chunk/document IDs and metadata, trusted filter eligibility, exact-distance inputs/tie policy, integration evidence, and prepared insert/replace/delete expectations. Synthetic stress inputs remain labelled. Standalone validation seals these inputs; readiness, actual responses and write visibility remain runtime checks. |
 
 ### Document references, including blank sources
 
@@ -285,8 +286,9 @@ for the pinned symmetric TEDS normalization, plus a near-perfect CDM case that
 rounds to one but has unmatched tokens. These are versioned evaluator checks,
 not new dataset annotations or metric edge cases. Their required normalization
 and strict ExpRate predicate are defined in the
-[document evaluator contract](extraction/document/methodology.md); the adapter
-migration remains part of its stated implementation boundary.
+[document evaluator contract](extraction/document/methodology.md#evaluation-setup).
+The adapters and transport checks are implemented; pinned nonempty Docker
+acceptance remains a separate runtime requirement.
 
 ### ASR references and controls
 
@@ -438,7 +440,8 @@ zero Runtime Error or Context-Limit-Reached Rate. Generator schema checks,
 citation-ID checks, and judge calibration happen separately from reference and
 input compatibility validation. Generation implements these separate gates;
 its judge identity and calibration evidence must still be supplied before
-authoritative execution. The live Final RAG integration remains deferred.
+authoritative execution. Final RAG applies the live input check to its actual
+retrieved context, without requiring gold evidence to have been retrieved.
 
 ## Data validity and metric applicability
 

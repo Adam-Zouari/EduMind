@@ -43,9 +43,35 @@ index/query devices. Chunking preserves half-open offsets. Their fingerprints ar
 stored in the index manifest so an incompatible index is rejected with a rebuild
 instruction.
 
+Ingestion retains extraction segment spans. Each chunk stores every overlapping
+page/time/structure location, with exact source-text offsets, including chunks
+crossing pages or segments. Context truncation clips those spans and removes
+excluded locations; timestamps still describe the original segment, not an
+invented word-level interpolation. Context headers and the UI display these
+locations. Existing indexed chunks without this provenance need re-ingestion to
+gain it; the application neither reconstructs missing locations nor resets an
+old index automatically.
+
 The vector database receives precomputed embeddings; it never chooses or creates
 an embedding model. Re-ingesting a logical document replaces all of its chunks so
 stale content is not left searchable.
+
+Replacement snapshots the old IDs, text, metadata, and vectors. Writes and
+compensating rollback use bounded batches respecting the server's supported
+limit, including NumPy-backed restored vectors. A failed replacement is reported
+even after successful restoration; if restoration also fails, both causes remain
+in an exception group for local diagnostics. This is compensating rollback, not
+a multi-client server transaction or a guarantee after restoration failure.
+
+The generator owns its model through stream consumption and worker cleanup.
+Stream failure requests cooperative decoder cancellation and joins the worker
+before another request or unload can acquire ownership. A native call that does
+not return cannot be forcibly killed by this thread-based adapter: ownership
+remains held while cleanup waits. Backend exceptions retain their original cause.
+Visible-answer parsing honors the provisional Qwen template's open/closed
+thinking boundaries and hides unfinished reasoning. Reasoning-only output leaves
+the visible answer empty; it is never restored as an answer fallback. These are
+application behaviors, not benchmark generation or quality qualifications.
 
 ## Experiment boundary
 

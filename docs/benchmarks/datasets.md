@@ -16,8 +16,8 @@ licenses, references, and source-family-isolated splits.
 After preparation, follow the [shared data-validation guide](data-validation.md)
 for per-profile checks, cross-split isolation, generated reports, and their
 verification before runs. Document, ASR, video, chunking–embedding,
-retrieval–reranking, and generation implement these standalone commands and
-report verification; Final RAG and vector-database migration remain separate.
+retrieval–reranking, generation, Final RAG, and Vector Database implement these
+standalone commands and report verification.
 Dataset annotation rules live here; prediction scoring lives in each metric
 reference, not in the validator.
 
@@ -196,9 +196,8 @@ Record original/replacement chunk counts and payload sizes; no subject inference
 from filenames is required. Synthetic stress corpora are separate conditions,
 not replacements for real-data evidence. Exact counts, dimensions, configuration
 ranges and load support remain in [pending data review](pending-data-review.md#vector-databases).
-The [vector methodology](vectordb/methodology.md) defines the target lifecycle;
-its standalone input validator and migration to that runner contract remain
-pending.
+The [vector methodology](vectordb/methodology.md) defines the implemented
+configuration lifecycle and its separate real-service/data prerequisites.
 
 ## 2. Prerequisites and storage layout
 
@@ -250,6 +249,36 @@ New-Item -ItemType Directory -Force `
 Rerunning `hf download` or `curl.exe -C -` resumes completed or partial files.
 Stopping either command does not discard already downloaded bytes.
 
+### Preparation plans and environment identity
+
+The project preparation CLI supports non-mutating planning for every target:
+
+```powershell
+python -m experiments.benchmarks.prepare qasper --dry-run
+python -m experiments.benchmarks.prepare assets --dry-run --plan reviewed-plan.json
+python -m experiments.benchmarks.prepare rag-selection --dry-run `
+  --qasper-manifest data/benchmarks/rag/qasper-dev.json `
+  --structured-manifest data/benchmarks/rag/structured-dev.json `
+  --output data/benchmarks/rag/rag-selection-dev.json
+```
+
+Dry-run checks required option combinations and prints a plan without downloads,
+Docker calls, model preparation, filesystem writes, or fixture regeneration.
+It does not open the referenced plan/manifests, certify annotations, reserve a
+held-out split, or create a successful validation report. Removing `--dry-run`
+performs the requested preparation and requires the corresponding inputs and
+explicit download coordination. This guarantee applies to the project CLI, not
+to the direct `hf`, `curl.exe`, or upstream download commands below.
+
+Model/component locks and official evaluator source/image identities are separate
+from dataset provenance. Follow the
+[snapshot and component migration instructions](../setup/installation.md#legacy-lock-and-component-pin-migration)
+without deleting existing model downloads or relabeling dataset revisions.
+The retained 17-model cache passed read-only integrity verification; its existing
+GTE snapshot does not need repreparation for stage-scoped use. That check does
+not supply reviewed manifests, model/GPU qualification, judge calibration, or
+official-scoring acceptance.
+
 ## 3. Install the RAG datasets
 
 Prepare the pinned QASPER revision and deterministic paper-isolated splits:
@@ -296,6 +325,22 @@ Final RAG holdout instead. Reviewed manifests must record the intended uses;
 locked reports never authorize reselection on the same data.
 
 ## 4. Install the document datasets
+
+For positive table/formula references requiring official reconstruction checks,
+prepare the pinned evaluator separately from these dataset downloads. Its
+`.edumind-source.json` must verify actual source/dependency content alongside
+the immutable image lock; a revision marker alone is insufficient. See
+[official evaluator preparation and identity verification](../setup/installation.md#official-document-metric-code).
+Preserve a legacy evaluator directory before explicit migration; do not mint a
+manifest for unverified source or treat evaluator corruption as candidate quality
+zero. Full document validation seals the verified evaluator identity, and a
+changed identity requires a new matching validation report.
+
+Dataset downloads and a source/image identity check do not prove nonempty
+TEDS/TEDS-S/CDM conformance. Live acceptance has separately passed on the pinned
+image; current source/image identity and reference validation remain required.
+No authoritative references, model scores or comparisons are created by these
+preparation and conformance checks.
 
 ### 4.1 OmniDocBench v1.6
 

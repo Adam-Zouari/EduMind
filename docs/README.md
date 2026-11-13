@@ -89,7 +89,7 @@ inputs:
 - Generated data-validation reports identify checked inputs and requirements.
   Standalone validation and report verification are implemented for extraction,
   Chunking–Embedding, Retrieval–Reranking, and Generation; Vector Database and
-  Final RAG retain inline checks pending that migration.
+  Final RAG also provide standalone validation and sealed report verification.
 - `data/benchmarks/models/selected.json` records model revisions, prepared local
   snapshot paths, checksums, and preparation-time `snapshot_size_bytes` metadata.
 - Engineer-reviewed files under `data/benchmarks/decisions/` record selections

@@ -113,9 +113,9 @@ Those checks are outside model loading, warmup, measured latency, and candidate
 resource monitoring. Valid inputs do not make every metric applicable to every
 row; task eligibility and prediction failures follow the metric contracts.
 Document, ASR, video, chunking–embedding, retrieval–reranking, and generation
-implement standalone validation and report verification. Vector Database and
-Final RAG retain inline checks until their validator/report-reuse interface is
-implemented; the [data-validation guide](data-validation.md) records that boundary.
+implement standalone validation and report verification, as do Vector Database
+and Final RAG. The [data-validation guide](data-validation.md) records their
+different input contracts and readiness requirements.
 The benchmark `validation` profile means evaluating finalists on unseen data,
 not either of these data checks.
 
@@ -551,7 +551,7 @@ EduMind / <Benchmark>
 ```
 
 Only applicable phases appear. Vector Database omits CUDA smoke and preflight;
-its own locked report remains part of the target contract, subject to the
+its own locked report is implemented, subject to the
 [vector implementation boundary](vectordb/methodology.md#implementation-status).
 Its flat children are database–configuration pairs, not hidden configuration
 trials beneath one database winner. Final RAG has `smoke-cpu`, `smoke-cuda`,
@@ -604,8 +604,8 @@ Final RAG's integrated preflight qualifies the actual selected request path and
 model-residency transitions: component qualification alone does not establish
 complete-system fit. Its frozen component device/resource contracts and ordinary
 runtime gates still apply; normal CPU server/BM25 work is not GPU-model
-offloading. This integrated phase remains
-[pending implementation](rag/final/methodology.md#implementation-status).
+offloading. See [Final RAG implementation status](rag/final/methodology.md#implementation-status)
+for mock verification and remaining real-system prerequisites.
 Vector Database server execution is CPU-only and has neither CUDA smoke nor
 preflight.
 

@@ -82,8 +82,12 @@ of another configuration file. Benchmark decisions do not override these sources
 Models are never downloaded at import or application startup. Explicit preparation
 writes exact snapshots under `data/benchmarks/downloads/` and generates
 `data/benchmarks/models/selected.json`. Runtime profiles include the model revision
-and all behavior-changing options in their fingerprints, so incompatible cached
-extraction or vector indexes are rejected instead of silently reused.
+and all behavior-changing options in their fingerprints. Extraction verifies the
+requested bundles before looking up a cached result; its cache identity and
+document provenance also retain the verified bundle checksums, including composed
+audio/visual components. Explicit paths cannot override the production lock.
+Vector indexes reject incompatible embedding/chunking contracts rather than
+silently mixing vectors. These checks do not select benchmark winners.
 
 The candidate-selection package has a different role:
 

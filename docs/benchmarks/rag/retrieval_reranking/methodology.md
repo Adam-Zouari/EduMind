@@ -37,15 +37,29 @@ remain separate from diagnostic ranking changes and measured failure counts.
 Alpha-nDCG uses the same answerable-question and source-document
 eligibility as primary retrieval quality, including single-unit questions.
 
-Two reporting details still require migration. The current no-reranker owner
-retains its first successful pool and can therefore score pool recall from a
-later attempt when the designated first attempt failed. The approved
-[pool-recall contract](metrics.md#candidate-pool-evidence-unit-recall20) must use
-only the designated first measured pool; this current fallback must not be
-treated as conforming evidence. Separately, the current reporter emits duplicate
-alpha eligibility counters even though their populations equal primary
-eligibility. The updated reporting contract reuses the common reference counts
-below while retaining all metric-specific contributing/unavailable support.
+Pool recall uses only the designated first measured pool. A later verified pool
+may be retained for diagnostics and dependent execution, with its actual attempt
+and first-attempt status, but never replaces first-pool quality. A failed owner
+is not rerun to manufacture a replacement baseline. Common reference counts serve
+all four quality families; duplicate alpha eligibility scalars are omitted while
+metric-specific contributing/unavailable and source support remain.
+
+Typed input/output violations on any scheduled attempt fail integrity without
+erasing completed first quality. Dense and BM25 source pools are validated before
+RRF discards their scores; the fused pool is validated separately. Interrupted
+builds retain completed dependencies and partial-phase evidence, not a complete
+RRF total. Rejected reranker scores retain bounded JSON-safe diagnostic fragments.
+Composed embedding batch controls are checked before loading/qualification.
+
+One checksummed parent `chunk_inventory.json` preserves all canonical chunks,
+their source text, offsets, frozen order, tokenizer and reference identities,
+including semantic boundaries and chunks outside every retrieved pool. Children
+reference it rather than copying the complete corpus. `inventory.chunks_from_inventory`
+verifies a saved inventory against its recorded checksum and original manifest
+for model-free rescoring; changed inventory or references are rejected.
+The fixed evaluation tokenizer verifies the pinned local encoding bytes and
+never downloads or repairs assets at runtime. Missing/corrupt assets require the
+explicit `python -m experiments.benchmarks.prepare models` preparation path.
 
 Reviewed independent-source CI support requirements remain data-dependent.
 Unfrozen requirements cannot establish authoritative uncertainty or advancement;
@@ -407,7 +421,7 @@ input inventory/parameters also record verified corpus, question, and chunk
 counts. Requested depth is a protocol parameter; observed pool sizes and optional
 source-token totals belong to pool artifacts, with optional integrity summaries.
 Parent artifacts are `plan.json`, `provenance.json`, `metric_contract.json`,
-`retrieval_protocol.json`, `pool_collections.json`, `leaderboard.parquet`,
+`retrieval_protocol.json`, `chunk_inventory.json`, `pool_collections.json`, `leaderboard.parquet`,
 `retriever_comparisons.parquet`,
 `retriever_comparisons.csv`, `reranker_comparisons.parquet`,
 `reranker_comparisons.csv`, and `summary.json`. Validation additionally stores
@@ -433,8 +447,7 @@ concrete search indexes. Dense omits the BM25 field, BM25 omits the Dense field,
 and RRF requires both. The chunking fingerprint remains separate provenance
 explaining how those chunks were produced.
 
-Under the approved reporting contract, a child logs applicable values under
-these families. These are target keys, not aliases for unmodified legacy outputs:
+A child logs applicable values under these families:
 
 ```text
 quality.overall.ndcg_at_3
@@ -518,8 +531,7 @@ The per-scope keys below use `overall`, `text`, `table`, `formula`, or
 
 All four quality families use these same reference-eligibility counts, including
 single-unit questions. Separate `alpha_ndcg_eligible_question_count` and
-`alpha_ndcg_eligible_document_count` scalars currently repeat them and are omitted
-from the approved updated contract; removing their emission remains pending.
+`alpha_ndcg_eligible_document_count` scalars are not emitted.
 Metric-specific scored/unavailable support and independent source grouping
 remain separate from these reference counts. A contributing `sample_count` is not permission to
 discard planned questions or treat repetitions as independent documents.
@@ -542,7 +554,10 @@ ranking. Hashes or pair scores do not replace produced rankings. Pool-owner chil
 store `pool_collection.parquet` and `index_build.json`. Raw documents and model
 weights are never copied into child artifacts.
 
-The parent's `pool_collections.json` identifies collections and their owners;
+The parent's `chunk_inventory.json` is the complete normalization corpus, not
+only the retrieved chunks; each child's `chunk_inventory` reference identifies
+its parent artifact and logical content checksum. The parent's
+`pool_collections.json` identifies collections and their owners;
 owner-child `pool_collection.parquet` stores ranked query rows. An RRF
 `index_build.json` identifies both dependency indexes, not a separately built
 fusion index. Internally prepared collections retain input-artifact provenance

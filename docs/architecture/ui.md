@@ -33,9 +33,16 @@ can be checked without duplicating business logic in the view.
 - The UI constructs one cached `EduMindPipeline` for the process.
 - Uploads are limited to the configured 100 MiB default and written to a temporary
   file that is removed after processing.
-- Session records keyed by content checksum prevent duplicate ingestion during
-  Streamlit reruns; this is not cross-process ingestion coordination.
+- Session records identify logical filename and content checksum. Only a
+  successful same-document, same-version ingestion is skipped; pressing
+  **Extract and index** again retries a failed upload. This is not cross-process
+  ingestion coordination.
 - Re-uploading a changed file with the same logical name replaces its old chunks.
+- Identical bytes under another logical name are processed, including when
+  replacing that name's older content. Successful replacement retires its stale
+  session records.
+- Evidence expanders show every overlapping page and original segment time range
+  for the displayed text, including after context truncation.
 - Readiness reports extraction/model requirements, Chroma/index state, and the
   local generator snapshot separately.
 - Starting the UI never starts Docker or downloads models.

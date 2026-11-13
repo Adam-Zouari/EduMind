@@ -15,11 +15,11 @@ running.
 
 ### Implementation status
 
-The Vector Database configuration, metric, and reporting contract and the
-single-system Final RAG workflow are not yet fully implemented. Their
+The Vector Database configuration/reporting path and single-system Final RAG
+workflow have implementation and mocked regression coverage. Their
 [Vector Database](vectordb/methodology.md#implementation-status) and
 [Final RAG](rag/final/methodology.md#implementation-status) implementation notes
-identify the remaining work.
+identify separate data, calibration, model, and live-service requirements.
 
 Chunking–embedding implements its separate load/build/query-component timings,
 retrieved-context descriptors, diagnostic top-five pair score, and execution,
@@ -27,26 +27,26 @@ quality, and integrity accounting. CI support requirements remain subject to dat
 review; unfrozen support gives descriptive points and null bounds, not
 authoritative advancement evidence. See its
 [implementation boundary](rag/chunking_embedding/methodology.md#implementation-status).
-Its fixed-workload metadata and artifact-only build-throughput reporting are
-documented targets; those logging changes are not yet implemented.
+Fixed workload counts are parent metadata, verified dimension/dtype are child
+parameters, and derived build throughput remains in build artifacts.
 
 Retrieval–reranking implements the corresponding complete-ranking diagnostic,
 one authoritative warmup, single-unit alpha-nDCG eligibility, and index ownership.
-Its first-attempt pool-recall gap and duplicate eligibility counters remain
-documented in its [implementation boundary](rag/retrieval_reranking/methodology.md#implementation-status).
+Pool recall uses the designated first measured pool, never a later success;
+see its [implementation status](rag/retrieval_reranking/methodology.md#implementation-status).
 
 Generation implements the runtime for seven model-mode configurations and
-an initial judge/scoring interface. The automatic first-run judge workflow,
-saved-output scoring resume, and Citation Support contract require migration,
-as well as a calibrated judge, reviewed source support, and prepared model
-snapshots before authoritative use.
+a configured automatic judge interface, durable evaluation-only resume, and
+Citation Support. Authoritative use still requires a calibrated judge,
+reviewed source support, and prepared model snapshots.
 
 Document, ASR, and Video provide their extraction metric, failure, repeatability,
 resource, and display-name paths. Their standalone data validators and
 automatic sealed-report verification are available. Video uses grouped parents
 with separate shared-audio preparation and visual children.
-Document's symmetric TEDS header normalization and count-based CDM ExpRate also
-need their specified evaluator migration; see its
+Document implements symmetric TEDS normalization and count-based CDM ExpRate.
+Real pinned Docker scorer acceptance has passed; current prepared identity
+and runtime availability remain execution requirements. See its
 [implementation boundary](extraction/document/methodology.md#evaluation-setup).
 
 Verify the [required retained prediction evidence](metrics.md#prediction-evidence-and-rescoring)
@@ -93,8 +93,8 @@ First prepare and review the inputs. The approved workflow has two steps:
 Both steps are outside latency and candidate resource measurement. See the
 [data-validation guide](data-validation.md#preparation-and-execution) for the
 exact checks, example, and module layout. Full validation is available for the
-three extraction benchmarks, chunking–embedding, retrieval–reranking, and
-generation; the deferred suites retain their current input checks.
+three extraction benchmarks, chunking–embedding, retrieval–reranking,
+generation, Vector Database, and Final RAG.
 Human annotation review remains necessary.
 
 Available preparation commands:
@@ -142,11 +142,11 @@ smoke-cpu + smoke-cuda -> preflight -> development -> validation -> locked
 - `locked` runs exactly one validation winner and is reporting-only.
 
 Vector Database server execution is CPU-only and has no CUDA preflight. Its own
-locked report is specified but not yet executable; see the
+locked report uses one reviewed database/configuration selection; see the
 [implementation boundary](vectordb/methodology.md#implementation-status).
 Final RAG checks the already-selected system through CPU/CUDA smoke and integrated
 preflight before its one locked evaluation. It has no development or validation
-comparison. This target lifecycle is not yet fully executable; see its
+comparison. Review real-system prerequisites in the
 [implementation boundary](rag/final/methodology.md#implementation-status).
 
 Development, validation, and locked use the device, dtype, and batch size in
@@ -162,6 +162,26 @@ source YAML, its resolved JSON, and its checksum.
 A **manifest** fixes the exact samples, split, paths, checksums, annotations,
 and source provenance. `--profile` selects the project manifest automatically.
 Use `--manifest PATH` only to run an alternate reviewed manifest.
+
+Model preparation is separate from these input overrides. Inspect plans with
+`python -m experiments.benchmarks.prepare --list` or a target's `--dry-run`;
+every target stops before network, Docker, preparation helpers, or writes.
+Planning is not input validation or hardware qualification. Follow the
+[model-lock preparation and migration instructions](../setup/installation.md#legacy-lock-and-component-pin-migration)
+only when additional preparation is needed and downloads are coordinated.
+Fresh snapshots require immutable-commit/file-inventory verification and a
+completion receipt; legacy paths remain usable when the requested model's
+recorded integrity verifies. Stage-scoped model loading does not require
+validating unrelated snapshots. The retained 17-entry cache passed read-only
+integrity verification, and its existing GTE does not need repreparation or
+relocation. This does not qualify model inference on CPU or CUDA.
+
+Keep application-only controls separate from benchmark eligibility. Benchmark
+preparation preserves those entries without adding candidates to a roster.
+Checksum-less legacy lock entries and Docling bundles without independent
+component pins require explicit migration, not a hand-edited revision or digest.
+Preserve original locks/cache and review a separate generated lock before
+selecting it through a supported model-lock override.
 
 A **component decision file** is an engineer-reviewed transition between stages.
 It names exact candidates with complete, run-level-valid evidence selected from
@@ -246,9 +266,37 @@ reference tables or formulas requiring reconstruction scores. Verified-negative
 presence annotations alone do not require an official reconstruction scorer:
 
 ```powershell
+python -m experiments.benchmarks.prepare evaluators --dry-run
 docker version
 python -m experiments.benchmarks.prepare evaluators
 ```
+
+The non-dry command requires coordinated source/image downloads and Docker's
+Linux engine. Preparation verifies the clean pinned checkout before recording
+`.edumind-source.json`; scoring verifies actual mounted evaluator/dependency
+content as well as the immutable image lock. A marker-only legacy tree or a
+changed/deleted/added source file fails integrity before scoring. Preserve such
+directories explicitly before preparing a clean destination; do not overwrite
+historical evidence or create a manifest from unverified bytes.
+
+After preparation, inspect the verified identity without invoking Docker:
+
+```powershell
+python -c "import json; from experiments.benchmarks.extraction.document.official_metrics import official_evaluator_identity; print(json.dumps(official_evaluator_identity(), indent=2))"
+```
+
+Retain the source revision/content hash, image digest, and image-lock hash with
+scoring provenance. Document validation seals bind this identity, so an identity
+change requires full validation again and a matching new report. Identity
+verification alone is not nonempty TEDS/TEDS-S/CDM conformance. Live acceptance
+has passed on the pinned image, including header perturbations and formula
+count/status checks; the runtime gate remains active. See the
+[evaluator setup and migration details](../setup/installation.md#official-document-metric-code).
+Docling model bundles separately require the
+[evidence-backed component pins](../setup/installation.md#extraction-models), not
+just the installed Docling package version. No model downloads, real scoring,
+GPU qualification, authoritative data, or winner selection are implied by these
+preparation checks.
 
 Run wiring and hardware qualification:
 
@@ -610,15 +658,15 @@ The [vector methodology](vectordb/methodology.md) and
 [metric contract](vectordb/metrics.md) specify one database–configuration child
 per candidate, tie-aware ANN/Filtered ANN Recall@20, evidence quality, database
 Ranking Repeatability, operation-specific error rates, p50/p95/QPS, and verified
-write/startup boundaries. The runner migration to this contract is pending.
-Existing commands below remain diagnostic under their recorded older protocol;
-do not interpret their keys or a successful exit as the revised report.
+write/startup boundaries. The runner uses explicit frozen configurations and
+sealed prepared inputs. Real-service checks and reviewed authoritative inputs
+remain prerequisites; a mocked test is not server verification.
 
-### Existing diagnostic entry points
+### Commands
 
-The current Compose command starts the legacy driver services. These entry
-points exist, but neither validation path establishes the complete revised
-contract. In particular, dense validation still retunes settings. Follow the
+The Compose command starts the pinned services. Prepare and validate the phase's
+vector workload before running the comparison. Validation and locked reuse
+reviewed exact configurations without retuning. Follow the
 [implementation boundary](vectordb/methodology.md#implementation-status).
 
 ```powershell
@@ -626,11 +674,11 @@ docker compose -f experiments/benchmarks/vectordb/compose.yml up -d
 python -m experiments.benchmarks.vectordb.run --profile smoke
 python -m experiments.benchmarks.vectordb.run --profile development
 python -m experiments.benchmarks.vectordb.run --profile validation
-python -m experiments.benchmarks.vectordb.retrieval_run --profile validation
+python -m experiments.benchmarks.vectordb.run --profile locked
 docker compose -f experiments/benchmarks/vectordb/compose.yml down
 ```
 
-### Target lifecycle after migration
+### Lifecycle and selection
 
 Run candidate services sequentially under controlled allocations. Prepare the
 representative corpus/query/operation workloads and their input-validation seal;
@@ -647,8 +695,8 @@ per-request artifacts; they do not produce independently selected winners.
 
 After validation, `vector-database-locked.json` in that decisions directory
 records exactly one selected pair and its source-run/protocol provenance. The
-target `python -m experiments.benchmarks.vectordb.run --profile locked` command
-is not executable yet. Its eventual report uses held-out inputs and frozen
+`python -m experiments.benchmarks.vectordb.run --profile locked` command
+uses held-out inputs and frozen
 settings, without new tuning. Final RAG consumes that same choice. Advancement
 uses decisions, not edits to the protocol roster.
 
@@ -702,14 +750,22 @@ configuration in `generation-locked.json`. Generation reports that choice on
 its own locked frozen-evidence test. Final RAG uses the same generator unchanged.
 
 Set `judge.contract_path` in the generation protocol to the reviewed contract.
-The current CLI's `--judge-records` option replays pre-existing replies bound to
-exact response requests; it does not call a provider. It still performs candidate
-inference and is therefore neither a normal first-run judge setup nor a
-saved-output recovery command. Replaying replies for different generated answers
-must fail. Do not run a locked test once to obtain answers and then rerun it to
-attach judge replies. A Python judge transport interface exists, but automatic
-CLI transport orchestration and scoring-only resume are not implemented; an
-authoritative first-run command will be documented after that migration.
+Use `--judge-transport` with a reviewed command-adapter JSON configuration.
+The adapter receives the frozen judge identity and structured request on stdin
+and returns raw label JSON on stdout; credentials stay in its environment.
+Its configuration has `schema_version: 1`, `kind: "command"`, and a `command`
+array containing your reviewed adapter's executable and arguments. The
+benchmark chooses no provider or judge automatically.
+
+```powershell
+python -m experiments.benchmarks.rag.generation.run --profile development --judge-transport path/to/judge-transport.json
+python -m experiments.benchmarks.rag.generation.run --resume-execution path/to/generation_execution.json --judge-transport path/to/judge-transport.json
+```
+
+Resume verifies the saved schedule/output binding and reuses accepted journal
+entries without loading a generator. `--judge-records` instead replays retained
+replies bound to exact requests; it is not a provider transport. Replaying replies
+for different answers must fail. Never repeat locked inference to repair judging.
 Replay misses or exhausted judge retries leave evaluation incomplete, never a
 candidate-quality zero; see
 [missing measurements or evaluations](metrics.md#missing-measurements-or-evaluations).
@@ -747,29 +803,48 @@ preflight on reviewed development/stress inputs, and locked execution on the
 untouched holdout. Prepare the corresponding canonical corpus and indexes for
 each phase. Extraction is outside
 Final RAG's quality and runtime scope. Final RAG runs only this selected system.
-The existing entry point below is retained for orientation, not as a claim that
-its current implementation executes the complete approved contract:
+
+The composition is an engineer-authored JSON object, not a generated winner:
+
+| Field | Required content |
+|---|---|
+| `schema_version` | Integer `1`. |
+| `selected_by`, `selected_date`, `reason` | Reviewer, ISO date, and rationale for freezing this composition. |
+| `system` | `chunking_embedding`, `retrieval`, `generator`, and `database` exact selected candidate IDs; one `top_k` of `3` or `5`; `residency` of `resident` or `sequential`. |
+| `upstream_decisions` | Paths keyed by `chunking_embedding`, `retrieval`, `generator`, and `database`, each selecting exactly one successful candidate from a complete component validation run. Relative paths resolve beside this composition file. |
+| `protocol_checksums` | Current resolved checksums keyed by `chunking_embedding`, `retrieval`, `generation`, `vector_database`, and `final_rag`. |
+
+The runner verifies the upstream decisions, tested database settings, component
+protocol identities, retrieval's selected chunking/embedding pair, and model
+revisions. `sequential` unloads retrieval models before generator loading and
+switches them again for each request; `resident` keeps the selected runtimes
+together. The declared transitions are measured, not hidden setup work.
+No placeholder decision is committed; author it only from reviewed evidence.
+After authoring the reviewed composition and preparing its required inputs:
 
 ```powershell
+python -m experiments.benchmarks.rag.final.run --profile smoke
+python -m experiments.benchmarks.rag.final.run --profile preflight
 python -m experiments.benchmarks.rag.final.run --profile locked --confirm-locked-test
 ```
 
 The approved report uses the calibrated LLM judge and deterministic scoring of
-saved outputs. The current runner's legacy review-artifact prerequisite and
-review export/import workflow must be removed during implementation migration;
-they are not requirements of this contract.
+saved outputs. Supply `--judge-transport` as for Generation. Final RAG has no
+human-review prerequisite or finalist-combination stage. For interrupted judging,
+use `--profile locked --resume-evaluation path/to/generation_execution.json`
+with the same manifest, composition, protocol, and judge transport. This verifies
+the saved binding and resumes the original journal without model loading.
 
 If component reports share locked data with Final RAG, freeze the entire system
 before the first component locked report. Otherwise
 use a separate untouched Final RAG holdout.
 
-The single-system CPU/CUDA smoke and integrated-preflight paths, complete
-server-backed locked path, automatic saved-output judge workflow,
-Citation Support, stage-specific failure accounting, and revised artifacts
-remain pending in the Final RAG runner. Do not present its current in-process
-retrieval result as the approved server-backed locked report. The
+Smoke and integrated preflight use the selected server. Locked data is reserved
+atomically before execution, including failed executions. Tests exercise these
+interfaces with injected runtimes; real model/service execution remains a
+separate requirement. The
 [Final RAG implementation boundary](rag/final/methodology.md#implementation-status)
-lists the required migration; it does not authorize another component selection.
+lists readiness requirements; it does not authorize another component selection.
 
 ## 11. Interpret failures and artifacts
 

@@ -1402,15 +1402,17 @@ Evaluator acceptance must include an identical-table baseline, equivalent
 header/wrapper representations, changed header text that remains different after
 normalization with unchanged structure (TEDS decreases; TEDS-S stays one), and
 changed header row/column spans (both decrease). These required perturbation
-checks establish evaluator acceptance; they are not additional quality metrics,
-and their results are not yet established.
+checks establish evaluator acceptance; they are not additional quality metrics.
+The pinned runtime passes these conformance checks.
 A self-comparison alone is insufficient. Reference validity
 still follows [data validation](../../data-validation.md#document-references-including-blank-sources).
 
-**Pending implementation:** the current project worker only adds an HTML/body
-envelope and calls TEDS directly. Migrating it to the symmetric pinned function,
-retaining both raw and scorer-facing HTML, and verifying the perturbations remain
-required before the implementation meets this approved contract. Record the normalizer's revision,
+**Implementation and acceptance:** the worker now invokes the complete pinned
+function on both sides and emits raw/scorer-facing HTML. Nonempty mocked-Docker
+coverage executes that normalizer and verifies the symmetric worker/host interface,
+strict result schema, and persisted/uploaded representations and source identity.
+The runtime conformance gate's header-text/span perturbations have also passed
+on the pinned Docker image. Retain the normalizer's revision,
 wrapper revision, evaluator image digest, and representations/checksums with the
 existing evaluation evidence. Preserve historical scores under their old identity;
 rescoring creates [versioned evidence](../../metrics.md#prediction-evidence-and-rescoring).
@@ -1522,8 +1524,8 @@ not zero; see [missing measurements or evaluations](../../metrics.md#missing-mea
 Required evaluation gaps leave aggregates incomplete under the
 [document result rules](#scoring-inputs-eligibility-and-result-status).
 
-Both scores retain the pinned official tree-edit implementation. The required
-project-side normalization remains pending as described above.
+Both scores retain the pinned official tree-edit implementation. The normalization
+code and pinned-runtime acceptance checks are implemented and verified as described above.
 
 ## Mathematical formulas
 
@@ -1772,11 +1774,18 @@ not zero; see [missing measurements or evaluations](../../metrics.md#missing-mea
 Required evaluation gaps leave aggregates incomplete under the
 [document result rules](#scoring-inputs-eligibility-and-result-status).
 
-**Pending implementation and provenance:** the project worker currently returns
-only `F1_score`, and document aggregation tests that rounded scalar for equality
-to one. Transporting and retaining `tp`, `gt_tokens`, and `pred_tokens`, applying
-`cdm_exact_counts_v1`, and verifying near-perfect rounding cases are still required
-migration work. Record the policy version, pinned evaluator revision/image digest,
+**Implementation and provenance:** the worker emits raw count/status records and
+document aggregation applies `cdm_exact_counts_v1`, with fixture regressions for
+rounded near-perfect results, equality, malformed/missing counts, and explicit
+reconstruction zeros. Independent similarity survives unavailable exactness.
+The version-2 host transport preserves count dictionaries without float coercion,
+rejects incompatible scorer envelopes, and retains verified evaluator provenance
+with per-formula similarity/exactness statuses in `official_evaluations.json`.
+Required missing counts make the comparison incomplete without erasing independent
+similarity. Mocked-Docker transport/artifact tests and live pinned-Docker formula
+identity/mismatch/missing/invalid-prediction checks pass. Rounded near-perfect
+count cases retain separate fixture regression coverage. Retain the policy version,
+pinned evaluator revision/image digest,
 wrapper revision, and each formula's counts, similarity, indicator, and status
 in existing evaluation artifacts. Missing/invalid reconstructions need their
 explicit status, not fabricated successful-evaluation counts. Old rounded-scalar

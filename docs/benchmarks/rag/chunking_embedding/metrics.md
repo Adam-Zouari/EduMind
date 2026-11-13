@@ -25,8 +25,8 @@ The applications below use each candidate pair's complete generated corpus,
 not another pair's corpus or the retrieved top-20 pool.
 
 The [implementation status](methodology.md#implementation-status) identifies
-implemented reporting, the approved but unimplemented metadata/throughput
-migration, and remaining data-review requirements. Definitions below apply to
+implemented reporting, parent workload metadata/artifact-only throughput placement,
+and remaining data-review requirements. Definitions below apply to
 the updated contract; historical outputs keep their original definitions.
 All numerical examples are illustrative, not measured results.
 
@@ -82,8 +82,7 @@ target reporting contract: [Corpus Counts](#corpus-counts) and
 [Embedding Dimension and Dtype](#embedding-dimension-and-dtype) are verified
 configuration parameters; [Corpus-Build Throughput](#corpus-build-throughput)
 is derived build-artifact information only. Their definitions remain below so
-the inputs and build evidence stay interpretable. The current runner still
-needs code migration to this placement. Contributing and independent-source
+the inputs and build evidence stay interpretable. Contributing and independent-source
 support counts are unchanged.
 
 ## Scoring inputs, eligibility, and result status
@@ -494,8 +493,7 @@ see [partial work and complete measurements](../../metrics.md#partial-work-and-c
 **Question:** How quickly does the pair prepare the fixed source workload?
 
 **Reporting placement:** derived build-artifact information only, not a mandatory
-MLflow scalar or an additional candidate-comparison metric. The approved move
-out of scalar reporting still requires code migration. Retain the rate in
+MLflow scalar or an additional candidate-comparison metric. Retain the rate in
 `candidate.json`'s corpus-build evidence with the source-token numerator's parent
 metadata reference and the completed build duration from `timings.parquet`.
 
@@ -718,9 +716,10 @@ Candidate-dependent chunk/token/context and matrix-byte descriptors remain
 chartable scalars. Fixed corpus counts and source tokens instead belong to parent
 workload metadata, while embedding dimension and stored dtype are child
 parameters. None independently selects a winner or compensates for worse quality.
-These are the approved placements; the
-[implementation boundary](methodology.md#implementation-status) records the
-pending migration. Required execution, quality, and CI support are not removed.
+These placements are implemented; the
+[implementation boundary](methodology.md#implementation-status) identifies the
+remaining shared-provenance integration. Required execution, quality, and CI
+support are not removed.
 
 Input counts describe the full verified workload. Generated-chunk descriptors
 may remain known even if embedding later fails. If chunk generation stops early,
@@ -976,8 +975,9 @@ parameters, not scalar metrics. Verify the produced matrix's shape against
 `(chunk_count, declared_dimension)` and its actual dtype against the declared
 stored dtype. Preserve verification outcomes in the build validation evidence;
 declared configuration alone is not proof that vectors were successfully built.
-The dimension's parameter-only reporting is approved but still needs code
-migration. Inference dtype and stored dtype are separate settings: CUDA inference
+Dimension is reported as the `embedding_dimension` parameter; `embedding_output`
+retains actual shape/dtype verification. Inference dtype and stored dtype are
+separate settings: CUDA inference
 can use FP16 while the resulting vectors are stored as FP32.
 
 **Example:** A dimension of 768 with stored `float32` means each vector contains

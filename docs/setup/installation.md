@@ -8,7 +8,10 @@ This guide prepares the provisional application and every approved benchmark
 candidate. The authoritative shortlist is described in
 [model selection](../benchmarks/model-selection.md); exact executable revisions
 are read from [selection evidence](../../experiments/benchmarks/selection_evidence.csv).
-Excluded rows are historical evidence and are never downloaded.
+Benchmark model preparation downloads only included rows. Pinned application
+controls are separate: `app-models` also prepares the documented Qwen3-1.7B
+control from its historical revision without changing its excluded benchmark
+decision or adding it to the benchmark roster.
 
 Run the commands below from the repository root. Benchmark commands use Python
 module names (`python -m experiments.benchmarks...`).
@@ -150,13 +153,56 @@ kept under `data/benchmarks/downloads/huggingface/` and
 `data/benchmarks/downloads/tiktoken/`; preparation does not rely on the user's
 shared model cache.
 
-Successful preparation writes one generated file:
+The default generated runtime lock is:
 
 ```text
 data/benchmarks/models/selected.json
 ```
 
-That file records the exact repository, revision, local path, composite submodels, and Docling artifacts used by runs. A benchmark refuses missing paths, excluded candidates, and revisions that disagree with `selection_evidence.csv`. Do not edit `selected.json` manually.
+That file records repositories, revisions, local paths, checksums, composite
+submodels, and Docling component/system identities. Benchmark loading checks
+only the models requested by that stage against selection evidence and actual
+local bytes. Application loading verifies integrity without importing benchmark
+eligibility. Do not hand-edit paths, revisions, or checksums to bypass checks.
+
+### Verified snapshots and retained locks
+
+Fresh Hugging Face preparation publishes a completed directory at
+`data/benchmarks/downloads/models/<repository-with-double-dashes>/<commit>/`.
+Before publication it verifies the resolved immutable commit, returned snapshot
+location, exact file inventory, file sizes, Git blob hashes or LFS SHA256 values,
+and the selected export exclusions. A sibling `<commit>.complete.json` records
+that inventory, policy, checksum, and measured size. Reusing a completed snapshot
+offline requires rechecking its receipt and bytes; an unavailable new revision
+cannot relabel an old download. Mixed revisions, stale excluded exports, and
+unverified partial directories fail closed. Existing downloads are not erased
+as an implicit repair; interrupted work remains available for explicit recovery.
+If publication was interrupted after the final directory appeared but before
+its completion receipt was written, that directory is still unverified. Retain
+it and use a separate preparation cache; do not relabel it as completed.
+
+Lock schemas 1, 2, and 3 are recognized, but requested entries must have nonempty
+paths to actual directories and valid integrity checksums. Primary snapshots,
+submodels, auxiliary caches, and prepared Tesseract files are verified when
+requested. Optional size metadata does not substitute for integrity. A lock
+merge checks the structure of untouched entries without reading unrelated
+snapshots and refuses to publish a schema-3 lock containing checksum-less legacy
+entries. Successful entries can precede a later preparation failure; a partially
+prepared environment is not complete setup.
+
+The 2026-11-13 repair check verified all **17 existing local lock entries** against
+their recorded bytes, including auxiliary/system files, without changing the
+original lock or model cache. Stage-scoped loading of the existing GTE snapshot
+also passed. That GTE snapshot does **not** need repreparation or relocation just
+because fresh downloads now use revision-specific directories. This was an
+integrity check, not model inference, CPU/CUDA qualification, or comparative
+evidence; Docling component-pin migration and evaluator readiness are separate.
+
+To recheck just that existing GTE entry without downloads, inference, or writes:
+
+```powershell
+python -c "from pathlib import Path; from experiments.benchmarks.preparation.models import load_selected_model_lock; lock = load_selected_model_lock(Path('data/benchmarks/models/selected.json'), candidates=['Alibaba-NLP/gte-modernbert-base']); print(lock['Alibaba-NLP/gte-modernbert-base']['model_path'])"
+```
 
 ### Snapshot size metadata
 
@@ -174,7 +220,7 @@ composite submodel directories, Tesseract executables/language data, Python
 packages, and model-serving memory are not added to a primary snapshot's size.
 This is local snapshot inventory, not total pipeline deployment size or VRAM.
 
-A prepared GTE entry, for example, includes these fields alongside its existing
+A retained GTE entry, for example, includes these fields alongside its existing
 revision and cache checksum:
 
 ```json
@@ -201,8 +247,15 @@ Inspect the complete download plan without network access:
 
 ```powershell
 python -m experiments.benchmarks.prepare --list
+python -m experiments.benchmarks.prepare app-models --dry-run
 python -m experiments.benchmarks.prepare all-models --dry-run
 ```
+
+Every preparation target accepts `--dry-run`. It validates required option
+combinations and prints a plan before calling any preparation helper: no network,
+Docker calls, model preparation, fixture regeneration, or filesystem writes.
+Planning does not open or validate the referenced dataset plan/manifests and
+does not establish environment or data readiness.
 
 Prepare only the provisional application controls:
 
@@ -229,7 +282,9 @@ benchmark embeddings, rerankers, and generators. Judge setup follows the later
 calibrated evaluation contract: a hosted judge needs credentials rather than a
 local snapshot, while a self-hosted judge needs an explicit pinned preparation
 step. No unselected judge is downloaded by these commands.
-The application's provisional CPU Qwen3-1.7B snapshot is separate from the
+The application's provisional CPU Qwen3-1.7B snapshot is pinned independently of
+benchmark eligibility; later benchmark preparation preserves its lock entry.
+It is separate from the
 generation benchmark: it is neither the reasoning control nor one of its three
 challengers. The declared generator roster has four model identities; direct
 and reasoning modes produce separate applicable configurations.
@@ -238,7 +293,9 @@ Flax, and TFLite exports because these benchmarks load the native Transformers
 checkpoint. The exact exclusions and resulting directory checksum are recorded
 in the model lock.
 
-Downloads are resumable through Hugging Face and are placed in deterministic project directories. Preparation never substitutes a newer repository head when the pinned revision is unavailable.
+Transfers can resume through the project-controlled Hugging Face cache;
+completed snapshots still require the inventory checks above. Preparation never
+substitutes a newer repository head when the pinned revision is unavailable.
 
 Benchmark `protocol.yaml` files do not download models and do not replace the
 model lock. Protocols define executable behavior and candidate rosters where
@@ -246,6 +303,31 @@ needed. Preparation uses included entries in `selection_evidence.csv` and writes
 immutable revisions, local snapshot paths, and checksums to
 `data/benchmarks/models/selected.json`.
 Each successfully written entry also receives its measured `snapshot_size_bytes`.
+
+### Legacy-lock and component-pin migration
+
+Keep existing locks and downloads as evidence. If an untouched legacy entry
+lacks integrity fields, prepare a separate lock rather than silently upgrading
+it. A legacy `docling-standard` entry with only package version `2.117.0` and a
+directory checksum is not an immutable component-model pin; benchmark loading
+requires the component inventory described below. Do not copy current checksums
+onto old entries or replace historical artifacts to make validation pass.
+
+Only if migration is needed, and after coordinating the required downloads,
+prepare a separate generated lock:
+
+```powershell
+python -m experiments.benchmarks.prepare app-models --output data/benchmarks/models/selected-next.json
+python -m experiments.benchmarks.prepare all-models --output data/benchmarks/models/selected-next.json
+```
+
+Review and verify the new lock before explicitly configuring its consumers;
+application `models.lock_path` and supported benchmark `--model-lock` overrides
+are deliberate choices. These commands do not promote benchmark winners or
+require deleting/repreparing an already verified GTE snapshot for current use.
+An interrupted unpublished target or conflicting snapshot policy may need a
+separate `cache_directory` through the preparation Python API; retain the old
+directory instead of deleting it as an automatic retry.
 
 ### RAG models
 
@@ -271,8 +353,8 @@ Judge preparation includes the response rubric's separate full-context and
 cited-passage support labels, correctness/relevancy labels, and the separate
 semantic-pair rubric. Credentials alone do not complete this setup: the
 [judge setup instructions](../benchmarks/running.md#generation-execution-and-judge-setup) distinguish
-current replay support from the pending automatic first-run and saved-output
-recovery workflow.
+the implemented replay, automatic command-transport, and saved-output recovery
+paths from the separate judge-selection and calibration requirements.
 
 ### Migrating an existing MiniLM index
 
@@ -302,6 +384,22 @@ The extraction download contains:
 - [PaddleOCR-VL-1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6) plus its Paddle layout components in a project-controlled cache.
 - [Whisper small.en](https://huggingface.co/openai/whisper-small.en), [Canary 180M](https://huggingface.co/nvidia/canary-180m-flash), [Parakeet TDT 0.6B v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2), and [MOSS Transcribe-Diarize](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize).
 
+Docling's `runtime_version` is separate from `component_models`. The evidence-backed
+[component pins](../../experiments/benchmarks/preparation/docling_pins.py) record
+immutable Hub commits for layout, TableFormer, and CodeFormula, plus measured
+RapidOCR/EasyOCR SHA256 inventories. Their evidence comes from the retained local
+download metadata/files, not invented SHAs or a quality assessment. Fresh
+preparation explicitly requests those commits and verifies OCR file checksums
+instead of relying on moving model heads. New bundles have separate paths;
+augmentation preserves verified components and system provenance, and preparing
+an application subset does not discard benchmark components.
+
+Tesseract is recorded separately by exact executable path/hash and English
+traineddata path/hash. These identities are verified rather than inferred from
+`PATH` or `TESSDATA_PREFIX`; the selected runtime must use the verified executable
+and language directory. A package version, language-list output, or a successful
+download alone is not a real-runtime smoke check.
+
 NeMo and MOSS have heavier runtime dependency trees. Install them only inside
 the Python 3.12 project environment from `requirements/benchmarks.lock`; do not
 combine this lock with unrelated ML environments.
@@ -315,9 +413,12 @@ rather than being reimplemented by EduMind. The main EduMind environment remains
 3.10 Docker environment, which also contains its required TeX, ImageMagick, and
 Ghostscript versions. They do not need to be installed on Windows.
 
-Start Docker Desktop, then prepare the evaluator explicitly:
+Inspect the plan first; then, when source/image downloads are coordinated and
+Docker's Linux engine is available, prepare the evaluator explicitly:
 
 ```powershell
+python -m experiments.benchmarks.prepare evaluators --dry-run
+docker version
 python -m experiments.benchmarks.prepare evaluators
 ```
 
@@ -325,9 +426,29 @@ The command checks out source revision
 `193627ae9e97d89188468ed1ee3b7a856ff76044`, pulls
 `ghcr.io/zeng-weijun/omnidocbench-eval:repro-ubuntu2204`, and records the
 resolved immutable image digest under
-`data/benchmarks/evaluators/OmniDocBench/`. An authoritative run uses that
-digest, disables container networking, and fails if the source, image, or lock
-does not match instead of logging an approximation.
+`data/benchmarks/evaluators/OmniDocBench/`. Before source publication it verifies
+a clean checkout of that commit and writes `.edumind-source.json`, covering
+retained evaluator code and dependency files. The revision marker alone is not
+proof of source integrity. Scoring rehashes actual mounted source content and
+uses the immutable image digest with container networking disabled. Changed,
+deleted, added, or unverifiable source files fail before scoring rather than
+becoming candidate quality zeroes.
+
+A legacy marker-only evaluator, changed source tree, or retained `.partial`
+checkout is not automatically trusted, deleted, or overwritten. Preserve/archive
+that directory explicitly before preparing a clean owned destination; do not
+hand-create a source manifest from an unverified checkout. Once prepared, inspect
+the verified source/image identity without starting Docker:
+
+```powershell
+python -c "import json; from experiments.benchmarks.extraction.document.official_metrics import official_evaluator_identity; print(json.dumps(official_evaluator_identity(), indent=2))"
+```
+
+The identity includes source revision/content hash, immutable image digest, and
+image-lock hash. Document validation seals bind this identity; changing it
+requires a new matching full-validation report before execution. Retain it with
+scoring provenance and saved predictions. This read-only check does not establish
+that the Docker daemon/image can execute or that nonempty official scoring passes.
 
 This evaluator never runs Docling, Granite Docling, or PaddleOCR-VL. EduMind
 first produces each parser's canonical prediction and calculates the common
@@ -336,12 +457,15 @@ only the table HTML and formula LaTeX reference/prediction pairs to the isolated
 official scorer. The scoring time is evaluation overhead and is not included in
 parser latency.
 
-Preparing the pinned evaluator does not itself implement the specified
-symmetric TEDS header normalization or count-based ExpRate decision. Those
-adapter changes remain pending under the
-[document implementation boundary](../benchmarks/extraction/document/methodology.md#evaluation-setup);
-the official CDM similarity stays unchanged, while strict ExpRate uses retained
-matching counts rather than testing its rounded display score.
+Preparing or verifying evaluator identity does not establish scorer conformance.
+The wrapper's symmetric normalization and count-based ExpRate behavior have
+fixture coverage and live nonempty TEDS/TEDS-S/CDM acceptance on the pinned
+Docker image. Header perturbations and formula identity, mismatch, missing and
+invalid predictions were verified; this is scorer conformance, not a model or
+dataset quality result. See the
+[document implementation boundary](../benchmarks/extraction/document/methodology.md#evaluation-setup).
+Strict ExpRate requires raw matching counts, not equality of the rounded CDM
+display score to one.
 
 ## 4. Datasets
 
@@ -389,11 +513,10 @@ running the existing smoke benchmarks does not require `flite`.
 
 Prepared assets still need reference and split review before benchmark execution.
 The [shared data-validation guide](../benchmarks/data-validation.md) defines the
-standalone checks and sealed-report verification. Document, ASR, Video,
-Chunking–Embedding, Retrieval–Reranking, and Generation implement this interface:
-validate prepared inputs before starting their profiles. Vector Database and
-Final RAG retain their current input checks until their planned validators are
-implemented.
+standalone checks and sealed-report verification. All eight benchmarks implement
+this interface: validate prepared inputs before starting their profiles. Vector
+Database verifies the actual vector/query/corpus inventory; Final RAG validates
+its inputs separately from component winner decisions and system qualification.
 
 ## 5. Vector databases
 
@@ -404,6 +527,14 @@ python -m experiments.benchmarks.prepare vectordb
 ```
 
 The compared servers are [Chroma](https://docs.trychroma.com/guides/deploy/docker), [Qdrant](https://qdrant.tech/documentation/installation/), [Weaviate](https://docs.weaviate.io/deploy/installation-guides/docker-installation), and [PostgreSQL with pgvector](https://github.com/pgvector/pgvector). The command writes `data/benchmarks/models/vectordb.json` and a digest-based Compose environment.
+
+With `--output PATH`, the image lock can use a relative or absolute custom file;
+the Compose environment remains at
+`experiments/benchmarks/vectordb/.env` under the project root. Directory/file
+conflicts, a lock/environment collision, or escaped Compose ownership fail
+before Docker calls or publication. Do not derive the environment location from
+the custom lock path. Image identities must be full immutable SHA256 digests;
+preparation pulls images but does not start services.
 
 Server start/stop commands belong to the
 [benchmark runbook](../benchmarks/running.md#9-vector-databases) and
@@ -432,7 +563,10 @@ require updating several copies.
 Before using a run as comparative evidence:
 
 - `python -m experiments.benchmarks.prepare --list` names only included application and benchmark models plus documented Docling subcomponents.
-- `selected.json` exists and every recorded directory exists.
+- The requested entries in `selected.json` pass structural and actual-byte
+  integrity checks; directory existence or optional size metadata alone is not enough.
+- Required Docling components have independent pins, and any required official
+  evaluator has verified source-content/image identity and real scorer conformance.
 - Development, validation, and locked manifests pass checksum, provenance,
   evidence-offset, and split-leakage validation.
 - all candidate runs retain per-sample results and exact revisions.

@@ -27,28 +27,32 @@ independent observations.
 
 ### Implementation status
 
-The protocol and runner implement the seven-configuration model-mode roster, complete
-question-set execution, one warmup, three measured seeds, structured response
-scoring, separate lifecycle measurements, and sealed data-report verification.
-Semantic labels come through the calibrated-judge interface; lexical overlap
-and a local classifier are not substitutes for that interface.
+The `generation-v5` protocol and runner implement the seven-configuration
+model-mode roster, frozen question/seed schedule validation, one warmup, three
+measured seeds, structured response scoring, separate lifecycle measurements,
+and sealed data-report verification. Typed input/infrastructure interruptions
+remain separate from measured generator errors. Terminal causes use token/stop
+events rather than delayed backend return time alone.
 
 Judge identity is pending calibration, not selected by this document. No
 authoritative claim-level score or complete comparison is established until
 the resolved settings, reference data, snapshots, and calibration artifact meet
-this contract. The current CLI requires previously obtained judge replies for
-authoritative profiles and replays them during a generation invocation; the
-Python interface accepts a judge transport and exposes saved-execution scoring.
-That CLI is neither the approved automatic generate-then-judge workflow nor a
-saved-output-only recovery command. Citation Support and its cited-subset labels
-also require implementation changes. No live provider, judge identity, or
-calibration result is selected automatically. CPU/CUDA smoke without a judge
+this contract. Automatic generate-save-release-judge execution and evaluation-only
+CLI recovery are implemented with an explicitly configured command transport
+and durable per-request judge journals. Citation Support uses separately
+validated cited-subset labels on the same claim inventory as Faithfulness.
+The four primary metrics are unchanged. Mocked first-run and interrupted-recovery
+regressions verify these paths; they do not establish real provider/model
+conformance or supply calibration evidence. No live provider, judge identity,
+or calibration result is selected automatically. CPU/CUDA smoke without a judge
 checks runtime and deterministic scoring only, retaining unavailable semantic
-values rather than fabricating labels.
+values rather than fabricating labels. Lexical overlap and a local classifier
+are not substitutes for the calibrated-judge interface.
 
-The approved workflow below is the target contract, not a claim that these
-deferred orchestration and scoring changes already exist. Executable command
-availability belongs to the [runbook](../../running.md).
+The executable transport/recovery interface is described
+[below](#configured-transport-and-evaluation-only-recovery). Reviewed source
+support policies, authoritative data, prepared snapshots, actual human judge
+calibration, and coordinated real-runtime verification remain readiness gates.
 
 ## Candidates and configurations
 
@@ -301,6 +305,92 @@ evidence justifications and check subset/full-context consistency. Judge choice,
 acceptance criteria, and reviewed calibration records remain pending data review;
 these examples do not supply them.
 
+### Configured transport and evaluation-only recovery
+
+Set `judge.contract_path` to a reviewed contract. The contract, calibration
+artifact, and human-label artifact use `schema_version: 2`; the contract and
+both calibration artifacts declare `label_schema: generation-judge-labels-v2`.
+The contract's `rubric` is an object with separate `response` and `pair` text;
+pair comparisons never receive the response rubric's evidence-scope inputs.
+Calibration criteria separately cover `full_context_support` and
+`cited_subset_support`, in addition to claim extraction, correctness, gold
+matching, relevancy, and semantic equivalence. Old schema-1 contracts are not
+silently upgraded or presented as calibrated for the added responsibility.
+
+Each atomic claim retains `supported`, `support_sources`, and `support_reason`
+for full-context support, plus `cited_supported`, `cited_support_sources`, and
+`cited_support_reason` for the valid cited subset. Source entries identify a
+supplied block and a literal quote within it. Positive support requires usable
+sources in the relevant scope. Citation-subset/full-context contradictions are
+rejected and retried under the frozen policy, not clamped. Correctness sources
+remain restricted to the separate verification-material inventory.
+
+The CLI accepts `--judge-transport` pointing to a local JSON configuration:
+
+```json
+{
+  "schema_version": 1,
+  "kind": "command",
+  "command": ["<explicit-adapter-executable>", "<adapter-argument>"]
+}
+```
+
+This is an interface example, not a prepared adapter or a judge selection.
+Provide the actual reviewed provider adapter explicitly. The command receives
+one `{identity, request}` JSON object on stdin, executes the frozen model
+identity/decoder, and returns raw label JSON on stdout. It must not substitute
+a different provider/model on failure. Use environment-held credentials rather
+than embedding secrets in configuration or replies. The configured timeout is
+enforced for the command; nonzero exits, malformed replies, and timeouts remain
+evaluator failures. The response request explicitly separates `supplied_evidence`,
+`cited_evidence`, required gold claims, and evaluator-only verification material.
+Pair requests retain their separate prompt/rubric. Candidate identity, seed,
+timings, and hidden reasoning are not judge inputs.
+
+After preparing and reviewing all prerequisites, the normal command is:
+
+```powershell
+python -m experiments.benchmarks.rag.generation.run --profile development --judge-transport PATH_TO_TRANSPORT_JSON
+```
+
+The runner saves `generation_schedule.json` before loading/inference and
+checkpoints `generation_progress.json` as execution advances. After the worker
+exits and generator resources are released, it saves immutable
+`generation_execution.json` and `execution_binding.json` before judging.
+The schedule binds candidate/model-lock, manifest, protocol, evaluator,
+device/dtype, questions/references, and measured seed identities. Duplicate or
+unexpected IDs are rejected; missing scheduled slots remain explicit incomplete
+outcomes rather than shrinking the schedule or fabricating failed requests.
+
+Every judge request is checkpointed separately under the child's `judge-journal/`.
+The journal records blinded request identity, raw replies before validation,
+retry rounds/outcomes, errors, and accepted labels. Repeated identical requests
+reuse accepted evaluation. A new recovery invocation may retry unavailable
+evaluations within another finite frozen-policy round; earlier failed replies
+remain recorded. Accepted replies are revalidated and reused, not regenerated.
+
+If judging is interrupted, use the original protocol and sealed execution:
+
+```powershell
+python -m experiments.benchmarks.rag.generation.run --protocol PATH_TO_ORIGINAL_PROTOCOL_YAML --resume-execution CHILD_DIRECTORY/generation_execution.json --judge-transport PATH_TO_TRANSPORT_JSON --evaluation-output NEW_EVALUATION_DIRECTORY
+```
+
+This path never resolves model snapshots, starts a generation worker, repeats
+qualification, or reserves/consumes locked data again. It verifies prediction,
+schedule, and evaluator identities and writes a new `evaluation.json` with
+original-prediction provenance. It does not overwrite the original run or its
+locked-consumption marker. Missing execution cannot be repaired by judging;
+malformed/exhausted replies keep dependent evaluation incomplete, not zero.
+Changed predictions, protocols, or judge/calibration identities are rejected as
+recovery of that original execution. Intentional evaluator changes require a
+separately versioned evaluation design and decision provenance.
+`--judge-records` remains an alternative replay transport bound to exact
+request/contract identities; it is not required for normal first-run execution.
+Its JSON envelope requires `schema_version: 2`, `label_schema`,
+`contract_checksum`, `contract_sha256`, and a `responses` mapping from the
+blinded request's stable hash to its raw reply. Both contract hashes must match;
+changed calibration cannot silently reuse an earlier evaluator identity.
+
 ## Benchmark workflow and selection
 
 ```text
@@ -417,8 +507,8 @@ benchmark workflow. Recovery follows the
 [shared evaluation-only resume rule](../../metrics.md#prediction-evidence-and-rescoring):
 score the saved outputs without re-inference or another locked execution, and
 retain evaluation provenance without reopening selection.
-The current replay CLI does not provide that saved-output recovery workflow;
-see [implementation status](#implementation-status).
+The CLI's [evaluation-only recovery](#configured-transport-and-evaluation-only-recovery)
+provides this workflow without another generation invocation.
 
 All scheduled outcomes remain recorded. Runtime/timeout/context-interrupted
 responses and required structural-schema failures have unavailable dependent

@@ -659,7 +659,9 @@ An observed zero count remains recorded with a selector failure under the
 ## Frozen-ASR diagnostics
 
 Decode each unique video once, transcribe each required 30-second/2-second-overlap
-window once, shift timestamps, and stitch its transcript using the retained
+window once, using the sealed decoded PCM duration for the complete window
+inventory rather than the video annotation duration. Shift timestamps and stitch
+its transcript using the retained
 [token units with inherited native bounds](#spoken-timestamp-matching). Compare
 the complete stitched result to that video's reviewed spoken reference. Do not score repeated
 overlap words twice or copy results to visual children.
@@ -986,6 +988,11 @@ requests, keeping per-video completion separately. Windows are request units,
 not independent bootstrap units. One failed required window makes the complete
 video transcript unavailable. Continue recoverable scheduled work and retain
 partial outputs and elapsed times as diagnostics only.
+
+Scheduled counts and reviewed window indices use the same decoded-PCM inventory.
+Tolerated audio/video duration differences cannot drop an audio tail or create
+padded requests. Frozen schema-3 reuse validates that inventory and rejects older
+manifest-duration schedules.
 
 Loading, warmup, or decoding failure before window inference remains a setup/
 preprocessing outcome, with affected video status, not fabricated failed ASR

@@ -46,17 +46,147 @@ the work in the operation artifact.
 
 ### Implementation status
 
-The existing vector drivers have not yet been migrated to this benchmark
-contract. Their synthetic workloads, configuration tuning, metric keys,
-agreement checks, and separate retrieval-validation entry point do not implement
-the procedure described here. The remaining work includes:
+The replacement driver uses protocol `vector-database-v4`, suite
+`vectordb-server-v5`, and stage `database-configuration`. Each child is an
+explicit `<database>|<configuration-alias>` pair; there is no hidden HNSW trial
+selection, recall gate, or workload-name/dimension inference. Validation consumes
+development decisions and locked consumes one validation decision, with matching
+protocol and recorded configuration settings. Locked consumption is reserved
+before model/corpus preparation, including failed runs.
 
-- the complete frozen-configuration validation and locked workflow;
-- tie-aware @20 scoring and the reporting structure below; and
-- the standalone validated-input/report interface.
+Implemented and covered by offline/in-memory regressions: tie-aware ANN@20,
+trusted metadata filtering, response/permutation checks, successful-completion
+QPS, designated-first quality, scheduled pre-rerank all-pairs repeatability,
+condition-local aggregation, document-operation visibility/restoration, preserved
+corpus startup boundaries, apparent-byte post-build storage, deployment/client
+identity checks, and standalone sealed input validation. Full-stack execution uses
+only the selected retrieval sources and the shared canonical evidence scorer;
+its latency percentiles summarize successful per-question medians. Both paths
+return explicit aggregates/support rather than the retired generic CI fallback.
+Timestamped server monitoring ends before offline scoring/bootstrap. The shared
+child persistence hook exports and content-checks CSV/Parquet; nested cells use
+the same canonical JSON encoding. Regression verification includes a temporary
+local MLflow parent/child run with retained status artifacts and omitted null CI
+scalars, not only a no-tracking return-value check.
 
-The [runbook](../running.md#9-vector-databases) distinguishes executable diagnostic
-commands from the target lifecycle.
+The default roster contains smoke configurations only. Authoritative candidates,
+prepared representative vectors, source inventories, load/operation conditions,
+upstream decisions and reviewed CI support must be supplied; the old synthetic
+100k/1M grid is not a reviewed default. Empty `statistics.ci_support` means null
+interval bounds, not an inferred minimum. Operation specifications may share a
+`condition_id`; their complete logical-operation ledgers remain grouped by the
+reviewed `source_group` or canonical independent source. Repetitions do not
+establish independent-operation support. Load conditions may declare one
+`independent_window_groups` entry per scheduled window; equal entries keep
+dependent windows together. Without that reviewed map, points remain available
+but load CI bounds are explicitly pending. Condition-specific support policies
+override a metric-family policy; neither path supplies a guessed minimum.
+
+Live smoke passes on all four pinned server images, covering effective index
+settings, trusted inventory, filters, transport, mutations, restart persistence
+and storage monitoring. Additional Weaviate acceptance verifies exact source-ID
+filtering and complete deletion of 10,005 matching records, preserving similar
+source names, then replacement and absent-document deletion. The adapter drains
+the server's bounded deletion batches and fails on errors or lack of progress.
+Unset optional Weaviate schema properties are omitted from canonical metadata;
+non-null extra facts still fail inventory validation. These controlled checks
+do not establish representative load performance or authoritative model-backed
+integration results. Reviewed inputs and upstream decisions remain required.
+Parent tables include left-minus-right paired
+differences over aligned complete query, window, and operation inventories.
+Both candidates use the same source/window draws. QPS is recomputed as a ratio
+of total successful work to total window time; operation/request percentiles and
+error/filter ratios retain their distinct cohorts. Missing required observations
+make paired evidence incomplete, not a surviving-only comparison. Undefined
+draws, support, equal-bound degeneracy and unfrozen-policy reasons are retained.
+
+Execution snapshots are sealed before offline scoring. Evaluation-only recovery
+verifies original inputs, protocol, candidate, logical schedules, actual pools,
+and the original locked-consumption reservation, then writes a separately
+versioned evaluation. It does not change the original run, predictions, failed
+first attempt, or reservation, and cannot load models, query servers or rerun a
+missing stage. A missing stage remains incomplete. Code migration is implemented;
+authoritative readiness still requires the reviewed inputs/support and live
+acceptance listed above.
+
+### Executable input and selected-server interfaces
+
+Run full validation separately; driver startup only verifies the seal:
+
+```powershell
+python -m experiments.benchmarks.validate vectordb --profile smoke
+python -m experiments.benchmarks.vectordb.run --profile smoke --no-mlflow
+python -m experiments.benchmarks.vectordb.validation --profile development --manifest PATH --inventory DEV_PATH --inventory VALIDATION_PATH --inventory LOCKED_PATH
+python -m experiments.benchmarks.vectordb.recover --candidate-directory ORIGINAL_CANDIDATE_DIRECTORY --output NEW_EVALUATION_DIRECTORY
+```
+
+The smoke driver command requires the coordinated, already-prepared pinned
+services; validation itself starts no services and loads no models.
+`retrieval_run` is a live imported integration/scoring module; its separate CLI
+is retired. Development/validation/locked require reviewed inputs and the matching
+standalone report; their command availability is not a claim those inputs exist.
+
+The manifest shape is illustrated by the explicitly synthetic committed
+`experiments/benchmarks/vectordb/smoke.json`. Each corpus has canonical record
+IDs/text/metadata, vectors, query vectors/IDs/source groups and provenance.
+Matrices may be inline floating arrays or relative `.npy` paths; actual matrix
+bytes are sealed. Conditions declare corpus/filter/query inventory, controlled
+or load mode, concurrency, repeated windows and warmup request count. The fixed
+schedule is query order inside measured-attempt order inside window order;
+only window zero/attempt one supplies quality, and window zero's three attempts
+supply repeatability. All windows contribute request/load statistics. Operations
+declare prepared new-document and replacement records and an existing source ID.
+Full validation checks all three authoritative splits, reviewed record/query
+source groups, mutation identities, canonical integration spans and allowed gold
+evidence. Integration inputs name corpus, RAG manifest, embedding/retrieval
+decisions, chunking/retrieval protocols, model lock, filters and extra dependency
+files. Required input files and decision source summaries are sealed explicitly.
+Immutable `retained-*-context.json`, `retained-*-server.json` and, when applicable,
+`retained-*-integration.json` files preserve pre-scoring execution. Do not edit
+these snapshots to repair a failed run. Recovery accepts a new output directory
+and preserves the original source-run and prediction identities; unavailable
+original inputs/tokenizer artifacts block recovery rather than authorize a
+download or another inference. Parent `paired_operational.csv/.parquet` tables
+retain condition, operation, estimator, aligned support and CI status alongside
+the ordinary per-candidate comparison tables.
+
+Final RAG can reuse these APIs without a new configuration search:
+
+```python
+from experiments.benchmarks.vectordb.selection import candidate_config, resolve_selected_config
+from experiments.benchmarks.vectordb.integration import SelectedServer
+from experiments.benchmarks.vectordb.workload import validate_hits
+```
+
+`candidate_config(protocol, candidate_id, actual_dimension)` returns backend and
+`Config`. `resolve_selected_config(decision_path, protocol, actual_dimension)`
+also validates the one validation winner and returns provenance. `SelectedServer`
+owns an actual adapter and exposes `prepare`, `retrieve`, and `close`; it never
+uses ExactIndex search or cached rankings. `retrieve(..., evidence=dict)` retains
+the actual observed pool on downstream reranker failure. The reranker must
+permute that whole pool. `validate_hits(hits, trusted_metadata_by_id, limit,
+filters)` rejects malformed/duplicate/unknown IDs and nonfinite scores, and
+separately returns a Boolean filter-violation event. It does not trust echoed
+metadata. A valid short database result remains an ANN observation but cannot
+silently become a complete integration pool. PostgreSQL's dynamic `finish_index`
+and all four adapter factories remain live.
+Dense/RRF requests validate complete native query-token counts before embedding,
+and validate vector shape, finite values and nonzero norms before server dispatch.
+BM25 positions and finite scores are checked before filtering/fusion; both actual
+query and reranker devices are synchronized at the complete request boundary.
+`retrieve(..., input_envelope=...)` optionally enforces the qualified
+`maximum_query_tokens` and `maximum_reranker_tokens` before the respective
+inference. It retains `query_input.native_token_count` and
+`reranker_input_token_counts`; leaving the argument unset does not alter ordinary
+vector callers' native model-capacity checks.
+
+`plan.settings.integration_provenance` and child parameters bind the actual
+`chunking_embedding_candidate`, `retrieval_candidate`, `model_lock_sha256`,
+`chunking_protocol_checksum`, `retrieval_protocol_checksum`,
+`embedding_source_run_id`, `retrieval_source_run_id`, `embedding_decision_sha256`
+and `retrieval_decision_sha256`. Final composition acceptance must compare this
+lineage against its frozen components and reject missing/mismatched identities,
+not merely accept the same database alias.
 
 Reviewed data, configuration ranges, load conditions, and independent-support
 requirements remain in [pending data review](../pending-data-review.md#vector-databases).

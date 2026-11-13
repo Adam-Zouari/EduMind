@@ -30,6 +30,9 @@ benchmark selection, or server lifecycle management into either subsystem.
 
 The Streamlit controller owns upload checksums, temporary-file cleanup, duplicate
 prevention, and presentation. The pipeline owns document and query processing.
+Successful upload deduplication uses logical filename plus content version;
+failed attempts can be retried explicitly. Sharing bytes with another filename
+does not suppress that logical document's required replacement.
 
 ## Model-workload isolation
 

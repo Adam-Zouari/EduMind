@@ -599,9 +599,9 @@ Database Ranking Repeatability share one pair-counting rule. Each benchmark
 freezes its own output representation and comparison depth. These metrics are diagnostic: a different
 valid output does not itself fail integrity. Invalid IDs, incorrect provenance,
 prohibited truncation, and non-permutation outputs retain their separate gates.
-Generation keeps its local semantic/citation comparison functions. Deferred
-Vector Database and Final RAG runners retain their explicitly documented
-implementation boundaries; a shared definition does not certify those runners.
+Generation keeps its local semantic/citation comparison functions. Vector
+Database and Final RAG document their implementation verification and remaining
+real-system prerequisites; a shared definition alone does not certify a runner.
 
 #### Repeatability with failed or missing attempts
 

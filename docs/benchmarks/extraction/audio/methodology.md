@@ -277,6 +277,14 @@ timestamp level; and MOSS `max_new_tokens=2048` with `do_sample=false`. Runtime
 versions, model paths, revisions, cache-manifest checksums, dtype, and device are
 recorded with them.
 
+Worker resource evidence now retains valid observed RAM/VRAM peaks after telemetry
+failure; absent samples stay null and CPU VRAM stays inapplicable. Monitoring
+completion and execution integrity are separate fields in retained coverage
+artifacts. A late post-monitor placement/metadata failure does not relabel the
+completed window as partial or discard completed transcripts. Measurement failures
+still fail qualification; preserved observations are not permission to accept a
+telemetry gap.
+
 ## Results and MLflow structure
 
 Audio uses its own MLflow experiment. Display names omit timestamps and redundant
