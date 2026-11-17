@@ -153,8 +153,11 @@ the ordinary per-candidate comparison tables.
 Final RAG can reuse these APIs without a new configuration search:
 
 ```python
-from experiments.benchmarks.vectordb.selection import candidate_config, resolve_selected_config
 from experiments.benchmarks.vectordb.integration import SelectedServer
+from experiments.benchmarks.vectordb.selection import (
+    candidate_config,
+    resolve_selected_config,
+)
 from experiments.benchmarks.vectordb.workload import validate_hits
 ```
 

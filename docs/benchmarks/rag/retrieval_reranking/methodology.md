@@ -58,8 +58,9 @@ reference it rather than copying the complete corpus. `inventory.chunks_from_inv
 verifies a saved inventory against its recorded checksum and original manifest
 for model-free rescoring; changed inventory or references are rejected.
 The fixed evaluation tokenizer verifies the pinned local encoding bytes and
-never downloads or repairs assets at runtime. Missing/corrupt assets require the
-explicit `python -m experiments.benchmarks.prepare models` preparation path.
+never downloads or repairs assets at runtime. If the encoding is missing or
+corrupt, run `python -m experiments.benchmarks.prepare embedding-models` before
+the benchmark. This command prepares the embedding snapshots as well as the tokenizer.
 
 Reviewed independent-source CI support requirements remain data-dependent.
 Unfrozen requirements cannot establish authoritative uncertainty or advancement;
