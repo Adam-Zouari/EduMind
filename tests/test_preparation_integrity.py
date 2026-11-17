@@ -21,6 +21,40 @@ from experiments.benchmarks.common.selection import selection_entries
 from experiments.benchmarks.preparation import evaluators, models, vectordb
 
 
+@pytest.mark.parametrize("valid", [True, False])
+def test_prepare_tiktoken_certifies_destination_not_cached_encoding(
+    tmp_path, monkeypatch, valid
+):
+    import os
+
+    import tiktoken
+    from tiktoken import load
+
+    from edumind.rag import tokenizers
+
+    expected = b"test-only tokenizer asset"
+    monkeypatch.setattr(
+        tokenizers, "_CL100K_SHA256", hashlib.sha256(expected).hexdigest()
+    )
+    monkeypatch.setattr(load, "read_file", lambda url: expected if valid else b"bad")
+    monkeypatch.setattr(
+        tiktoken, "get_encoding", lambda *a: pytest.fail("registry cache used")
+    )
+    monkeypatch.setenv("TIKTOKEN_CACHE_DIR", str(tmp_path / "previous"))
+    destination = tmp_path / "new-cache"
+    if valid:
+        models._prepare_tiktoken(destination)
+        assert {path.read_bytes() for path in destination.iterdir()} == {
+            expected,
+            b"cl100k_base\n",
+        }
+    else:
+        with pytest.raises(ValueError, match="Hash mismatch"):
+            models._prepare_tiktoken(destination)
+        assert not (destination / "cl100k_base.ready").exists()
+    assert os.environ["TIKTOKEN_CACHE_DIR"] == str(tmp_path / "previous")
+
+
 def entry_for(directory, candidate="openai/whisper-small.en"):
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "weights.bin").write_bytes(b"unit-test-only bytes")

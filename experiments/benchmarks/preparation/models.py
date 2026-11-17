@@ -741,14 +741,26 @@ def _prepare_paddle_components(cache_directory: Path, model_path: Path) -> Path:
 def _prepare_tiktoken(cache_directory: Path) -> None:
     """Resolve the benchmark token counter during explicit preparation, never a run."""
     try:
-        import tiktoken
+        from tiktoken.load import read_file_cached
     except ModuleNotFoundError as exc:
         raise RuntimeError(
             "tiktoken is required; install the application lock"
         ) from exc
-    cache_directory.mkdir(parents=True, exist_ok=True)
+    from edumind.rag.tokenizers import _CL100K_SHA256
+
+    url = "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken"
+    cache_path = cache_directory / hashlib.sha1(url.encode()).hexdigest()
+    previous = os.environ.get("TIKTOKEN_CACHE_DIR")
     os.environ["TIKTOKEN_CACHE_DIR"] = str(cache_directory)
-    tiktoken.get_encoding("cl100k_base").encode("EduMind preparation check")
+    try:
+        read_file_cached(url, expected_hash=_CL100K_SHA256)
+        if sha256_file(cache_path) != _CL100K_SHA256:
+            raise ValueError(f"Pinned tokenizer checksum mismatch: {cache_path}")
+    finally:
+        if previous is None:
+            os.environ.pop("TIKTOKEN_CACHE_DIR", None)
+        else:
+            os.environ["TIKTOKEN_CACHE_DIR"] = previous
     atomic_write_text(cache_directory / "cl100k_base.ready", "cl100k_base\n")
 
 

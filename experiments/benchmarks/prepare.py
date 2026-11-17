@@ -31,6 +31,12 @@ from experiments.benchmarks.preparation.vectordb import prepare_vectordb
 
 
 def main() -> int:
+    benchmark_targets = {
+        "embedding-models": EMBEDDING_COMPONENTS,
+        "rag-models": RAG_COMPONENTS,
+        "extraction-models": EXTRACTION_COMPONENTS,
+        "all-models": MODEL_COMPONENTS,
+    }
     parser = argparse.ArgumentParser(
         description="Explicit EduMind benchmark preparation"
     )
@@ -39,10 +45,7 @@ def main() -> int:
         nargs="?",
         choices=(
             "app-models",
-            "embedding-models",
-            "rag-models",
-            "extraction-models",
-            "all-models",
+            *benchmark_targets,
             "qasper",
             "rag-selection",
             "assets",
@@ -104,41 +107,39 @@ def main() -> int:
         parser.error(
             "rag-selection requires --qasper-manifest, --structured-manifest, and --output"
         )
+    if arguments.target in benchmark_targets:
+        components = benchmark_targets[arguments.target]
+        entries = {entry.candidate: entry for entry in selection_entries()}
+        selected = tuple(arguments.candidate or selected_model_names(components))
+        for candidate in selected:
+            entry = entries.get(candidate)
+            if entry is None:
+                parser.error(
+                    f"{candidate} is not an included model-selection candidate"
+                )
+            if entry.component not in components:
+                parser.error(f"{candidate} is not part of {arguments.target}")
+        docling_components = (
+            DOCLING_BENCHMARK_COMPONENTS
+            if arguments.target in {"extraction-models", "all-models"}
+            and (
+                not arguments.candidate
+                or any(
+                    entries[name].component == "document_extraction"
+                    for name in selected
+                )
+            )
+            else ()
+        )
+
     if arguments.dry_run:
         # Dispatch must stop before *any* mutating preparation helper. Input
         # paths are described, not opened or repaired by a planning invocation.
         models = None
         if arguments.target == "app-models":
             models = preparation_plan(APP_CANDIDATES, DOCLING_APP_COMPONENTS)
-        elif arguments.target.endswith("-models"):
-            components = {
-                "embedding-models": EMBEDDING_COMPONENTS,
-                "rag-models": RAG_COMPONENTS,
-                "extraction-models": EXTRACTION_COMPONENTS,
-                "all-models": MODEL_COMPONENTS,
-            }[arguments.target]
-            selected = tuple(arguments.candidate or selected_model_names(components))
-            entries = {entry.candidate: entry for entry in selection_entries()}
-            if any(
-                name not in entries or entries[name].component not in components
-                for name in selected
-            ):
-                parser.error(
-                    "Requested candidate is not included in this benchmark target"
-                )
-            models = preparation_plan(
-                selected,
-                DOCLING_BENCHMARK_COMPONENTS
-                if arguments.target in {"extraction-models", "all-models"}
-                and (
-                    not arguments.candidate
-                    or any(
-                        entries[name].component == "document_extraction"
-                        for name in selected
-                    )
-                )
-                else (),
-            )
+        elif arguments.target in benchmark_targets:
+            models = preparation_plan(selected, docling_components)
         print(
             json.dumps(
                 {
@@ -180,46 +181,13 @@ def main() -> int:
         outputs = prepare_public_assets(
             arguments.plan, arguments.output or root / "data/benchmarks/raw"
         )
-    elif arguments.target in {
-        "embedding-models",
-        "rag-models",
-        "extraction-models",
-        "all-models",
-    }:
-        components = {
-            "embedding-models": EMBEDDING_COMPONENTS,
-            "rag-models": RAG_COMPONENTS,
-            "extraction-models": EXTRACTION_COMPONENTS,
-            "all-models": MODEL_COMPONENTS,
-        }[arguments.target]
-        selected = tuple(arguments.candidate or selected_model_names(components))
-        entries = {entry.candidate: entry for entry in selection_entries()}
-        for candidate in selected:
-            entry = entries.get(candidate)
-            if entry is None:
-                parser.error(
-                    f"{candidate} is not an included model-selection candidate"
-                )
-            if entry.component not in components:
-                parser.error(f"{candidate} is not part of {arguments.target}")
+    elif arguments.target in benchmark_targets:
         outputs = [
             prepare_selected_models(
                 arguments.output or root / "data/benchmarks/models/selected.json",
                 root / "data/benchmarks/downloads/models",
                 selected,
-                docling_components=(
-                    DOCLING_BENCHMARK_COMPONENTS
-                    if arguments.target in {"extraction-models", "all-models"}
-                    and (
-                        not arguments.candidate
-                        or any(
-                            entries[name].component == "document_extraction"
-                            for name in selected
-                        )
-                    )
-                    else ()
-                ),
-                dry_run=arguments.dry_run,
+                docling_components=docling_components,
             )
         ]
     elif arguments.target == "vectordb":
