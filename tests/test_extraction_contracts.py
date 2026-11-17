@@ -205,9 +205,8 @@ def test_worker_peak_cannot_hide_continuous_measurement_gaps(tmp_path, monkeypat
     ]
 
 
-def test_official_scorer_timeout_removes_only_its_own_container(tmp_path, monkeypatch):
-    import subprocess
-
+@pytest.fixture
+def stub_official_evaluator(tmp_path, monkeypatch):
     from experiments.benchmarks.extraction.document import official_metrics as official
 
     source = tmp_path / "data/benchmarks/evaluators/OmniDocBench"
@@ -225,6 +224,15 @@ def test_official_scorer_timeout_removes_only_its_own_container(tmp_path, monkey
             "image_lock_sha256": "0" * 64,
         },
     )
+    return official
+
+
+def test_official_scorer_timeout_removes_only_its_own_container(
+    stub_official_evaluator, monkeypatch
+):
+    import subprocess
+
+    official = stub_official_evaluator
     commands = []
 
     def run(command, **_kwargs):
@@ -1267,27 +1275,11 @@ def test_cdm_worker_checks_reference_tokens_before_emitting_quality(
 
 
 def test_official_host_preserves_cdm_infrastructure_failure_as_unavailable(
-    tmp_path, monkeypatch
+    stub_official_evaluator, monkeypatch
 ):
     import subprocess
 
-    from experiments.benchmarks.extraction.document import official_metrics as official
-
-    source = tmp_path / "data/benchmarks/evaluators/OmniDocBench"
-    source.mkdir(parents=True)
-    (source / ".edumind-revision").write_text(official.OMNIDOCBENCH_REVISION)
-    (source / official.OMNIDOCBENCH_IMAGE_LOCK).write_text("{}")
-    monkeypatch.setattr(official, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setattr(
-        official,
-        "official_evaluator_identity",
-        lambda: {
-            "source_revision": official.OMNIDOCBENCH_REVISION,
-            "image_digest": "image@sha256:fixture",
-            "source_manifest_sha256": "0" * 64,
-            "image_lock_sha256": "0" * 64,
-        },
-    )
+    official = stub_official_evaluator
 
     def failed(command, **_kwargs):
         raise subprocess.CalledProcessError(
@@ -1416,7 +1408,9 @@ def test_workers_preserve_designated_quality_and_all_measured_attempts(
             original_bootstrap = worker.bootstrap_sources
 
             def recorded_bootstrap(*args, **kwargs):
-                bootstrap_minima.append(kwargs["minimum_sources"])
+                bootstrap_minima.append(
+                    (kwargs["minimum_sources"], kwargs["minimum_sources_by_metric"])
+                )
                 return original_bootstrap(*args, **kwargs)
 
             monkeypatch.setattr(worker, "bootstrap_sources", recorded_bootstrap)
@@ -1454,9 +1448,15 @@ def test_workers_preserve_designated_quality_and_all_measured_attempts(
             )
     result = worker.execute(payload)
     if suite == "video":
-        assert bootstrap_minima == (
-            [None] if latency_support is None else [None, latency_support]
-        )
+        assert bootstrap_minima == [
+            (
+                None,
+                {
+                    "p50_warm_visual_latency_seconds": latency_support,
+                    "p95_warm_visual_latency_seconds": latency_support,
+                },
+            )
+        ]
     attempts = result["attempts"] if suite == "document" else result["timings"]
     assert len(attempts) == 3
     assert [row["success"] for row in attempts] == [

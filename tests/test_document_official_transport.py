@@ -474,7 +474,6 @@ def test_mocked_transport_evidence_is_uploaded_to_mlflow(
         dataset_checksum="mocked-docker-fixture",
         directions={"tables.teds": "max"},
         primary_metric="tables.teds",
-        monitor_resources=False,
         paired_comparisons=False,
         artifact_root=tmp_path / "artifacts",
     )

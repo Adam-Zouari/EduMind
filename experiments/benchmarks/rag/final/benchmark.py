@@ -39,6 +39,7 @@ from experiments.benchmarks.rag.generation.models import generator_for
 from experiments.benchmarks.rag.generation.validation import questions_from_manifest
 from experiments.benchmarks.rag.retrieval_reranking.metrics import (
     aggregate_quality,
+    pool_evidence_unit_recall,
     source_interval,
 )
 
@@ -92,14 +93,12 @@ def stable_citations(attempt):
     return identities
 
 
-def _placement(server, backend, device):
+def _retrieval_placement(server, device):
     reports = []
     if server.index.embedder is not None:
         reports.append(server.index.embedder.placement_report(device))
     if server.reranker is not None:
         reports.append(server.reranker.placement_report())
-    if backend is not None:
-        reports.append(backend.placement())
     for report in reports:
         if report.get("status") != "qualified":
             raise GenerationPlacementError(report)
@@ -189,7 +188,6 @@ def execute(
             backend = backend_factory(
                 candidate, model_lock, raw["device"], raw["dtype"], generation_protocol
             )
-            started = time.perf_counter()
             if residency == "sequential":
                 _unload_retrieval(server)
             else:
@@ -197,13 +195,13 @@ def execute(
                     server.index.embedder.prepare()
                 if server.reranker is not None:
                     server.reranker.prepare()
+            started = time.perf_counter()
             backend.load()
             backend.synchronize()
             raw["cold_model_load_seconds"] = time.perf_counter() - started
-            raw["placement_before"] = backend.placement()
-            _placement(
-                server, backend, raw["device"]
-            ) if residency == "resident" else _placement_generator(backend)
+            _record_generator_placement(backend, raw, "placement_before")
+            if residency == "resident":
+                _retrieval_placement(server, raw["device"])
             raw["resolved_decoder"] = dict(backend.resolved_decoder)
             raw["inherited_generation_config"] = getattr(
                 backend, "inherited_generation_config", {}
@@ -228,8 +226,8 @@ def execute(
                         server.index.embedder.prepare()
                     if server.reranker is not None:
                         server.reranker.prepare()
-                    attempt["retrieval_placement_before"] = _placement(
-                        server, None, raw["device"]
+                    attempt["retrieval_placement_before"] = _retrieval_placement(
+                        server, raw["device"]
                     )
                     envelope = plan.settings.get("qualified_input_envelope")
                     server.retrieve(
@@ -237,8 +235,8 @@ def execute(
                         evidence=attempt["retrieval"],
                         **({"input_envelope": envelope} if envelope else {}),
                     )
-                    attempt["retrieval_placement_after"] = _placement(
-                        server, None, raw["device"]
+                    attempt["retrieval_placement_after"] = _retrieval_placement(
+                        server, raw["device"]
                     )
                     attempt["retrieval"]["latency_seconds"] = (
                         time.perf_counter() - started
@@ -246,10 +244,6 @@ def execute(
                     positions = attempt["retrieval"]["ranking"][
                         : composition.system["top_k"]
                     ]
-                    if positions != attempt["retrieval"]["ranking"][: len(positions)]:
-                        raise ValueError(
-                            "Selected context is not the validated ranking prefix"
-                        )
                     attempt["failure_stage"] = "input_validation"
                     generation_started = time.perf_counter()
                     blocks, identities = context_question(
@@ -260,8 +254,9 @@ def execute(
                     if residency == "sequential":
                         _unload_retrieval(server)
                         backend.load()
-                    _placement_generator(backend)
-                    attempt["generator_placement_before"] = backend.placement()
+                    _record_generator_placement(
+                        backend, attempt, "generator_placement_before"
+                    )
                     prepared = backend.prepare(live)
                     prompt_tokens = prepared["prompt_tokens"]
                     check = {
@@ -296,17 +291,16 @@ def execute(
                         timing.get("generation_call_offset_seconds", 0) + preparation
                     )
                     timing["latency_seconds"] = time.perf_counter() - generation_started
-                    attempt.update(
-                        produced, timing=timing, generation_status=produced["outcome"]
-                    )
+                    attempt["timing"] = timing
                     if isinstance(produced.get("token_event_seconds"), list):
                         attempt["token_event_seconds"] = [
                             t + preparation for t in produced["token_event_seconds"]
                         ]
                     attempt["failure_stage"] = "post_inference_integrity"
                     backend.synchronize()
-                    _placement_generator(backend)
-                    attempt["generator_placement_after"] = backend.placement()
+                    _record_generator_placement(
+                        backend, attempt, "generator_placement_after"
+                    )
                     response, _ = parse_response(attempt.get("visible_text", ""))
                     attempt["request_status"] = (
                         "completed"
@@ -359,10 +353,7 @@ def execute(
             if not preflight:
                 raw["phase"] = "warmup"
                 warmup = request(questions[0], generation_protocol.warmup_seed)
-                if (
-                    warmup["request_status"] != "completed"
-                    or parse_response(warmup.get("visible_text", ""))[0] is None
-                ):
+                if warmup["request_status"] != "completed":
                     raise ValueError("Final complete-request warmup failed")
             raw["phase"] = "measured"
             for record in raw["records"]:
@@ -415,8 +406,9 @@ def execute(
     return raw
 
 
-def _placement_generator(backend):
+def _record_generator_placement(backend, evidence, field):
     report = backend.placement()
+    evidence[field] = report
     if report.get("status") != "qualified":
         raise GenerationPlacementError(report)
 
@@ -503,6 +495,7 @@ def score(raw, manifest, generation_protocol, retrieval_protocol, *, judge=None)
     cutoff = raw["composition"]["top_k"]
     cutoffs = [k for k in retrieval_protocol.quality_cutoffs if k <= cutoff]
     quality_rows, timing_groups, request_rows = [], {}, []
+    tokenizer = None
     for record in raw["records"]:
         q = record["question"]
         first = record["attempts"][0]
@@ -522,12 +515,14 @@ def score(raw, manifest, generation_protocol, retrieval_protocol, *, judge=None)
             values = dict.fromkeys(names)
             values["diagnostic.pool_evidence_unit_recall_at_20"] = None
             if ranking is not None:
+                if tokenizer is None:
+                    tokenizer = TiktokenOffsetTokenizer("cl100k_base")
                 selected = [chunks[i] for i in ranking[:cutoff]]
                 scored = score_question(
                     questions[q["id"]],
                     selected,
                     chunks,
-                    TiktokenOffsetTokenizer("cl100k_base"),
+                    tokenizer,
                     cutoffs=cutoffs,
                     alpha=retrieval_protocol.alpha_ndcg_alpha,
                 )
@@ -539,13 +534,11 @@ def score(raw, manifest, generation_protocol, retrieval_protocol, *, judge=None)
                 )
             pool = first.get("retrieval", {}).get("pool")
             if pool is not None:
-                units = evidence_units(questions[q["id"]])
-                recovered = set().union(
-                    *(covered_unit_ids(chunks[i], units) for i in pool)
+                values["diagnostic.pool_evidence_unit_recall_at_20"] = (
+                    pool_evidence_unit_recall(
+                        questions[q["id"]], [chunks[i] for i in pool]
+                    )
                 )
-                values["diagnostic.pool_evidence_unit_recall_at_20"] = len(
-                    recovered
-                ) / len(units)
         executed = [a for a in record["attempts"] if "request_status" in a]
         values["reliability.request_failure_rate"] = (
             sum(a["request_status"] != "completed" for a in executed) / len(executed)

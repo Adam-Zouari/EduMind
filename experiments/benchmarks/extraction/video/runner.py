@@ -191,7 +191,6 @@ def main():
     image_candidate, image_decision = _selected_image(arguments, document_protocol)
     if arguments.profile == "preflight":
         result = run_video_preflight(
-            items,
             manifest=manifest,
             manifest_path=manifest_path,
             protocol=protocol,
@@ -713,7 +712,6 @@ def run_visual_benchmark(
         paired_metrics=(),
         paired_comparisons=False,
         operational_prefix="",
-        monitor_resources=False,
         evaluator_receives_context=True,
         shuffle_candidates=False,
         candidate_artifact_name="candidate.json",

@@ -13,7 +13,7 @@ from experiments.benchmarks.common.contracts import (
 )
 from experiments.benchmarks.common.datasets import load_manifest
 from experiments.benchmarks.rag.evaluation import Chunk
-from experiments.benchmarks.rag.final import benchmark
+from experiments.benchmarks.rag.final import benchmark, validation
 from experiments.benchmarks.rag.final.composition import reserve_locked
 from experiments.benchmarks.rag.final.protocol import load_protocol as final_protocol
 from experiments.benchmarks.rag.final.validation import (
@@ -34,7 +34,7 @@ def test_locked_consumption_is_atomic_and_not_reopened_after_failure(tmp_path):
         reserve_locked(marker, {"manifest": "different configuration"})
 
 
-def test_final_data_check_accepts_missing_supplied_gold_context(tmp_path):
+def test_final_data_check_accepts_missing_supplied_gold_context(tmp_path, monkeypatch):
     import json
 
     source = manifest_path("smoke")
@@ -52,6 +52,17 @@ def test_final_data_check_accepts_missing_supplied_gold_context(tmp_path):
     )
     assert report["status"] == "passed", report["errors"]
     verify_inputs(target, "smoke", final_protocol(), report_root=tmp_path / "reports")
+    changed_validator = tmp_path / "changed_generation_validator.py"
+    changed_validator.write_text(
+        "# changed validation implementation", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        validation.generation_validation, "__file__", str(changed_validator)
+    )
+    with pytest.raises(ValueError, match="Missing or stale data validation"):
+        verify_inputs(
+            target, "smoke", final_protocol(), report_root=tmp_path / "reports"
+        )
 
 
 @pytest.mark.parametrize("fail_first", [False, True])
@@ -77,7 +88,7 @@ def test_live_server_execution_and_first_ranking_quality(tmp_path, fail_first):
                 raise RuntimeError("test database timeout")
             evidence.update(
                 pool=list(range(len(chunks))),
-                ranking=list(range(len(chunks))),
+                ranking=list(reversed(range(len(chunks)))),
                 database_latency_seconds=0.001,
                 identity=self.identity,
             )
@@ -127,6 +138,11 @@ def test_live_server_execution_and_first_ranking_quality(tmp_path, fail_first):
         assert caught.value.metrics["reliability.request_failure_rate"] > 0
         assert caught.value.metrics["diagnostic.evidence_unit_recall_at_3"] is None
     else:
+        for record in raw["records"]:
+            blocks = record["attempts"][0]["live_question"]["blocks"]
+            assert [block["text"] for block in blocks] == [
+                chunk.text for chunk in chunks[::-1][:3]
+            ]
         result = benchmark.score(raw, manifest, protocol, retrieval_protocol())
         assert result[2]["diagnostic.evidence_unit_recall_at_3"] == 1
         assert result[2]["reliability.request_failure_rate"] == 0

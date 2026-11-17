@@ -234,21 +234,12 @@ def aggregate(
         seed=seed,
         confidence=confidence,
         minimum_sources=minimum_sources,
+        minimum_sources_by_metric={
+            "p50_warm_clip_latency_seconds": minimum_latency_sources,
+            "p95_warm_clip_latency_seconds": minimum_latency_sources,
+        },
         stratum_field="sample_type",
     )
-    if minimum_latency_sources != minimum_sources:
-        latency_bounds = bootstrap_sources(
-            rows,
-            statistic,
-            resamples=resamples,
-            seed=seed,
-            confidence=confidence,
-            minimum_sources=minimum_latency_sources,
-            stratum_field="sample_type",
-        )
-        for name in ("p50_warm_clip_latency_seconds", "p95_warm_clip_latency_seconds"):
-            if name in latency_bounds:
-                intervals[name] = latency_bounds[name]
     for row in sample_rows:
         values, statuses = sample_metrics(
             row, timing_rows=timings_by_sample.get(str(row["sample_id"]), [])

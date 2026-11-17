@@ -522,7 +522,7 @@ def evaluate_candidate(
             aggregate[key] = details[suffix] if details["complete"] else None
             workload_support[key] = details
     if index is not None:
-        aggregate.update(_storage_metrics(index, candidate, reranker))
+        aggregate.update(_storage_metrics(index, candidate))
         if candidate.reranker == "none" and candidate.retriever != "rrf":
             operational["index_build_seconds"] = (
                 (index_build or {})
@@ -1366,7 +1366,7 @@ def _require_pool(rows, index, protocol, question_id, *, depth=None):
         raise OutputIntegrityError(f"Token-free chunk in pool for {question_id}")
 
 
-def _storage_metrics(index, candidate, reranker=None):
+def _storage_metrics(index, candidate):
     if candidate.reranker != "none":
         return {}
     dense = int(index.vectors.nbytes) if index.vectors is not None else None

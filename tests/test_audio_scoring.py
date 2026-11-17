@@ -538,8 +538,11 @@ def test_bootstrap_support_is_metric_specific_and_latency_threshold_is_separate(
     assert intervals["word_error_rate"]["lower"] is None
     assert intervals["word_error_rate"]["reason"] == "insufficient_independent_sources"
     assert intervals["word_error_rate"]["contributing_source_count"] == 1
+    assert intervals["word_error_rate"]["undefined_resamples"] > 0
+    assert intervals["word_error_rate"]["degenerate"] is False
     assert intervals["attempt_failure_rate"]["lower"] is not None
     assert intervals["p50_warm_clip_latency_seconds"]["lower"] == 0.5
+    assert intervals["p50_warm_clip_latency_seconds"]["degenerate"] is True
     assert intervals["p50_warm_clip_latency_seconds"]["undefined_resamples"] > 0
 
 

@@ -208,7 +208,7 @@ class SelectedServer:
                     "Selected query exceeds native embedding capacity; truncation is forbidden",
                     {"reason_code": "query_input_overflow", **details["query_input"]},
                 )
-            _check_envelope(input_envelope, "maximum_query_tokens", counts, details)
+            _check_envelope(input_envelope, "maximum_query_tokens", counts)
             vector = self.index.embedder.embed_query(query)
             vector = np.asarray(vector)
             if (
@@ -313,7 +313,7 @@ class SelectedServer:
                 raise ValueError(
                     "Reranker native token counts must cover the actual pool"
                 )
-            _check_envelope(input_envelope, "maximum_reranker_tokens", counts, details)
+            _check_envelope(input_envelope, "maximum_reranker_tokens", counts)
             try:
                 local = self.reranker.rank(query, documents)
             except Exception as exc:
@@ -350,7 +350,7 @@ class SelectedServer:
         self.adapter.close()
 
 
-def _check_envelope(envelope, key, counts, evidence):
+def _check_envelope(envelope, key, counts):
     if envelope is None:
         return
     maximum = envelope.get(key)

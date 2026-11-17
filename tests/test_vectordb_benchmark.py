@@ -17,34 +17,7 @@ from experiments.benchmarks.vectordb.protocol import (
     load_protocol,
 )
 from experiments.benchmarks.vectordb.run import COMPOSE
-from experiments.benchmarks.vectordb.selection import make_config
-from experiments.benchmarks.vectordb.workload import Corpus, exact_ids
-
-
-@pytest.mark.parametrize("indices", [None, np.array([6, 3, 1, 5, 2, 0, 4])])
-def test_exact_oracle_uses_ids_to_break_ties_at_cutoff(indices):
-    vectors = np.ones((7, 2), dtype=np.float32)
-    corpus = Corpus(vectors, vectors[:1], np.array([0]), ({},) * 7, "fixture")
-    assert exact_ids(corpus, vectors[0], 3, candidate_indices=indices) == [
-        "0",
-        "1",
-        "2",
-    ]
-
-
-def test_exact_oracle_ranks_similarity_before_id_and_handles_short_filters():
-    vectors = np.array([[0, 1], [1, 0], [1, 0]], dtype=np.float32)
-    corpus = Corpus(
-        vectors,
-        vectors[:1],
-        np.array([0]),
-        ({"scope": "other"}, {"scope": "yes"}, {"scope": "yes"}),
-        "fixture",
-    )
-    assert exact_ids(corpus, vectors[1], 2) == ["1", "2"]
-    assert exact_ids(corpus, vectors[1], 5, {"scope": "yes"}) == ["1", "2"]
-    assert exact_ids(corpus, vectors[1], 5, {"scope": "missing"}) == []
-    assert exact_ids(corpus, vectors[1], 0) == []
+from experiments.benchmarks.vectordb.selection import candidate_config
 
 
 def test_chroma_accepts_numpy_vectors_without_numpy_scalar_lists():
@@ -52,7 +25,7 @@ def test_chroma_accepts_numpy_vectors_without_numpy_scalar_lists():
 
     protocol = load_protocol()
     adapter = object.__new__(Chroma)
-    adapter.config = make_config("chroma", 2, protocol, **protocol.smoke_hnsw)
+    _, adapter.config = candidate_config(protocol, "chroma|smoke-hnsw", 2)
     calls = []
 
     def upsert(**kwargs):
@@ -77,7 +50,7 @@ def test_chroma_applies_http_limits_and_closes_transport(monkeypatch):
     import httpx
 
     protocol = load_protocol()
-    config = make_config("chroma", 2, protocol, **protocol.smoke_hnsw)
+    _, config = candidate_config(protocol, "chroma|smoke-hnsw", 2)
     transport = httpx.Client(transport=httpx.MockTransport(lambda request: None))
     admin_transport = httpx.Client(transport=httpx.MockTransport(lambda request: None))
     calls = []
@@ -111,7 +84,7 @@ def test_chroma_applies_http_limits_and_closes_transport(monkeypatch):
 def test_weaviate_reset_uses_current_client_hnsw_api():
     protocol = load_protocol()
     adapter = object.__new__(Weaviate)
-    adapter.config = make_config("weaviate", 2, protocol, **protocol.smoke_hnsw)
+    _, adapter.config = candidate_config(protocol, "weaviate|smoke-hnsw", 2)
     calls = []
     adapter.client = SimpleNamespace(
         collections=SimpleNamespace(
@@ -131,7 +104,7 @@ def test_weaviate_reset_uses_current_client_hnsw_api():
 def test_weaviate_verifies_named_vector_hnsw_settings(mismatch):
     protocol = load_protocol()
     adapter = object.__new__(Weaviate)
-    adapter.config = make_config("weaviate", 2, protocol, **protocol.smoke_hnsw)
+    _, adapter.config = candidate_config(protocol, "weaviate|smoke-hnsw", 2)
     index = SimpleNamespace(
         vector_index_type=lambda: "hnsw",
         skip=False,
@@ -171,7 +144,7 @@ def test_qdrant_resumes_paused_optimizers_without_bypassing_readiness(monkeypatc
 
     protocol = load_protocol()
     adapter = object.__new__(Qdrant)
-    adapter.config = make_config("qdrant", 2, protocol, **protocol.smoke_hnsw)
+    _, adapter.config = candidate_config(protocol, "qdrant|smoke-hnsw", 2)
     adapter.models = models
     states = iter(
         SimpleNamespace(
@@ -223,7 +196,7 @@ def test_conformance_closes_client_on_initial_failure(monkeypatch):
         ),
     )
     protocol = load_protocol()
-    config = make_config("chroma", 2, protocol, **protocol.smoke_hnsw)
+    _, config = candidate_config(protocol, "chroma|smoke-hnsw", 2)
     with pytest.raises(RuntimeError, match="reset failed"):
         conformance.check("chroma", config, COMPOSE, protocol)
     assert events == ["closed"]

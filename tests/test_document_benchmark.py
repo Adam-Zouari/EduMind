@@ -211,7 +211,6 @@ def test_completed_worker_window_and_quality_survive_integrity_failure_in_mlflow
         dataset_checksum="test-fixture",
         directions={"text.content_f1": "max"},
         primary_metric="text.content_f1",
-        monitor_resources=False,
         paired_comparisons=False,
         artifact_root=tmp_path / "artifacts",
     )

@@ -8,8 +8,6 @@ from pathlib import Path
 
 from edumind.common.paths import PROJECT_ROOT
 
-from .decisions import load_engineer_decision
-
 LIFECYCLE_PROFILES = ("smoke", "preflight", "development", "validation", "locked")
 
 
@@ -96,35 +94,3 @@ def default_decision_path(benchmark: str, profile: str) -> Path | None:
     if suffix is None:
         return None
     return PROJECT_ROOT / "data/benchmarks/decisions" / f"{benchmark}-{suffix}.json"
-
-
-def resolved_candidates(
-    declared: Sequence[str],
-    profile: str,
-    shortlist: Path | None,
-    *,
-    expected_source: tuple[str, str, str] | None = None,
-    minimum: int = 1,
-    maximum: int | None = None,
-    exact: int | None = None,
-) -> tuple[str, ...]:
-    if shortlist is None:
-        if profile == "validation":
-            raise ValueError(
-                "Validation profiles run engineer-selected finalists only; provide "
-                "--shortlist DECISION_JSON"
-            )
-        return tuple(declared)
-    selected = load_engineer_decision(
-        shortlist,
-        expected_source=expected_source,
-        minimum=minimum,
-        maximum=maximum,
-        exact=exact,
-    ).selected_candidates
-    unknown = sorted(set(selected) - set(declared))
-    if unknown:
-        raise ValueError(
-            "Decision selects unsupported candidates: " + ", ".join(unknown)
-        )
-    return selected

@@ -317,8 +317,6 @@ def _run_evaluation(
         no_mlflow=no_mlflow,
         candidate_artifact_name="candidate.json",
         sample_artifact_name="query_metrics",
-        resource_artifact_name="resources",
-        monitor_resources=False,
         paired_comparisons=False,
         parent_artifact_builder=_paired_artifact,
         run_name_prefix=(f"smoke-{device}" if profile == "smoke" else profile),

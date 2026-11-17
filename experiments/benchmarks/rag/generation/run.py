@@ -394,7 +394,6 @@ def main(argv=None):
                 input_artifacts=inputs,
                 protocols={"generation": protocol.meta},
                 no_mlflow=arguments.no_mlflow,
-                monitor_resources=False,
                 paired_comparisons=False,
                 evaluator_receives_context=True,
                 candidate_artifact_name="candidate.json",

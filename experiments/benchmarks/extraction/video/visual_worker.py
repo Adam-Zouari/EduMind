@@ -430,23 +430,12 @@ def execute(payload):
                 seed=protocol.meta.seed,
                 confidence=protocol.confidence_level,
                 minimum_sources=protocol.minimum_ci_sources,
+                minimum_sources_by_metric={
+                    "p50_warm_visual_latency_seconds": protocol.minimum_latency_ci_sources,
+                    "p95_warm_visual_latency_seconds": protocol.minimum_latency_ci_sources,
+                },
             )
         )
-        if protocol.minimum_latency_ci_sources != protocol.minimum_ci_sources:
-            latency_intervals = bootstrap_sources(
-                rows,
-                _operational_statistics,
-                resamples=execution.bootstrap_resamples,
-                seed=protocol.meta.seed,
-                confidence=protocol.confidence_level,
-                minimum_sources=protocol.minimum_latency_ci_sources,
-            )
-            for name in (
-                "p50_warm_visual_latency_seconds",
-                "p95_warm_visual_latency_seconds",
-            ):
-                if name in latency_intervals:
-                    intervals[name] = latency_intervals[name]
         metrics = aggregate_quality(rows)
         metrics.update(quality_support_counts(rows))
     except Exception as exc:

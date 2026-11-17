@@ -15,7 +15,6 @@ from uuid import uuid4
 from edumind.common.artifacts import atomic_write_json, sha256_file, stable_hash
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.contracts import (
-    BenchmarkPlan,
     CandidateExecutionError,
     SampleResult,
 )
@@ -39,10 +38,8 @@ from .evidence import (
     validate_schedule,
     write_new_json,
 )
-from .judge import load_judge_contract
 from .metrics import (
     BASE_KEYS,
-    GENERATION_DIRECTIONS,
     OPERATIONAL_KEYS,
     aggregate,
     finish_inventory,
@@ -53,8 +50,6 @@ from .metrics import (
 from .models import generator_for
 from .protocol import load_protocol
 from .validation import questions_from_manifest
-
-__all__ = ["GENERATION_DIRECTIONS", "evaluate_candidate"]
 
 
 class GenerationPlacementError(RuntimeError):
@@ -945,86 +940,3 @@ def _retain_execution(raw, directory):
     elif json.loads(path.read_text(encoding="utf-8")) != raw["schedule"]:
         raise ValueError("Worker returned a changed frozen schedule")
     return seal_execution(raw, directory)
-
-
-def evaluate_candidate(
-    candidate,
-    manifest,
-    model_lock,
-    *,
-    protocol,
-    final_index=None,
-    retrieval_method="frozen",
-    top_k=None,
-    repetitions=None,
-    device=None,
-    dtype=None,
-    bootstrap_resamples=None,
-    bootstrap_seed=None,
-    retrieval_protocol=None,
-    warmups=None,
-    question_scope="all",
-    backend_factory=None,
-    judge=None,
-    profile="smoke",
-    qualified_input_envelope=None,
-):
-    """Standalone fixed-evidence entrypoint; Final owns its live request lifecycle."""
-    if final_index is not None or retrieval_method != "frozen" or top_k is not None:
-        raise ValueError(
-            "Standalone generation cannot accept a retrieval index: Final owns live prompt preparation, input checks, and timing through explicit scoring hooks"
-        )
-    if question_scope != "all":
-        raise ValueError(
-            "Generation evaluates the complete frozen question set; development screening is retired"
-        )
-    execution = protocol.profile(profile)
-    overrides = (repetitions, bootstrap_resamples, bootstrap_seed, warmups)
-    resolved = (
-        execution.repetitions,
-        execution.bootstrap_resamples,
-        protocol.meta.seed,
-        execution.warmups,
-    )
-    if any(
-        value is not None and value != frozen
-        for value, frozen in zip(overrides, resolved, strict=True)
-    ):
-        raise ValueError(
-            "Generation execution overrides must match the resolved protocol"
-        )
-    if profile != "smoke":
-        if judge is None:
-            raise ValueError(
-                "judge_calibration_pending: inject a calibrated semantic judge"
-            )
-        load_judge_contract(judge.contract["contract_path"])
-    plan = BenchmarkPlan(
-        "rag",
-        "generation",
-        profile,
-        manifest.name,
-        (candidate,),
-        protocol.meta.seed,
-        execution.repetitions,
-        execution.bootstrap_resamples,
-        execution.warmups,
-        {
-            "device": device or execution.device,
-            "dtype": dtype or execution.dtype_for(device or execution.device),
-            "qualified_input_envelopes": {candidate: qualified_input_envelope},
-        },
-    )
-    if backend_factory is not None:
-        raw = execute_generation(
-            candidate,
-            manifest,
-            model_lock,
-            plan,
-            protocol,
-            backend_factory=backend_factory,
-        )
-        return score_execution(raw, protocol, profile, judge=judge)
-    return run_in_fresh_process(
-        candidate, manifest, model_lock, plan, protocol, judge=judge
-    )

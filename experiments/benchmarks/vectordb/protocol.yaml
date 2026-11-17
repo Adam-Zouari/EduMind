@@ -1,13 +1,7 @@
 schema_version: 1
-protocol_version: vector-database-v4
+protocol_version: vector-database-v5
 seed: 42
 # Smoke fixtures are diagnostics, not a reviewed authoritative search space.
-workloads:
-  smoke:
-    - {name: smoke-1k-d384, size: 1000, dimension: 384, queries: 50, concurrency: [1]}
-  development: []
-  validation: []
-  locked: []
 candidates:
   smoke:
     - {id: 'chroma|smoke-hnsw', database: chroma, settings: {m: 16, ef_construction: 100, ef_search: 64}}
@@ -15,7 +9,6 @@ candidates:
     - {id: 'weaviate|smoke-hnsw', database: weaviate, settings: {m: 16, ef_construction: 100, ef_search: 64}}
     - {id: 'pgvector|smoke-hnsw', database: pgvector, settings: {m: 16, ef_construction: 100, ef_search: 64}}
   development: []
-smoke_hnsw: {m: 16, ef_construction: 100, ef_search: 64}
 shortlist_limit: 3
 synthetic:
   centroid_count: 128

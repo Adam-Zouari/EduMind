@@ -16,26 +16,13 @@ from edumind.extraction import (
     SourceKind,
 )
 from edumind.extraction.structured import build_structured_document
-from experiments.benchmarks.common.contracts import SampleResult
 from experiments.benchmarks.common.data_validation import manifest_path
 from experiments.benchmarks.common.metrics import (
-    average_precision_at_k,
     character_error_rate,
-    context_precision_at_k,
-    context_recall,
-    hit_rate_at_k,
-    interval_overlap,
-    merge_intervals,
-    ndcg_at_k,
     normalize_prose,
     paired_bootstrap_interval,
-    precision_at_k,
-    recall_at_k,
-    reciprocal_rank,
-    relevance_grades,
     word_error_rate,
 )
-from experiments.benchmarks.common.statistics import aggregate_samples
 from experiments.benchmarks.extraction.document import benchmark as document_benchmark
 from experiments.benchmarks.extraction.document.adapters import _paddle_blocks
 from experiments.benchmarks.extraction.document.benchmark import comparison_candidates
@@ -89,21 +76,6 @@ def test_official_metric_worker_bootstraps_both_omnidocbench_import_roots(
     ]
 
 
-def test_interval_overlap_is_clamped_and_union_avoids_double_counting() -> None:
-    assert interval_overlap((0, 5), (10, 20)) == 0
-    assert interval_overlap((0, 10), (5, 15)) == 5
-    assert merge_intervals([(0, 8), (5, 10), (12, 14)]) == [(0, 10), (12, 14)]
-    assert context_recall([(0, 10)], [(0, 7), (5, 10)]) == 1.0
-
-
-def test_rank_metrics_have_known_values() -> None:
-    relevance = [0.0, 1.0, 0.0, 1.0]
-    assert context_precision_at_k(relevance, 4) == pytest.approx((1 / 2 + 2 / 4) / 2)
-    assert average_precision_at_k(relevance, 2, 4) == pytest.approx(0.5)
-    assert 0 < ndcg_at_k(relevance, 4) < 1
-    assert ndcg_at_k([0.5], 1, [1.0, 0.5]) < 1.0
-
-
 def test_error_metrics_and_prose_projection() -> None:
     assert character_error_rate("cat", "cut") == pytest.approx(1 / 3)
     assert word_error_rate("the cat", "the dog") == pytest.approx(0.5)
@@ -117,18 +89,19 @@ def test_bootstrap_is_deterministic() -> None:
     assert first == second
 
 
-def test_metric_edge_cases_and_directions() -> None:
-    assert relevance_grades([(0, 4)], [(2, 6)]) == [0.5]
-    assert precision_at_k([1.0, 0.0], 2) == 0.5
-    with pytest.raises(ValueError, match="positive"):
-        precision_at_k([], 0)
-    assert recall_at_k([1.0], 0, 1) == 0.0
-    assert hit_rate_at_k([0.0, 1.0], 2) == 1.0
-    assert reciprocal_rank([0.0, 1.0]) == 0.5
+def test_paired_bootstrap_uses_aligned_differences() -> None:
     paired = paired_bootstrap_interval([2, 4], [1, 1], resamples=100)
     assert paired.estimate == 2.0
     with pytest.raises(ValueError, match="non-empty"):
         paired_bootstrap_interval([])
+
+
+def test_paired_bootstrap_keeps_all_members_of_drawn_sources() -> None:
+    # Draws: AB, BA, AB, AB. Every draw contains two +1 documents and one 0.
+    paired = paired_bootstrap_interval([1, 0], group_sizes=[2, 1], resamples=4, seed=42)
+    assert paired.estimate == pytest.approx(2 / 3)
+    assert paired.lower == pytest.approx(2 / 3)
+    assert paired.upper == pytest.approx(2 / 3)
 
 
 def test_extraction_text_metrics_have_known_ranges_and_directions() -> None:
@@ -858,25 +831,6 @@ def test_canonical_document_preserves_exact_offsets_and_structure() -> None:
         (9, 13),
     ]
     assert document.segments[1].parent_id == "h"
-
-
-def test_generic_aggregation_retains_null_observations_without_dividing_by_zero():
-    samples = [
-        SampleResult("first", {"measured": 0.0, "unavailable": None}, None),
-        SampleResult("second", {"measured": None, "unavailable": None}, None),
-    ]
-    values, intervals = aggregate_samples(samples, resamples=10)
-    assert values == {"measured": 0.0, "unavailable": None}
-    assert intervals["measured"]["sample_count"] == 1
-    assert intervals["unavailable"]["sample_count"] == 0
-    assert intervals["measured"]["lower"] is None
-    assert len(samples) == 2
-
-
-@pytest.mark.parametrize("value", [float("nan"), float("inf"), True])
-def test_generic_aggregation_rejects_invalid_numeric_values(value):
-    with pytest.raises(ValueError, match="non-finite"):
-        aggregate_samples([SampleResult("first", {"metric": value}, None)])
 
 
 def _document(

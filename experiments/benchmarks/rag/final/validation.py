@@ -2,13 +2,11 @@
 
 from pathlib import Path
 
+from edumind.common.artifacts import sha256_file
 from edumind.common.paths import PROJECT_ROOT
 from experiments.benchmarks.common.data_validation import verify_report, write_report
 from experiments.benchmarks.common.datasets import load_manifest
-from experiments.benchmarks.rag.generation.validation import (
-    default_inventory,
-    questions_from_manifest,
-)
+from experiments.benchmarks.rag.generation import validation as generation_validation
 
 
 def manifest_path(profile):
@@ -25,12 +23,17 @@ def requirements(protocol, profile):
         "reference_schema": "final-canonical-references-v1",
         "phase": profile,
         "protocol_checksum": protocol.meta.checksum,
+        "generation_validator_sha256": sha256_file(
+            Path(generation_validation.__file__)
+        ),
     }
 
 
 def validate(path, profile):
     manifest = load_manifest(path)
-    questions = questions_from_manifest(manifest, require_supplied_evidence=False)
+    questions = generation_validation.questions_from_manifest(
+        manifest, require_supplied_evidence=False
+    )
     if profile == "preflight" and not any(
         row.get("preflight_stress") is True
         for row in manifest.samples
@@ -63,7 +66,9 @@ def _report(function, path, profile, protocol, options):
         raise ValueError("Final RAG has only smoke/preflight/locked inputs")
     # The preflight input split is development; there is no Final development evaluation.
     split = "development" if profile == "preflight" else profile
-    options["inventory"] = options.get("inventory") or default_inventory(path, split)
+    options["inventory"] = options.get(
+        "inventory"
+    ) or generation_validation.default_inventory(path, split)
     args = ("final-rag", split, path, requirements(protocol, profile), Path(__file__))
     if function is write_report:
         return function(*args, lambda source, _: validate(source, profile), **options)

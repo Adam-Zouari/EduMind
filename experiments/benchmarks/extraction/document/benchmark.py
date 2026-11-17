@@ -214,7 +214,6 @@ def run(
         paired_metrics=runner.paired_metrics(directions),
         paired_group_key="source_group_id",
         paired_minimum_ci_units=protocol.minimum_ci_sources,
-        monitor_resources=False,
         candidate_artifact_name="candidate.json",
         revisions={
             **{

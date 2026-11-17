@@ -256,7 +256,10 @@ def execution_case(monkeypatch):
         system={"residency": "resident", "top_k": 3},
     )
 
-    def execute(protocol, backend=None):
+    def execute(protocol, backend=None, *, residency="resident", embedder=None):
+        server = Server()
+        server.index = SimpleNamespace(chunks=chunks, embedder=embedder)
+        composition.system["residency"] = residency
         raw = benchmark.execute(
             "qwen3-0.6b-direct",
             manifest,
@@ -264,7 +267,7 @@ def execution_case(monkeypatch):
             plan,
             protocol,
             composition,
-            Server(),
+            server,
             backend_factory=lambda *a: backend or Backend(),
             monitor_factory=Monitor,
         )
@@ -273,6 +276,46 @@ def execution_case(monkeypatch):
         return raw
 
     return manifest, execute
+
+
+@pytest.mark.parametrize("residency", ["resident", "sequential"])
+def test_cold_generator_clock_excludes_retrieval_lifecycle(
+    execution_case, monkeypatch, residency
+):
+    _, execute = execution_case
+    elapsed = 0
+    placement_checks = []
+
+    def advance(seconds):
+        nonlocal elapsed
+        elapsed += seconds
+
+    class TimedBackend(Backend):
+        def load(self):
+            advance(2)
+            super().load()
+
+        def synchronize(self):
+            advance(1)
+
+        def placement(self):
+            placement_checks.append(elapsed)
+            return super().placement()
+
+    embedder = SimpleNamespace(
+        prepare=lambda: advance(10),
+        unload=lambda: advance(20),
+        placement_report=lambda device: {"status": "qualified"},
+    )
+    monkeypatch.setattr(
+        benchmark, "time", SimpleNamespace(perf_counter=lambda: elapsed)
+    )
+    raw = execute(
+        load_protocol(), TimedBackend(), residency=residency, embedder=embedder
+    )
+    assert raw["cold_model_load_seconds"] == 3
+    assert len(placement_checks) == 1 + 2 * (1 + len(raw["records"]))
+    assert elapsed > 3
 
 
 @pytest.mark.parametrize("outcome", ["timeout", "context_limit", "runtime_error"])

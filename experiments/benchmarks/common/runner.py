@@ -34,30 +34,19 @@ from .contracts import (
 from .metrics import paired_bootstrap_interval
 from .protocol import ProtocolMetadata
 from .provenance import git_provenance, hardware_summary
-from .resources import ResourceMonitor
-from .statistics import aggregate_samples
 from .tracking import benchmark_experiment, benchmark_name, tracker
 
 Evaluator = Callable[
     ...,
-    tuple[list[SampleResult], Mapping[str, float]]
-    | tuple[list[SampleResult], Mapping[str, float], Mapping[str, float]]
-    | tuple[
-        list[SampleResult],
-        Mapping[str, float],
-        Mapping[str, float],
+    tuple[
+        Sequence[SampleResult],
+        Mapping[str, float | None],
+        Mapping[str, float | None],
         Mapping[str, object],
-    ]
-    | tuple[
-        list[SampleResult],
-        Mapping[str, float],
-        Mapping[str, float],
-        Mapping[str, object],
-        Mapping[str, Mapping[str, float]],
+        Mapping[str, Mapping[str, object]],
         Mapping[str, object],
     ],
 ]
-ResourceMonitorOptions = Mapping[str, object] | Callable[[str], Mapping[str, object]]
 
 
 def run_benchmark(
@@ -74,15 +63,11 @@ def run_benchmark(
     input_artifacts: Mapping[str, Path] | None = None,
     no_mlflow: bool = False,
     artifact_root: Path = Path("artifacts/benchmarks"),
-    monitor_resources: bool = True,
     operational_prefix: str = "operational.",
     paired_comparisons: bool = True,
     candidate_artifact_name: str | None = None,
     nullable_metrics: Sequence[str] = (),
     sample_artifact_name: str = "samples",
-    resource_artifact_name: str | None = None,
-    resource_monitor_options: ResourceMonitorOptions | None = None,
-    monitor_temporary_disk: bool = True,
     paired_group_key: str | None = None,
     paired_minimum_ci_units: int | None = 2,
     run_name_prefix: str | None = None,
@@ -296,20 +281,15 @@ def run_benchmark(
                     tracking,
                     run_fingerprint,
                     candidate_required,
-                    monitor_resources,
                     operational_prefix,
                     candidate_artifact_name,
                     tuple(
                         name for name in nullable_metrics if name in candidate_required
                     ),
                     sample_artifact_name,
-                    resource_artifact_name,
-                    resource_monitor_options,
-                    monitor_temporary_disk,
                     evaluator_receives_context,
                     operational_maximums,
                     protocol_values,
-                    confidence_level,
                     dataset_checksum,
                     decision_fingerprint,
                     (candidate_run_names or {}).get(candidate, candidate),
@@ -506,18 +486,13 @@ def _run_candidate(
     tracking,
     run_fingerprint,
     required_metrics,
-    monitor_resources,
     operational_prefix,
     candidate_artifact_name,
     nullable_metrics,
     sample_artifact_name,
-    resource_artifact_name,
-    resource_monitor_options,
-    monitor_temporary_disk,
     evaluator_receives_context,
     operational_maximums,
     protocols,
-    confidence_level,
     dataset_checksum,
     decision_fingerprint,
     display_name,
@@ -526,16 +501,13 @@ def _run_candidate(
 ) -> CandidateResult:
     samples: list[SampleResult] = []
     metrics: dict[str, float | None] = {}
-    intervals: dict[str, dict[str, float]] = {}
-    operational: dict[str, float] = {}
+    intervals: dict[str, Mapping[str, object]] = {}
+    operational: dict[str, float | None] = {}
     candidate_parameters: dict[str, object] = {}
-    resource_parameters: dict[str, object] = {}
     artifact_names: list[str] = []
     sample_artifact_path: Path | None = None
     temporary_directory: Path | None = None
-    resource_rows: list[dict[str, object]] = []
     artifact_tables: dict[str, object] = {}
-    resource_error: RuntimeError | None = None
     fingerprint = stable_hash({"run": run_fingerprint, "candidate": candidate})
     protocol_parameters = (
         {
@@ -615,60 +587,14 @@ def _run_candidate(
             )
             temporary_directory = directory / "temporary" / _safe(candidate)
             temporary_directory.mkdir(parents=True, exist_ok=True)
-            if monitor_resources:
-                monitor_options = (
-                    resource_monitor_options(candidate)
-                    if callable(resource_monitor_options)
-                    else resource_monitor_options
-                )
-                resources = ResourceMonitor(
-                    temporary_directory=(
-                        temporary_directory if monitor_temporary_disk else None
-                    ),
-                    **dict(monitor_options or {}),
-                )
-                try:
-                    with _temporary_environment(temporary_directory), resources:
-                        evaluated = evaluate()
-                finally:
-                    resource_rows = resources.samples()
-                    resource_parameters["vram_measurement_method"] = (
-                        resources.vram_measurement_method
-                    )
-                    if resources.vram_measurement_method == "not-applicable":
-                        nullable_metrics = (
-                            *nullable_metrics,
-                            f"{operational_prefix}peak_vram_mb",
-                        )
-                        resource_parameters["peak_vram_status"] = "inapplicable"
-                    try:
-                        operational.update(resources.metrics())
-                    except RuntimeError as exc:
-                        resource_error = exc
-                        evidence = dict(getattr(exc, "resource_evidence", {}))
-                        operational.update(
-                            {
-                                key: evidence[key]
-                                for key in ("peak_process_tree_ram_mb", "peak_vram_mb")
-                                if key in evidence
-                            }
-                        )
-                        resource_parameters["measurement.resource_status"] = (
-                            "incomplete"
-                        )
-                        resource_parameters["measurement.resource_error"] = str(exc)
-            else:
-                with _temporary_environment(temporary_directory):
-                    evaluated = evaluate()
-            samples = list(evaluated[0])
-            operational = {**dict(evaluated[1]), **operational}
-            candidate_metrics = dict(evaluated[2]) if len(evaluated) >= 3 else {}
-            if len(evaluated) >= 4:
-                candidate_parameters = {
-                    **dict(evaluated[3]),
-                    **candidate_parameters,
-                }
-            candidate_parameters.update(resource_parameters)
+            with _temporary_environment(temporary_directory):
+                rows, measured, aggregates, parameters, bounds, artifacts = evaluate()
+            samples = list(rows)
+            operational = dict(measured)
+            metrics = dict(aggregates)
+            intervals = dict(bounds)
+            artifact_tables = dict(artifacts)
+            candidate_parameters = {**parameters, **candidate_parameters}
             tracking.parameters(candidate_parameters)
             if candidate_parameters.get("run_type"):
                 tracking.tags({"run_type": str(candidate_parameters["run_type"])})
@@ -680,78 +606,10 @@ def _run_candidate(
                         )
                     }
                 )
-            candidate_intervals = dict(evaluated[4]) if len(evaluated) >= 5 else {}
-            artifact_tables = dict(evaluated[5]) if len(evaluated) >= 6 else {}
-            if resource_artifact_name and resource_rows:
-                artifact_tables.setdefault(resource_artifact_name, resource_rows)
             if not samples:
                 raise RuntimeError("Candidate produced no samples")
             _validate_sample_ids(samples)
             shutil.rmtree(temporary_directory, ignore_errors=True)
-            # Evaluators with grouped/pooled statistics return their own aggregates and CIs.
-            if len(evaluated) >= 5:
-                metrics, intervals = candidate_metrics, candidate_intervals
-            else:
-                metrics, intervals = aggregate_samples(
-                    samples,
-                    resamples=0
-                    if plan.profile == "smoke"
-                    else plan.bootstrap_resamples,
-                    seed=plan.seed,
-                    confidence=confidence_level,
-                )
-                metrics.update(candidate_metrics)
-                incomplete_quality = {
-                    name: {
-                        "estimate": metrics[name],
-                        "scheduled": len(samples),
-                        "contributing": sum(
-                            sample.metrics.get(name) is not None for sample in samples
-                        ),
-                        "reason": "required_quality_coverage_incomplete",
-                    }
-                    for name in required_metrics
-                    if (name == "quality" or name.startswith("quality."))
-                    and name in metrics
-                    and name not in nullable_metrics
-                    and any(sample.metrics.get(name) is None for sample in samples)
-                }
-                if incomplete_quality:
-                    raise CandidateExecutionError(
-                        "Required quality observations are incomplete",
-                        samples=tuple(samples),
-                        operational=operational,
-                        parameters=candidate_parameters,
-                        metrics={
-                            key: value
-                            for key, value in metrics.items()
-                            if key not in incomplete_quality
-                        },
-                        intervals={
-                            key: value
-                            for key, value in intervals.items()
-                            if key not in incomplete_quality
-                        },
-                        artifacts={"partial_quality": incomplete_quality},
-                    )
-            if resource_error is not None:
-                raise CandidateExecutionError(
-                    str(resource_error),
-                    samples=tuple(samples),
-                    metrics=metrics,
-                    intervals=intervals,
-                    operational=operational,
-                    parameters=candidate_parameters,
-                    artifacts={
-                        **artifact_tables,
-                        "resource_measurement_failure": {
-                            "reason": str(resource_error),
-                            "evidence": dict(
-                                getattr(resource_error, "resource_evidence", {})
-                            ),
-                        },
-                    },
-                )
             _validate_required_metrics(
                 metrics,
                 operational,
@@ -801,16 +659,13 @@ def _run_candidate(
             samples = list(exc.samples)
             metrics = dict(exc.metrics)
             intervals = dict(exc.intervals)
-            operational = {**dict(exc.operational), **operational}
+            operational = dict(exc.operational)
             candidate_parameters = {
                 **exc.parameters,
-                **resource_parameters,
                 **protocol_parameters,
                 **execution_parameters,
             }
             artifact_payloads = dict(exc.artifacts)
-            if resource_artifact_name and resource_rows:
-                artifact_payloads.setdefault(resource_artifact_name, resource_rows)
             error = str(exc)
             structured_failure = True
             runner_rejection = False
@@ -1266,6 +1121,14 @@ def _paired_comparisons(
                     right_samples[sample_id].metrics[metric] for sample_id in paired_ids
                 ]
                 paired_units = len(paired_ids)
+                delta = (
+                    sum(
+                        left - right
+                        for left, right in zip(left_values, right_values, strict=True)
+                    )
+                    / paired_units
+                )
+                group_sizes = None
                 if group_key is not None:
                     grouped_left: dict[str, list[float]] = {}
                     grouped_right: dict[str, list[float]] = {}
@@ -1290,6 +1153,7 @@ def _paired_comparisons(
                             float(right_value)
                         )
                     groups = sorted(grouped_left)
+                    group_sizes = [len(grouped_left[group]) for group in groups]
                     left_values = [
                         sum(grouped_left[group]) / len(grouped_left[group])
                         for group in groups
@@ -1315,16 +1179,13 @@ def _paired_comparisons(
                         resamples=resamples,
                         seed=seed,
                         confidence=confidence,
+                        group_sizes=group_sizes,
                     )
                     if reason is None
                     else None
                 )
                 metrics[metric] = {
-                    "left_minus_right": sum(
-                        left - right
-                        for left, right in zip(left_values, right_values, strict=True)
-                    )
-                    / len(left_values),
+                    "left_minus_right": delta,
                     "lower": interval.lower if interval else None,
                     "upper": interval.upper if interval else None,
                     "confidence": confidence,

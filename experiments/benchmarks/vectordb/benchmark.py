@@ -232,25 +232,31 @@ def evaluate_candidate(
         database, config = candidate_config(
             protocol, candidate, int(corpus.vectors.shape[1])
         )
-        parameters = {
-            "server": database,
-            "configuration_settings": {
-                key: getattr(config, key)
-                for key in ("m", "ef_construction", "ef_search")
-            },
-            "configuration": asdict(config),
-            "corpus_checksums": {
-                key: value.content_checksum for key, value in corpora.items()
-            },
-            "transport": {
-                "search": "grpc-single-channel-bounded-rpcs"
-                if database == "weaviate"
-                else "bounded-client-pool",
-                "limit": config.connection_pool_limit,
-                "request_timeout_seconds": config.request_timeout_seconds,
-                "adapter_explicit_retries": 0,
-            },
-        }
+        configuration = asdict(config)
+        if not parameters:
+            parameters = {
+                "server": database,
+                "configuration_settings": {
+                    key: getattr(config, key)
+                    for key in ("m", "ef_construction", "ef_search")
+                },
+                "configuration": {
+                    key: value
+                    for key, value in configuration.items()
+                    if key != "dimension"
+                },
+                "corpus_checksums": {
+                    key: value.content_checksum for key, value in corpora.items()
+                },
+                "transport": {
+                    "search": "grpc-single-channel-bounded-rpcs"
+                    if database == "weaviate"
+                    else "bounded-client-pool",
+                    "limit": config.connection_pool_limit,
+                    "request_timeout_seconds": config.request_timeout_seconds,
+                    "adapter_explicit_retries": 0,
+                },
+            }
         try:
             if conformance:
                 checked, report = check(database, config, compose, protocol)
@@ -436,7 +442,9 @@ def evaluate_candidate(
                 if row["status"] != "success":
                     problems.append(f"Startup failed: {corpus_id}")
         evidence = monitor.evidence()
-        lifecycle.append(evidence)
+        lifecycle.append(
+            {**evidence, "corpus": corpus_id, "configuration": configuration}
+        )
         resource_rows.extend(
             {"corpus": corpus_id, **row} for row in evidence["samples"]
         )

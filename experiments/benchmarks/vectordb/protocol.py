@@ -9,7 +9,6 @@ from pathlib import Path
 from experiments.benchmarks.common.protocol import (
     boolean,
     execution_profiles,
-    increasing_integers,
     integer,
     load_yaml,
     metadata,
@@ -45,9 +44,7 @@ class SyntheticSettings:
 @dataclass(frozen=True)
 class VectorDatabaseProtocol:
     meta: object
-    workloads: Mapping
     synthetic: SyntheticSettings
-    smoke_hnsw: Mapping
     candidates: Mapping
     conformance: Mapping
     upsert_batch_sizes: Mapping
@@ -76,10 +73,8 @@ def load_protocol(path=DEFAULT_PROTOCOL_PATH):
             "schema_version",
             "protocol_version",
             "seed",
-            "workloads",
             "synthetic",
             "candidates",
-            "smoke_hnsw",
             "conformance",
             "adapters",
             "measurement",
@@ -98,19 +93,6 @@ def load_protocol(path=DEFAULT_PROTOCOL_PATH):
             raise ValueError(
                 "Vector profiles require one smoke / three measured attempts"
             )
-    workloads = strict_object(root["workloads"], "workloads", set(profiles))
-    for profile, rows in workloads.items():
-        names = []
-        for row in sequence(rows, "workloads." + profile):
-            row = strict_object(
-                row, "workload", {"name", "size", "dimension", "queries", "concurrency"}
-            )
-            names.append(string(row["name"], "workload.name"))
-            for field in ("size", "dimension", "queries"):
-                integer(row[field], "workload." + field, minimum=1)
-            increasing_integers(row["concurrency"], "workload.concurrency")
-        if len(names) != len(set(names)):
-            raise ValueError("Duplicate workload condition identities")
     raw = strict_object(
         root["synthetic"],
         "synthetic",
@@ -166,7 +148,6 @@ def load_protocol(path=DEFAULT_PROTOCOL_PATH):
             ids.append(candidate_id)
         if len(ids) != len(set(ids)):
             raise ValueError("Duplicate candidate identity")
-    smoke = hnsw_settings(root["smoke_hnsw"])
     conformance = strict_object(
         root["conformance"],
         "conformance",
@@ -256,9 +237,7 @@ def load_protocol(path=DEFAULT_PROTOCOL_PATH):
         string(policy["reviewed_date"], metric)
     return VectorDatabaseProtocol(
         metadata("vector_database", path, root, profiles=profiles),
-        workloads,
         synthetic,
-        smoke,
         candidates,
         conformance,
         batches,

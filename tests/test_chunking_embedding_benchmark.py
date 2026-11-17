@@ -51,7 +51,6 @@ from experiments.benchmarks.rag.evaluation import (
     InputCompatibilityError,
     _chunking_contract,
     dense_rank_with_scores,
-    retrieval_metrics,
 )
 
 CHUNKING_PROTOCOL = default_chunking_protocol()
@@ -309,29 +308,6 @@ def test_retrieval_metrics_use_complete_units_and_evaluation_tokens() -> None:
         2 / 3
     )
     assert complete_score.matches[0]["first_rank"] == 1
-
-
-def test_downstream_retrieval_metrics_accept_multi_interval_evidence_units() -> None:
-    question = {
-        "id": "q1",
-        "document_id": "doc",
-        "evidence_type": "text",
-        "evidence": [
-            {
-                "id": "unit-a",
-                "evidence_type": "text",
-                "intervals": [
-                    {"document_id": "doc", "start": 0, "end": 5},
-                    {"document_id": "doc", "start": 6, "end": 10},
-                ],
-            }
-        ],
-    }
-    chunk = Chunk("complete", "doc", "alpha beta", 0, 10, 2)
-    metrics, _ = retrieval_metrics(
-        question, [chunk], [chunk], WordTokenizer(), cutoffs=(1, 3, 5, 10)
-    )
-    assert metrics["context_recall_at_5"] == 1.0
 
 
 @pytest.mark.parametrize(

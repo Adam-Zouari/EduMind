@@ -13,18 +13,6 @@ from edumind.common.artifacts import stable_hash
 from edumind.rag.contracts import EmbeddingSpec
 from edumind.rag.embedder import Embedder
 from edumind.rag.tokenizers import OffsetTokenizer, TiktokenOffsetTokenizer
-from experiments.benchmarks.common.datasets import EvidenceInterval, evidence_units
-from experiments.benchmarks.common.metrics import (
-    average_precision_at_k,
-    context_precision_at_k,
-    context_recall,
-    hit_rate_at_k,
-    ndcg_at_k,
-    precision_at_k,
-    recall_at_k,
-    reciprocal_rank,
-    relevance_grades,
-)
 from experiments.benchmarks.rag.chunking_embedding.profiles import embedding_spec
 from experiments.benchmarks.rag.chunking_embedding.protocol import (
     ChunkingEmbeddingProtocol,
@@ -529,51 +517,6 @@ def _chunking_contract(chunker) -> dict[str, object]:
     }
 
 
-def retrieval_metrics(
-    question, selected, all_chunks, _tokenizer, *, cutoffs: Sequence[int]
-) -> tuple[dict[str, float], int]:
-    evidence = [
-        interval for unit in evidence_units(question) for interval in unit.intervals
-    ]
-    all_grades = [_grade(chunk, evidence) for chunk in all_chunks]
-    grades = [_grade(chunk, evidence) for chunk in selected]
-    relevant_total = sum(score > 0 for score in all_grades)
-    gold = [(interval.start, interval.end) for interval in evidence]
-    metrics = {"mrr": reciprocal_rank(grades)}
-    for cutoff in cutoffs:
-        intervals = [
-            (chunk.start, chunk.end)
-            for chunk in selected[:cutoff]
-            if chunk.document_id == str(question["document_id"])
-        ]
-        metrics.update(
-            {
-                f"precision_at_{cutoff}": precision_at_k(grades, cutoff),
-                f"recall_at_{cutoff}": recall_at_k(grades, relevant_total, cutoff),
-                f"hit_rate_at_{cutoff}": hit_rate_at_k(grades, cutoff),
-                f"context_precision_at_{cutoff}": context_precision_at_k(
-                    grades, cutoff
-                ),
-                f"context_recall_at_{cutoff}": context_recall(gold, intervals),
-            }
-        )
-        if cutoff > 1:
-            metrics[f"map_at_{cutoff}"] = average_precision_at_k(
-                grades, relevant_total, cutoff
-            )
-            metrics[f"ndcg_at_{cutoff}"] = ndcg_at_k(grades, cutoff, all_grades)
-    return metrics, sum(chunk.tokens for chunk in selected)
-
-
-def _grade(chunk: Chunk, evidence: Sequence[EvidenceInterval]) -> float:
-    matching = [
-        (interval.start, interval.end)
-        for interval in evidence
-        if chunk.document_id == interval.document_id
-    ]
-    return relevance_grades(matching, [(chunk.start, chunk.end)])[0]
-
-
 def reranker_for(
     method: str,
     model_lock: Mapping[str, Mapping[str, object]],
@@ -598,20 +541,3 @@ def reranker_for(
         batch_size=retrieval_protocol.reranker_batch_size,
         maximum_length=retrieval_protocol.maximum_tokens(reranker_name),
     )
-
-
-def retrieval_quality_directions(cutoffs: Sequence[int]) -> dict[str, str]:
-    directions = {"mrr": "max", "determinism": "max"}
-    for cutoff in cutoffs:
-        for name in (
-            "precision",
-            "recall",
-            "hit_rate",
-            "context_precision",
-            "context_recall",
-        ):
-            directions[f"{name}_at_{cutoff}"] = "max"
-        if cutoff > 1:
-            directions[f"map_at_{cutoff}"] = "max"
-            directions[f"ndcg_at_{cutoff}"] = "max"
-    return directions

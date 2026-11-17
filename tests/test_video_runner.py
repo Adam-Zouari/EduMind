@@ -178,7 +178,7 @@ def test_input_preparation_is_a_sibling_not_a_comparison_candidate(
 
     def evaluate(candidate):
         field = "word_error_rate" if candidate == "frozen" else "visual_content_f1"
-        return [SampleResult("one", {field: 1.0}, 0.1)], {}, {}
+        return [SampleResult("one", {field: 1.0}, 0.1)], {}, {field: 1.0}, {}, {}, {}
 
     result = common_runner.run_benchmark(
         plan,
@@ -191,7 +191,6 @@ def test_input_preparation_is_a_sibling_not_a_comparison_candidate(
             "frozen": ("word_error_rate",),
             "visual": ("visual_content_f1",),
         },
-        monitor_resources=False,
         paired_comparisons=False,
         shuffle_candidates=False,
         artifact_root=tmp_path,
@@ -406,7 +405,6 @@ def test_failed_candidate_logs_independently_valid_retained_intervals(
         dataset_checksum="checksum",
         directions={"score": "max"},
         primary_metric="score",
-        monitor_resources=False,
         paired_comparisons=False,
         artifact_root=tmp_path,
     )

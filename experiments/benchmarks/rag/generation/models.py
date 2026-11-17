@@ -277,7 +277,7 @@ class LocalBackend:
                 "Backend returned without observable EOS, context boundary, or timeout"
             )
         raw = self.tokenizer.decode(token_ids, skip_special_tokens=False)
-        visible, reasoning, reasoning_count = self._separate(token_ids, prepared)
+        visible, reasoning, reasoning_count = self._separate(token_ids)
         response, _ = parse_response(visible)
         return {
             "outcome": outcome,
@@ -309,7 +309,7 @@ class LocalBackend:
             },
         }
 
-    def _separate(self, ids, prepared):
+    def _separate(self, ids):
         close = self.tokenizer.encode("</think>", add_special_tokens=False)
         opening = self.tokenizer.encode("<think>", add_special_tokens=False)
         for index in range(len(ids) - len(close) + 1):

@@ -260,24 +260,12 @@ def test_rag_and_vector_behavior_comes_from_protocol(tmp_path) -> None:
         load_final_protocol(_write_protocol(tmp_path, "final-behavior", final_root))
 
     vector_root = deepcopy(load_vector_protocol().meta.resolved)
-    vector_root["workloads"]["smoke"][0]["size"] = 321
-    vector_root["workloads"]["development"] = [
-        {
-            "name": "reviewed-condition",
-            "size": 321,
-            "dimension": 768,
-            "queries": 5,
-            "concurrency": [1, 4],
-        }
-    ]
     vector_root["adapters"]["upsert_batch_sizes"]["chroma"] = 17
     vector_root["adapters"]["qdrant_indexing_threshold"] = 2
     vector_root["statistics"]["confidence_level"] = 0.9
     vector = load_vector_protocol(
         _write_protocol(tmp_path, "vector-behavior", vector_root)
     )
-    assert vector.workloads["smoke"][0]["size"] == 321
-    assert vector.workloads["development"][0]["concurrency"] == [1, 4]
     assert vector.upsert_batch_sizes["chroma"] == 17
     assert vector.qdrant_indexing_threshold == 2
     assert vector.confidence_level == 0.9

@@ -32,7 +32,6 @@ from experiments.benchmarks.preparation.models import load_selected_model_lock
 
 
 def run_video_preflight(
-    items,
     *,
     manifest,
     manifest_path,

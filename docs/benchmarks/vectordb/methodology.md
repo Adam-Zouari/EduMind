@@ -46,13 +46,14 @@ the work in the operation artifact.
 
 ### Implementation status
 
-The replacement driver uses protocol `vector-database-v4`, suite
+The replacement driver uses protocol `vector-database-v5`, suite
 `vectordb-server-v5`, and stage `database-configuration`. Each child is an
 explicit `<database>|<configuration-alias>` pair; there is no hidden HNSW trial
-selection, recall gate, or workload-name/dimension inference. Validation consumes
-development decisions and locked consumes one validation decision, with matching
-protocol and recorded configuration settings. Locked consumption is reserved
-before model/corpus preparation, including failed runs.
+selection, recall gate, or workload-name/dimension inference. Do not relabel
+v4 artifacts as v5; use their original protocol and code revision for replay.
+Validation consumes development decisions and locked consumes one validation
+decision, with matching protocol and recorded configuration settings. Locked
+consumption is reserved before model/corpus preparation, including failed runs.
 
 Implemented and covered by offline/in-memory regressions: tie-aware ANN@20,
 trusted metadata filtering, response/permutation checks, successful-completion
@@ -136,6 +137,8 @@ schedule is query order inside measured-attempt order inside window order;
 only window zero/attempt one supplies quality, and window zero's three attempts
 supply repeatability. All windows contribute request/load statistics. Operations
 declare prepared new-document and replacement records and an existing source ID.
+The manifest owns these workload values, including for smoke. The protocol
+owns the explicit candidate index settings and the separate conformance probe.
 Full validation checks all three authoritative splits, reviewed record/query
 source groups, mutation identities, canonical integration spans and allowed gold
 evidence. Integration inputs name corpus, RAG manifest, embedding/retrieval
@@ -611,7 +614,7 @@ artifacts and metric-specific support fields.
 | `repeatability.parquet` | Three scheduled database-ranking pair comparisons per query when applicable. |
 | `timings.parquet` | Build/startup/operation/full-stack boundaries, load-window wall time, and elapsed-to-failure. |
 | `resources.parquet` | Timestamped server samples, monitoring coverage and storage checkpoints. |
-| `validation_report.json` | Runtime conformance, visibility, provenance, permutation, filter and output-integrity evidence; separate from the input-validation seal. |
+| `validation_report.json` | Runtime conformance, visibility, provenance, permutation, filter and output-integrity evidence, with the effective configuration and resource coverage for each corpus. Separate from the input-validation seal. |
 | `metric_statuses.json` | Scored/inapplicable/unavailable/incomplete statuses, units, counts, CI support, and reasons. |
 
 Parent comparison tables preserve conditions and upstream identities. Paired

@@ -241,45 +241,17 @@ def test_temporary_environment_does_not_reuse_deleted_candidate_directory(
         tempfile.tempdir = original
 
 
-def test_resource_monitor_failure_does_not_mask_candidate_error(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class Monitor:
-        vram_measurement_method = "unavailable"
-
-        def __init__(self, **_options):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def metrics(self):
-            raise RuntimeError("monitor failure")
-
-        def samples(self):
-            return []
-
-    monkeypatch.setattr(benchmark_runner, "ResourceMonitor", Monitor)
-
-    def evaluator(_candidate: str):
-        raise CandidateExecutionError("original candidate failure")
-
-    result = _run(tmp_path, _plan("failed"), evaluator)
-
-    assert result.candidates[0].status == "failed"
-    assert result.candidates[0].error == "original candidate failure"
-
-
 def test_bad_score_is_complete_and_runner_makes_no_selection(tmp_path: Path) -> None:
     def evaluator(candidate: str):
         score = 0.0 if candidate == "poor" else 1.0
-        return [SampleResult("same-sample", {"quality": score}, 0.01)], {
-            "p95_latency_seconds": 0.01
-        }
+        return (
+            [SampleResult("same-sample", {"quality": score}, 0.01)],
+            {"p95_latency_seconds": 0.01},
+            {"quality": score},
+            {},
+            {},
+            {},
+        )
 
     result = _run(tmp_path, _plan("poor", "strong"), evaluator)
 
@@ -304,6 +276,10 @@ def test_missing_required_metric_fails_candidate_but_keeps_samples(
         lambda _candidate: (
             [SampleResult("sample-1", {}, 0.01)],
             {"p95_latency_seconds": 0.01},
+            {},
+            {},
+            {},
+            {},
         ),
     )
 
@@ -317,9 +293,14 @@ def test_missing_required_metric_fails_candidate_but_keeps_samples(
 def test_different_sample_sets_make_comparison_incomplete(tmp_path: Path) -> None:
     def evaluator(candidate: str):
         sample_id = "sample-a" if candidate == "left" else "sample-b"
-        return [SampleResult(sample_id, {"quality": 0.5}, 0.01)], {
-            "p95_latency_seconds": 0.01
-        }
+        return (
+            [SampleResult(sample_id, {"quality": 0.5}, 0.01)],
+            {"p95_latency_seconds": 0.01},
+            {"quality": 0.5},
+            {},
+            {},
+            {},
+        )
 
     result = _run(tmp_path, _plan("left", "right"), evaluator)
 
@@ -328,32 +309,6 @@ def test_different_sample_sets_make_comparison_incomplete(tmp_path: Path) -> Non
     assert any(
         "different sample set" in problem for problem in result.completion_problems
     )
-
-
-def test_generic_runner_does_not_publish_surviving_partial_quality(tmp_path):
-    result = _run(
-        tmp_path,
-        _plan("partial"),
-        lambda _: (
-            [
-                SampleResult("scored", {"quality": 1.0}, 0.01),
-                SampleResult("unavailable", {"quality": None}, None),
-            ],
-            {"p95_latency_seconds": 0.01},
-        ),
-    )
-    assert not result.complete
-    child = result.candidates[0]
-    assert "quality" not in child.metrics
-    assert len(child.samples) == 2
-    partial = json.loads(
-        (
-            result.artifact_directory / "candidates/partial/partial_quality.json"
-        ).read_text(encoding="utf-8")
-    )
-    assert partial["quality"]["estimate"] == 1.0
-    assert partial["quality"]["contributing"] == 1
-    assert partial["quality"]["scheduled"] == 2
 
 
 def test_input_limit_failure_is_audited_and_fails_parent(
@@ -462,7 +417,6 @@ def test_mlflow_keeps_child_identity_null_evidence_and_failed_siblings(
         directions={"quality": "max", "optional": "descriptive"},
         primary_metric="quality",
         nullable_metrics=("optional",),
-        monitor_resources=False,
         artifact_root=tmp_path / "artifacts",
     )
     assert not result.complete
@@ -501,7 +455,6 @@ def test_runner_rejection_updates_validation_report_and_preserves_evidence(tmp_p
         primary_metric="quality",
         no_mlflow=True,
         artifact_root=tmp_path,
-        monitor_resources=False,
         operational_maximums={"peak_vram_mb": 3584},
     )
     candidate = result.candidates[0]
@@ -530,6 +483,10 @@ def test_parent_artifact_validation_failure_marks_run_incomplete(
         lambda _candidate: (
             [SampleResult("sample", {"quality": 1.0}, 0.01)],
             {"p95_latency_seconds": 0.01},
+            {"quality": 1.0},
+            {},
+            {},
+            {},
         ),
         dataset_checksum="fixed-checksum",
         directions={
@@ -553,7 +510,9 @@ def test_parent_artifact_validation_failure_marks_run_incomplete(
     assert summary["complete"] is False
 
 
-def test_paired_comparisons_resample_document_groups(tmp_path: Path) -> None:
+def test_paired_comparisons_resample_sources_without_reweighting_documents(
+    tmp_path: Path,
+) -> None:
     plan = _plan("left", "right")
 
     def evaluator(candidate: str):
@@ -563,13 +522,20 @@ def test_paired_comparisons_resample_document_groups(tmp_path: Path) -> None:
                 sample_id,
                 {"quality": value},
                 0.01,
-                {"document_id": document_id},
+                {"source_group_id": source_id},
             )
-            for sample_id, document_id, value in zip(
-                ("q1", "q2", "q3"), ("a", "a", "b"), values, strict=True
+            for sample_id, source_id, value in zip(
+                ("doc1", "doc2", "doc3"), ("a", "a", "b"), values, strict=True
             )
         ]
-        return samples, {"p95_latency_seconds": 0.01}
+        return (
+            samples,
+            {"p95_latency_seconds": 0.01},
+            {"quality": sum(values) / len(values)},
+            {},
+            {},
+            {},
+        )
 
     result = run_benchmark(
         plan,
@@ -578,7 +544,7 @@ def test_paired_comparisons_resample_document_groups(tmp_path: Path) -> None:
         directions={"quality": "max", "operational.p95_latency_seconds": "min"},
         primary_metric="quality",
         paired_metrics=("quality",),
-        paired_group_key="document_id",
+        paired_group_key="source_group_id",
         no_mlflow=True,
         artifact_root=tmp_path,
     )
@@ -586,8 +552,8 @@ def test_paired_comparisons_resample_document_groups(tmp_path: Path) -> None:
         (result.artifact_directory / "summary.json").read_text(encoding="utf-8")
     )
     comparison = summary["paired_comparisons"][0]["metrics"]["quality"]
-    expected = 0.5 if summary["paired_comparisons"][0]["left"] == "left" else -0.5
-    assert comparison["left_minus_right"] == expected
+    sign = 1 if summary["paired_comparisons"][0]["left"] == "left" else -1
+    assert comparison["left_minus_right"] == pytest.approx(sign * 2 / 3)
     assert comparison["paired_samples"] == 3
     assert comparison["paired_resampling_units"] == 2
 
@@ -599,6 +565,10 @@ def test_engineer_decision_requires_a_complete_non_smoke_run(tmp_path: Path) -> 
         lambda candidate: (
             [SampleResult("sample", {"quality": float(candidate == "chosen")}, 0.01)],
             {"p95_latency_seconds": 0.01},
+            {"quality": float(candidate == "chosen")},
+            {},
+            {},
+            {},
         ),
     )
     decision_path = tmp_path / "decision.json"
@@ -683,7 +653,7 @@ def test_incomplete_candidate_and_parent_are_marked_failed_in_tracking(
     result = _run(
         tmp_path,
         _plan("incomplete"),
-        lambda _candidate: ([SampleResult("sample", {}, 0.01)], {}),
+        lambda _candidate: ([SampleResult("sample", {}, 0.01)], {}, {}, {}, {}, {}),
     )
 
     assert not result.complete
@@ -739,6 +709,10 @@ def test_protocol_identity_and_resolved_settings_are_recorded_for_parent_and_chi
         lambda _candidate: (
             [SampleResult("sample", {"quality": 1.0}, 0.01)],
             {"p95_latency_seconds": 0.01},
+            {"quality": 1.0},
+            {},
+            {},
+            {},
         ),
         dataset_checksum="fixed-checksum",
         directions={"quality": "max", "operational.p95_latency_seconds": "min"},

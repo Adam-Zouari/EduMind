@@ -640,7 +640,6 @@ def test_asr_runner_logs_flat_metrics_and_required_tables(tmp_path) -> None:
         primary_metric="word_error_rate",
         no_mlflow=True,
         artifact_root=tmp_path,
-        monitor_resources=False,
         operational_prefix="",
         paired_comparisons=False,
         candidate_artifact_name="candidate.json",
@@ -687,7 +686,6 @@ def test_failed_asr_candidate_keeps_one_sample_artifact(tmp_path) -> None:
         primary_metric="required_quality",
         no_mlflow=True,
         artifact_root=tmp_path,
-        monitor_resources=False,
         candidate_artifact_name="candidate.json",
     )
     assert not result.complete

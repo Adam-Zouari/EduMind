@@ -41,6 +41,7 @@ def bootstrap_sources(
     seed: int,
     confidence: float,
     minimum_sources: int | None = None,
+    minimum_sources_by_metric: Mapping[str, int | None] | None = None,
     stratum_field: str | None = None,
 ) -> dict[str, dict[str, object]]:
     """Resample complete source groups, retaining failures and dependent records."""
@@ -66,34 +67,35 @@ def bootstrap_sources(
         name: sum(group.get(name) is not None for group in group_estimates)
         for name in estimates
     }
-    reasons = {
-        name: "no_contributing_sources"
-        if value is None
-        else "ci_support_not_frozen"
-        if minimum_sources is None
-        else "insufficient_independent_sources"
-        if support[name] < minimum_sources
-        else None
-        for name, value in estimates.items()
-    }
-    if not groups or all(reasons.values()):
-        return {
-            name: {
-                "estimate": value,
-                "lower": None,
-                "upper": None,
-                "confidence": confidence,
-                "reason": reasons[name],
-                "independent_source_count": len(groups),
-                "stratum_source_counts": stratum_counts,
-                "contributing_source_count": support[name],
-                "requested_resamples": resamples,
-                "defined_resamples": 0,
-                "undefined_resamples": 0,
-                "resampling_performed": False,
-            }
-            for name, value in estimates.items()
+    result = {}
+    for name, value in estimates.items():
+        minimum = (minimum_sources_by_metric or {}).get(name, minimum_sources)
+        reason = (
+            "no_contributing_sources"
+            if value is None or not groups
+            else "ci_support_not_frozen"
+            if minimum is None
+            else "insufficient_independent_sources"
+            if support[name] < minimum
+            else None
+        )
+        result[name] = {
+            "estimate": value,
+            "lower": None,
+            "upper": None,
+            "confidence": confidence,
+            "reason": reason,
+            "independent_source_count": len(groups),
+            "stratum_source_counts": stratum_counts,
+            "contributing_source_count": support[name],
+            "requested_resamples": resamples,
+            "defined_resamples": 0,
+            "undefined_resamples": 0,
+            "resampling_performed": False,
+            "degenerate": False,
         }
+    if all(row["reason"] for row in result.values()):
+        return result
     draws: dict[str, list[float]] = {name: [] for name in estimates}
     rng = np.random.default_rng(seed)
     for _ in range(resamples):
@@ -103,30 +105,27 @@ def bootstrap_sources(
             for index in rng.integers(0, len(units), len(units))
             for row in units[index]
         ]
-        for name, value in aggregate(sample).items():
-            if value is not None:
-                draws[name].append(float(value))
+        values = aggregate(sample)
+        for name, observed in draws.items():
+            if (value := values.get(name)) is not None:
+                observed.append(float(value))
     tail = (1 - confidence) / 2
-    result = {}
     for name, values in draws.items():
-        lower, upper = np.quantile(values, [tail, 1 - tail]) if values else (None, None)
-        result[name] = {
-            "estimate": estimates[name],
-            "lower": float(lower)
-            if lower is not None and reasons[name] is None
-            else None,
-            "upper": float(upper)
-            if upper is not None and reasons[name] is None
-            else None,
-            "confidence": confidence,
-            "defined_resamples": len(values),
-            "undefined_resamples": resamples - len(values),
-            "independent_source_count": len(groups),
-            "stratum_source_counts": stratum_counts,
-            "contributing_source_count": support[name],
-            "requested_resamples": resamples,
-            "resampling_performed": True,
-            "degenerate": bool(values and lower == upper),
-            "reason": reasons[name] or (None if values else "no_defined_resamples"),
-        }
+        row = result[name]
+        # Even when bounds are withheld, retain the diagnostics from the shared draws.
+        if row["reason"] is None:
+            if values:
+                lower, upper = np.quantile(values, [tail, 1 - tail])
+                row.update(
+                    lower=float(lower),
+                    upper=float(upper),
+                    degenerate=bool(lower == upper),
+                )
+            else:
+                row["reason"] = "no_defined_resamples"
+        row.update(
+            defined_resamples=len(values),
+            undefined_resamples=resamples - len(values),
+            resampling_performed=True,
+        )
     return result

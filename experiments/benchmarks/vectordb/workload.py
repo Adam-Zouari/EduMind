@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 
@@ -126,61 +126,16 @@ def clustered(
 
 
 def records(corpus: Corpus) -> list[Record]:
+    ids = corpus.ids
     return [
         Record(
-            corpus.ids[index],
+            ids[index],
             vector,
             corpus.texts[index] if corpus.texts else f"benchmark record {index}",
             corpus.metadata[index],
         )
         for index, vector in enumerate(corpus.vectors)
     ]
-
-
-def exact_ids(
-    corpus: Corpus,
-    query: np.ndarray,
-    limit: int,
-    filters=None,
-    *,
-    candidate_indices: np.ndarray | None = None,
-) -> list[str]:
-    if limit <= 0:
-        return []
-    indices = (
-        candidate_indices
-        if candidate_indices is not None
-        else np.arange(len(corpus.vectors))
-    )
-    if filters and candidate_indices is None:
-        indices = np.asarray(
-            [
-                index
-                for index in indices
-                if all(
-                    corpus.metadata[int(index)].get(key) == value
-                    for key, value in filters.items()
-                )
-            ]
-        )
-    if not len(indices):
-        return []
-    scores = cosine_scores(corpus.vectors[indices], query)
-    count = min(limit, len(indices))
-    boundary = np.partition(scores, len(scores) - count)[len(scores) - count]
-    local = np.flatnonzero(scores >= boundary)
-    local = local[np.lexsort((indices[local], -scores[local]))][:count]
-    order = indices[local]
-    return [corpus.ids[int(value)] for value in order]
-
-
-def recall(hits: Sequence[Hit], expected: Sequence[str], limit: int) -> float | None:
-    expected_set = set(expected[:limit])
-    if not expected_set:
-        return None
-    return len({hit.identifier for hit in hits[:limit]} & expected_set) / len(
-        expected_set
-    )
 
 
 def cosine_scores(vectors, query):
@@ -240,8 +195,9 @@ def tie_reference(corpus, query, limit=20, filters=None):
         }
     distances = 1.0 - cosine_scores(corpus.vectors[indices], query)
     cutoff = float(np.partition(distances, count - 1)[count - 1])
-    strict = [corpus.ids[indices[i]] for i in np.flatnonzero(distances < cutoff)]
-    boundary = [corpus.ids[indices[i]] for i in np.flatnonzero(distances == cutoff)]
+    ids = corpus.ids
+    strict = [ids[indices[i]] for i in np.flatnonzero(distances < cutoff)]
+    boundary = [ids[indices[i]] for i in np.flatnonzero(distances == cutoff)]
     return {
         "effective_count": count,
         "cutoff_distance": cutoff,

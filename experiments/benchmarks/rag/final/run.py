@@ -660,7 +660,6 @@ def main(argv=None):
                 },
                 protocols=metas,
                 no_mlflow=args.no_mlflow,
-                monitor_resources=False,
                 paired_comparisons=False,
                 csv_artifact_tables=("final_attempts",),
                 evaluator_receives_context=True,

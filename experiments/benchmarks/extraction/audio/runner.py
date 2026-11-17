@@ -514,7 +514,6 @@ def run(
             },
             protocols={"audio": protocol.meta},
             no_mlflow=no_mlflow,
-            monitor_resources=False,
             evaluator_receives_context=True,
             operational_prefix="",
             paired_comparisons=False,

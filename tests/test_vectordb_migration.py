@@ -109,7 +109,13 @@ def fixture_protocol():
 
 def test_tie_boundary_alternatives_cannot_replace_strict_neighbor():
     vectors = np.array([[1, 0], [0, 1], [0, 1], [0, 1], [-1, 0]], dtype=float)
-    corpus = Corpus(vectors, vectors[:1], np.array([0]), ({},) * 5, "fixture")
+    corpus = Corpus(
+        vectors,
+        vectors[:1],
+        np.array([0]),
+        ({}, {"source_id": "same"}, {"source_id": "same"}, {}, {}),
+        "fixture",
+    )
     reference = tie_reference(corpus, vectors[0], 3)
     assert reference["boundary_slots"] == 2
     for ids, expected in [
@@ -123,6 +129,9 @@ def test_tie_boundary_alternatives_cannot_replace_strict_neighbor():
         )
     empty = tie_reference(corpus, vectors[0], filters={"source_id": "absent"})
     assert tie_recall([], empty)["status"] == "inapplicable"
+    short = tie_reference(corpus, vectors[0], 20, filters={"source_id": "same"})
+    assert short["effective_count"] == 2
+    assert tie_recall([Hit("2", 0, {})], short)["value"] == 0.5
 
 
 @pytest.mark.parametrize(
@@ -623,10 +632,19 @@ def test_storage_fallback_preserves_apparent_bytes_and_no_block_conversion(monke
     assert all("-sk" not in call for call in calls)
 
 
-def test_postbuild_checkpoint_precedes_all_workload_queries(monkeypatch):
+@pytest.mark.parametrize("reverse", [False, True])
+def test_postbuild_checkpoint_and_configuration_are_corpus_scoped(monkeypatch, reverse):
     from experiments.benchmarks.vectordb.docker_metrics import DockerMonitor
 
     payload, corpora = validation.load_inputs(validation.manifest_path("smoke"))
+    fixture = corpora["fixture"]
+    corpora["wide"] = replace(
+        fixture,
+        vectors=np.pad(fixture.vectors, ((0, 0), (0, 1))),
+        queries=np.pad(fixture.queries, ((0, 0), (0, 1))),
+    )
+    if reverse:
+        corpora = dict(reversed(corpora.items()))
     events = []
 
     def factory(name, config):
@@ -660,6 +678,11 @@ def test_postbuild_checkpoint_precedes_all_workload_queries(monkeypatch):
     )
     assert len(result) == 6 and events[0] == "checkpoint" and "query" in events
     assert result[2]["descriptor.persistent_storage_size_bytes.corpus.fixture"] == 5
+    assert "dimension" not in result[3]["configuration"]
+    assert {
+        row["corpus"]: row["configuration"]["dimension"]
+        for row in result[5]["validation_report"]["monitoring"]
+    } == {"fixture": 2, "wide": 3}
 
 
 @pytest.mark.parametrize("mismatch", ["digest", "client", "missing_client"])

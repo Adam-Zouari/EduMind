@@ -382,7 +382,6 @@ def main(argv=None):
         decision_files={"database": decision_path} if decision_path else {},
         protocols={"vector_database": protocol.meta},
         input_artifacts={"data_validation": report_path, "manifest": Path(path)},
-        monitor_resources=False,
         paired_comparisons=False,
         candidate_artifact_name="candidate.json",
         parent_artifact_builder=lambda directory, results, plan: parent_artifacts(

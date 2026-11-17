@@ -535,14 +535,6 @@ def _run_evaluation(
         paired_comparisons=False,
         candidate_artifact_name="candidate.json",
         sample_artifact_name="query_metrics",
-        resource_artifact_name="resources",
-        resource_monitor_options=lambda candidate: {
-            "require_vram": device == "cuda"
-            and parse_candidate(candidate).model_backed,
-            "device": device if parse_candidate(candidate).model_backed else "cpu",
-        },
-        monitor_temporary_disk=False,
-        monitor_resources=False,
         run_name_prefix=(f"smoke-{device}" if profile == "smoke" else profile),
         shuffle_candidates=False,
         evaluator_receives_context=True,

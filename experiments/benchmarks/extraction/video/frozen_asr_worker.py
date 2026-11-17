@@ -379,22 +379,11 @@ def _score_videos(items, videos, protocol, audio_protocol, execution, evidence):
         seed=protocol.meta.seed,
         confidence=protocol.confidence_level,
         minimum_sources=protocol.minimum_ci_sources,
+        minimum_sources_by_metric={
+            "p50_warm_audio_processing_latency_seconds": protocol.minimum_latency_ci_sources,
+            "p95_warm_audio_processing_latency_seconds": protocol.minimum_latency_ci_sources,
+        },
     )
-    if protocol.minimum_latency_ci_sources != protocol.minimum_ci_sources:
-        latency_intervals = bootstrap_sources(
-            videos,
-            _statistics,
-            resamples=execution.bootstrap_resamples,
-            seed=protocol.meta.seed,
-            confidence=protocol.confidence_level,
-            minimum_sources=protocol.minimum_latency_ci_sources,
-        )
-        for name in (
-            "p50_warm_audio_processing_latency_seconds",
-            "p95_warm_audio_processing_latency_seconds",
-        ):
-            if name in latency_intervals:
-                intervals[name] = latency_intervals[name]
     metrics.update(
         {
             "cold_model_load_seconds": evidence["cold_model_load_seconds"],
