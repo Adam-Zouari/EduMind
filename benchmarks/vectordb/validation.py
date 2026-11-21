@@ -27,11 +27,7 @@ REPORT_ROOT = PROJECT_ROOT / "artifacts/benchmarks/data-validation"
 
 
 def manifest_path(profile):
-    return (
-        Path(__file__).with_name("smoke.json")
-        if profile == "smoke"
-        else PROJECT_ROOT / f"data/benchmarks/vectordb/{profile}.json"
-    )
+    return PROJECT_ROOT / f"data/benchmarks/vectordb/{profile}.json"
 
 
 def _array(value, parent):

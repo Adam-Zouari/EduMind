@@ -128,7 +128,7 @@ is retired. Development/validation/locked require reviewed inputs and the matchi
 standalone report; their command availability is not a claim those inputs exist.
 
 The manifest shape is illustrated by the explicitly synthetic committed
-`benchmarks/vectordb/smoke.json`. Each corpus has canonical record
+`data/benchmarks/vectordb/smoke.json`. Each corpus has canonical record
 IDs/text/metadata, vectors, query vectors/IDs/source groups and provenance.
 Matrices may be inline floating arrays or relative `.npy` paths; actual matrix
 bytes are sealed. Conditions declare corpus/filter/query inventory, controlled
