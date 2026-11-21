@@ -12,6 +12,7 @@ from benchmarks.common.metrics import (
     character_error_rate,
     normalize_prose,
     paired_bootstrap_interval,
+    precision_recall_f1,
     word_error_rate,
 )
 from benchmarks.extraction.document import benchmark as document_benchmark
@@ -74,6 +75,12 @@ def test_official_metric_worker_bootstraps_both_omnidocbench_import_roots(
         "/opt/omnidocbench/src",
         "/opt/omnidocbench",
     ]
+
+
+@pytest.mark.parametrize("false_positive,false_negative", [(13, 1), (1, 13)])
+def test_count_f1_preserves_the_exact_half_threshold(false_positive, false_negative):
+    assert precision_recall_f1(7, false_positive, false_negative)[2] == 0.5
+    assert precision_recall_f1(6, false_positive, false_negative)[2] < 0.5
 
 
 def test_error_metrics_and_prose_projection() -> None:

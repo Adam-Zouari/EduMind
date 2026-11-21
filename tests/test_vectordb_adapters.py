@@ -1,12 +1,18 @@
-"""Regressions for adapter incompatibilities exposed by live pinned servers."""
+"""Pinned vector client transport and adapter contracts without live servers."""
 
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from functools import partial
+from queue import Queue
+from threading import BoundedSemaphore, Event
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
 from benchmarks.vectordb.adapters import Record
+from benchmarks.vectordb.adapters import weaviate as weaviate_adapter
+from benchmarks.vectordb.adapters.pgvector import PgVector
 from benchmarks.vectordb.adapters.qdrant import Qdrant
 from benchmarks.vectordb.adapters.weaviate import Weaviate
 from benchmarks.vectordb.integration import verify_inventory
@@ -32,6 +38,109 @@ def test_qdrant_real_rest_transport_accepts_frozen_connection_limits(monkeypatch
         assert limits.max_keepalive_connections == config.connection_pool_limit
     finally:
         adapter.close()
+
+
+def test_pgvector_rejects_unhonored_collection_override_before_connect():
+    _, config = candidate_config(load_protocol(), "pgvector|smoke-hnsw", 2)
+    with pytest.raises(ValueError, match="collection"):
+        PgVector(replace(config, collection="not_the_table"))
+
+
+def test_weaviate_missing_distance_never_becomes_perfect_similarity():
+    adapter = object.__new__(Weaviate)
+    adapter.collection = SimpleNamespace(
+        query=SimpleNamespace(
+            near_vector=lambda **kwargs: SimpleNamespace(
+                objects=[
+                    SimpleNamespace(
+                        properties={"edumind_id": "a"},
+                        uuid="a",
+                        metadata=SimpleNamespace(distance=None),
+                    )
+                ]
+            )
+        )
+    )
+    with pytest.raises(ValueError, match="distance"):
+        adapter.search([1.0, 0.0], 20)
+
+
+def test_weaviate_configures_http_connection_pool(monkeypatch):
+    import weaviate
+
+    connect = Mock()
+    monkeypatch.setattr(weaviate, "connect_to_custom", connect)
+    _, config = candidate_config(load_protocol(), "weaviate|smoke-hnsw", 2)
+    Weaviate(config)
+
+    connect.assert_called_once()
+    connection = connect.call_args.kwargs["additional_config"].connection
+    assert connection.session_pool_connections == config.connection_pool_limit
+    assert connection.session_pool_maxsize == config.connection_pool_limit
+
+
+@pytest.mark.parametrize("first_rpc_fails", [False, True], ids=["success", "failure"])
+def test_weaviate_search_caps_concurrent_rpcs_and_releases_a_slot(
+    monkeypatch, first_rpc_fails
+):
+    import weaviate
+
+    _, config = candidate_config(load_protocol(), "weaviate|smoke-hnsw", 2)
+    config = replace(config, connection_pool_limit=2)
+    events = Queue()
+    release = [Event(), Event()]
+    watchdog = 5
+
+    class ObservedSemaphore(BoundedSemaphore):
+        def __enter__(self):
+            if not self.acquire(blocking=False):
+                # Report real contention before blocking, not merely thread start.
+                events.put(("waiting", None))
+                assert self.acquire(timeout=watchdog), "search slot was not released"
+
+    def near_vector(*, near_vector, **_):
+        index = int(near_vector[0])
+        events.put(("dispatched", index))
+        if index < len(release):
+            assert release[index].wait(watchdog), "test did not release the held RPC"
+        if index == 0 and first_rpc_fails:
+            raise ConnectionError("fixture RPC failure")
+        return SimpleNamespace(objects=[])
+
+    # Patch only this adapter's factory; the real semaphore still owns the
+    # permits and context-manager release, including the exception path.
+    monkeypatch.setattr(
+        weaviate_adapter,
+        "threading",
+        SimpleNamespace(BoundedSemaphore=ObservedSemaphore),
+    )
+    monkeypatch.setattr(weaviate, "connect_to_custom", Mock())
+    adapter = Weaviate(config)
+    adapter.collection = SimpleNamespace(query=SimpleNamespace(near_vector=near_vector))
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        try:
+            first = pool.submit(adapter.search, [0.0, 0.0], 1)
+            second = pool.submit(adapter.search, [1.0, 0.0], 1)
+            assert {events.get(timeout=watchdog) for _ in release} == {
+                ("dispatched", 0),
+                ("dispatched", 1),
+            }
+            overflow = pool.submit(adapter.search, [2.0, 0.0], 1)
+            assert events.get(timeout=watchdog) == ("waiting", None)
+
+            release[0].set()
+            if first_rpc_fails:
+                with pytest.raises(ConnectionError, match="fixture RPC failure"):
+                    first.result(timeout=watchdog)
+            else:
+                assert first.result(timeout=watchdog) == []
+            assert events.get(timeout=watchdog) == ("dispatched", 2)
+            assert overflow.result(timeout=watchdog) == []
+            assert not second.done()
+        finally:
+            for event in release:
+                event.set()
+        assert second.result(timeout=watchdog) == []
 
 
 @pytest.mark.parametrize("unexpected", [False, True])

@@ -1,6 +1,5 @@
 import csv
 import json
-from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -19,10 +18,8 @@ from benchmarks.preparation.models import (
     EXTRACTION_COMPONENTS,
     MODEL_COMPONENTS,
     RAG_COMPONENTS,
-    load_selected_model_lock,
     preparation_plan,
     selected_model_names,
-    snapshot_specs,
 )
 from benchmarks.rag.chunking_embedding.profiles import (
     EXPERIMENTAL_EMBEDDING_SPECS,
@@ -35,6 +32,7 @@ from benchmarks.rag.generation.protocol import (
 )
 from benchmarks.rag.retrieval_reranking.profiles import (
     development_candidates,
+    required_reranker_models,
 )
 from edumind.common.config import ConfigurationError, load_settings
 from edumind.common.model_assets import (
@@ -48,20 +46,17 @@ from edumind.rag.contracts import EMBEDDING_SPECS, PRODUCTION_EMBEDDING_MODEL
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_selection_history_counts_and_keys_are_preserved() -> None:
+def test_gte_control_has_reviewed_selection_evidence() -> None:
     with (ROOT / "benchmarks/selection_evidence.csv").open(
         encoding="utf-8", newline=""
     ) as handle:
-        rows = list(csv.DictReader(handle))
-    assert len(rows) == 68
-    assert len({(row["component"], row["candidate"]) for row in rows}) == 68
-    assert Counter(row["decision"] for row in rows) == {
-        "include": 24,
-        "exclude": 44,
-    }
-    gte = next(
-        row for row in rows if row["candidate"] == "Alibaba-NLP/gte-modernbert-base"
-    )
+        rows = csv.DictReader(handle)
+        gte = next(
+            row
+            for row in rows
+            if (row["component"], row["candidate"])
+            == ("embedding", PRODUCTION_EMBEDDING_MODEL)
+        )
     assert gte["purpose"] == "control"
     assert gte["decision"] == "include"
     assert gte["approx_params_b"] == "0.149"
@@ -118,47 +113,33 @@ def test_gte_production_contract_and_fixed_chunking_tokenizer() -> None:
         )
 
 
-def test_embedding_documentation_matches_executable_registry() -> None:
-    selected = set(included_candidates("embedding"))
-    model_selection = (ROOT / "docs/benchmarks/model-selection.md").read_text(
-        encoding="utf-8"
+def test_embedding_docs_reference_approved_models_and_tokenizer() -> None:
+    docs = ROOT / "docs/benchmarks"
+    selection = (docs / "model-selection.md").read_text(encoding="utf-8")
+    for candidate in included_candidates("embedding"):
+        assert candidate in selection, candidate
+    for guide in ("methodology.md", "metrics.md"):
+        path = docs / "rag/chunking_embedding" / guide
+        assert "tiktoken:cl100k_base" in path.read_text(encoding="utf-8"), path
+
+
+def test_retrieval_reranker_models_match_approved_selection() -> None:
+    assert set(required_reranker_models(development_candidates())) == set(
+        included_candidates("reranker")
     )
-    methodology = (
-        ROOT / "docs/benchmarks/rag/chunking_embedding/methodology.md"
-    ).read_text(encoding="utf-8")
-    metrics = (ROOT / "docs/benchmarks/rag/chunking_embedding/metrics.md").read_text(
-        encoding="utf-8"
-    )
-
-    assert all(candidate in model_selection for candidate in selected)
-    assert PRODUCTION_EMBEDDING_MODEL in model_selection
-    assert "GTE ModernBERT base" in methodology
-    assert "tiktoken:cl100k_base" in methodology
-    assert "tiktoken:cl100k_base" in metrics
-    assert "Tokenizers are controls, not candidates" in model_selection
 
 
-def test_reranker_audio_and_document_registries_are_exact() -> None:
-    expected_retrieval = {
-        f"{retriever}|{reranker}"
-        for retriever in ("dense", "bm25", "rrf")
-        for reranker in (
-            "none",
-            "gte-modernbert",
-            "ettin-150m",
-            "ettin-400m",
-            "ettin-1b",
-        )
+def test_audio_model_ids_match_approved_selection() -> None:
+    assert {
+        candidate.model_id for candidate in load_audio_protocol().candidates.values()
+    } == set(included_candidates("asr"))
+
+
+def test_document_lock_registries_match_approved_selection() -> None:
+    assert set(DOCUMENT_LOCK_CANDIDATES.values()) == {
+        "docling-standard",
+        *included_candidates("document_extraction"),
     }
-    assert set(development_candidates()) == expected_retrieval
-    assert len(expected_retrieval) == 15
-    approved_asr = {
-        "whisper-small-en-control",
-        "canary-180m",
-        "parakeet-tdt-0.6b-v2",
-        "moss-transcribe-diarize",
-    }
-    assert set(load_audio_protocol().candidates) == approved_asr
     assert set(DOCUMENT_LOCK_CANDIDATES) == {
         "docling-standard",
         "docling-vlm-granite-258m",
@@ -268,46 +249,6 @@ def test_model_lock_writes_measured_size_and_preserves_existing_entries(
     assert models[candidate]["snapshot_size_bytes"] == 7
 
 
-def test_stage_model_lock_ignores_unrequested_missing_models(tmp_path) -> None:
-    from benchmarks.preparation.models import _directory_manifest_hash
-
-    entries = {entry.candidate: entry for entry in selection_entries()}
-    requested = entries["openai/whisper-small.en"]
-    unrelated = entries[PRODUCTION_EMBEDDING_MODEL]
-    requested_directory = tmp_path / "whisper"
-    requested_directory.mkdir()
-    (requested_directory / "weights.bin").write_bytes(b"test-only snapshot bytes")
-
-    def lock_entry(entry, model_path):
-        repository, revision, _ = snapshot_specs(entry)[0]
-        return {
-            "model": repository,
-            "revision": revision,
-            "selection_revision": entry.revision,
-            "model_path": str(model_path),
-            "model_cache_manifest_sha256": (
-                _directory_manifest_hash(model_path)
-                if model_path.is_dir()
-                else "0" * 64
-            ),
-        }
-
-    path = tmp_path / "selected.json"
-    path.write_text(
-        json.dumps(
-            {
-                "models": {
-                    requested.candidate: lock_entry(requested, requested_directory),
-                    unrelated.candidate: lock_entry(unrelated, tmp_path / "missing"),
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    loaded = load_selected_model_lock(path, candidates=(requested.candidate,))
-    assert set(loaded) == {requested.candidate}
-
-
 def test_document_stage_requests_only_its_candidate_models(monkeypatch) -> None:
     from benchmarks.extraction.document import benchmark
 
@@ -333,45 +274,6 @@ def test_document_stage_requests_only_its_candidate_models(monkeypatch) -> None:
         "docling-standard",
         "ibm-granite/granite-docling-258M",
     )
-
-
-def test_schema_three_model_lock_verifies_the_complete_cache_manifest(tmp_path) -> None:
-    from benchmarks.preparation.models import _directory_manifest_hash
-
-    entry = next(
-        item
-        for item in selection_entries()
-        if item.candidate == "openai/whisper-small.en"
-    )
-    repository, revision, _ = snapshot_specs(entry)[0]
-    model_path = tmp_path / "model"
-    model_path.mkdir()
-    weights = model_path / "weights.bin"
-    weights.write_bytes(b"pinned")
-    path = tmp_path / "selected.json"
-    path.write_text(
-        json.dumps(
-            {
-                "schema_version": 3,
-                "models": {
-                    entry.candidate: {
-                        "model": repository,
-                        "revision": revision,
-                        "selection_revision": entry.revision,
-                        "model_path": str(model_path),
-                        "model_cache_manifest_sha256": _directory_manifest_hash(
-                            model_path
-                        ),
-                    }
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    assert load_selected_model_lock(path, candidates=(entry.candidate,))
-    weights.write_bytes(b"tampered")
-    with pytest.raises(RuntimeError, match="cache manifest checksum mismatch"):
-        load_selected_model_lock(path, candidates=(entry.candidate,))
 
 
 def test_torch_and_torchaudio_lock_versions_match() -> None:

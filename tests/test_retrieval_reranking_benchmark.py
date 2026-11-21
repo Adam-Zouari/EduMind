@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import pytest
+from retrieval_fixtures import Embedder
 
 from benchmarks.common.contracts import (
     BenchmarkPlan,
@@ -1392,8 +1393,6 @@ def test_rrf_small_corpus_uses_complete_sources_without_padding(monkeypatch):
 
 def test_evaluator_preserves_dense_build_when_bm25_construction_fails(monkeypatch):
     from dataclasses import replace
-
-    from test_rag_evaluation import Embedder
 
     from benchmarks.rag import evaluation
 

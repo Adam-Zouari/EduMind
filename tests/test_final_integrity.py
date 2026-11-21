@@ -6,9 +6,12 @@ from dataclasses import asdict
 from types import SimpleNamespace
 
 import pytest
-from test_generation_benchmark import Backend, Monitor
-from test_generation_recovery import calibrated_inputs as calibrated_fixture
-from test_generation_recovery import fixture_transport
+from generation_fixtures import (
+    Backend,
+    Monitor,
+    fixture_transport,
+    make_calibrated_inputs,
+)
 
 from benchmarks.common.contracts import (
     BenchmarkPlan,
@@ -336,7 +339,7 @@ def test_execute_labels_failed_generation_elapsed_not_completed_latency(
 def bound_execution(execution_case, tmp_path):
     manifest, execute = execution_case
     questions = questions_from_manifest(manifest, require_supplied_evidence=False)
-    protocol, *_ = calibrated_fixture.__wrapped__(
+    protocol, *_ = make_calibrated_inputs(
         (load_protocol(), manifest, questions), tmp_path
     )
     return protocol, manifest, execute(protocol), questions

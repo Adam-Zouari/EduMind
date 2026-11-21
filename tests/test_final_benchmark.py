@@ -4,7 +4,7 @@ from dataclasses import asdict
 from types import SimpleNamespace
 
 import pytest
-from test_generation_benchmark import Backend, Monitor
+from generation_fixtures import Backend, Monitor
 
 from benchmarks.common.contracts import (
     BenchmarkPlan,

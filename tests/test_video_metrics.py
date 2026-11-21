@@ -89,7 +89,9 @@ def _row(sample_id="video", predictions=None, *, outcomes=("A", "A", "A"), group
     "reference,prediction,expected",
     [("", "", 1), ("!", "...", 1), ("", "invented", 0), ("Alpha", "", 0)],
 )
-def test_valid_empty_conventions(reference, prediction, expected):
+def test_visual_content_scores_handle_empty_reference_or_prediction(
+    reference, prediction, expected
+):
     row = score_video(
         _item(
             reference=reference,

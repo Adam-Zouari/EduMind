@@ -231,6 +231,101 @@ def test_preflight_requires_every_declared_component_group(tmp_path) -> None:
     assert result.group_readiness == {"frozen-asr": False, "visual": True}
 
 
+def test_cpu_worker_environment_hides_cuda_devices():
+    environment = benchmark_process.worker_environment("cpu")
+    assert environment["CUDA_VISIBLE_DEVICES"] == ""
+    assert environment["NVIDIA_VISIBLE_DEVICES"] == "none"
+
+
+def test_worker_timeout_terminates_the_tree_and_preserves_output(tmp_path, monkeypatch):
+    import subprocess
+
+    class Child:
+        pid = 123
+        returncode = -9
+
+        def communicate(self, timeout=None):
+            if timeout is not None:
+                raise subprocess.TimeoutExpired("worker", timeout)
+            return "partial output", "partial error"
+
+    terminated = []
+    monkeypatch.setattr(
+        benchmark_process.subprocess, "Popen", lambda *_args, **_kwargs: Child()
+    )
+    monkeypatch.setattr(benchmark_process, "_terminate_process_tree", terminated.append)
+    with pytest.raises(
+        benchmark_process.WorkerExecutionError, match="timeout"
+    ) as failure:
+        benchmark_process.run_json_worker(
+            ROOT / "benchmarks/extraction/audio/worker.py",
+            {},
+            device="cpu",
+            prefix="timeout-",
+            error_label="test",
+            temporary_root=tmp_path,
+            timeout_seconds=1,
+        )
+    assert terminated == [123]
+    assert failure.value.artifacts["worker_error"]["stdout"] == "partial output"
+    assert failure.value.artifacts["worker_error"]["stderr"] == "partial error"
+
+
+def test_worker_peak_cannot_hide_continuous_measurement_gaps(tmp_path, monkeypatch):
+    class Monitor:
+        peak_vram_mb = 1.0
+
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def metrics(self):
+            error = RuntimeError("missing device-memory observations")
+            error.resource_evidence = {"resource_samples": [{"vram_mb": None}]}
+            raise error
+
+    child = SimpleNamespace(
+        pid=123, returncode=0, poll=lambda: 0, communicate=lambda: ("", "")
+    )
+    monkeypatch.setattr(
+        benchmark_process.subprocess, "Popen", lambda *_args, **_kwargs: child
+    )
+    monkeypatch.setattr(benchmark_process, "ResourceMonitor", Monitor)
+    with pytest.raises(
+        benchmark_process.WorkerMeasurementError, match="missing"
+    ) as failure:
+        benchmark_process.run_json_worker(
+            ROOT / "benchmarks/extraction/audio/worker.py",
+            {},
+            device="cuda",
+            prefix="measurement-",
+            error_label="test",
+            temporary_root=tmp_path,
+            require_vram_measurement=True,
+        )
+    assert failure.value.artifacts["worker_error"]["resource_samples"] == [
+        {"vram_mb": None}
+    ]
+
+
+def test_late_telemetry_failure_preserves_partial_resource_evidence():
+    from benchmarks.common.resources import ResourceMonitor
+
+    monitor = ResourceMonitor(require_vram=True)
+    monitor._ram_sampled = True
+    monitor._peak_ram_bytes = 1024**2
+    monitor._samples = [{"ram_mb": 1.0, "vram_mb": None}]
+    with pytest.raises(RuntimeError, match="device-memory") as failure:
+        monitor.metrics()
+    assert failure.value.resource_evidence["peak_process_tree_ram_mb"] == 1
+    assert failure.value.resource_evidence["resource_samples"] == monitor.samples()
+
+
 def test_worker_supervisor_stops_only_the_process_over_the_vram_limit(
     tmp_path, monkeypatch
 ) -> None:
@@ -466,6 +561,37 @@ def test_preflight_report_requires_exact_fingerprint_and_complete_roster(
         load_preflight_report(
             report, fingerprint="matching", declared_candidates=("a",)
         )
+
+
+def test_preflight_parent_and_child_use_canonical_dataset_identity(
+    tmp_path, monkeypatch
+):
+    from benchmarks.common import preflight
+    from benchmarks.common.tracking import NoTracking
+
+    tags = []
+
+    class Tracking(NoTracking):
+        def tags(self, values):
+            tags.append(values)
+
+    monkeypatch.setattr(preflight, "tracker", lambda **kwargs: Tracking())
+    preflight.run_preflight(
+        benchmark="generation",
+        candidates=("test-candidate",),
+        fingerprint="test-only",
+        context={
+            "input_envelope": {"stress_manifest_checksum": "actual-fixture-identity"}
+        },
+        probe=lambda _: {
+            "placement": {"status": "qualified"},
+            "vram_measurement_method": "nvml-device-total",
+        },
+        no_mlflow=True,
+        artifact_root=tmp_path,
+    )
+    identities = [row["dataset_checksum"] for row in tags if "dataset_checksum" in row]
+    assert identities == ["actual-fixture-identity", "actual-fixture-identity"]
 
 
 class _Tensor:

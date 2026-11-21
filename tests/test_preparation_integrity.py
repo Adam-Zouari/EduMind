@@ -727,37 +727,41 @@ def test_evaluator_marker_alone_cannot_be_sealed_or_prepared(tmp_path, monkeypat
     assert (source / ".edumind-revision").is_file()
 
 
-@pytest.mark.parametrize("schema", [1, 2, 3])
-def test_supported_lock_schemas_keep_integrity_and_optional_size(tmp_path, schema):
+@pytest.mark.parametrize(
+    "schema", [None, 1, 2, 3], ids=["implicit-v1", "v1", "v2", "v3"]
+)
+def test_supported_lock_schemas_verify_only_requested_snapshots(tmp_path, schema):
     entry = entry_for(tmp_path / "snapshot")
-    path = tmp_path / "lock.json"
-    atomic_write_json(
-        path, {"schema_version": schema, "models": {entry["model"]: entry}}
-    )
-    assert require_model(load_model_lock(path), entry["model"])
-    assert models.load_selected_model_lock(path, candidates=[entry["model"]])
-    assert "snapshot_size_bytes" not in entry
-
-
-def test_stage_loading_does_not_read_unrequested_snapshot(tmp_path):
-    entry = entry_for(tmp_path / "snapshot")
-    path = tmp_path / "lock.json"
-    atomic_write_json(
-        path,
-        {
-            "schema_version": 3,
-            "models": {
-                entry["model"]: entry,
-                "Alibaba-NLP/gte-modernbert-base": {
-                    "revision": "irrelevant",
-                    "model_path": "unavailable",
-                },
+    unrelated = entry_for(tmp_path / "unrelated", "Alibaba-NLP/gte-modernbert-base")
+    unrelated["model_path"] = str(tmp_path / "missing")
+    payload = {
+        "models": {
+            entry["model"]: entry,
+            unrelated["model"]: unrelated,
+            "nvidia/canary-180m-flash": {
+                "revision": "irrelevant",
+                "model_path": "unavailable",
             },
         },
-    )
-    assert set(models.load_selected_model_lock(path, candidates=[entry["model"]])) == {
-        entry["model"]
     }
+    if schema is not None:
+        payload["schema_version"] = schema
+    path = tmp_path / "lock.json"
+    atomic_write_json(path, payload)
+
+    selected = [entry["model"]]
+    snapshot = require_model(load_model_lock(path), entry["model"])
+    assert snapshot.values == entry
+    assert "snapshot_size_bytes" not in snapshot.values
+    assert models.load_selected_model_lock(path, candidates=selected) == {
+        entry["model"]: entry,
+    }
+    with pytest.raises(ModelPreparationError, match="directory is missing"):
+        models.load_selected_model_lock(path, candidates=[unrelated["model"]])
+
+    (tmp_path / "snapshot/weights.bin").write_bytes(b"tampered")
+    with pytest.raises(ModelPreparationError, match="cache manifest checksum mismatch"):
+        models.load_selected_model_lock(path, candidates=selected)
 
 
 def test_missing_submodel_integrity_cannot_pass_as_a_valid_primary(tmp_path):

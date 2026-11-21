@@ -87,19 +87,49 @@ def evaluate(monkeypatch, result, *, kind="image", profile="smoke", protocol=Non
 @pytest.mark.parametrize(
     "mutation",
     [
-        lambda result: result["attempts"].append(deepcopy(result["attempts"][0])),
-        lambda result: result["attempts"].clear(),
-        lambda result: result["attempts"][0].update(repetition=True),
-        lambda result: result["attempts"][0].update(latency_seconds=float("nan")),
-        lambda result: result["attempts"][0].update(latency_seconds=-1),
-        lambda result: result["attempts"][0].update(success="true"),
-        lambda result: result["attempts"][0].update(output_fingerprint="different"),
-        lambda result: result["attempts"][0]["document"].update(segments=[None]),
-        lambda result: result["attempts"][0]["document"].update(warnings=[None]),
-        lambda result: result["attempts"][0]["document"].update(
-            source_checksum="different"
+        pytest.param(
+            lambda result: result["attempts"].append(deepcopy(result["attempts"][0])),
+            id="duplicate-attempt",
         ),
-        lambda result: result.update(measured_batch_seconds=-1),
+        pytest.param(lambda result: result["attempts"].clear(), id="missing-attempt"),
+        pytest.param(
+            lambda result: result["attempts"][0].update(repetition=True),
+            id="boolean-repetition",
+        ),
+        pytest.param(
+            lambda result: result["attempts"][0].update(latency_seconds=float("nan")),
+            id="nan-latency",
+        ),
+        pytest.param(
+            lambda result: result["attempts"][0].update(latency_seconds=-1),
+            id="negative-latency",
+        ),
+        pytest.param(
+            lambda result: result["attempts"][0].update(success="true"),
+            id="string-success",
+        ),
+        pytest.param(
+            lambda result: result["attempts"][0].update(output_fingerprint="different"),
+            id="mismatched-output-fingerprint",
+        ),
+        pytest.param(
+            lambda result: result["attempts"][0]["document"].update(segments=[None]),
+            id="null-segment",
+        ),
+        pytest.param(
+            lambda result: result["attempts"][0]["document"].update(warnings=[None]),
+            id="null-warning",
+        ),
+        pytest.param(
+            lambda result: result["attempts"][0]["document"].update(
+                source_checksum="different"
+            ),
+            id="mismatched-source-checksum",
+        ),
+        pytest.param(
+            lambda result: result.update(measured_batch_seconds=-1),
+            id="negative-batch-duration",
+        ),
     ],
 )
 def test_malformed_worker_keeps_evidence_without_invented_samples(

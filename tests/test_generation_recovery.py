@@ -1,4 +1,4 @@
-"""Behavioral migration regressions; every backend/judge here is test-only."""
+"""Generation failure recovery and replay; every backend and judge is test-only."""
 
 import json
 import sys
@@ -8,15 +8,17 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
-from test_generation_benchmark import (
+from generation_fixtures import (
     Backend,
     FixtureJudge,
     Monitor,
     answer,
     attempt,
     execute,
+    fixture_transport,
+    make_calibrated_inputs,
+    smoke_generation_inputs,
 )
-from test_generation_benchmark import inputs as base_inputs
 
 from benchmarks.common.contracts import CandidateExecutionError
 from benchmarks.common.process import (
@@ -27,8 +29,6 @@ from benchmarks.common.process import (
 from benchmarks.rag.generation import evaluate, run
 from benchmarks.rag.generation.evidence import load_execution
 from benchmarks.rag.generation.judge import (
-    LABEL_SCHEMA,
-    TASKS,
     SemanticJudge,
     configured_judge,
     validate_response_labels,
@@ -42,19 +42,16 @@ from benchmarks.rag.generation.metrics import (
     score_pairs,
 )
 from benchmarks.rag.generation.models import LocalBackend
-from benchmarks.rag.generation.protocol import load_protocol
 from benchmarks.rag.generation.validation import questions_from_manifest
 from edumind.common.artifacts import (
     atomic_write_json,
-    atomic_write_text,
     sha256_file,
-    stable_hash,
 )
 
 
 @pytest.fixture
 def inputs():
-    return base_inputs.__wrapped__()
+    return smoke_generation_inputs()
 
 
 @pytest.mark.parametrize("damage", ["one_seed", "same_seed", "question", "empty"])
@@ -131,78 +128,7 @@ def test_preinfer_prompt_drift_is_input_failure(inputs, monkeypatch):
 
 @pytest.fixture
 def calibrated_inputs(inputs, tmp_path):
-    """Synthetic calibration solely for interface tests, never real readiness."""
-    contract = {
-        "schema_version": 2,
-        "identity": {"model_id": "test-only", "revision": "fixture", "decoding": {}},
-        "prompts": {"response": "test-only response", "pair": "test-only pair"},
-        "rubric": {
-            "response": "test-only response scopes",
-            "pair": "test-only semantic comparison",
-        },
-        "label_schema": LABEL_SCHEMA,
-        "retry": {"maximum_attempts": 2, "timeout_seconds": 2},
-        "calibration": {"path": "calibration.json", "sha256": "pending"},
-    }
-    checksum = stable_hash({k: v for k, v in contract.items() if k != "calibration"})
-    human = tmp_path / "human.json"
-    atomic_write_json(
-        human,
-        {
-            "schema_version": 2,
-            "label_schema": LABEL_SCHEMA,
-            "split": "development",
-            "items": [{"test_only": True}],
-        },
-    )
-    calibration = tmp_path / "calibration.json"
-    atomic_write_json(
-        calibration,
-        {
-            "schema_version": 2,
-            "label_schema": LABEL_SCHEMA,
-            "split": "development",
-            "contract_checksum": checksum,
-            "reviewed_by": "test-only",
-            "selection_rationale": "test-only",
-            "cost_review": {"test_only": True},
-            "human_labels": {"path": human.name, "sha256": sha256_file(human)},
-            "criteria": {
-                task: {"criterion": "test-only", "observed": 1, "passed": True}
-                for task in TASKS
-            },
-        },
-    )
-    contract["calibration"]["sha256"] = sha256_file(calibration)
-    contract_path = tmp_path / "judge.json"
-    atomic_write_json(contract_path, contract)
-    import yaml
-
-    source = yaml.safe_load(inputs[0].meta.source_path.read_text(encoding="utf-8"))
-    source["judge"]["contract_path"] = str(contract_path)
-    source["statistics"]["minimum_ci_sources"] = dict.fromkeys(
-        run.required_ci_policy_keys(inputs[2]), 2
-    )
-    protocol_path = tmp_path / "protocol.yaml"
-    atomic_write_text(protocol_path, yaml.safe_dump(source))
-    return load_protocol(protocol_path), *inputs[1:]
-
-
-def fixture_transport(question):
-    def transport(request, *, timeout_seconds):
-        if request["task"] == "pair":
-            return FixtureJudge().pair(question, request["left"], request["right"])[
-                "labels"
-            ]
-        assert request["cited_evidence"] == [
-            b
-            for b in request["supplied_evidence"]
-            if b["id"] in request["response"]["citations"]
-        ]
-        assert not {"candidate", "model", "mode", "seed", "reasoning"} & request.keys()
-        return FixtureJudge().response(question, request["response"])["labels"]
-
-    return transport
+    return make_calibrated_inputs(inputs, tmp_path)
 
 
 @pytest.mark.parametrize(

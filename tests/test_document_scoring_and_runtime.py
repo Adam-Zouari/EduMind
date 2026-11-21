@@ -1,6 +1,5 @@
-"""Behavioral regressions for the extraction repair handoff (no model inference)."""
+"""Document reference validation, formula scoring, and OCR runtime contracts."""
 
-import json
 import sys
 from copy import deepcopy
 from pathlib import Path
@@ -277,57 +276,3 @@ def test_tesseract_options_bind_and_verify_prepared_files(monkeypatch, tmp_path)
     english.write_bytes(b"substituted")
     with pytest.raises(ValueError, match="missing or changed"):
         extractor._converter(request, SourceKind.IMAGE)
-
-
-def test_official_wrapper_normalizes_nonempty_pairs_symmetrically(
-    tmp_path, monkeypatch
-):
-    import importlib.util
-
-    from benchmarks.extraction.document import (
-        omnidocbench_worker as official,
-    )
-
-    root = (
-        Path(__file__).resolve().parents[1] / "data/benchmarks/evaluators/OmniDocBench"
-    )
-    if not (root / "src/core/preprocess/data_preprocess.py").is_file():
-        pytest.skip("Prepared pinned normalizer unavailable; no download performed")
-    monkeypatch.setattr(sys, "dont_write_bytecode", True)
-    monkeypatch.syspath_prepend(str(root))
-    monkeypatch.syspath_prepend(str(root / "src"))
-    # Execute the full prepared normalizer, not a project rewrite or a stub.
-    spec = importlib.util.spec_from_file_location(
-        "prepared_normalizer", root / "src/core/preprocess/data_preprocess.py"
-    )
-    normalizer = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(normalizer)
-    monkeypatch.setitem(sys.modules, "src.core.preprocess.data_preprocess", normalizer)
-    calls = []
-
-    class TEDS:
-        def __init__(self, structure_only):
-            self.structure_only = structure_only
-
-        def evaluate(self, prediction, reference):
-            calls.append((prediction, reference))
-            assert "<th" not in prediction and "<th" not in reference
-            assert 'colspan="2"' in prediction and 'colspan="2"' in reference
-            return 1.0
-
-    monkeypatch.setitem(sys.modules, "metrics.table_metric", SimpleNamespace(TEDS=TEDS))
-    reference = '<table><thead><tr><th colspan="2">Header</th></tr></thead></table>'
-    prediction = '<table><tr><td colspan="2"><span>Header</span></td></tr></table>'
-    source, dest = tmp_path / "input.json", tmp_path / "output.json"
-    source.write_text(
-        json.dumps({"tables": [{"reference": reference, "prediction": prediction}]}),
-        encoding="utf-8",
-    )
-    official.main(source, dest)
-    result = json.loads(dest.read_text())
-    assert result["tables"] == [[1, 1]]
-    assert len(calls) == 3
-    evidence = result["table_evidence"][0]
-    assert evidence["reference"] == reference and evidence["prediction"] == prediction
-    assert evidence["normalized_reference"] == evidence["normalized_prediction"]
-    assert result["provenance"]["exact_match_policy"] == "cdm_exact_counts_v1"

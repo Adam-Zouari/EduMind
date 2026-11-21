@@ -1,4 +1,4 @@
-"""Behavioral vector migration tests, all services/inference controlled in memory."""
+"""Vector benchmark workload, conformance, and selected-server integration."""
 
 import json
 from dataclasses import replace
@@ -8,15 +8,13 @@ import numpy as np
 import pandas as pd
 import pytest
 import yaml
+from vectordb_fixtures import MemoryAdapter, fixture_protocol, make_server
 
 from benchmarks.common.contracts import CandidateExecutionError
 from benchmarks.vectordb import benchmark, conformance, run, validation
 from benchmarks.vectordb.adapters import Hit, Record
 from benchmarks.vectordb.adapters.base import DimensionMismatch
-from benchmarks.vectordb.integration import (
-    SelectedServer,
-    verify_inventory,
-)
+from benchmarks.vectordb.integration import verify_inventory
 from benchmarks.vectordb.metrics import (
     aggregate_condition,
     interval,
@@ -36,75 +34,6 @@ from benchmarks.vectordb.workload import (
     tie_reference,
     validate_hits,
 )
-
-
-class MemoryAdapter:
-    def __init__(self, config):
-        self.config = replace(config, index_readiness_timeout_seconds=0)
-        self.rows = {}
-        self.calls = []
-        self.failure = None
-
-    def reset(self):
-        self.calls.append("reset")
-        self.rows.clear()
-
-    def upsert(self, rows):
-        self.calls.append("upsert")
-        self.rows.update((row.identifier, row) for row in rows)
-
-    def count(self):
-        return len(self.rows)
-
-    def fetch(self, ids):
-        return [self.rows[value] for value in ids if value in self.rows]
-
-    def delete(self, ids):
-        for value in ids:
-            self.rows.pop(value, None)
-
-    def delete_document(self, source_id):
-        ids = [
-            key
-            for key, row in self.rows.items()
-            if row.metadata["source_id"] == source_id
-        ]
-        self.delete(ids)
-        return len(ids)
-
-    def index_info(self):
-        return {"status": "passed"}
-
-    def health(self):
-        return True
-
-    def close(self):
-        self.calls.append("close")
-
-    def search(self, vector, limit, filters=None):
-        self.calls.append("search")
-        if self.failure:
-            raise self.failure
-        rows = [
-            row
-            for row in self.rows.values()
-            if all(
-                row.metadata.get(key) == value for key, value in (filters or {}).items()
-            )
-        ]
-        rows.sort(
-            key=lambda row: (
-                -float(np.dot(row.vector, vector)) / np.linalg.norm(row.vector)
-            )
-        )
-        return [
-            Hit(row.identifier, float(np.dot(row.vector, vector)), row.metadata)
-            for row in rows[:limit]
-        ]
-
-
-def fixture_protocol():
-    return replace(load_protocol(), monitor_storage=False, monitor_server_memory=False)
 
 
 def test_tie_boundary_alternatives_cannot_replace_strict_neighbor():
@@ -316,50 +245,6 @@ def test_dimension_outage_not_passing_rejection():
         and result["scope"] == "adapter"
         and result["server_status"] == "unverified"
     )
-
-
-def make_server(strategy="dense", reranker=None):
-    chunks = [
-        SimpleNamespace(
-            identifier=value,
-            document_id="doc",
-            text=value,
-            start=i,
-            end=i + 1,
-            tokens=1,
-        )
-        for i, value in enumerate("abc")
-    ]
-    embed_calls, lexical_calls = [], []
-    index = SimpleNamespace(
-        chunks=chunks,
-        vectors=np.array([[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]]),
-        embedder=SimpleNamespace(
-            device="cpu",
-            embed_query=lambda query: embed_calls.append(query) or [1, 0],
-            spec=SimpleNamespace(maximum_length=8192, query_device="cpu"),
-            input_token_counts=lambda texts, role: [len(text) for text in texts],
-        ),
-        bm25=SimpleNamespace(
-            rank=lambda query, limit: (
-                lexical_calls.append(query) or [(i, 1.0) for i in range(3)]
-            )
-        ),
-    )
-    protocol = fixture_protocol()
-    _, config = candidate_config(protocol, "chroma|smoke-hnsw", 2)
-    adapter = MemoryAdapter(config)
-    server = SelectedServer(
-        "chroma",
-        config,
-        index,
-        strategy,
-        SimpleNamespace(rrf_constant=60, rrf_weights=(1, 1)),
-        adapter=adapter,
-        reranker=reranker,
-    )
-    server.prepare()
-    return server, embed_calls, lexical_calls
 
 
 @pytest.mark.parametrize(
@@ -872,65 +757,6 @@ def test_bootstrap_retains_null_groups_and_reports_undefined_degenerate_draws():
         unit="source",
     )
     assert equal["lower"] == equal["upper"] == 0 and equal["degenerate"]
-
-
-def test_qdrant_and_weaviate_transport_limits_are_applied(monkeypatch):
-    import qdrant_client
-    import weaviate
-
-    from benchmarks.vectordb.adapters.qdrant import Qdrant
-    from benchmarks.vectordb.adapters.weaviate import Weaviate
-
-    _, config = candidate_config(fixture_protocol(), "chroma|smoke-hnsw", 2)
-    qdrant_calls, weaviate_calls = [], []
-    monkeypatch.setattr(
-        qdrant_client,
-        "QdrantClient",
-        lambda **kwargs: qdrant_calls.append(kwargs) or SimpleNamespace(),
-    )
-    monkeypatch.setattr(
-        weaviate,
-        "connect_to_custom",
-        lambda **kwargs: weaviate_calls.append(kwargs) or SimpleNamespace(),
-    )
-    Qdrant(config)
-    adapter = Weaviate(config)
-    assert qdrant_calls[0]["limits"].max_connections == config.connection_pool_limit
-    assert "pool_size" not in qdrant_calls[0]  # Mutually exclusive with HTTP limits.
-    assert (
-        weaviate_calls[0]["additional_config"].connection.session_pool_maxsize
-        == config.connection_pool_limit
-    )
-    assert adapter._search_slots._initial_value == config.connection_pool_limit
-
-
-def test_pgvector_rejects_unhonored_collection_override_before_connect():
-    from benchmarks.vectordb.adapters.pgvector import PgVector
-
-    _, config = candidate_config(fixture_protocol(), "pgvector|smoke-hnsw", 2)
-    with pytest.raises(ValueError, match="collection"):
-        PgVector(replace(config, collection="not_the_table"))
-
-
-def test_weaviate_missing_distance_never_becomes_perfect_similarity():
-    from benchmarks.vectordb.adapters.weaviate import Weaviate
-
-    adapter = object.__new__(Weaviate)
-    adapter.collection = SimpleNamespace(
-        query=SimpleNamespace(
-            near_vector=lambda **kwargs: SimpleNamespace(
-                objects=[
-                    SimpleNamespace(
-                        properties={"edumind_id": "a"},
-                        uuid="a",
-                        metadata=SimpleNamespace(distance=None),
-                    )
-                ]
-            )
-        )
-    )
-    with pytest.raises(ValueError, match="distance"):
-        adapter.search([1.0, 0.0], 20)
 
 
 @pytest.mark.parametrize(

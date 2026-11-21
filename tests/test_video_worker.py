@@ -221,30 +221,45 @@ def test_synchronization_failure_keeps_completed_frame_selection(
 @pytest.mark.parametrize(
     "mutation,match",
     [
-        (
+        pytest.param(
             lambda result: result["timings"][0].update(success=False, error="failure"),
             "success fingerprint",
+            id="failed-timing-with-success-fingerprint",
         ),
-        (lambda result: result["timings"].pop(), "inventory"),
-        (
+        pytest.param(
+            lambda result: result["timings"].pop(), "inventory", id="missing-timing"
+        ),
+        pytest.param(
             lambda result: result["timings"][0].update(latency_seconds=float("nan")),
             "latency",
+            id="nan-latency",
         ),
-        (lambda result: result["timings"][0].update(duration_seconds=9), "manifest"),
-        (
+        pytest.param(
+            lambda result: result["timings"][0].update(duration_seconds=9),
+            "manifest",
+            id="duration-disagrees-with-manifest",
+        ),
+        pytest.param(
             lambda result: result["outputs"]["attempts"]["one"][1].update(
                 fingerprint="wrong"
             ),
             "disagree",
+            id="mismatched-attempt-fingerprint",
         ),
-        (lambda result: result["metrics"].update(visual_content_f1=0.5), "aggregate"),
-        (
+        pytest.param(
+            lambda result: result["metrics"].update(visual_content_f1=0.5),
+            "aggregate",
+            id="inconsistent-content-f1",
+        ),
+        pytest.param(
             lambda result: result["samples"][0].update(attempt_failure_rate=1),
             "reliability",
+            id="inconsistent-failure-rate",
         ),
-        (
+        pytest.param(
             lambda result: result["operational"].update(peak_visual_vram_mb=0),
             "CPU visual VRAM",
+            id="cpu-vram-reported",
         ),
     ],
 )

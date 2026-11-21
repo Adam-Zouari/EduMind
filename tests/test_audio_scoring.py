@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from benchmarks.extraction.audio import evaluate
-from benchmarks.extraction.scoring import attempt_rates
+from benchmarks.extraction.scoring import attempt_rates, bootstrap_sources
 
 
 def _segment(text, start=0.0, end=1.0):
@@ -515,6 +515,31 @@ def test_bootstrap_resamples_whole_sources_with_failures_and_separate_controls()
     }
     assert metrics["word_error_rate.scheduled_source_count"] == 4
     assert metrics["word_error_rate.contributing_source_count"] == 1
+
+
+def test_asr_bootstrap_preserves_speech_and_control_allocation():
+    rows = [
+        {"source_group_id": str(i), "sample_type": kind}
+        for i, kind in enumerate(("speech", "speech", "nonspeech"))
+    ]
+    allocations = []
+
+    def aggregate(draw):
+        if len(draw) == 3:
+            allocations.append(sum(row["sample_type"] == "nonspeech" for row in draw))
+        return {"quality": 1.0}
+
+    result = bootstrap_sources(
+        rows,
+        aggregate,
+        resamples=50,
+        seed=42,
+        confidence=0.95,
+        minimum_sources=1,
+        stratum_field="sample_type",
+    )["quality"]
+    assert allocations == [1] * 51  # full estimate and every resample
+    assert result["stratum_source_counts"] == {"speech": 2, "nonspeech": 1}
 
 
 def test_bootstrap_zero_reference_draws_use_insertion_counts():

@@ -225,7 +225,9 @@ with (
         ("yes", 0, 1, False),
     ],
 )
-def test_windows_launcher(tmp_path, answer, prepare_exit, heartbeat_exit, launches):
+def test_windows_launcher_starts_app_only_after_setup_succeeds(
+    tmp_path, answer, prepare_exit, heartbeat_exit, launches
+):
     release = tmp_path / "source release"
     release.mkdir()
     shutil.copy2(PROJECT_ROOT / "start.ps1", release)

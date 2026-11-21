@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from benchmarks.common.protocol import unique_strings
 from benchmarks.common.runner import _protocol_confidence_level
 from benchmarks.extraction.audio.protocol import (
     load_protocol as load_audio_protocol,
@@ -90,6 +91,16 @@ PROTOCOL_CASES = (
 )
 
 
+@pytest.mark.parametrize("values", [[], "a", None, [""], [1], ["a", " a "]])
+def test_shared_protocol_strings_reject_empty_invalid_and_duplicate_values(values):
+    with pytest.raises(ValueError):
+        unique_strings(values, "values")
+
+
+def test_shared_protocol_strings_preserve_order_and_trim_values():
+    assert unique_strings([" a ", "b"], "values") == ("a", "b")
+
+
 def _write_protocol(tmp_path: Path, name: str, payload: dict[str, object]) -> Path:
     path = tmp_path / f"{name}.yaml"
     path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
@@ -120,6 +131,25 @@ def test_every_protocol_has_stable_identity_and_rejects_worker_drift(
     mismatched = {**first_meta.worker_payload(), "checksum": "wrong"}
     with pytest.raises(ValueError, match="checksum"):
         first_meta.validate_worker_payload(mismatched)
+
+
+@pytest.mark.parametrize("version", [None, True, 999, "1"])
+def test_worker_envelope_rejects_invalid_schema(version):
+    protocol = load_document_protocol().meta
+    payload = deepcopy(protocol.worker_payload())
+    if version is None:
+        payload.pop("schema_version")
+    else:
+        payload["schema_version"] = version
+    with pytest.raises(ValueError):
+        protocol.validate_worker_payload(payload)
+
+
+def test_worker_envelope_rejects_unknown_fields():
+    protocol = load_document_protocol().meta
+    with pytest.raises(ValueError):
+        protocol.validate_worker_payload({**protocol.worker_payload(), "unknown": 1})
+    protocol.validate_worker_payload(protocol.worker_payload())
 
 
 @pytest.mark.parametrize(("name", "source", "loader", "numeric"), PROTOCOL_CASES)

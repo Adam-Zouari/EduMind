@@ -146,6 +146,69 @@ def docker_transport(tmp_path, monkeypatch):
     return state
 
 
+@pytest.fixture
+def stub_official_evaluator(tmp_path, monkeypatch):
+    from benchmarks.extraction.document import official_metrics as official
+
+    source = tmp_path / "data/benchmarks/evaluators/OmniDocBench"
+    source.mkdir(parents=True)
+    (source / ".edumind-revision").write_text(official.OMNIDOCBENCH_REVISION)
+    (source / official.OMNIDOCBENCH_IMAGE_LOCK).write_text("{}")
+    monkeypatch.setattr(official, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(
+        official,
+        "official_evaluator_identity",
+        lambda: {
+            "source_revision": official.OMNIDOCBENCH_REVISION,
+            "image_digest": "image@sha256:fixture",
+            "source_manifest_sha256": "0" * 64,
+            "image_lock_sha256": "0" * 64,
+        },
+    )
+    return official
+
+
+def test_official_scorer_timeout_removes_only_its_own_container(
+    stub_official_evaluator, monkeypatch
+):
+    import subprocess
+
+    official = stub_official_evaluator
+    commands = []
+
+    def run(command, **_kwargs):
+        commands.append(command)
+        if command[1] == "run":
+            raise subprocess.TimeoutExpired(command, 1)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(official.subprocess, "run", run)
+    with pytest.raises(RuntimeError, match="timeout"):
+        official.score_official_metrics([("table", "table")], [], timeout_seconds=1)
+    name = commands[0][commands[0].index("--name") + 1]
+    assert name.startswith("edumind-scorer-")
+    assert commands[1] == ["docker", "rm", "--force", name]
+
+
+def test_official_host_preserves_cdm_infrastructure_failure_as_unavailable(
+    stub_official_evaluator, monkeypatch
+):
+    import subprocess
+
+    official = stub_official_evaluator
+
+    def failed(command, **_kwargs):
+        raise subprocess.CalledProcessError(
+            1,
+            command,
+            stderr="CDM renderer infrastructure failed: pdflatex failed with exit code -1",
+        )
+
+    monkeypatch.setattr(official.subprocess, "run", failed)
+    with pytest.raises(RuntimeError, match="CDM renderer infrastructure failed"):
+        official.score_official_metrics([], [("x", "x")], timeout_seconds=1)
+
+
 def test_typed_transport_retains_counts_normalization_and_verified_identity(
     docker_transport,
 ):
@@ -179,23 +242,54 @@ def test_typed_transport_retains_counts_normalization_and_verified_identity(
 @pytest.mark.parametrize(
     "mutation",
     [
-        lambda p: p.pop("schema_version"),
-        lambda p: p.update(schema_version=True),
-        lambda p: p.update(schema_version=999),
-        lambda p: p.update(unknown=True),
-        lambda p: p.update(formulas=[1.0]),
-        lambda p: p["formulas"][0].update(status="evaluator_failed"),
-        lambda p: p["formulas"][0].update(similarity=True),
-        lambda p: p["formulas"][0].update(similarity=float("nan")),
-        lambda p: p["formulas"][0].update(similarity="1.0"),
-        lambda p: p.update(tables=[]),
-        lambda p: p.update(tables=[[True, 1.0]]),
-        lambda p: p.pop("table_evidence"),
-        lambda p: p["table_evidence"][0].pop("normalized_reference"),
-        lambda p: p["table_evidence"][0].update(reference="different input"),
-        lambda p: p["provenance"].update(normalization="envelope-only"),
-        lambda p: p["provenance"].update(exact_match_policy="rounded-f1"),
-        lambda p: p["provenance"].update(wrapper_sha256="0" * 64),
+        pytest.param(lambda p: p.pop("schema_version"), id="missing-schema-version"),
+        pytest.param(
+            lambda p: p.update(schema_version=True), id="boolean-schema-version"
+        ),
+        pytest.param(
+            lambda p: p.update(schema_version=999), id="unsupported-schema-version"
+        ),
+        pytest.param(lambda p: p.update(unknown=True), id="unknown-field"),
+        pytest.param(lambda p: p.update(formulas=[1.0]), id="scalar-formula-result"),
+        pytest.param(
+            lambda p: p["formulas"][0].update(status="evaluator_failed"),
+            id="evaluator-failed-status",
+        ),
+        pytest.param(
+            lambda p: p["formulas"][0].update(similarity=True), id="boolean-similarity"
+        ),
+        pytest.param(
+            lambda p: p["formulas"][0].update(similarity=float("nan")),
+            id="nan-similarity",
+        ),
+        pytest.param(
+            lambda p: p["formulas"][0].update(similarity="1.0"), id="string-similarity"
+        ),
+        pytest.param(lambda p: p.update(tables=[]), id="missing-table-score"),
+        pytest.param(
+            lambda p: p.update(tables=[[True, 1.0]]), id="boolean-table-score"
+        ),
+        pytest.param(lambda p: p.pop("table_evidence"), id="missing-table-evidence"),
+        pytest.param(
+            lambda p: p["table_evidence"][0].pop("normalized_reference"),
+            id="missing-normalized-reference",
+        ),
+        pytest.param(
+            lambda p: p["table_evidence"][0].update(reference="different input"),
+            id="substituted-reference",
+        ),
+        pytest.param(
+            lambda p: p["provenance"].update(normalization="envelope-only"),
+            id="mismatched-normalization-policy",
+        ),
+        pytest.param(
+            lambda p: p["provenance"].update(exact_match_policy="rounded-f1"),
+            id="mismatched-exact-match-policy",
+        ),
+        pytest.param(
+            lambda p: p["provenance"].update(wrapper_sha256="0" * 64),
+            id="mismatched-wrapper-checksum",
+        ),
     ],
 )
 def test_transport_rejects_schema_score_and_provenance_drift(
@@ -238,12 +332,16 @@ def test_nonempty_worker_runs_pinned_normalizer_through_mocked_docker(
     spec.loader.exec_module(normalizer)
     monkeypatch.setitem(sys.modules, "src.core.preprocess.data_preprocess", normalizer)
 
+    teds_calls = []
+
     class TEDS:
         def __init__(self, structure_only):
             self.structure_only = structure_only
 
         def evaluate(self, prediction, reference):
+            teds_calls.append((self.structure_only, prediction, reference))
             assert "<th" not in prediction and "<th" not in reference
+            assert 'colspan="2"' in prediction and 'colspan="2"' in reference
             return 1.0
 
     renderer = SimpleNamespace(
@@ -283,12 +381,20 @@ def test_nonempty_worker_runs_pinned_normalizer_through_mocked_docker(
     )
     metrics.apply_official_metrics([record], timeout_seconds=1)
     assert record.metrics["tables.teds"] == 1
+    assert record.metrics["tables.teds_s"] == 1
     assert record.metrics["formulas.recognition_similarity"] == 1
     assert record.metrics["formulas.exact_match"] == 0
-    assert (
-        record.table_evidence[0]["normalized_reference"]
-        == record.table_evidence[0]["normalized_prediction"]
-    )
+    (evidence,) = record.table_evidence
+    assert evidence["reference"] == reference
+    assert evidence["prediction"] == prediction
+    normalized = evidence["normalized_reference"]
+    assert evidence["normalized_prediction"] == normalized
+    assert teds_calls == [
+        (False, normalized, normalized),  # reference validation
+        (False, normalized, normalized),  # content and structure
+        (True, normalized, normalized),  # structure only
+    ]
+    assert record.official_provenance["exact_match_policy"] == "cdm_exact_counts_v1"
     assert record.official_provenance["source_manifest_sha256"]
 
 

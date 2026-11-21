@@ -13,9 +13,13 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import pytest
-from test_generation_benchmark import Backend, FixtureJudge, Monitor
-from test_generation_recovery import calibrated_inputs as base_calibrated_inputs
-from test_generation_recovery import fixture_transport
+from generation_fixtures import (
+    Backend,
+    FixtureJudge,
+    Monitor,
+    fixture_transport,
+    make_calibrated_inputs,
+)
 
 from benchmarks.common import runner as common_runner
 from benchmarks.common.contracts import (
@@ -461,7 +465,7 @@ def test_final_cli_resume_reuses_accepted_original_journal_without_inference(
     harness = final_harness
     base = harness.protocols["generation"]
     questions = questions_from_manifest(harness.manifest)
-    generation, *_ = base_calibrated_inputs.__wrapped__(
+    generation, *_ = make_calibrated_inputs(
         (base, harness.manifest, questions), harness.tmp_path
     )
     protocols = {**harness.protocols, "generation": generation}

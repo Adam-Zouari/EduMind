@@ -9,7 +9,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from benchmarks.common.protocol import unique_strings
 from benchmarks.extraction.document.metrics import (
     DocumentEvaluation,
     aggregate_evaluations,
@@ -29,16 +28,6 @@ from edumind.extraction import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-@pytest.mark.parametrize("values", [[], "a", None, [""], [1], ["a", " a "]])
-def test_shared_protocol_strings_reject_empty_invalid_and_duplicate_values(values):
-    with pytest.raises(ValueError):
-        unique_strings(values, "values")
-
-
-def test_shared_protocol_strings_preserve_order_and_trim_values():
-    assert unique_strings([" a ", "b"], "values") == ("a", "b")
 
 
 def test_official_scores_keep_document_boundaries_and_content_scores(monkeypatch):
@@ -131,123 +120,6 @@ def test_validation_inventory_rejects_mislabeled_held_out_samples(
         data_validation.validate_inventory(
             benchmark, "development", Path("development"), manifests
         )
-
-
-def test_worker_timeout_terminates_the_tree_and_preserves_failure(
-    tmp_path, monkeypatch
-):
-    import subprocess
-
-    from benchmarks.common import process
-
-    class Child:
-        pid = 123
-        returncode = -9
-
-        def communicate(self, timeout=None):
-            if timeout is not None:
-                raise subprocess.TimeoutExpired("worker", timeout)
-            return "partial output", "partial error"
-
-    terminated = []
-    monkeypatch.setattr(process.subprocess, "Popen", lambda *_args, **_kwargs: Child())
-    monkeypatch.setattr(process, "_terminate_process_tree", terminated.append)
-    with pytest.raises(process.WorkerExecutionError, match="timeout") as failure:
-        process.run_json_worker(
-            ROOT / "benchmarks/extraction/audio/worker.py",
-            {},
-            device="cpu",
-            prefix="timeout-",
-            error_label="test",
-            temporary_root=tmp_path,
-            timeout_seconds=1,
-        )
-    assert terminated == [123]
-    assert failure.value.artifacts["worker_error"]["stdout"] == "partial output"
-
-
-def test_worker_peak_cannot_hide_continuous_measurement_gaps(tmp_path, monkeypatch):
-    from benchmarks.common import process
-
-    class Monitor:
-        peak_vram_mb = 1.0
-
-        def __init__(self, **_kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            pass
-
-        def metrics(self):
-            error = RuntimeError("missing device-memory observations")
-            error.resource_evidence = {"resource_samples": [{"vram_mb": None}]}
-            raise error
-
-    child = SimpleNamespace(
-        pid=123, returncode=0, poll=lambda: 0, communicate=lambda: ("", "")
-    )
-    monkeypatch.setattr(process.subprocess, "Popen", lambda *_args, **_kwargs: child)
-    monkeypatch.setattr(process, "ResourceMonitor", Monitor)
-    with pytest.raises(process.WorkerMeasurementError, match="missing") as failure:
-        process.run_json_worker(
-            ROOT / "benchmarks/extraction/audio/worker.py",
-            {},
-            device="cuda",
-            prefix="measurement-",
-            error_label="test",
-            temporary_root=tmp_path,
-            require_vram_measurement=True,
-        )
-    assert failure.value.artifacts["worker_error"]["resource_samples"] == [
-        {"vram_mb": None}
-    ]
-
-
-@pytest.fixture
-def stub_official_evaluator(tmp_path, monkeypatch):
-    from benchmarks.extraction.document import official_metrics as official
-
-    source = tmp_path / "data/benchmarks/evaluators/OmniDocBench"
-    source.mkdir(parents=True)
-    (source / ".edumind-revision").write_text(official.OMNIDOCBENCH_REVISION)
-    (source / official.OMNIDOCBENCH_IMAGE_LOCK).write_text("{}")
-    monkeypatch.setattr(official, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setattr(
-        official,
-        "official_evaluator_identity",
-        lambda: {
-            "source_revision": official.OMNIDOCBENCH_REVISION,
-            "image_digest": "image@sha256:fixture",
-            "source_manifest_sha256": "0" * 64,
-            "image_lock_sha256": "0" * 64,
-        },
-    )
-    return official
-
-
-def test_official_scorer_timeout_removes_only_its_own_container(
-    stub_official_evaluator, monkeypatch
-):
-    import subprocess
-
-    official = stub_official_evaluator
-    commands = []
-
-    def run(command, **_kwargs):
-        commands.append(command)
-        if command[1] == "run":
-            raise subprocess.TimeoutExpired(command, 1)
-        return subprocess.CompletedProcess(command, 0)
-
-    monkeypatch.setattr(official.subprocess, "run", run)
-    with pytest.raises(RuntimeError, match="timeout"):
-        official.score_official_metrics([("table", "table")], [], timeout_seconds=1)
-    name = commands[0][commands[0].index("--name") + 1]
-    assert name.startswith("edumind-scorer-")
-    assert commands[1] == ["docker", "rm", "--force", name]
 
 
 def test_table_html_preserves_spanning_cell_coordinates_and_recovers_missing_tags():
@@ -353,31 +225,6 @@ def test_granite_executes_and_logs_the_protocol_image_scale(monkeypatch, tmp_pat
         )
 
 
-def test_asr_bootstrap_preserves_speech_and_control_allocation():
-    rows = [
-        {"source_group_id": str(i), "sample_type": kind}
-        for i, kind in enumerate(("speech", "speech", "nonspeech"))
-    ]
-    allocations = []
-
-    def aggregate(draw):
-        if len(draw) == 3:
-            allocations.append(sum(row["sample_type"] == "nonspeech" for row in draw))
-        return {"quality": 1.0}
-
-    result = bootstrap_sources(
-        rows,
-        aggregate,
-        resamples=50,
-        seed=42,
-        confidence=0.95,
-        minimum_sources=1,
-        stratum_field="sample_type",
-    )["quality"]
-    assert allocations == [1] * 51  # full estimate and every resample
-    assert result["stratum_source_counts"] == {"speech": 2, "nonspeech": 1}
-
-
 def test_document_data_validation_checks_reference_renderability(monkeypatch, tmp_path):
     import json
 
@@ -436,43 +283,6 @@ def test_empty_device_map_is_not_model_placement_evidence():
     assert not report["verified"]
 
 
-def test_content_cache_reuses_extraction_with_current_source_identity(tmp_path):
-    from edumind.extraction import ExtractionRequest
-    from edumind.extraction.cache import ExtractionCache
-
-    original, renamed = tmp_path / "original.png", tmp_path / "renamed.png"
-    original.write_bytes(b"same source content")
-    renamed.write_bytes(original.read_bytes())
-    prediction = document("content")
-    request = ExtractionRequest.from_path(
-        original, profile=prediction.profile, source_kind=SourceKind.IMAGE
-    )
-    cache = ExtractionCache(tmp_path / "cache")
-    cache.put(request, prediction)
-    current = replace(request, source_path=renamed)
-    assert cache.key(current) == cache.key(request)
-    loaded = cache.get(current)
-    assert loaded.cache_hit
-    assert loaded.source_name == renamed.name
-    assert loaded.source_path == str(renamed)
-    assert loaded.text == "content"
-    assert cache.key(replace(request, source_kind=SourceKind.PDF)) != cache.key(request)
-    assert cache.key(replace(request, mime_type="image/png")) != cache.key(request)
-
-
-@pytest.mark.parametrize("payload", ["[]", "null", '{"schema": 1, "document": []}'])
-def test_corrupt_cache_shape_is_a_cache_miss(tmp_path, payload):
-    from edumind.extraction import ExtractionRequest
-    from edumind.extraction.cache import ExtractionCache
-
-    cache = ExtractionCache(tmp_path)
-    request = ExtractionRequest(
-        tmp_path / "image", "fixture", profile=document().profile
-    )
-    (tmp_path / f"{cache.key(request)}.json").write_text(payload, encoding="utf-8")
-    assert cache.get(request) is None
-
-
 @pytest.mark.parametrize("accessor", ["buffers", "named_modules", "get_providers"])
 def test_partial_placement_inspection_cannot_qualify_a_model(accessor):
     from edumind.common.model_placement import inspect_model_placement
@@ -486,19 +296,6 @@ def test_partial_placement_inspection_cannot_qualify_a_model(accessor):
     assert report["status"] == "placement_unverifiable"
     assert not report["verified"]
     assert report["inspection_errors"]
-
-
-def test_late_telemetry_failure_preserves_partial_resource_evidence():
-    from benchmarks.common.resources import ResourceMonitor
-
-    monitor = ResourceMonitor(require_vram=True)
-    monitor._ram_sampled = True
-    monitor._peak_ram_bytes = 1024**2
-    monitor._samples = [{"ram_mb": 1.0, "vram_mb": None}]
-    with pytest.raises(RuntimeError, match="device-memory") as failure:
-        monitor.metrics()
-    assert failure.value.resource_evidence["peak_process_tree_ram_mb"] == 1
-    assert failure.value.resource_evidence["resource_samples"] == monitor.samples()
 
 
 @pytest.mark.parametrize("candidate", ["video-fixed-5", "video-fixed-05s"])
@@ -1279,25 +1076,6 @@ def test_cdm_worker_checks_reference_tokens_before_emitting_quality(
         formula = json.loads(output_path.read_text(encoding="utf-8"))["formulas"][0]
         assert formula["similarity"] == expected
         assert formula["status"] == "invalid_prediction"
-
-
-def test_official_host_preserves_cdm_infrastructure_failure_as_unavailable(
-    stub_official_evaluator, monkeypatch
-):
-    import subprocess
-
-    official = stub_official_evaluator
-
-    def failed(command, **_kwargs):
-        raise subprocess.CalledProcessError(
-            1,
-            command,
-            stderr="CDM renderer infrastructure failed: pdflatex failed with exit code -1",
-        )
-
-    monkeypatch.setattr(official.subprocess, "run", failed)
-    with pytest.raises(RuntimeError, match="CDM renderer infrastructure failed"):
-        official.score_official_metrics([], [("x", "x")], timeout_seconds=1)
 
 
 @pytest.mark.parametrize(

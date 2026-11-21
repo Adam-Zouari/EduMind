@@ -49,26 +49,56 @@ def canonical_payload():
 @pytest.mark.parametrize(
     "mutation",
     [
-        lambda p: p.pop("text"),
-        lambda p: p.update(segments=["bad"]),
-        lambda p: p.update(warnings=["bad"]),
-        lambda p: p["segments"][0].pop("text"),
-        lambda p: p["segments"][0].update(start=True),
-        lambda p: p["segments"][0].update(page_number=0),
-        lambda p: p["segments"][0].update(bounding_box=[0.9, 0, 0.1, 1]),
-        lambda p: p["segments"][0].update(bounding_box=[0, 0, float("nan"), 1]),
-        lambda p: p["segments"][1].update(element_id="a"),
-        lambda p: p["segments"][1].update(parent_id="missing"),
-        lambda p: p["segments"][0].update(parent_id="b"),
-        lambda p: p.update(extraction_seconds=float("inf")),
-        lambda p: p.update(cache_hit=True),
-        lambda p: p["profile"].update(device=123),
-        lambda p: p["metadata"].update(bad=object()),
-        lambda p: p["segments"][0].update(kind="formula", structured_content={}),
-        lambda p: p["segments"][0].update(
-            kind="table", structured_content={"rows": [[None]]}
+        pytest.param(lambda p: p.pop("text"), id="missing-document-text"),
+        pytest.param(lambda p: p.update(segments=["bad"]), id="string-segment"),
+        pytest.param(lambda p: p.update(warnings=["bad"]), id="string-warning"),
+        pytest.param(lambda p: p["segments"][0].pop("text"), id="missing-segment-text"),
+        pytest.param(
+            lambda p: p["segments"][0].update(start=True), id="boolean-start-offset"
         ),
-        lambda p: p["segments"][0].update(end=2),
+        pytest.param(
+            lambda p: p["segments"][0].update(page_number=0), id="zero-page-number"
+        ),
+        pytest.param(
+            lambda p: p["segments"][0].update(bounding_box=[0.9, 0, 0.1, 1]),
+            id="reversed-bounding-box",
+        ),
+        pytest.param(
+            lambda p: p["segments"][0].update(bounding_box=[0, 0, float("nan"), 1]),
+            id="nan-bounding-box",
+        ),
+        pytest.param(
+            lambda p: p["segments"][1].update(element_id="a"), id="duplicate-element-id"
+        ),
+        pytest.param(
+            lambda p: p["segments"][1].update(parent_id="missing"),
+            id="missing-parent-element",
+        ),
+        pytest.param(
+            lambda p: p["segments"][0].update(parent_id="b"), id="cyclic-parent"
+        ),
+        pytest.param(
+            lambda p: p.update(extraction_seconds=float("inf")),
+            id="infinite-extraction-time",
+        ),
+        pytest.param(lambda p: p.update(cache_hit=True), id="cached-result"),
+        pytest.param(lambda p: p["profile"].update(device=123), id="nonstring-device"),
+        pytest.param(
+            lambda p: p["metadata"].update(bad=object()), id="nonserializable-metadata"
+        ),
+        pytest.param(
+            lambda p: p["segments"][0].update(kind="formula", structured_content={}),
+            id="empty-formula-content",
+        ),
+        pytest.param(
+            lambda p: p["segments"][0].update(
+                kind="table", structured_content={"rows": [[None]]}
+            ),
+            id="null-table-cell",
+        ),
+        pytest.param(
+            lambda p: p["segments"][0].update(end=2), id="mismatched-end-offset"
+        ),
     ],
 )
 def test_strict_payload_validator_rejects_malformed_json(mutation):

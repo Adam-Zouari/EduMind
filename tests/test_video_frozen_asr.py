@@ -896,29 +896,42 @@ def test_fully_accounted_window_failures_can_be_reused_as_reliability_evidence(
 @pytest.mark.parametrize(
     "mutation,match",
     [
-        (lambda p: p["parameters"].update(dtype="float16"), "runtime parameters"),
-        (
+        pytest.param(
+            lambda p: p["parameters"].update(dtype="float16"),
+            "runtime parameters",
+            id="changed-dtype",
+        ),
+        pytest.param(
             lambda p: p["parameters"].update(model_revision="different"),
             "runtime parameters",
+            id="changed-model-revision",
         ),
-        (lambda p: p["metrics"].update(peak_vram_mb=0.0), "CPU VRAM"),
-        (
+        pytest.param(
+            lambda p: p["metrics"].update(peak_vram_mb=0.0),
+            "CPU VRAM",
+            id="cpu-vram-reported",
+        ),
+        pytest.param(
             lambda p: p["videos"][0]["windows"][0].update(latency_seconds=True),
             "window latency",
+            id="boolean-window-latency",
         ),
-        (
+        pytest.param(
             lambda p: p["videos"][0].update(
                 transcript="beta", segments=[{"text": "beta", "start": 0.0, "end": 1.0}]
             ),
             "deterministic window stitching",
+            id="transcript-disagrees-with-windows",
         ),
-        (
+        pytest.param(
             lambda p: p.update(model_lock_fingerprint="different"),
             "model lock fingerprint",
+            id="changed-model-lock-fingerprint",
         ),
-        (
+        pytest.param(
             lambda p: p.update(submodels=[{"revision": "different"}]),
             "submodels mismatch",
+            id="changed-submodels",
         ),
     ],
 )

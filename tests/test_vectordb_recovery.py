@@ -5,6 +5,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
+from vectordb_fixtures import MemoryAdapter, fixture_protocol, make_server
 
 from benchmarks.vectordb.protocol import load_protocol
 
@@ -127,7 +128,6 @@ def test_paired_load_rejects_duplicate_or_unaligned_logical_operations():
 
 def _run_retained(tmp_path, monkeypatch, *, fail_scoring=False):
     import yaml
-    from test_vectordb_migration import MemoryAdapter
 
     from benchmarks.vectordb import benchmark, run, validation
     from benchmarks.vectordb.protocol import DEFAULT_PROTOCOL_PATH
@@ -256,8 +256,6 @@ def test_recovery_rejects_changed_input_bytes_before_scoring(tmp_path, monkeypat
 
 
 def test_selected_server_qualification_envelope_stops_inference_before_both_models():
-    from test_vectordb_migration import make_server
-
     from benchmarks.rag.evaluation import InputCompatibilityError
 
     server, calls, _ = make_server()
@@ -337,8 +335,6 @@ def test_paired_operations_keep_repetitions_inside_reviewed_source_groups():
 def test_locked_recovery_preserves_failed_first_and_consumption_marker(
     tmp_path, monkeypatch
 ):
-    from test_vectordb_migration import MemoryAdapter
-
     from benchmarks.common.contracts import CandidateExecutionError
     from benchmarks.vectordb import benchmark, recover, run, validation
     from edumind.common.artifacts import sha256_file, stable_hash
@@ -499,8 +495,6 @@ def test_retained_integration_pool_can_be_scored_without_live_search(
     tmp_path, monkeypatch
 ):
     import copy
-
-    from test_vectordb_migration import MemoryAdapter, fixture_protocol, make_server
 
     from benchmarks.common.datasets import manifest_content_checksum
     from benchmarks.vectordb import (

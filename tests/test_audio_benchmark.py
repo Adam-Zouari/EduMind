@@ -14,7 +14,6 @@ from benchmarks.common.contracts import (
     SampleResult,
 )
 from benchmarks.common.datasets import assert_no_split_leakage
-from benchmarks.common.process import worker_environment
 from benchmarks.common.resources import ResourceMonitor
 from benchmarks.common.runner import run_benchmark
 from benchmarks.extraction.audio.adapters import (
@@ -549,14 +548,17 @@ def test_timestamp_span_alignment_does_not_reuse_a_broad_prediction() -> None:
     assert words["timestamp_boundary_error_seconds"] == pytest.approx(0.2)
 
 
-def test_audio_registry_and_duration_limit_are_frozen() -> None:
-    assert set(ASR_PROFILES) == {
-        "whisper-small-en-control",
-        "canary-180m",
-        "parakeet-tdt-0.6b-v2",
-        "moss-transcribe-diarize",
+def test_asr_profiles_bind_each_candidate_to_its_model_and_backend() -> None:
+    assert {
+        alias: (profile.model, profile.backend)
+        for alias, profile in ASR_PROFILES.items()
+    } == {
+        alias: (candidate.model_id, candidate.backend)
+        for alias, candidate in AUDIO_PROTOCOL.candidates.items()
     }
-    assert len(METRIC_DIRECTIONS) == 17
+
+
+def test_audio_manifest_rejects_speech_over_the_duration_limit() -> None:
     speech = [
         {
             "id": "too-long",
@@ -591,10 +593,6 @@ def test_audio_registry_and_duration_limit_are_frozen() -> None:
     ]
     with pytest.raises(ValueError, match="duration exceeds its valid range"):
         _validate_manifest_rows(speech, controls, "smoke", AUDIO_PROTOCOL)
-
-    cpu_environment = worker_environment("cpu")
-    assert cpu_environment["CUDA_VISIBLE_DEVICES"] == ""
-    assert cpu_environment["NVIDIA_VISIBLE_DEVICES"] == "none"
 
 
 def test_asr_runner_logs_flat_metrics_and_required_tables(tmp_path) -> None:

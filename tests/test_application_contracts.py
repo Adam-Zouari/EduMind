@@ -1,4 +1,4 @@
-"""Behavioral regressions for application handoff A01–A08; no model inference."""
+"""Application model integrity, extraction, provenance, and generation contracts."""
 
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -22,6 +22,7 @@ from edumind.extraction import (
     SegmentKind,
     SourceKind,
 )
+from edumind.extraction.cache import ExtractionCache
 from edumind.extraction.extractors.audio import WhisperExtractor, transcribe_whisper
 from edumind.extraction.extractors.base import build_document
 from edumind.extraction.extractors.video import VideoExtractor
@@ -97,6 +98,42 @@ def test_verified_bundle_changes_cache_and_tampering_fails_before_cache(tmp_path
     assert not changed.cache_hit
     assert len(calls) == 2
     assert identity != changed.metadata["model_bundles"]["model_bundle_identity"]
+
+
+def test_content_cache_reuses_extraction_with_current_source_identity(tmp_path):
+    original, renamed = tmp_path / "original.png", tmp_path / "renamed.png"
+    original.write_bytes(b"same source content")
+    renamed.write_bytes(original.read_bytes())
+    request = ExtractionRequest.from_path(
+        original,
+        profile=ExtractionProfile("fixture", "docling-standard", "revision"),
+        source_kind=SourceKind.IMAGE,
+    )
+    cache = ExtractionCache(tmp_path / "cache")
+    cache.put(
+        request, build_document(request, SourceKind.IMAGE, request.profile, ["content"])
+    )
+    current = replace(request, source_path=renamed)
+    assert cache.key(current) == cache.key(request)
+    loaded = cache.get(current)
+    assert loaded.cache_hit
+    assert loaded.source_name == renamed.name
+    assert loaded.source_path == str(renamed)
+    assert loaded.text == "content"
+    assert cache.key(replace(request, source_kind=SourceKind.PDF)) != cache.key(request)
+    assert cache.key(replace(request, mime_type="image/png")) != cache.key(request)
+
+
+@pytest.mark.parametrize("payload", ["[]", "null", '{"schema": 1, "document": []}'])
+def test_corrupt_cache_shape_is_a_cache_miss(tmp_path, payload):
+    cache = ExtractionCache(tmp_path)
+    request = ExtractionRequest(
+        tmp_path / "image",
+        "fixture",
+        profile=ExtractionProfile("fixture", "docling-standard", "revision"),
+    )
+    (tmp_path / f"{cache.key(request)}.json").write_text(payload, encoding="utf-8")
+    assert cache.get(request) is None
 
 
 def test_video_verifies_both_snapshots_even_when_paths_are_supplied(tmp_path):
