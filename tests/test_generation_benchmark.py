@@ -11,38 +11,38 @@ from typing import ClassVar
 
 import pytest
 
-from edumind.common.artifacts import atomic_write_json, sha256_file, stable_hash
-from experiments.benchmarks.common.contracts import (
+from benchmarks.common.contracts import (
     BenchmarkPlan,
     CandidateExecutionError,
 )
-from experiments.benchmarks.common.data_validation import manifest_path
-from experiments.benchmarks.common.datasets import load_manifest
-from experiments.benchmarks.common.preflight import _probe_candidate
-from experiments.benchmarks.common.process import WorkerResourceLimitError
-from experiments.benchmarks.rag.generation import evaluate
-from experiments.benchmarks.rag.generation.judge import (
+from benchmarks.common.data_validation import manifest_path
+from benchmarks.common.datasets import load_manifest
+from benchmarks.common.preflight import _probe_candidate
+from benchmarks.common.process import WorkerResourceLimitError
+from benchmarks.rag.generation import evaluate
+from benchmarks.rag.generation.judge import (
     LABEL_SCHEMA,
     TASKS,
     SemanticJudge,
     load_judge_contract,
     replay_judge,
 )
-from experiments.benchmarks.rag.generation.metrics import (
+from benchmarks.rag.generation.metrics import (
     REFUSAL,
     aggregate,
     parse_response,
     score_attempt,
     score_pairs,
 )
-from experiments.benchmarks.rag.generation.models import LocalBackend
-from experiments.benchmarks.rag.generation.protocol import load_protocol
-from experiments.benchmarks.rag.generation.run import _selected_candidates
-from experiments.benchmarks.rag.generation.validation import (
+from benchmarks.rag.generation.models import LocalBackend
+from benchmarks.rag.generation.protocol import load_protocol
+from benchmarks.rag.generation.run import _selected_candidates
+from benchmarks.rag.generation.validation import (
     prepare_report,
     questions_from_manifest,
     verify_inputs,
 )
+from edumind.common.artifacts import atomic_write_json, sha256_file, stable_hash
 
 
 @pytest.fixture

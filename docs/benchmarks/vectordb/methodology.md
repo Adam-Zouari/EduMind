@@ -115,10 +115,10 @@ acceptance listed above.
 Run full validation separately; driver startup only verifies the seal:
 
 ```powershell
-python -m experiments.benchmarks.validate vectordb --profile smoke
-python -m experiments.benchmarks.vectordb.run --profile smoke --no-mlflow
-python -m experiments.benchmarks.vectordb.validation --profile development --manifest PATH --inventory DEV_PATH --inventory VALIDATION_PATH --inventory LOCKED_PATH
-python -m experiments.benchmarks.vectordb.recover --candidate-directory ORIGINAL_CANDIDATE_DIRECTORY --output NEW_EVALUATION_DIRECTORY
+python -m benchmarks.validate vectordb --profile smoke
+python -m benchmarks.vectordb.run --profile smoke --no-mlflow
+python -m benchmarks.vectordb.validation --profile development --manifest PATH --inventory DEV_PATH --inventory VALIDATION_PATH --inventory LOCKED_PATH
+python -m benchmarks.vectordb.recover --candidate-directory ORIGINAL_CANDIDATE_DIRECTORY --output NEW_EVALUATION_DIRECTORY
 ```
 
 The smoke driver command requires the coordinated, already-prepared pinned
@@ -128,7 +128,7 @@ is retired. Development/validation/locked require reviewed inputs and the matchi
 standalone report; their command availability is not a claim those inputs exist.
 
 The manifest shape is illustrated by the explicitly synthetic committed
-`experiments/benchmarks/vectordb/smoke.json`. Each corpus has canonical record
+`benchmarks/vectordb/smoke.json`. Each corpus has canonical record
 IDs/text/metadata, vectors, query vectors/IDs/source groups and provenance.
 Matrices may be inline floating arrays or relative `.npy` paths; actual matrix
 bytes are sealed. Conditions declare corpus/filter/query inventory, controlled
@@ -156,12 +156,12 @@ the ordinary per-candidate comparison tables.
 Final RAG can reuse these APIs without a new configuration search:
 
 ```python
-from experiments.benchmarks.vectordb.integration import SelectedServer
-from experiments.benchmarks.vectordb.selection import (
+from benchmarks.vectordb.integration import SelectedServer
+from benchmarks.vectordb.selection import (
     candidate_config,
     resolve_selected_config,
 )
-from experiments.benchmarks.vectordb.workload import validate_hits
+from benchmarks.vectordb.workload import validate_hits
 ```
 
 `candidate_config(protocol, candidate_id, actual_dimension)` returns backend and

@@ -11,6 +11,9 @@ import httpx
 import pytest
 from huggingface_hub.errors import HfHubHTTPError, LocalEntryNotFoundError
 
+from benchmarks import prepare
+from benchmarks.common.selection import selection_entries
+from benchmarks.preparation import evaluators, models, vectordb
 from edumind.common import model_assets
 from edumind.common.artifacts import atomic_write_json, sha256_file, stable_hash
 from edumind.common.models import (
@@ -21,9 +24,6 @@ from edumind.common.models import (
 )
 from edumind.prepare_models import APP_MODELS
 from edumind.rag.tokenizers import prepare_tiktoken
-from experiments.benchmarks import prepare
-from experiments.benchmarks.common.selection import selection_entries
-from experiments.benchmarks.preparation import evaluators, models, vectordb
 
 
 @pytest.mark.parametrize("valid", [True, False])
@@ -422,7 +422,7 @@ def evaluator_fixture(root):
 def test_evaluator_corruption_rejected_before_docker_scoring(
     tmp_path, monkeypatch, mode
 ):
-    from experiments.benchmarks.extraction.document import official_metrics
+    from benchmarks.extraction.document import official_metrics
 
     source = evaluator_fixture(tmp_path)
     assert evaluators.evaluator_identity(source)["source_manifest_sha256"]
@@ -454,7 +454,7 @@ def test_evaluator_corruption_rejected_before_docker_scoring(
 
 
 def test_validation_identity_binds_actual_evaluator_content(tmp_path, monkeypatch):
-    from experiments.benchmarks.common import data_validation
+    from benchmarks.common import data_validation
 
     source = evaluator_fixture(tmp_path)
     manifest = tmp_path / "manifest.json"
@@ -517,7 +517,7 @@ def test_vectordb_custom_output_never_changes_compose_ownership(
     output = Path(destination)
     vectordb.prepare_vectordb(output)
     assert output.is_file()
-    environment = root / "experiments/benchmarks/vectordb/.env"
+    environment = root / "benchmarks/vectordb/.env"
     assert environment.is_file()
     assert environment.read_text().count("_IMAGE=") == len(vectordb.VECTOR_IMAGES)
 
@@ -534,7 +534,7 @@ def test_vectordb_invalid_destinations_fail_before_services_or_writes(
         parent.write_bytes(b"keep")
         output = parent / "lock.json"
     else:
-        output = tmp_path / "experiments/benchmarks/vectordb/.env"
+        output = tmp_path / "benchmarks/vectordb/.env"
     monkeypatch.setattr(
         vectordb.subprocess,
         "run",

@@ -10,27 +10,27 @@ from types import SimpleNamespace
 
 import pytest
 
+from benchmarks.common.contracts import (
+    BenchmarkPlan,
+    CandidateExecutionError,
+)
+from benchmarks.common.runner import _write_candidate_artifact
+from benchmarks.extraction.document import (
+    metrics,
+    runner,
+)
+from benchmarks.extraction.document import (
+    official_metrics as official,
+)
+from benchmarks.extraction.document import (
+    omnidocbench_worker as worker,
+)
+from benchmarks.extraction.document.protocol import load_protocol
+from benchmarks.preparation import evaluators
 from edumind.common.artifacts import atomic_write_json, sha256_file, stable_hash
 from edumind.extraction import ExtractionProfile, SourceKind
 from edumind.extraction.contracts import ExtractionRequest
 from edumind.extraction.structured import build_structured_document
-from experiments.benchmarks.common.contracts import (
-    BenchmarkPlan,
-    CandidateExecutionError,
-)
-from experiments.benchmarks.common.runner import _write_candidate_artifact
-from experiments.benchmarks.extraction.document import (
-    metrics,
-    runner,
-)
-from experiments.benchmarks.extraction.document import (
-    official_metrics as official,
-)
-from experiments.benchmarks.extraction.document import (
-    omnidocbench_worker as worker,
-)
-from experiments.benchmarks.extraction.document.protocol import load_protocol
-from experiments.benchmarks.preparation import evaluators
 
 HTML = '<table><tr><th colspan="2">HeaderAlpha</th></tr></table>'
 NEAR = {
@@ -445,7 +445,7 @@ def test_infrastructure_failure_retains_source_identity_and_predictions(
 def test_mocked_transport_evidence_is_uploaded_to_mlflow(
     docker_transport, monkeypatch, tmp_path, request
 ):
-    from experiments.benchmarks.common.runner import run_benchmark
+    from benchmarks.common.runner import run_benchmark
 
     mlflow = pytest.importorskip("mlflow")
     previous = mlflow.get_tracking_uri()

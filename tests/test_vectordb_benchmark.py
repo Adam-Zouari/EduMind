@@ -6,18 +6,18 @@ import numpy as np
 import pytest
 import yaml
 
-from experiments.benchmarks.vectordb import conformance
-from experiments.benchmarks.vectordb.adapters import InvalidIndexState, Record
-from experiments.benchmarks.vectordb.adapters.chroma import Chroma
-from experiments.benchmarks.vectordb.adapters.qdrant import Qdrant
-from experiments.benchmarks.vectordb.adapters.weaviate import Weaviate
-from experiments.benchmarks.vectordb.docker_metrics import DockerMonitor
-from experiments.benchmarks.vectordb.protocol import (
+from benchmarks.vectordb import conformance
+from benchmarks.vectordb.adapters import InvalidIndexState, Record
+from benchmarks.vectordb.adapters.chroma import Chroma
+from benchmarks.vectordb.adapters.qdrant import Qdrant
+from benchmarks.vectordb.adapters.weaviate import Weaviate
+from benchmarks.vectordb.docker_metrics import DockerMonitor
+from benchmarks.vectordb.protocol import (
     DEFAULT_PROTOCOL_PATH,
     load_protocol,
 )
-from experiments.benchmarks.vectordb.run import COMPOSE
-from experiments.benchmarks.vectordb.selection import candidate_config
+from benchmarks.vectordb.run import COMPOSE
+from benchmarks.vectordb.selection import candidate_config
 
 
 def test_chroma_accepts_numpy_vectors_without_numpy_scalar_lists():
@@ -174,7 +174,7 @@ def test_qdrant_resumes_paused_optimizers_without_bypassing_readiness(monkeypatc
         update_collection=lambda *args, **kwargs: updates.append((args, kwargs)),
     )
     monkeypatch.setattr(
-        "experiments.benchmarks.vectordb.adapters.qdrant.time.sleep", lambda _: None
+        "benchmarks.vectordb.adapters.qdrant.time.sleep", lambda _: None
     )
     assert adapter.index_info()["status"] == "green"
     assert len(updates) == 1

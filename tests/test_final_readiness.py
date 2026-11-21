@@ -7,15 +7,15 @@ from unittest.mock import Mock
 
 import pytest
 
+from benchmarks.common.contracts import BenchmarkPlan
+from benchmarks.common.datasets import load_manifest
+from benchmarks.common.preflight import _probe_candidate
+from benchmarks.rag.final import run
+from benchmarks.rag.generation import metrics as generation_metrics
+from benchmarks.rag.generation import run as generation_run
+from benchmarks.rag.generation.evidence import retain_schedule
+from benchmarks.rag.generation.validation import questions_from_manifest
 from edumind.common.artifacts import stable_hash
-from experiments.benchmarks.common.contracts import BenchmarkPlan
-from experiments.benchmarks.common.datasets import load_manifest
-from experiments.benchmarks.common.preflight import _probe_candidate
-from experiments.benchmarks.rag.final import run
-from experiments.benchmarks.rag.generation import metrics as generation_metrics
-from experiments.benchmarks.rag.generation import run as generation_run
-from experiments.benchmarks.rag.generation.evidence import retain_schedule
-from experiments.benchmarks.rag.generation.validation import questions_from_manifest
 
 REAL_WORKER = run._worker
 

@@ -8,20 +8,20 @@ from types import SimpleNamespace
 
 import pytest
 
-from edumind.extraction import ExtractedDocument, ExtractionProfile, SourceKind
-from experiments.benchmarks.common.process import WorkerExecutionError
-from experiments.benchmarks.extraction.audio.protocol import (
+from benchmarks.common.process import WorkerExecutionError
+from benchmarks.extraction.audio.protocol import (
     load_protocol as audio_protocol,
 )
-from experiments.benchmarks.extraction.document.protocol import (
+from benchmarks.extraction.document.protocol import (
     load_protocol as document_protocol,
 )
-from experiments.benchmarks.extraction.video import visual_worker as worker
-from experiments.benchmarks.extraction.video.protocol import (
+from benchmarks.extraction.video import visual_worker as worker
+from benchmarks.extraction.video.protocol import (
     load_protocol,
     protocol_from_mapping,
 )
-from experiments.benchmarks.extraction.video.runner import _validate_visual_output
+from benchmarks.extraction.video.runner import _validate_visual_output
+from edumind.extraction import ExtractedDocument, ExtractionProfile, SourceKind
 
 
 @pytest.fixture
@@ -178,7 +178,7 @@ def test_later_failure_preserves_first_quality(lifecycle):
 
 
 def test_visual_worker_never_loads_or_transcribes_asr(lifecycle, monkeypatch):
-    from experiments.benchmarks.extraction.audio import adapters
+    from benchmarks.extraction.audio import adapters
 
     def forbidden(*_args, **_kwargs):
         pytest.fail("Visual worker attempted ASR loading/transcription")

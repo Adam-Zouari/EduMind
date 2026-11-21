@@ -7,45 +7,45 @@ from types import SimpleNamespace
 
 import pytest
 
-from edumind.common.artifacts import stable_hash
-from edumind.common.model_placement import inspect_model_placement
-from experiments.benchmarks.common import process as benchmark_process
-from experiments.benchmarks.common.arguments import (
+from benchmarks.common import process as benchmark_process
+from benchmarks.common.arguments import (
     default_decision_path,
     execution_devices,
 )
-from experiments.benchmarks.common.preflight import (
+from benchmarks.common.preflight import (
     eligible_candidates,
     model_lock_fingerprints,
     qualification_fingerprint,
     run_preflight,
 )
-from experiments.benchmarks.common.preflight_reports import (
+from benchmarks.common.preflight_reports import (
     find_local_preflight_report,
     load_preflight_report,
 )
-from experiments.benchmarks.common.process import (
+from benchmarks.common.process import (
     WorkerMeasurementError,
     WorkerResourceLimitError,
 )
-from experiments.benchmarks.common.tracking import benchmark_experiment
-from experiments.benchmarks.extraction.audio.protocol import load_protocol as audio
-from experiments.benchmarks.extraction.document.benchmark import _preflight_items
-from experiments.benchmarks.extraction.document.protocol import (
+from benchmarks.common.tracking import benchmark_experiment
+from benchmarks.extraction.audio.protocol import load_protocol as audio
+from benchmarks.extraction.document.benchmark import _preflight_items
+from benchmarks.extraction.document.protocol import (
     load_protocol as document,
 )
-from experiments.benchmarks.extraction.video.protocol import load_protocol as video
-from experiments.benchmarks.rag.chunking_embedding.protocol import (
+from benchmarks.extraction.video.protocol import load_protocol as video
+from benchmarks.rag.chunking_embedding.protocol import (
     load_protocol as chunking,
 )
-from experiments.benchmarks.rag.final.protocol import load_protocol as final_rag
-from experiments.benchmarks.rag.generation.protocol import (
+from benchmarks.rag.final.protocol import load_protocol as final_rag
+from benchmarks.rag.generation.protocol import (
     load_protocol as generation,
 )
-from experiments.benchmarks.rag.retrieval_reranking.protocol import (
+from benchmarks.rag.retrieval_reranking.protocol import (
     load_protocol as retrieval,
 )
-from experiments.benchmarks.vectordb.protocol import load_protocol as vectordb
+from benchmarks.vectordb.protocol import load_protocol as vectordb
+from edumind.common.artifacts import stable_hash
+from edumind.common.model_placement import inspect_model_placement
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -280,7 +280,7 @@ def test_worker_supervisor_stops_only_the_process_over_the_vram_limit(
     monkeypatch.setattr(benchmark_process, "_terminate_process_tree", terminated.append)
     with pytest.raises(WorkerResourceLimitError, match="exceeded"):
         benchmark_process.run_json_worker(
-            ROOT / "experiments/benchmarks/rag/chunking_embedding/worker.py",
+            ROOT / "benchmarks/rag/chunking_embedding/worker.py",
             {},
             device="cuda",
             prefix="supervisor-test-",
@@ -323,7 +323,7 @@ def test_uncapped_worker_preserves_high_vram_without_termination(tmp_path, monke
     monkeypatch.setattr(benchmark_process.subprocess, "Popen", launch)
     monkeypatch.setattr(benchmark_process, "_terminate_process_tree", stopped.append)
     output = benchmark_process.run_json_worker(
-        ROOT / "experiments/benchmarks/extraction/audio/worker.py",
+        ROOT / "benchmarks/extraction/audio/worker.py",
         {},
         device="cuda",
         prefix="uncapped-",
@@ -340,7 +340,7 @@ def test_uncapped_worker_preserves_high_vram_without_termination(tmp_path, monke
 def test_audio_workers_have_no_cap_but_require_cuda_telemetry(
     tmp_path, monkeypatch, device, mode
 ):
-    from experiments.benchmarks.extraction.audio import runner
+    from benchmarks.extraction.audio import runner
 
     def launch(_worker, payload, **kwargs):
         assert kwargs.get("vram_limit_mb") is None
@@ -365,7 +365,7 @@ def test_audio_workers_have_no_cap_but_require_cuda_telemetry(
 def test_extraction_protocol_removes_cap_without_changing_rag_caps():
     from copy import deepcopy
 
-    from experiments.benchmarks.extraction.audio.protocol import protocol_from_mapping
+    from benchmarks.extraction.audio.protocol import protocol_from_mapping
 
     settings = deepcopy(audio().meta.resolved)
     assert "authoritative_peak_vram_mb" not in settings["resources"]

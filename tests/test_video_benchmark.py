@@ -5,31 +5,31 @@ from types import SimpleNamespace
 
 import pytest
 
-from edumind.common.artifacts import atomic_write_json, stable_hash
-from experiments.benchmarks.extraction.audio.protocol import (
+from benchmarks.extraction.audio.protocol import (
     load_protocol as load_audio_protocol,
 )
-from experiments.benchmarks.extraction.document.protocol import (
+from benchmarks.extraction.document.protocol import (
     load_protocol as load_document_protocol,
 )
-from experiments.benchmarks.extraction.video import runner as video_runner
-from experiments.benchmarks.extraction.video.candidates import (
+from benchmarks.extraction.video import runner as video_runner
+from benchmarks.extraction.video.candidates import (
     all_candidates,
     frame_command,
     parse_candidate,
 )
-from experiments.benchmarks.extraction.video.frozen_asr import load_frozen_asr_artifact
-from experiments.benchmarks.extraction.video.frozen_asr_worker import (
+from benchmarks.extraction.video.frozen_asr import load_frozen_asr_artifact
+from benchmarks.extraction.video.frozen_asr_worker import (
     _slice_wav,
     _stitch_segments,
     _window_starts,
 )
-from experiments.benchmarks.extraction.video.metrics import (
+from benchmarks.extraction.video.metrics import (
     aggregate_quality,
     score_video,
 )
-from experiments.benchmarks.extraction.video.protocol import load_protocol
-from experiments.benchmarks.extraction.video.runner import _candidates
+from benchmarks.extraction.video.protocol import load_protocol
+from benchmarks.extraction.video.runner import _candidates
+from edumind.common.artifacts import atomic_write_json, stable_hash
 
 ROOT = Path(__file__).resolve().parents[1]
 VIDEO_PROTOCOL = load_protocol()
@@ -41,7 +41,7 @@ DOCUMENT_PROTOCOL = load_document_protocol()
 def test_frozen_asr_has_no_memory_cap_in_smoke_or_preflight(
     monkeypatch, tmp_path, device
 ):
-    from experiments.benchmarks.extraction.video import frozen_asr, preflight
+    from benchmarks.extraction.video import frozen_asr, preflight
 
     calls = []
 
@@ -295,7 +295,7 @@ def test_frozen_asr_artifact_is_reused_only_for_matching_protocol(tmp_path) -> N
     ["src/edumind/extraction/extractors/audio.py", "src/edumind/common/gpu.py"],
 )
 def test_frozen_asr_identity_tracks_shared_runtime_changes(monkeypatch, relative_path):
-    from experiments.benchmarks.extraction.video import frozen_asr
+    from benchmarks.extraction.video import frozen_asr
 
     before = frozen_asr.execution_identity()
     assert relative_path in before["implementation_and_locks"]
@@ -362,8 +362,8 @@ def test_application_video_defaults_and_request_overrides_use_shared_selector() 
 
 
 def test_visual_worker_uses_current_candidate_temp_root(monkeypatch, tmp_path) -> None:
-    from experiments.benchmarks.common import process
-    from experiments.benchmarks.extraction.video import runner
+    from benchmarks.common import process
+    from benchmarks.extraction.video import runner
 
     current = tmp_path / "current-candidate"
     stale = tmp_path / "removed-previous-candidate"
@@ -392,8 +392,8 @@ def test_visual_worker_uses_current_candidate_temp_root(monkeypatch, tmp_path) -
 def test_mocked_visual_phase_runs_through_artifact_writer(
     monkeypatch, tmp_path
 ) -> None:
-    from experiments.benchmarks.common.runner import run_benchmark as real_run_benchmark
-    from experiments.benchmarks.extraction.video import runner
+    from benchmarks.common.runner import run_benchmark as real_run_benchmark
+    from benchmarks.extraction.video import runner
 
     manifest_path = tmp_path / "manifest.json"
     frozen_path = tmp_path / "frozen.json"
@@ -556,9 +556,9 @@ def test_mocked_visual_phase_runs_through_artifact_writer(
 
 
 def _frozen_payload(sample_id):
-    from experiments.benchmarks.extraction.audio.adapters import profiles
-    from experiments.benchmarks.extraction.video.frozen_asr import execution_identity
-    from experiments.benchmarks.extraction.video.frozen_asr_worker import (
+    from benchmarks.extraction.audio.adapters import profiles
+    from benchmarks.extraction.video.frozen_asr import execution_identity
+    from benchmarks.extraction.video.frozen_asr_worker import (
         _score_videos,
     )
 
@@ -748,8 +748,8 @@ def test_frozen_asr_decodes_each_video_once_and_preserves_window_failures(
 ):
     import wave
 
-    from experiments.benchmarks.extraction.audio.adapters import Transcript
-    from experiments.benchmarks.extraction.video import frozen_asr_worker as worker
+    from benchmarks.extraction.audio.adapters import Transcript
+    from benchmarks.extraction.video import frozen_asr_worker as worker
 
     decoded, requests = [], []
 

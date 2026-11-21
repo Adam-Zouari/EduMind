@@ -6,9 +6,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from experiments.benchmarks.rag import evaluation
-from experiments.benchmarks.rag.chunking_embedding.profiles import embedding_spec
-from experiments.benchmarks.rag.chunking_embedding.protocol import load_protocol
+from benchmarks.rag import evaluation
+from benchmarks.rag.chunking_embedding.profiles import embedding_spec
+from benchmarks.rag.chunking_embedding.protocol import load_protocol
 
 
 class Embedder:

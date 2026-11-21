@@ -8,6 +8,40 @@ from types import SimpleNamespace
 
 import pytest
 
+from benchmarks.common.contracts import (
+    BenchmarkPlan,
+    DatasetManifest,
+    SampleResult,
+)
+from benchmarks.common.datasets import assert_no_split_leakage
+from benchmarks.common.process import worker_environment
+from benchmarks.common.resources import ResourceMonitor
+from benchmarks.common.runner import run_benchmark
+from benchmarks.extraction.audio.adapters import (
+    Transcript,
+    WhisperRuntime,
+    profiles,
+)
+from benchmarks.extraction.audio.evaluate import (
+    METRIC_DIRECTIONS,
+    normalize_transcript,
+    score_nonspeech,
+)
+from benchmarks.extraction.audio.evaluate import (
+    aggregate as _aggregate,
+)
+from benchmarks.extraction.audio.evaluate import (
+    score_speech as _score_speech,
+)
+from benchmarks.extraction.audio.protocol import (
+    load_protocol as default_protocol,
+)
+from benchmarks.extraction.audio.validation import (
+    validate_manifest_rows as _validate_manifest_rows,
+)
+from benchmarks.extraction.audio.validation import (
+    validate_reliability_split_isolation as _validate_reliability_split_isolation,
+)
 from edumind.extraction.contracts import (
     ExtractionProfile,
     ExtractionRequest,
@@ -15,40 +49,6 @@ from edumind.extraction.contracts import (
 )
 from edumind.extraction.extractors.audio import WhisperExtractor
 from edumind.extraction.extractors.base import build_document
-from experiments.benchmarks.common.contracts import (
-    BenchmarkPlan,
-    DatasetManifest,
-    SampleResult,
-)
-from experiments.benchmarks.common.datasets import assert_no_split_leakage
-from experiments.benchmarks.common.process import worker_environment
-from experiments.benchmarks.common.resources import ResourceMonitor
-from experiments.benchmarks.common.runner import run_benchmark
-from experiments.benchmarks.extraction.audio.adapters import (
-    Transcript,
-    WhisperRuntime,
-    profiles,
-)
-from experiments.benchmarks.extraction.audio.evaluate import (
-    METRIC_DIRECTIONS,
-    normalize_transcript,
-    score_nonspeech,
-)
-from experiments.benchmarks.extraction.audio.evaluate import (
-    aggregate as _aggregate,
-)
-from experiments.benchmarks.extraction.audio.evaluate import (
-    score_speech as _score_speech,
-)
-from experiments.benchmarks.extraction.audio.protocol import (
-    load_protocol as default_protocol,
-)
-from experiments.benchmarks.extraction.audio.validation import (
-    validate_manifest_rows as _validate_manifest_rows,
-)
-from experiments.benchmarks.extraction.audio.validation import (
-    validate_reliability_split_isolation as _validate_reliability_split_isolation,
-)
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIO_PROTOCOL = default_protocol()
@@ -74,13 +74,13 @@ def aggregate(*args, **kwargs):
 @pytest.mark.parametrize(
     "module, usage",
     (
-        ("experiments.benchmarks.extraction.audio.worker", "usage: worker.py"),
+        ("benchmarks.extraction.audio.worker", "usage: worker.py"),
         (
-            "experiments.benchmarks.extraction.video.frozen_asr_worker",
+            "benchmarks.extraction.video.frozen_asr_worker",
             "usage: frozen_asr_worker.py",
         ),
         (
-            "experiments.benchmarks.extraction.video.visual_worker",
+            "benchmarks.extraction.video.visual_worker",
             "usage: visual_worker.py",
         ),
     ),
@@ -157,7 +157,7 @@ def test_whisper_loader_passes_offline_mode_once(monkeypatch) -> None:
 
 
 def test_mocked_asr_worker_phase_runs_end_to_end(monkeypatch, tmp_path) -> None:
-    from experiments.benchmarks.extraction.audio import worker
+    from benchmarks.extraction.audio import worker
 
     class Runtime:
         def load(self):
@@ -946,7 +946,7 @@ def test_cpu_vram_is_inapplicable_not_a_fabricated_zero():
 
 
 def test_long_reference_timeline_does_not_hit_python_recursion_limit():
-    from experiments.benchmarks.extraction.audio.evaluate import _ordered_span_matches
+    from benchmarks.extraction.audio.evaluate import _ordered_span_matches
 
     matches = _ordered_span_matches(
         [{"text": "alpha"}] * 1100, [{"text": "alpha"}], threshold=0.5
@@ -960,7 +960,7 @@ def test_timestamp_dynamic_program_matches_exhaustive_small_rankings():
     from itertools import pairwise, product
     from random import Random
 
-    from experiments.benchmarks.extraction.audio.evaluate import _ordered_span_matches
+    from benchmarks.extraction.audio.evaluate import _ordered_span_matches
 
     rng = Random(42)
     for _ in range(30):

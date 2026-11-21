@@ -67,7 +67,7 @@ progress, and safe errors; it does not duplicate extraction or RAG logic.
 | `src/edumind/extraction/` | Source contracts, detection, extraction adapters, normalization, provenance, and cache |
 | `src/edumind/rag/` | Chunking, embedding contracts, Chroma access, context packing, and direct HF generation |
 | `src/edumind/application.py` | Typed end-to-end application operations, timings, warnings, and progress events |
-| `experiments/benchmarks/` | Candidate matrices, datasets, metrics, statistical comparisons, MLflow, and reports for engineer selection |
+| `benchmarks/` | Candidate matrices, datasets, metrics, statistical comparisons, MLflow, and reports for engineer selection |
 | `config/base.yaml` | Configurable provisional production defaults; extraction route profiles also have explicit defaults in code |
 | `data/benchmarks/` | Frozen manifests/fixtures plus ignored prepared assets and model snapshots |
 
@@ -93,7 +93,7 @@ silently mixing vectors. These checks do not select benchmark winners.
 The candidate-selection package has a different role:
 
 - `docs/benchmarks/model-selection.md` explains why a model or vector server was shortlisted.
-- `experiments/benchmarks/selection_evidence.csv` provides exact included identities and revisions.
+- `benchmarks/selection_evidence.csv` provides exact included identities and revisions.
 - each benchmark's `protocol.yaml` owns behavior-changing settings and any
   configurable candidate roster, while code defines supported adapters;
 - `data/benchmarks/models/selected.json` owns prepared revisions, local paths,

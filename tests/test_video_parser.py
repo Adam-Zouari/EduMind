@@ -7,17 +7,17 @@ from types import SimpleNamespace
 
 import pytest
 
+from benchmarks.extraction.document.adapters import (
+    ExperimentalDocumentExtractor,
+)
+from benchmarks.extraction.document.worker import validate_document_payload
+from benchmarks.extraction.video import visual_worker
 from edumind.extraction import ExtractionProfile, ExtractionRequest, SourceKind
 from edumind.extraction.errors import ExtractionBackendError
 from edumind.extraction.extractors.document import (
     DoclingExtractor,
     docling_conversion_output,
 )
-from experiments.benchmarks.extraction.document.adapters import (
-    ExperimentalDocumentExtractor,
-)
-from experiments.benchmarks.extraction.document.worker import validate_document_payload
-from experiments.benchmarks.extraction.video import visual_worker
 
 
 class Status(str, Enum):

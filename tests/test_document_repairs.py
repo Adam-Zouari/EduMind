@@ -9,12 +9,12 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
+from benchmarks.extraction.document import adapters, metrics, worker
+from benchmarks.extraction.document.profiles import lock_paths
+from benchmarks.extraction.document.protocol import load_protocol
 from edumind.common.artifacts import sha256_file
 from edumind.extraction import ExtractedDocument, ExtractionProfile, SourceKind
 from edumind.extraction.contracts import ExtractionRequest
-from experiments.benchmarks.extraction.document import adapters, metrics, worker
-from experiments.benchmarks.extraction.document.profiles import lock_paths
-from experiments.benchmarks.extraction.document.protocol import load_protocol
 
 
 @pytest.mark.parametrize(
@@ -122,7 +122,7 @@ def test_cdm_reconstruction_zero_does_not_invent_success_counts(status):
 
 
 def test_cdm_missing_counts_do_not_erase_completed_similarity():
-    from experiments.benchmarks.extraction.document.omnidocbench_worker import (
+    from benchmarks.extraction.document.omnidocbench_worker import (
         _score_formula,
     )
 
@@ -284,7 +284,7 @@ def test_official_wrapper_normalizes_nonempty_pairs_symmetrically(
 ):
     import importlib.util
 
-    from experiments.benchmarks.extraction.document import (
+    from benchmarks.extraction.document import (
         omnidocbench_worker as official,
     )
 

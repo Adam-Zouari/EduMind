@@ -9,6 +9,17 @@ from types import SimpleNamespace
 
 import pytest
 
+from benchmarks.extraction.document import worker
+from benchmarks.extraction.document.adapters import (
+    ExperimentalDocumentExtractor,
+    _paddle_blocks,
+    _paddle_box,
+    _parse_table_html,
+)
+from benchmarks.extraction.document.protocol import (
+    load_protocol,
+    protocol_from_mapping,
+)
 from edumind.extraction.contracts import (
     ExtractionProfile,
     ExtractionRequest,
@@ -18,17 +29,6 @@ from edumind.extraction.errors import ExtractionBackendError
 from edumind.extraction.structured import (
     build_docling_document,
     build_structured_document,
-)
-from experiments.benchmarks.extraction.document import worker
-from experiments.benchmarks.extraction.document.adapters import (
-    ExperimentalDocumentExtractor,
-    _paddle_blocks,
-    _paddle_box,
-    _parse_table_html,
-)
-from experiments.benchmarks.extraction.document.protocol import (
-    load_protocol,
-    protocol_from_mapping,
 )
 
 
@@ -91,8 +91,8 @@ def test_validator_accepts_valid_empty_and_json_roundtrip():
 def test_validator_import_does_not_load_models_or_scoring():
     code = """
 import sys
-from experiments.benchmarks.extraction.document.worker import validate_document_payload
-assert not {'torch', 'paddle', 'docling', 'experiments.benchmarks.extraction.document.metrics'} & sys.modules.keys()
+from benchmarks.extraction.document.worker import validate_document_payload
+assert not {'torch', 'paddle', 'docling', 'benchmarks.extraction.document.metrics'} & sys.modules.keys()
 """
     result = subprocess.run(
         [sys.executable, "-B", "-c", code], capture_output=True, text=True, check=False
@@ -101,7 +101,7 @@ assert not {'torch', 'paddle', 'docling', 'experiments.benchmarks.extraction.doc
 
 
 def test_fingerprint_retains_structure_but_ignores_incidental_ids_and_timings():
-    from experiments.benchmarks.extraction.document.metrics import _document_fingerprint
+    from benchmarks.extraction.document.metrics import _document_fingerprint
 
     original = canonical_payload()
     changed = deepcopy(original)
@@ -225,7 +225,7 @@ def lifecycle(monkeypatch):
 def test_worker_times_validation_and_fingerprinting_and_preserves_physical_pages(
     lifecycle, monkeypatch
 ):
-    from experiments.benchmarks.extraction.document import metrics
+    from benchmarks.extraction.document import metrics
 
     validate, fingerprint = (
         worker.validate_document_payload,
@@ -416,7 +416,7 @@ def test_rejected_paddle_block_is_inspectable_but_not_scored():
 
 
 def test_rejected_diagnostic_is_bounded():
-    from experiments.benchmarks.extraction.evidence import rejected_diagnostic
+    from benchmarks.extraction.evidence import rejected_diagnostic
 
     payload = {"x" * 1000: ["y" * 1000] * 1000}
     encoded = json.dumps(
@@ -537,8 +537,8 @@ def test_preflight_failure_class_survives_json_boundary(
     tmp_path,
     failure_kind,
 ):
-    from experiments.benchmarks.common import process
-    from experiments.benchmarks.common.preflight import _probe_candidate
+    from benchmarks.common import process
+    from benchmarks.common.preflight import _probe_candidate
 
     lifecycle.payload.update(mode="preflight", device="cuda")
     if failure_kind == "measurement":
@@ -639,7 +639,7 @@ def test_nonzero_worker_exit_preserves_supervisor_and_child_resource_evidence(
     child_peak,
     expected_peak,
 ):
-    from experiments.benchmarks.common import process
+    from benchmarks.common import process
 
     supervisor_samples = [{"vram_mb": 200, "source": "supervisor"}]
     child_samples = [{"vram_mb": None, "source": "worker"}]

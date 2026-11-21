@@ -4,15 +4,15 @@ from dataclasses import replace
 
 import pytest
 
-from edumind.common.paths import PROJECT_ROOT
-from experiments.benchmarks.common.data_validation import manifest_path
-from experiments.benchmarks.common.datasets import (
+from benchmarks.common.data_validation import manifest_path
+from benchmarks.common.datasets import (
     DatasetValidationError,
     assert_no_split_leakage,
     load_manifest,
     require_manifest_split,
 )
-from experiments.benchmarks.preparation.fixtures import _write_minimal_docx
+from benchmarks.preparation.fixtures import _write_minimal_docx
+from edumind.common.paths import PROJECT_ROOT
 
 
 def test_smoke_dataset_has_thirty_documents_24_questions_and_exact_offsets() -> None:

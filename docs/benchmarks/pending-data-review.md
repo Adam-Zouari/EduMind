@@ -86,7 +86,7 @@ the authoritative dataset manifests and methodology, then remove the item.
 - Confirm that the reviewed video durations and annotations are compatible with
   the frozen 30-second windows, 2-second overlap, normalized suffix/prefix
   stitching, and one-to-one occurrence threshold in
-  `experiments/benchmarks/extraction/video/protocol.yaml`. Any required revision
+  `benchmarks/extraction/video/protocol.yaml`. Any required revision
   must be justified from development data and receive a new protocol version;
   validation and locked-test results cannot tune it.
 - After the development scene comparison, write the selected declared scene

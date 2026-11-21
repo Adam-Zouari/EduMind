@@ -126,7 +126,7 @@ adding a forwarding-only module. The tree shows domain ownership; each added
 module must contain real checks beyond the shared primitives.
 
 ```text
-experiments/benchmarks/
+benchmarks/
 ├── validate.py                    # one public coordinator
 ├── common/datasets.py             # shared data-validation primitives
 ├── common/data_validation.py      # sealed report identity and verification
@@ -152,15 +152,15 @@ that its references, corpus coverage, or split isolation passed validation.
 Available commands, from the repository root:
 
 ```powershell
-python -m experiments.benchmarks.validate audio --profile development
-python -m experiments.benchmarks.validate audio --profile all
-python -m experiments.benchmarks.validate document --profile all
-python -m experiments.benchmarks.validate video --profile all
-python -m experiments.benchmarks.validate chunking-embedding --profile all
-python -m experiments.benchmarks.validate retrieval-reranking --profile all
-python -m experiments.benchmarks.validate generation --profile all
-python -m experiments.benchmarks.validate all --profile smoke
-python -m experiments.benchmarks.validate all --profile all
+python -m benchmarks.validate audio --profile development
+python -m benchmarks.validate audio --profile all
+python -m benchmarks.validate document --profile all
+python -m benchmarks.validate video --profile all
+python -m benchmarks.validate chunking-embedding --profile all
+python -m benchmarks.validate retrieval-reranking --profile all
+python -m benchmarks.validate generation --profile all
+python -m benchmarks.validate all --profile smoke
+python -m benchmarks.validate all --profile all
 ```
 
 `all` coordinates all eight benchmark validators. It reports missing
@@ -175,8 +175,8 @@ report's content seal; it neither repairs inputs nor creates a passed report.
 Additional benchmark commands:
 
 ```powershell
-python -m experiments.benchmarks.validate final-rag --profile all
-python -m experiments.benchmarks.validate vectordb --profile all
+python -m benchmarks.validate final-rag --profile all
+python -m benchmarks.validate vectordb --profile all
 ```
 
 `--profile smoke|development|validation|locked` chooses one applicable dataset;

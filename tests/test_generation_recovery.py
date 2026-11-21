@@ -18,28 +18,22 @@ from test_generation_benchmark import (
 )
 from test_generation_benchmark import inputs as base_inputs
 
-from edumind.common.artifacts import (
-    atomic_write_json,
-    atomic_write_text,
-    sha256_file,
-    stable_hash,
-)
-from experiments.benchmarks.common.contracts import CandidateExecutionError
-from experiments.benchmarks.common.process import (
+from benchmarks.common.contracts import CandidateExecutionError
+from benchmarks.common.process import (
     WorkerExecutionError,
     WorkerMeasurementError,
     benchmark_objects_from_payload,
 )
-from experiments.benchmarks.rag.generation import evaluate, run
-from experiments.benchmarks.rag.generation.evidence import load_execution
-from experiments.benchmarks.rag.generation.judge import (
+from benchmarks.rag.generation import evaluate, run
+from benchmarks.rag.generation.evidence import load_execution
+from benchmarks.rag.generation.judge import (
     LABEL_SCHEMA,
     TASKS,
     SemanticJudge,
     configured_judge,
     validate_response_labels,
 )
-from experiments.benchmarks.rag.generation.metrics import (
+from benchmarks.rag.generation.metrics import (
     PRIMARY_METRICS,
     RATE_KEYS,
     aggregate,
@@ -47,9 +41,15 @@ from experiments.benchmarks.rag.generation.metrics import (
     score_attempt,
     score_pairs,
 )
-from experiments.benchmarks.rag.generation.models import LocalBackend
-from experiments.benchmarks.rag.generation.protocol import load_protocol
-from experiments.benchmarks.rag.generation.validation import questions_from_manifest
+from benchmarks.rag.generation.models import LocalBackend
+from benchmarks.rag.generation.protocol import load_protocol
+from benchmarks.rag.generation.validation import questions_from_manifest
+from edumind.common.artifacts import (
+    atomic_write_json,
+    atomic_write_text,
+    sha256_file,
+    stable_hash,
+)
 
 
 @pytest.fixture
@@ -681,9 +681,7 @@ def test_configured_adapter_binds_frozen_identity_without_provider_default(
             ),
         )
 
-    monkeypatch.setattr(
-        "experiments.benchmarks.rag.generation.judge.subprocess.run", adapter
-    )
+    monkeypatch.setattr("benchmarks.rag.generation.judge.subprocess.run", adapter)
     result = configured_judge(protocol.judge_contract_path, path).response(
         question, answer()
     )
@@ -711,7 +709,7 @@ def test_semantic_pair_has_its_own_rubric_not_response_evidence_scopes(
 def test_received_raw_reply_recovers_across_validation_interruption(
     calibrated_inputs, monkeypatch, tmp_path
 ):
-    from experiments.benchmarks.rag.generation import judge as judge_module
+    from benchmarks.rag.generation import judge as judge_module
 
     protocol, question = calibrated_inputs[0], calibrated_inputs[2][0]
     original = judge_module.atomic_write_json

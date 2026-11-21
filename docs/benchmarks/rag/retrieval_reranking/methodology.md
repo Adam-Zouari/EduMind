@@ -59,7 +59,7 @@ verifies a saved inventory against its recorded checksum and original manifest
 for model-free rescoring; changed inventory or references are rejected.
 The fixed evaluation tokenizer verifies the pinned local encoding bytes and
 never downloads or repairs assets at runtime. If the encoding is missing or
-corrupt, run `python -m experiments.benchmarks.prepare embedding-models` before
+corrupt, run `python -m benchmarks.prepare embedding-models` before
 the benchmark. This command prepares the embedding snapshots as well as the tokenizer.
 
 Reviewed independent-source CI support requirements remain data-dependent.
@@ -183,7 +183,7 @@ The top-20 pool supports reranking and diagnosis; it is not another quality
 cutoff. No token-budget packing policy is applied in this phase. The first three
 and first five canonical chunk texts are scored exactly as ranked.
 
-The versioned `experiments/benchmarks/rag/retrieval_reranking/protocol.yaml` file is the
+The versioned `benchmarks/rag/retrieval_reranking/protocol.yaml` file is the
 single source of truth for benchmark hyperparameters. Its strict schema rejects
 missing or unknown fields. Algorithm definitions and deterministic tie-breaking
 remain tested code invariants rather than configurable alternatives. The runner

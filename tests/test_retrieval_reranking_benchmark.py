@@ -9,61 +9,61 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from edumind.common.artifacts import stable_hash
-from edumind.common.paths import PROJECT_ROOT
-from edumind.rag.contracts import PRODUCTION_EMBEDDING_MODEL, EmbeddingSpec
-from edumind.rag.errors import RAGConfigurationError
-from edumind.rag.tokenizers import TiktokenOffsetTokenizer
-from experiments.benchmarks.common.contracts import (
+from benchmarks.common.contracts import (
     BenchmarkPlan,
     CandidateExecutionError,
     CandidateResult,
     DatasetManifest,
     SampleResult,
 )
-from experiments.benchmarks.common.datasets import load_manifest
-from experiments.benchmarks.rag.chunking_embedding.protocol import (
+from benchmarks.common.datasets import load_manifest
+from benchmarks.rag.chunking_embedding.protocol import (
     load_protocol as default_chunking_protocol,
 )
-from experiments.benchmarks.rag.chunking_embedding.protocol import (
+from benchmarks.rag.chunking_embedding.protocol import (
     protocol_from_mapping as chunking_protocol_from_mapping,
 )
-from experiments.benchmarks.rag.chunking_embedding.strategies import (
+from benchmarks.rag.chunking_embedding.strategies import (
     build_chunking_strategy,
 )
-from experiments.benchmarks.rag.evaluation import (
+from benchmarks.rag.evaluation import (
     Chunk,
     ExactIndex,
     OutputIntegrityError,
 )
-from experiments.benchmarks.rag.methods import reciprocal_rank_fusion_with_scores
-from experiments.benchmarks.rag.retrieval_reranking import (
+from benchmarks.rag.methods import reciprocal_rank_fusion_with_scores
+from benchmarks.rag.retrieval_reranking import (
     benchmark as retrieval_benchmark,
 )
-from experiments.benchmarks.rag.retrieval_reranking import run as retrieval_run
-from experiments.benchmarks.rag.retrieval_reranking.benchmark import (
+from benchmarks.rag.retrieval_reranking import run as retrieval_run
+from benchmarks.rag.retrieval_reranking.benchmark import (
     _require_permutation,
     evaluate_candidate,
 )
-from experiments.benchmarks.rag.retrieval_reranking.comparisons import (
+from benchmarks.rag.retrieval_reranking.comparisons import (
     parent_artifact_builder,
 )
-from experiments.benchmarks.rag.retrieval_reranking.metrics import (
+from benchmarks.rag.retrieval_reranking.metrics import (
     directions_for,
     pool_evidence_unit_recall,
 )
-from experiments.benchmarks.rag.retrieval_reranking.profiles import (
+from benchmarks.rag.retrieval_reranking.profiles import (
     development_candidates,
     owner_first,
     parse_candidate,
 )
-from experiments.benchmarks.rag.retrieval_reranking.protocol import (
+from benchmarks.rag.retrieval_reranking.protocol import (
     load_protocol as default_protocol,
 )
-from experiments.benchmarks.rag.retrieval_reranking.protocol import (
+from benchmarks.rag.retrieval_reranking.protocol import (
     protocol_from_mapping,
     protocol_from_settings,
 )
+from edumind.common.artifacts import stable_hash
+from edumind.common.paths import PROJECT_ROOT
+from edumind.rag.contracts import PRODUCTION_EMBEDDING_MODEL, EmbeddingSpec
+from edumind.rag.errors import RAGConfigurationError
+from edumind.rag.tokenizers import TiktokenOffsetTokenizer
 
 RETRIEVAL_CANDIDATES = owner_first(development_candidates())
 
@@ -276,7 +276,7 @@ def test_bm25_freezes_documented_parameters(monkeypatch: pytest.MonkeyPatch) -> 
 
     import rank_bm25
 
-    from experiments.benchmarks.rag import methods
+    from benchmarks.rag import methods
 
     monkeypatch.setattr(rank_bm25, "BM25Okapi", FixtureBM25)
 
@@ -1060,7 +1060,7 @@ def test_preparation_only_is_explicit_and_native_validation_is_measured(monkeypa
 
 
 def test_repeatability_all_three_pairs_full_order_and_missing_outcomes():
-    from experiments.benchmarks.rag.retrieval_reranking.metrics import repeatability
+    from benchmarks.rag.retrieval_reranking.metrics import repeatability
 
     def attempt(rep, ids=None, status="success"):
         return {
@@ -1087,7 +1087,7 @@ def test_repeatability_all_three_pairs_full_order_and_missing_outcomes():
 
 
 def test_repeatability_source_ci_policy_and_degenerate_bounds():
-    from experiments.benchmarks.rag.retrieval_reranking.metrics import aggregate_quality
+    from benchmarks.rag.retrieval_reranking.metrics import aggregate_quality
 
     key = "diagnostic.ranking_repeatability"
     samples = [
@@ -1121,7 +1121,7 @@ def test_repeatability_source_ci_policy_and_degenerate_bounds():
 
 
 def test_document_macro_weights_survive_reviewed_multi_document_source_groups():
-    from experiments.benchmarks.rag.retrieval_reranking.metrics import aggregate_quality
+    from benchmarks.rag.retrieval_reranking.metrics import aggregate_quality
 
     name = "quality.overall.ndcg_at_5"
     samples = [
@@ -1159,7 +1159,7 @@ def test_document_macro_weights_survive_reviewed_multi_document_source_groups():
 
 
 def test_paired_latency_recalculates_percentiles_not_mean_query_differences():
-    from experiments.benchmarks.rag.retrieval_reranking.metrics import (
+    from benchmarks.rag.retrieval_reranking.metrics import (
         paired_document_interval,
     )
 
@@ -1208,7 +1208,7 @@ def test_interrupted_rrf_build_preserves_only_completed_dependency():
 
 
 def test_rr_validator_binds_explicit_chunking_protocol_and_reuses_report(tmp_path):
-    from experiments.benchmarks.rag.retrieval_reranking.validation import (
+    from benchmarks.rag.retrieval_reranking.validation import (
         prepare_report,
         verify_inputs,
     )
@@ -1395,7 +1395,7 @@ def test_evaluator_preserves_dense_build_when_bm25_construction_fails(monkeypatc
 
     from test_rag_evaluation import Embedder
 
-    from experiments.benchmarks.rag import evaluation
+    from benchmarks.rag import evaluation
 
     spec = replace(_fixture_index().embedding_spec, dimension=2)
     monkeypatch.setattr(evaluation, "embedding_spec", lambda *a, **kw: spec)
@@ -1435,7 +1435,7 @@ def test_evaluator_preserves_dense_build_when_bm25_construction_fails(monkeypatc
 def test_actual_reranker_adapter_retains_rejected_native_fragment(
     monkeypatch, tmp_path, native
 ):
-    from experiments.benchmarks.rag.methods import Reranker
+    from benchmarks.rag.methods import Reranker
 
     owner = _rr_evaluate(monkeypatch, preparation_only=True)
     adapter = Reranker("fixture", "revision", ".", maximum_length=8192)
@@ -1523,12 +1523,12 @@ def test_no_duplicate_alpha_eligibility_but_metric_specific_support_survives(
 def test_full_inventory_recomputes_semantic_ideals_without_models(
     monkeypatch, tmp_path
 ):
-    from edumind.common.artifacts import atomic_write_json
-    from experiments.benchmarks.rag.chunking_embedding.metrics import score_question
-    from experiments.benchmarks.rag.retrieval_reranking.inventory import (
+    from benchmarks.rag.chunking_embedding.metrics import score_question
+    from benchmarks.rag.retrieval_reranking.inventory import (
         canonical_inventory,
         chunks_from_inventory,
     )
+    from edumind.common.artifacts import atomic_write_json
 
     manifest, index = _fixture_manifest(), _fixture_index()
     index.chunking_contract = {
@@ -1637,8 +1637,8 @@ def test_parent_retains_one_inventory_and_failed_owner_pool_without_reexecution(
 
     import mlflow
 
+    from benchmarks.common import runner
     from edumind.common.artifacts import atomic_write_json
-    from experiments.benchmarks.common import runner
 
     settings = _settings(
         profile="smoke", warmups=0, repetitions=3, bootstrap_resamples=0

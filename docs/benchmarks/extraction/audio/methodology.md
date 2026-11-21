@@ -113,7 +113,7 @@ required timestamps, and control categories, and rejects a full speech split
 with no normalized reference words or eligible timed segments. Individual
 legitimate empty projections remain valid. No data check runs inside measured
 transcription or candidate resource monitoring. Run
-`python -m experiments.benchmarks.validate audio --profile <profile>` after
+`python -m benchmarks.validate audio --profile <profile>` after
 preparing the inputs; execution automatically verifies its matching sealed report.
 
 ## Metrics and their purpose

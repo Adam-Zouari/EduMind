@@ -4,8 +4,8 @@ from copy import deepcopy
 
 import pytest
 
-from experiments.benchmarks.common.metrics import precision_recall_f1
-from experiments.benchmarks.extraction.document.protocol import load_protocol
+from benchmarks.common.metrics import precision_recall_f1
+from benchmarks.extraction.document.protocol import load_protocol
 
 
 @pytest.mark.parametrize("false_positive,false_negative", [(13, 1), (1, 13)])
@@ -36,8 +36,8 @@ def test_worker_envelope_rejects_unknown_fields():
 def test_preflight_parent_and_child_use_canonical_dataset_identity(
     tmp_path, monkeypatch
 ):
-    from experiments.benchmarks.common import preflight
-    from experiments.benchmarks.common.tracking import NoTracking
+    from benchmarks.common import preflight
+    from benchmarks.common.tracking import NoTracking
 
     tags = []
 

@@ -8,23 +8,18 @@ from typing import ClassVar
 import numpy as np
 import pytest
 
-from edumind.rag.contracts import EmbeddingSpec
-from edumind.rag.embedder import Embedder
-from edumind.rag.errors import RAGConfigurationError
-from edumind.rag.text_chunker import TokenChunkingStrategy
-from edumind.rag.tokenizers import TiktokenOffsetTokenizer
-from experiments.benchmarks.common.contracts import (
+from benchmarks.common.contracts import (
     BenchmarkPlan,
     DatasetManifest,
     SampleResult,
 )
-from experiments.benchmarks.common.datasets import (
+from benchmarks.common.datasets import (
     DatasetValidationError,
     validate_evidence,
 )
-from experiments.benchmarks.preparation.datasets import _answers_and_evidence
-from experiments.benchmarks.rag.chunking_embedding import benchmark
-from experiments.benchmarks.rag.chunking_embedding.metrics import (
+from benchmarks.preparation.datasets import _answers_and_evidence
+from benchmarks.rag.chunking_embedding import benchmark
+from benchmarks.rag.chunking_embedding.metrics import (
     aggregate_quality,
     aggregate_repeatability,
     latency_intervals,
@@ -32,26 +27,31 @@ from experiments.benchmarks.rag.chunking_embedding.metrics import (
     ranking_repeatability,
     score_question,
 )
-from experiments.benchmarks.rag.chunking_embedding.profiles import embedding_spec
-from experiments.benchmarks.rag.chunking_embedding.protocol import (
+from benchmarks.rag.chunking_embedding.profiles import embedding_spec
+from benchmarks.rag.chunking_embedding.protocol import (
     load_protocol as default_chunking_protocol,
 )
-from experiments.benchmarks.rag.chunking_embedding.protocol import (
+from benchmarks.rag.chunking_embedding.protocol import (
     protocol_from_mapping as chunking_protocol_from_mapping,
 )
-from experiments.benchmarks.rag.chunking_embedding.strategies import (
+from benchmarks.rag.chunking_embedding.strategies import (
     RecursiveCharacterChunkingStrategy,
     SemanticChunkingStrategy,
     StructureAwareChunkingStrategy,
     build_chunking_strategy,
 )
-from experiments.benchmarks.rag.evaluation import (
+from benchmarks.rag.evaluation import (
     Chunk,
     ExactIndex,
     InputCompatibilityError,
     _chunking_contract,
     dense_rank_with_scores,
 )
+from edumind.rag.contracts import EmbeddingSpec
+from edumind.rag.embedder import Embedder
+from edumind.rag.errors import RAGConfigurationError
+from edumind.rag.text_chunker import TokenChunkingStrategy
+from edumind.rag.tokenizers import TiktokenOffsetTokenizer
 
 CHUNKING_PROTOCOL = default_chunking_protocol()
 FIXTURE_EMBEDDING = replace(
@@ -736,7 +736,7 @@ def test_rag_evidence_requires_stable_units_and_valid_mixed_types() -> None:
 
 
 def test_build_index_rejects_model_inputs_before_embedding(monkeypatch) -> None:
-    from experiments.benchmarks.rag import evaluation
+    from benchmarks.rag import evaluation
 
     class Embedder:
         batch_size = 1
@@ -799,7 +799,7 @@ def test_build_index_rejects_model_inputs_before_embedding(monkeypatch) -> None:
 def test_cl100k_boundaries_send_canonical_text_not_token_ids_to_embedder(
     monkeypatch,
 ) -> None:
-    from experiments.benchmarks.rag import evaluation
+    from benchmarks.rag import evaluation
 
     embedded_inputs: list[tuple[str, ...]] = []
 
@@ -1042,7 +1042,7 @@ def test_candidate_emits_new_metrics_and_auditable_top_twenty(monkeypatch) -> No
 
 
 def test_fixed_workload_is_parent_plan_metadata_and_matches_manifest(monkeypatch):
-    from experiments.benchmarks.rag.chunking_embedding import run
+    from benchmarks.rag.chunking_embedding import run
 
     monkeypatch.setattr(run, "TiktokenOffsetTokenizer", lambda *_: WordTokenizer())
     manifest = _manifest()
@@ -1412,13 +1412,13 @@ def test_protocol_rejects_missing_chunker_and_single_document_ci_support():
 
 
 def test_sealed_data_report_is_reused_then_rejects_changed_input(tmp_path, monkeypatch):
-    from edumind.common.artifacts import atomic_write_json
-    from edumind.common.paths import PROJECT_ROOT
-    from experiments.benchmarks.common.datasets import load_manifest
-    from experiments.benchmarks.rag.chunking_embedding.validation import (
+    from benchmarks.common.datasets import load_manifest
+    from benchmarks.rag.chunking_embedding.validation import (
         prepare_report,
         verify_inputs,
     )
+    from edumind.common.artifacts import atomic_write_json
+    from edumind.common.paths import PROJECT_ROOT
 
     source = PROJECT_ROOT / "data/benchmarks/rag/smoke.json"
     manifest = load_manifest(source)
@@ -1427,7 +1427,7 @@ def test_sealed_data_report_is_reused_then_rejects_changed_input(tmp_path, monke
     root = tmp_path / "reports"
     _, report = prepare_report(path, "smoke", CHUNKING_PROTOCOL, report_root=root)
     assert report["status"] == "passed"
-    from experiments.benchmarks.common import datasets
+    from benchmarks.common import datasets
 
     monkeypatch.setattr(
         datasets,
@@ -1445,9 +1445,9 @@ def test_sealed_data_report_is_reused_then_rejects_changed_input(tmp_path, monke
 
 @pytest.mark.parametrize("identifier", [" unit ", 1, None])
 def test_invalid_evidence_ids_produce_a_failed_data_report(tmp_path, identifier):
+    from benchmarks.common.datasets import manifest_content_checksum
+    from benchmarks.rag.chunking_embedding.validation import prepare_report
     from edumind.common.artifacts import atomic_write_json
-    from experiments.benchmarks.common.datasets import manifest_content_checksum
-    from experiments.benchmarks.rag.chunking_embedding.validation import prepare_report
 
     manifest = deepcopy(_manifest().__dict__)
     manifest["samples"][-1]["evidence"][0]["id"] = identifier
@@ -1464,8 +1464,8 @@ def test_invalid_evidence_ids_produce_a_failed_data_report(tmp_path, identifier)
 
 @pytest.mark.parametrize("payload", [[], None, {"samples": [None]}])
 def test_malformed_manifest_structure_produces_a_failed_data_report(tmp_path, payload):
+    from benchmarks.rag.chunking_embedding.validation import prepare_report
     from edumind.common.artifacts import atomic_write_json
-    from experiments.benchmarks.rag.chunking_embedding.validation import prepare_report
 
     if isinstance(payload, dict):
         payload = {**_manifest().__dict__, **payload}
@@ -1525,7 +1525,7 @@ def test_alpha_greedy_exceedance_keeps_raw_ratio_and_caps_question_score():
     "ranking", [[], [(0, 1.0), (0, 0.9)], [(2, 1.0)], [(0, float("nan"))]]
 )
 def test_invalid_rankings_are_integrity_errors(ranking):
-    from experiments.benchmarks.rag.evaluation import validate_ranking
+    from benchmarks.rag.evaluation import validate_ranking
 
     with pytest.raises(RuntimeError):
         validate_ranking(SimpleNamespace(chunks=[object()]), ranking, 20)
@@ -1594,8 +1594,8 @@ def test_partial_build_preserves_inventory_but_no_final_bytes_or_duration(monkey
 
 
 def test_paired_ci_does_not_invent_support_before_data_review():
-    from experiments.benchmarks.common.contracts import CandidateResult
-    from experiments.benchmarks.common.runner import _paired_comparisons
+    from benchmarks.common.contracts import CandidateResult
+    from benchmarks.common.runner import _paired_comparisons
 
     name = "quality.overall.ndcg_at_3"
     samples = tuple(
@@ -1705,7 +1705,7 @@ def test_structure_chunker_does_not_split_a_formula_at_a_hash_heading():
 
 
 def test_zero_generated_chunks_are_known_but_not_a_completed_index(monkeypatch):
-    from experiments.benchmarks.rag import evaluation
+    from benchmarks.rag import evaluation
 
     monkeypatch.setattr(
         evaluation,
@@ -1737,7 +1737,7 @@ def test_zero_generated_chunks_are_known_but_not_a_completed_index(monkeypatch):
 
 
 def test_fatal_worker_retains_missing_records_without_inventing_attempts(monkeypatch):
-    from experiments.benchmarks.common.process import WorkerExecutionError
+    from benchmarks.common.process import WorkerExecutionError
 
     def crash(*args, **kwargs):
         raise WorkerExecutionError("injected process exit", {"peak_vram_mb": 600})
@@ -1840,7 +1840,7 @@ def test_invalid_worker_schema_retains_missing_records_and_available_peaks(
 def test_successful_preflight_merges_supervisor_evidence_without_legacy_helper(
     monkeypatch,
 ):
-    from experiments.benchmarks.common.preflight import _probe_candidate
+    from benchmarks.common.preflight import _probe_candidate
 
     monkeypatch.setattr(
         benchmark,
@@ -1884,9 +1884,9 @@ def test_successful_preflight_merges_supervisor_evidence_without_legacy_helper(
 
 
 def test_authoritative_data_validation_checks_complete_inventory_and_leakage(tmp_path):
+    from benchmarks.common.datasets import manifest_content_checksum
+    from benchmarks.rag.chunking_embedding.validation import prepare_report
     from edumind.common.artifacts import atomic_write_json
-    from experiments.benchmarks.common.datasets import manifest_content_checksum
-    from experiments.benchmarks.rag.chunking_embedding.validation import prepare_report
 
     payload = deepcopy(CHUNKING_PROTOCOL.meta.resolved)
     payload["data"]["qasper_papers"] = dict.fromkeys(
@@ -1963,8 +1963,8 @@ def test_authoritative_data_validation_checks_complete_inventory_and_leakage(tmp
 def test_phase_decisions_reject_stale_protocols_and_select_exact_winners(
     tmp_path, profile, source_profile
 ):
+    from benchmarks.rag.chunking_embedding.run import _selected_candidates
     from edumind.common.artifacts import atomic_write_json
-    from experiments.benchmarks.rag.chunking_embedding.run import _selected_candidates
 
     payload = deepcopy(CHUNKING_PROTOCOL.meta.resolved)
     payload["statistics"].update(
@@ -2369,7 +2369,7 @@ def test_ce_repeatability_protocol_rejects_invalid_controls(field, value):
 
 
 def test_ce_reviewed_groups_preserve_document_macro_and_cluster_draw_copies():
-    from experiments.benchmarks.common.contracts import CandidateResult
+    from benchmarks.common.contracts import CandidateResult
 
     quality, repeat = "quality.overall.ndcg_at_3", "diagnostic.ranking_repeatability"
     samples = [
@@ -2504,7 +2504,7 @@ def test_ce_context_survives_independent_offline_scorer_failure(monkeypatch):
 
 
 def test_ce_paired_parent_hook_writes_grouped_comparison_evidence(tmp_path):
-    from experiments.benchmarks.rag.chunking_embedding.run import _paired_artifact
+    from benchmarks.rag.chunking_embedding.run import _paired_artifact
 
     plan = BenchmarkPlan(
         "rag",
@@ -2559,7 +2559,7 @@ def test_ce_later_integrity_and_hardware_failures_still_fail_gates(monkeypatch, 
 
 
 def test_ce_unfrozen_ci_support_is_explicit_and_cannot_advance(monkeypatch):
-    from experiments.benchmarks.rag.chunking_embedding import run
+    from benchmarks.rag.chunking_embedding import run
 
     assert CHUNKING_PROTOCOL.unfrozen_ci_policies == (
         "quality",

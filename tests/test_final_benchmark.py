@@ -6,25 +6,25 @@ from types import SimpleNamespace
 import pytest
 from test_generation_benchmark import Backend, Monitor
 
-from edumind.common.artifacts import stable_hash
-from experiments.benchmarks.common.contracts import (
+from benchmarks.common.contracts import (
     BenchmarkPlan,
     CandidateExecutionError,
 )
-from experiments.benchmarks.common.datasets import load_manifest
-from experiments.benchmarks.rag.evaluation import Chunk
-from experiments.benchmarks.rag.final import benchmark, validation
-from experiments.benchmarks.rag.final.composition import reserve_locked
-from experiments.benchmarks.rag.final.protocol import load_protocol as final_protocol
-from experiments.benchmarks.rag.final.validation import (
+from benchmarks.common.datasets import load_manifest
+from benchmarks.rag.evaluation import Chunk
+from benchmarks.rag.final import benchmark, validation
+from benchmarks.rag.final.composition import reserve_locked
+from benchmarks.rag.final.protocol import load_protocol as final_protocol
+from benchmarks.rag.final.validation import (
     manifest_path,
     prepare_report,
     verify_inputs,
 )
-from experiments.benchmarks.rag.generation.protocol import load_protocol
-from experiments.benchmarks.rag.retrieval_reranking.protocol import (
+from benchmarks.rag.generation.protocol import load_protocol
+from benchmarks.rag.retrieval_reranking.protocol import (
     load_protocol as retrieval_protocol,
 )
+from edumind.common.artifacts import stable_hash
 
 
 def test_locked_consumption_is_atomic_and_not_reopened_after_failure(tmp_path):
@@ -42,7 +42,7 @@ def test_final_data_check_accepts_missing_supplied_gold_context(tmp_path, monkey
     for row in payload["samples"]:
         if row.get("kind") == "question":
             row.pop("supplied_evidence", None)
-    from experiments.benchmarks.common.datasets import manifest_content_checksum
+    from benchmarks.common.datasets import manifest_content_checksum
 
     payload["checksum"] = manifest_content_checksum(payload["samples"])
     target = tmp_path / "final.json"

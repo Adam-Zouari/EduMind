@@ -122,7 +122,7 @@ inventories, geometry, hierarchy, and split isolation. Explicit empty text or
 element sequences must not be rejected merely for being empty, nor inserted as
 defaults for missing fields. These checks finish before candidate loading and
 measurement; they do not change document metric eligibility or scoring.
-Run `python -m experiments.benchmarks.validate document --profile <profile>`
+Run `python -m benchmarks.validate document --profile <profile>`
 after data preparation. Before candidate execution, the runner verifies the
 matching sealed report against actual input bytes and applicable requirements;
 it does not repeat full validation. Legitimate reviewed empty references remain

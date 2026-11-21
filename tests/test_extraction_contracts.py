@@ -9,6 +9,16 @@ from types import SimpleNamespace
 
 import pytest
 
+from benchmarks.common.protocol import unique_strings
+from benchmarks.extraction.document.metrics import (
+    DocumentEvaluation,
+    aggregate_evaluations,
+    apply_official_metrics,
+    score_document,
+    validate_reference,
+)
+from benchmarks.extraction.document.protocol import load_protocol
+from benchmarks.extraction.scoring import attempt_rates, bootstrap_sources
 from edumind.common.models import ModelPreparationError
 from edumind.extraction import (
     ExtractedDocument,
@@ -17,16 +27,6 @@ from edumind.extraction import (
     SegmentKind,
     SourceKind,
 )
-from experiments.benchmarks.common.protocol import unique_strings
-from experiments.benchmarks.extraction.document.metrics import (
-    DocumentEvaluation,
-    aggregate_evaluations,
-    apply_official_metrics,
-    score_document,
-    validate_reference,
-)
-from experiments.benchmarks.extraction.document.protocol import load_protocol
-from experiments.benchmarks.extraction.scoring import attempt_rates, bootstrap_sources
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -42,7 +42,7 @@ def test_shared_protocol_strings_preserve_order_and_trim_values():
 
 
 def test_official_scores_keep_document_boundaries_and_content_scores(monkeypatch):
-    from experiments.benchmarks.extraction.document import metrics
+    from benchmarks.extraction.document import metrics
 
     records = [
         DocumentEvaluation(("pdf",)),
@@ -109,7 +109,7 @@ def test_official_scores_keep_document_boundaries_and_content_scores(monkeypatch
 def test_validation_inventory_rejects_mislabeled_held_out_samples(
     monkeypatch, benchmark, kind
 ):
-    from experiments.benchmarks.common import data_validation
+    from benchmarks.common import data_validation
 
     manifests = {
         Path(split): SimpleNamespace(
@@ -138,7 +138,7 @@ def test_worker_timeout_terminates_the_tree_and_preserves_failure(
 ):
     import subprocess
 
-    from experiments.benchmarks.common import process
+    from benchmarks.common import process
 
     class Child:
         pid = 123
@@ -154,7 +154,7 @@ def test_worker_timeout_terminates_the_tree_and_preserves_failure(
     monkeypatch.setattr(process, "_terminate_process_tree", terminated.append)
     with pytest.raises(process.WorkerExecutionError, match="timeout") as failure:
         process.run_json_worker(
-            ROOT / "experiments/benchmarks/extraction/audio/worker.py",
+            ROOT / "benchmarks/extraction/audio/worker.py",
             {},
             device="cpu",
             prefix="timeout-",
@@ -167,7 +167,7 @@ def test_worker_timeout_terminates_the_tree_and_preserves_failure(
 
 
 def test_worker_peak_cannot_hide_continuous_measurement_gaps(tmp_path, monkeypatch):
-    from experiments.benchmarks.common import process
+    from benchmarks.common import process
 
     class Monitor:
         peak_vram_mb = 1.0
@@ -193,7 +193,7 @@ def test_worker_peak_cannot_hide_continuous_measurement_gaps(tmp_path, monkeypat
     monkeypatch.setattr(process, "ResourceMonitor", Monitor)
     with pytest.raises(process.WorkerMeasurementError, match="missing") as failure:
         process.run_json_worker(
-            ROOT / "experiments/benchmarks/extraction/audio/worker.py",
+            ROOT / "benchmarks/extraction/audio/worker.py",
             {},
             device="cuda",
             prefix="measurement-",
@@ -208,7 +208,7 @@ def test_worker_peak_cannot_hide_continuous_measurement_gaps(tmp_path, monkeypat
 
 @pytest.fixture
 def stub_official_evaluator(tmp_path, monkeypatch):
-    from experiments.benchmarks.extraction.document import official_metrics as official
+    from benchmarks.extraction.document import official_metrics as official
 
     source = tmp_path / "data/benchmarks/evaluators/OmniDocBench"
     source.mkdir(parents=True)
@@ -251,7 +251,7 @@ def test_official_scorer_timeout_removes_only_its_own_container(
 
 
 def test_table_html_preserves_spanning_cell_coordinates_and_recovers_missing_tags():
-    from experiments.benchmarks.extraction.document.adapters import _parse_table_html
+    from benchmarks.extraction.document.adapters import _parse_table_html
 
     rows, cells = _parse_table_html(
         '<table><tr><th rowspan="2">A</th><td colspan="2">B</td></tr>'
@@ -293,14 +293,14 @@ def test_granite_executes_and_logs_the_protocol_image_scale(monkeypatch, tmp_pat
     converter_module = pytest.importorskip("docling.document_converter")
     from docling.datamodel.base_models import InputFormat
 
-    from edumind.extraction import ExtractionRequest
-    from experiments.benchmarks.extraction.document.adapters import (
+    from benchmarks.extraction.document.adapters import (
         ExperimentalDocumentExtractor,
     )
-    from experiments.benchmarks.extraction.document.worker import (
+    from benchmarks.extraction.document.worker import (
         initialize,
         pipeline_parameters,
     )
+    from edumind.extraction import ExtractionRequest
 
     initialized_formats = []
 
@@ -381,9 +381,9 @@ def test_asr_bootstrap_preserves_speech_and_control_allocation():
 def test_document_data_validation_checks_reference_renderability(monkeypatch, tmp_path):
     import json
 
+    from benchmarks.common.datasets import manifest_content_checksum
+    from benchmarks.extraction.document import official_metrics, validation
     from edumind.common.artifacts import atomic_write_json
-    from experiments.benchmarks.common.datasets import manifest_content_checksum
-    from experiments.benchmarks.extraction.document import official_metrics, validation
 
     manifest = json.loads((ROOT / "data/benchmarks/extraction/smoke.json").read_text())
     sample = next(row for row in manifest["samples"] if row["kind"] == "image")
@@ -489,7 +489,7 @@ def test_partial_placement_inspection_cannot_qualify_a_model(accessor):
 
 
 def test_late_telemetry_failure_preserves_partial_resource_evidence():
-    from experiments.benchmarks.common.resources import ResourceMonitor
+    from benchmarks.common.resources import ResourceMonitor
 
     monitor = ResourceMonitor(require_vram=True)
     monitor._ram_sampled = True
@@ -503,8 +503,8 @@ def test_late_telemetry_failure_preserves_partial_resource_evidence():
 
 @pytest.mark.parametrize("candidate", ["video-fixed-5", "video-fixed-05s"])
 def test_video_candidate_ids_are_canonical(candidate):
-    from experiments.benchmarks.extraction.video.candidates import parse_candidate
-    from experiments.benchmarks.extraction.video.protocol import load_protocol
+    from benchmarks.extraction.video.candidates import parse_candidate
+    from benchmarks.extraction.video.protocol import load_protocol
 
     with pytest.raises(ValueError, match="Unknown video"):
         parse_candidate(candidate, load_protocol())
@@ -559,7 +559,7 @@ def test_all_scheduled_repeatability_pairs_are_accounted_for(attempts, expected)
 def test_structured_negative_reference_requires_explicit_element_list(
     capability, presence, element_field
 ):
-    from experiments.benchmarks.extraction.document.metrics import (
+    from benchmarks.extraction.document.metrics import (
         _reference_from_mapping,
     )
 
@@ -832,7 +832,7 @@ def test_document_bootstrap_uses_metric_eligible_sources_and_document_macro():
 
 
 def test_bootstrap_batches_identical_row_cohorts_with_per_metric_support(monkeypatch):
-    from experiments.benchmarks.extraction.document import metrics
+    from benchmarks.extraction.document import metrics
 
     first, second, table = "text.content_f1", "text.character_error_rate", "tables.teds"
     records = [
@@ -1061,7 +1061,7 @@ def test_blank_table_matching_uses_structure_without_cell_text(cell_text):
     ],
 )
 def test_blank_table_structure_fallback_rejects_changed_or_invalid_structure(html):
-    from experiments.benchmarks.extraction.document.metrics import (
+    from benchmarks.extraction.document.metrics import (
         ReferenceElement,
         _match_elements,
     )
@@ -1144,7 +1144,7 @@ def _cdm_renderer(code=0):
     ],
 )
 def test_cdm_infrastructure_command_failures_are_unavailable(command, code):
-    from experiments.benchmarks.extraction.document.omnidocbench_worker import (
+    from benchmarks.extraction.document.omnidocbench_worker import (
         _score_formula,
     )
 
@@ -1163,7 +1163,7 @@ def test_cdm_infrastructure_command_failures_are_unavailable(command, code):
 
 
 def test_cdm_bad_predicted_latex_is_quality_zero_and_empty_reference_render_is_not():
-    from experiments.benchmarks.extraction.document.omnidocbench_worker import (
+    from benchmarks.extraction.document.omnidocbench_worker import (
         _score_formula,
     )
 
@@ -1201,7 +1201,7 @@ def test_cdm_bad_predicted_latex_is_quality_zero_and_empty_reference_render_is_n
 def test_cdm_missing_template_dependency_is_distinct_from_bad_prediction_input(
     tmp_path, missing, unavailable
 ):
-    from experiments.benchmarks.extraction.document.omnidocbench_worker import (
+    from benchmarks.extraction.document.omnidocbench_worker import (
         _score_formula,
     )
 
@@ -1235,7 +1235,7 @@ def test_cdm_worker_checks_reference_tokens_before_emitting_quality(
     import sys
     from types import ModuleType
 
-    from experiments.benchmarks.extraction.document import omnidocbench_worker as worker
+    from benchmarks.extraction.document import omnidocbench_worker as worker
 
     modules = {
         name: ModuleType(name)
@@ -1311,15 +1311,11 @@ def test_workers_preserve_designated_quality_and_all_measured_attempts(
     import importlib
     import time
 
-    from experiments.benchmarks.extraction.audio.adapters import Transcript
+    from benchmarks.extraction.audio.adapters import Transcript
 
     module = "visual_worker" if suite == "video" else "worker"
-    worker = importlib.import_module(
-        f"experiments.benchmarks.extraction.{suite}.{module}"
-    )
-    protocol_module = importlib.import_module(
-        f"experiments.benchmarks.extraction.{suite}.protocol"
-    )
+    worker = importlib.import_module(f"benchmarks.extraction.{suite}.{module}")
+    protocol_module = importlib.import_module(f"benchmarks.extraction.{suite}.protocol")
     settings = deepcopy(protocol_module.load_protocol().meta.resolved)
     settings["profiles"]["smoke"]["repetitions"] = 3
     if suite == "video":
@@ -1404,10 +1400,10 @@ def test_workers_preserve_designated_quality_and_all_measured_attempts(
                 model_lock={"docling-standard": {"revision": "system"}},
             )
         else:
-            from experiments.benchmarks.extraction.audio.protocol import (
+            from benchmarks.extraction.audio.protocol import (
                 load_protocol as asr_protocol,
             )
-            from experiments.benchmarks.extraction.document.protocol import (
+            from benchmarks.extraction.document.protocol import (
                 load_protocol as doc_protocol,
             )
 
@@ -1502,13 +1498,13 @@ def test_data_verification_reuses_sealed_report_without_running_full_validator(
 ):
     import json
 
-    from edumind.common.artifacts import atomic_write_json, sha256_file
-    from experiments.benchmarks.common.datasets import manifest_content_checksum
-    from experiments.benchmarks.extraction.document.validation import (
+    from benchmarks.common.datasets import manifest_content_checksum
+    from benchmarks.extraction.document.validation import (
         prepare_report,
         verified_inputs,
     )
-    from experiments.benchmarks.preparation import evaluators
+    from benchmarks.preparation import evaluators
+    from edumind.common.artifacts import atomic_write_json, sha256_file
 
     # This fixture has no reconstruction task. Evaluator corruption/resealing
     # has separate preparation regressions; do not depend on local prepared state.
@@ -1568,7 +1564,7 @@ def test_claimed_image_pages_require_explicit_page_annotations(text):
 
 @pytest.mark.parametrize("text", ["", "alpha"])
 def test_smoke_image_page_inference_requires_supplied_text(text):
-    from experiments.benchmarks.extraction.document.metrics import load_reference
+    from benchmarks.extraction.document.metrics import load_reference
 
     reference = load_reference({"id": "image", "kind": "image", "text": text})
     assert reference.pages == {1: text}

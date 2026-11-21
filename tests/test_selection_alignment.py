@@ -5,23 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from edumind.common.config import ConfigurationError, load_settings
-from edumind.common.model_assets import (
-    INFERENCE_SNAPSHOT_IGNORE_PATTERNS,
-    snapshot_ignore_patterns,
-)
-from edumind.extraction.pipeline import LOCK_CANDIDATE_BY_ENGINE
-from edumind.prepare_models import APP_MODELS
-from edumind.rag.contracts import EMBEDDING_SPECS, PRODUCTION_EMBEDDING_MODEL
-from experiments.benchmarks.common.selection import (
+from benchmarks.common.selection import (
     included_candidates,
     selection_entries,
 )
-from experiments.benchmarks.extraction.audio.protocol import (
+from benchmarks.extraction.audio.protocol import (
     load_protocol as load_audio_protocol,
 )
-from experiments.benchmarks.extraction.document.profiles import DOCUMENT_LOCK_CANDIDATES
-from experiments.benchmarks.preparation.models import (
+from benchmarks.extraction.document.profiles import DOCUMENT_LOCK_CANDIDATES
+from benchmarks.preparation.models import (
     DOCLING_BENCHMARK_COMPONENTS,
     EMBEDDING_COMPONENTS,
     EXTRACTION_COMPONENTS,
@@ -32,24 +24,32 @@ from experiments.benchmarks.preparation.models import (
     selected_model_names,
     snapshot_specs,
 )
-from experiments.benchmarks.rag.chunking_embedding.profiles import (
+from benchmarks.rag.chunking_embedding.profiles import (
     EXPERIMENTAL_EMBEDDING_SPECS,
 )
-from experiments.benchmarks.rag.chunking_embedding.protocol import (
+from benchmarks.rag.chunking_embedding.protocol import (
     load_protocol as load_chunking_protocol,
 )
-from experiments.benchmarks.rag.generation.protocol import (
+from benchmarks.rag.generation.protocol import (
     load_protocol as load_generation_protocol,
 )
-from experiments.benchmarks.rag.retrieval_reranking.profiles import (
+from benchmarks.rag.retrieval_reranking.profiles import (
     development_candidates,
 )
+from edumind.common.config import ConfigurationError, load_settings
+from edumind.common.model_assets import (
+    INFERENCE_SNAPSHOT_IGNORE_PATTERNS,
+    snapshot_ignore_patterns,
+)
+from edumind.extraction.pipeline import LOCK_CANDIDATE_BY_ENGINE
+from edumind.prepare_models import APP_MODELS
+from edumind.rag.contracts import EMBEDDING_SPECS, PRODUCTION_EMBEDDING_MODEL
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_selection_history_counts_and_keys_are_preserved() -> None:
-    with (ROOT / "experiments/benchmarks/selection_evidence.csv").open(
+    with (ROOT / "benchmarks/selection_evidence.csv").open(
         encoding="utf-8", newline=""
     ) as handle:
         rows = list(csv.DictReader(handle))
@@ -230,7 +230,7 @@ def test_snapshot_size_rejects_missing_or_empty_snapshots(
 def test_model_lock_writes_measured_size_and_preserves_existing_entries(
     tmp_path, candidate
 ) -> None:
-    from experiments.benchmarks.preparation.models import (
+    from benchmarks.preparation.models import (
         _directory_manifest_hash,
         _merge_model_lock,
     )
@@ -269,7 +269,7 @@ def test_model_lock_writes_measured_size_and_preserves_existing_entries(
 
 
 def test_stage_model_lock_ignores_unrequested_missing_models(tmp_path) -> None:
-    from experiments.benchmarks.preparation.models import _directory_manifest_hash
+    from benchmarks.preparation.models import _directory_manifest_hash
 
     entries = {entry.candidate: entry for entry in selection_entries()}
     requested = entries["openai/whisper-small.en"]
@@ -309,7 +309,7 @@ def test_stage_model_lock_ignores_unrequested_missing_models(tmp_path) -> None:
 
 
 def test_document_stage_requests_only_its_candidate_models(monkeypatch) -> None:
-    from experiments.benchmarks.extraction.document import benchmark
+    from benchmarks.extraction.document import benchmark
 
     requested = None
 
@@ -336,7 +336,7 @@ def test_document_stage_requests_only_its_candidate_models(monkeypatch) -> None:
 
 
 def test_schema_three_model_lock_verifies_the_complete_cache_manifest(tmp_path) -> None:
-    from experiments.benchmarks.preparation.models import _directory_manifest_hash
+    from benchmarks.preparation.models import _directory_manifest_hash
 
     entry = next(
         item

@@ -2,7 +2,7 @@
 
 [Project overview](../../README.md) · [Documentation map](../README.md) ·
 [Benchmark program](../README.md#experiments) · [Shared methodology](methodology.md) ·
-[Selection evidence](../../experiments/benchmarks/selection_evidence.csv) ·
+[Selection evidence](../../benchmarks/selection_evidence.csv) ·
 [Dataset selection](dataset-selection.md) · [Benchmark model preparation](model-preparation.md)
 
 Status: **public-evidence shortlist; EduMind's local benchmarks inform the engineer's final decisions**
@@ -152,7 +152,7 @@ The public screen uses **`avg` WER (%)** from the pinned Open ASR English short-
 
 Shared quality source: the English short-form [Open ASR Leaderboard](https://huggingface.co/spaces/hf-audio/open_asr_leaderboard)
 and its [methodology](https://github.com/huggingface/open_asr_leaderboard).
-The [selection evidence](../../experiments/benchmarks/selection_evidence.csv)
+The [selection evidence](../../benchmarks/selection_evidence.csv)
 records the scores and original CSV revision used for this shortlist. That
 revision was not publicly retrievable during link review; the live leaderboard
 is for browsing, not a replacement for the historical evidence.

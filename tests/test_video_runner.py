@@ -7,24 +7,24 @@ from types import SimpleNamespace
 
 import pytest
 
-from edumind.common.artifacts import sha256_file
-from experiments.benchmarks.common import preflight as common_preflight
-from experiments.benchmarks.common import runner as common_runner
-from experiments.benchmarks.common.contracts import (
+from benchmarks.common import preflight as common_preflight
+from benchmarks.common import runner as common_runner
+from benchmarks.common.contracts import (
     BenchmarkPlan,
     CandidateExecutionError,
     SampleResult,
 )
-from experiments.benchmarks.common.process import (
+from benchmarks.common.process import (
     WorkerExecutionError,
     WorkerMeasurementError,
 )
-from experiments.benchmarks.common.tracking import NoTracking
-from experiments.benchmarks.extraction.video import preflight, runner
-from experiments.benchmarks.extraction.video.protocol import (
+from benchmarks.common.tracking import NoTracking
+from benchmarks.extraction.video import preflight, runner
+from benchmarks.extraction.video.protocol import (
     load_protocol,
     protocol_from_mapping,
 )
+from edumind.common.artifacts import sha256_file
 
 
 def _validation(items):

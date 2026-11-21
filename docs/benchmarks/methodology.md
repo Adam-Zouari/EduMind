@@ -470,14 +470,14 @@ implementation:
 
 | Benchmark | Protocol |
 |---|---|
-| Document extraction | `experiments/benchmarks/extraction/document/protocol.yaml` |
-| ASR extraction | `experiments/benchmarks/extraction/audio/protocol.yaml` |
-| Video extraction | `experiments/benchmarks/extraction/video/protocol.yaml` |
-| Chunking and embedding | `experiments/benchmarks/rag/chunking_embedding/protocol.yaml` |
-| Retrieval and reranking | `experiments/benchmarks/rag/retrieval_reranking/protocol.yaml` |
-| Generation | `experiments/benchmarks/rag/generation/protocol.yaml` |
-| Final RAG | `experiments/benchmarks/rag/final/protocol.yaml` |
-| Vector database | `experiments/benchmarks/vectordb/protocol.yaml` |
+| Document extraction | `benchmarks/extraction/document/protocol.yaml` |
+| ASR extraction | `benchmarks/extraction/audio/protocol.yaml` |
+| Video extraction | `benchmarks/extraction/video/protocol.yaml` |
+| Chunking and embedding | `benchmarks/rag/chunking_embedding/protocol.yaml` |
+| Retrieval and reranking | `benchmarks/rag/retrieval_reranking/protocol.yaml` |
+| Generation | `benchmarks/rag/generation/protocol.yaml` |
+| Final RAG | `benchmarks/rag/final/protocol.yaml` |
+| Vector database | `benchmarks/vectordb/protocol.yaml` |
 
 These files define the editable benchmark settings that can change outputs,
 eligibility, latency, memory, or failure status: search ranges, parser and decoder

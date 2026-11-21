@@ -198,7 +198,7 @@ def test_document_runtime_cache_includes_request_overrides(
     from dataclasses import replace
 
     converter = pytest.importorskip("docling.document_converter")
-    from experiments.benchmarks.extraction.document.adapters import (
+    from benchmarks.extraction.document.adapters import (
         ExperimentalDocumentExtractor,
     )
 
@@ -296,7 +296,7 @@ def test_paddle_sets_framework_device_before_building_pipeline(
 ):
     import sys
 
-    from experiments.benchmarks.extraction.document import adapters
+    from benchmarks.extraction.document import adapters
 
     events = []
     paddle_env = SimpleNamespace(is_cuda_available=lambda: True)

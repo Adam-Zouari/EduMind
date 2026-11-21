@@ -113,7 +113,7 @@ annotation seeds and must be reviewed against the video.
 Use the [data-validation workflow](../../data-validation.md) during preparation.
 Automatic validated-input verification checks the matching report before each
 invocation. Both finish before candidate loading, monitoring, or timing.
-Run `python -m experiments.benchmarks.validate video --profile <profile>` after
+Run `python -m benchmarks.validate video --profile <profile>` after
 preparing the inputs. Frozen-artifact identity checks are separate runtime
 integrity gates.
 

@@ -11,16 +11,16 @@ from types import SimpleNamespace
 
 import pytest
 
-import experiments.benchmarks.common.runner as benchmark_runner
-from experiments.benchmarks.common import process as benchmark_process
-from experiments.benchmarks.common.contracts import (
+import benchmarks.common.runner as benchmark_runner
+from benchmarks.common import process as benchmark_process
+from benchmarks.common.contracts import (
     BenchmarkPlan,
     CandidateExecutionError,
     SampleResult,
 )
-from experiments.benchmarks.common.decisions import load_engineer_decision
-from experiments.benchmarks.common.runner import run_benchmark
-from experiments.benchmarks.rag.generation.protocol import (
+from benchmarks.common.decisions import load_engineer_decision
+from benchmarks.common.runner import run_benchmark
+from benchmarks.rag.generation.protocol import (
     load_protocol as load_generation_protocol,
 )
 
@@ -49,7 +49,7 @@ def test_worker_launcher_uses_repository_module(
         return SimpleNamespace(returncode=0, communicate=lambda **_kwargs: ("", ""))
 
     monkeypatch.setattr(benchmark_process.subprocess, "Popen", fake_popen)
-    script = ROOT / f"experiments/benchmarks/extraction/{domain}/worker.py"
+    script = ROOT / f"benchmarks/extraction/{domain}/worker.py"
     result = benchmark_process.run_json_worker(
         script,
         {},
@@ -63,7 +63,7 @@ def test_worker_launcher_uses_repository_module(
     assert command[:3] == [
         sys.executable,
         "-m",
-        f"experiments.benchmarks.extraction.{domain}.worker",
+        f"benchmarks.extraction.{domain}.worker",
     ]
     assert options["cwd"] == ROOT
 
@@ -79,7 +79,7 @@ def test_worker_launcher_classifies_unusable_output_as_missing_results(
     monkeypatch.setattr(benchmark_process.subprocess, "Popen", launch)
     with pytest.raises(benchmark_process.WorkerExecutionError):
         benchmark_process.run_json_worker(
-            ROOT / "experiments/benchmarks/rag/chunking_embedding/worker.py",
+            ROOT / "benchmarks/rag/chunking_embedding/worker.py",
             {},
             device="cpu",
             prefix="bad-worker-output-",
@@ -89,8 +89,8 @@ def test_worker_launcher_classifies_unusable_output_as_missing_results(
 
 
 def test_worker_setup_failure_preserves_input_contract_report(tmp_path, monkeypatch):
-    from experiments.benchmarks.common.preflight import _probe_candidate
-    from experiments.benchmarks.rag.evaluation import InputCompatibilityError
+    from benchmarks.common.preflight import _probe_candidate
+    from benchmarks.rag.evaluation import InputCompatibilityError
 
     source = tmp_path / "input.json"
     destination = tmp_path / "output.json"
@@ -112,7 +112,7 @@ def test_worker_setup_failure_preserves_input_contract_report(tmp_path, monkeypa
     result = _probe_candidate(
         "candidate",
         lambda _: benchmark_process.run_json_worker(
-            ROOT / "experiments/benchmarks/rag/chunking_embedding/worker.py",
+            ROOT / "benchmarks/rag/chunking_embedding/worker.py",
             {},
             device="cpu",
             prefix="input-failure-",
@@ -127,15 +127,15 @@ def test_worker_setup_failure_preserves_input_contract_report(tmp_path, monkeypa
 @pytest.mark.parametrize(
     "module",
     (
-        "experiments.benchmarks.prepare",
-        "experiments.benchmarks.extraction.audio.run",
-        "experiments.benchmarks.extraction.document.run",
-        "experiments.benchmarks.extraction.video.run",
-        "experiments.benchmarks.rag.chunking_embedding.run",
-        "experiments.benchmarks.rag.retrieval_reranking.run",
-        "experiments.benchmarks.rag.generation.run",
-        "experiments.benchmarks.rag.final.run",
-        "experiments.benchmarks.vectordb.run",
+        "benchmarks.prepare",
+        "benchmarks.extraction.audio.run",
+        "benchmarks.extraction.document.run",
+        "benchmarks.extraction.video.run",
+        "benchmarks.rag.chunking_embedding.run",
+        "benchmarks.rag.retrieval_reranking.run",
+        "benchmarks.rag.generation.run",
+        "benchmarks.rag.final.run",
+        "benchmarks.vectordb.run",
     ),
 )
 def test_benchmark_entrypoint_runs_as_module(module: str) -> None:
@@ -153,9 +153,9 @@ def test_benchmark_entrypoint_runs_as_module(module: str) -> None:
 @pytest.mark.parametrize(
     "module",
     (
-        "experiments.benchmarks.rag.chunking_embedding.run",
-        "experiments.benchmarks.rag.generation.run",
-        "experiments.benchmarks.rag.final.run",
+        "benchmarks.rag.chunking_embedding.run",
+        "benchmarks.rag.generation.run",
+        "benchmarks.rag.final.run",
     ),
 )
 def test_rag_entrypoint_import_does_not_parse_arguments(module: str) -> None:
@@ -179,8 +179,8 @@ def test_rag_entrypoint_import_does_not_parse_arguments(module: str) -> None:
 @pytest.mark.parametrize(
     "module",
     (
-        "experiments.benchmarks.rag.chunking_embedding.worker",
-        "experiments.benchmarks.rag.retrieval_reranking.worker",
+        "benchmarks.rag.chunking_embedding.worker",
+        "benchmarks.rag.retrieval_reranking.worker",
     ),
 )
 def test_rag_workers_import_as_modules(module: str) -> None:

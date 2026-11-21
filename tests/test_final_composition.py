@@ -5,9 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from benchmarks.rag.final.composition import load_composition
+from benchmarks.rag.final.run import _verify_model_lineage
 from edumind.common.artifacts import sha256_file
-from experiments.benchmarks.rag.final.composition import load_composition
-from experiments.benchmarks.rag.final.run import _verify_model_lineage
 
 
 @pytest.fixture

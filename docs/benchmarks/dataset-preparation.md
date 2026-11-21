@@ -222,9 +222,9 @@ Stopping either command does not discard already downloaded bytes.
 The project preparation CLI supports non-mutating planning for every target:
 
 ```powershell
-python -m experiments.benchmarks.prepare qasper --dry-run
-python -m experiments.benchmarks.prepare assets --dry-run --plan reviewed-plan.json
-python -m experiments.benchmarks.prepare rag-selection --dry-run `
+python -m benchmarks.prepare qasper --dry-run
+python -m benchmarks.prepare assets --dry-run --plan reviewed-plan.json
+python -m benchmarks.prepare rag-selection --dry-run `
   --qasper-manifest data/benchmarks/rag/qasper-dev.json `
   --structured-manifest data/benchmarks/rag/structured-dev.json `
   --output data/benchmarks/rag/rag-selection-dev.json
@@ -249,15 +249,15 @@ The small committed fixtures are sufficient for smoke tests. To regenerate
 them explicitly, use the preparation CLI:
 
 ```powershell
-python -m experiments.benchmarks.prepare smoke-fixtures
+python -m benchmarks.prepare smoke-fixtures
 ```
 
 Regenerate only one fixture group when working on a single experiment:
 
 ```powershell
-python -m experiments.benchmarks.prepare smoke-fixtures --modality document
-python -m experiments.benchmarks.prepare smoke-fixtures --modality audio
-python -m experiments.benchmarks.prepare smoke-fixtures --modality video
+python -m benchmarks.prepare smoke-fixtures --modality document
+python -m benchmarks.prepare smoke-fixtures --modality audio
+python -m benchmarks.prepare smoke-fixtures --modality video
 ```
 
 Audio and video regeneration requires an FFmpeg build containing the optional
@@ -269,7 +269,7 @@ running the existing smoke benchmarks does not require `flite`.
 Prepare the pinned QASPER revision and deterministic paper-isolated splits:
 
 ```powershell
-python -m experiments.benchmarks.prepare qasper
+python -m benchmarks.prepare qasper
 ```
 
 This creates `qasper-dev.json`, `qasper-validation.json`, and
@@ -286,17 +286,17 @@ do not count toward the table, formula or mixed quotas. Combine with QASPER
 only after checking the evidence offsets and counts:
 
 ```powershell
-python -m experiments.benchmarks.prepare rag-selection `
+python -m benchmarks.prepare rag-selection `
   --qasper-manifest data/benchmarks/rag/qasper-dev.json `
   --structured-manifest data/benchmarks/rag/structured-dev.json `
   --output data/benchmarks/rag/rag-selection-dev.json
 
-python -m experiments.benchmarks.prepare rag-selection `
+python -m benchmarks.prepare rag-selection `
   --qasper-manifest data/benchmarks/rag/qasper-validation.json `
   --structured-manifest data/benchmarks/rag/structured-validation.json `
   --output data/benchmarks/rag/rag-selection-validation.json
 
-python -m experiments.benchmarks.prepare rag-selection `
+python -m benchmarks.prepare rag-selection `
   --qasper-manifest data/benchmarks/rag/qasper-locked-test.json `
   --structured-manifest data/benchmarks/rag/structured-locked-test.json `
   --output data/benchmarks/rag/rag-selection-locked-test.json

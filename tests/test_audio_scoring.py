@@ -9,8 +9,8 @@ from itertools import pairwise, product
 import numpy as np
 import pytest
 
-from experiments.benchmarks.extraction.audio import evaluate
-from experiments.benchmarks.extraction.scoring import attempt_rates
+from benchmarks.extraction.audio import evaluate
+from benchmarks.extraction.scoring import attempt_rates
 
 
 def _segment(text, start=0.0, end=1.0):

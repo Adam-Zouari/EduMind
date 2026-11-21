@@ -6,22 +6,22 @@ from pathlib import Path
 
 import pytest
 
-from edumind.common.artifacts import sha256_file
-from experiments.benchmarks.common.preflight import _probe_candidate
-from experiments.benchmarks.common.process import (
+from benchmarks.common.preflight import _probe_candidate
+from benchmarks.common.process import (
     WorkerExecutionError,
     WorkerMeasurementError,
 )
-from experiments.benchmarks.extraction.audio import validation, worker
-from experiments.benchmarks.extraction.audio.adapters import Transcript
-from experiments.benchmarks.extraction.audio.protocol import (
+from benchmarks.extraction.audio import validation, worker
+from benchmarks.extraction.audio.adapters import Transcript
+from benchmarks.extraction.audio.protocol import (
     load_protocol,
     protocol_from_mapping,
 )
-from experiments.benchmarks.extraction.audio.runner import (
+from benchmarks.extraction.audio.runner import (
     _validate_output,
     _verify_input_envelope,
 )
+from edumind.common.artifacts import sha256_file
 
 
 @pytest.fixture

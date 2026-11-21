@@ -41,8 +41,8 @@
   removed duplicate stage pages and command copies.
 - Aligned production with Docling Standard, Whisper `small.en`, GTE ModernBERT, Chroma HTTP,
   and direct pinned Hugging Face Qwen3 1.7B controls.
-- Kept experiment implementation, candidates, metrics, and MLflow logging under
-  `experiments/benchmarks`, with all reader documentation centralized in `docs/`.
+- Kept experiment implementation, candidates, metrics, and MLflow logging
+  separate from the application, with all reader documentation centralized in `docs/`.
 - Moved Streamlit and end-to-end orchestration into the installed `edumind`
   package and separated experiment-only model and strategy implementations.
 - Removed the API/service layer, packaged benchmark framework, embedded vector databases, duplicate application modules, recommendation machinery, and broad build/lint/coverage workflows.

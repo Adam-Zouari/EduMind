@@ -10,23 +10,23 @@ from test_generation_benchmark import Backend, Monitor
 from test_generation_recovery import calibrated_inputs as calibrated_fixture
 from test_generation_recovery import fixture_transport
 
-from edumind.common.artifacts import stable_hash
-from experiments.benchmarks.common.contracts import (
+from benchmarks.common.contracts import (
     BenchmarkPlan,
     CandidateExecutionError,
     DatasetManifest,
 )
-from experiments.benchmarks.common.datasets import load_manifest
-from experiments.benchmarks.rag.evaluation import Chunk
-from experiments.benchmarks.rag.final import benchmark
-from experiments.benchmarks.rag.final.validation import manifest_path
-from experiments.benchmarks.rag.generation.judge import SemanticJudge
-from experiments.benchmarks.rag.generation.metrics import score_pairs
-from experiments.benchmarks.rag.generation.protocol import load_protocol
-from experiments.benchmarks.rag.generation.validation import questions_from_manifest
-from experiments.benchmarks.rag.retrieval_reranking.protocol import (
+from benchmarks.common.datasets import load_manifest
+from benchmarks.rag.evaluation import Chunk
+from benchmarks.rag.final import benchmark
+from benchmarks.rag.final.validation import manifest_path
+from benchmarks.rag.generation.judge import SemanticJudge
+from benchmarks.rag.generation.metrics import score_pairs
+from benchmarks.rag.generation.protocol import load_protocol
+from benchmarks.rag.generation.validation import questions_from_manifest
+from benchmarks.rag.retrieval_reranking.protocol import (
     load_protocol as retrieval_protocol,
 )
+from edumind.common.artifacts import stable_hash
 
 
 def _offline_score(monkeypatch, attempts, *, documents=None, sources=None):

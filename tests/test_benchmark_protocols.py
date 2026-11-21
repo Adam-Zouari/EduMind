@@ -6,34 +6,34 @@ from pathlib import Path
 import pytest
 import yaml
 
-from experiments.benchmarks.common.runner import _protocol_confidence_level
-from experiments.benchmarks.extraction.audio.protocol import (
+from benchmarks.common.runner import _protocol_confidence_level
+from benchmarks.extraction.audio.protocol import (
     load_protocol as load_audio_protocol,
 )
-from experiments.benchmarks.extraction.document.protocol import (
+from benchmarks.extraction.document.protocol import (
     load_protocol as load_document_protocol,
 )
-from experiments.benchmarks.extraction.video.candidates import fixed_candidates
-from experiments.benchmarks.extraction.video.protocol import (
+from benchmarks.extraction.video.candidates import fixed_candidates
+from benchmarks.extraction.video.protocol import (
     load_protocol as load_video_protocol,
 )
-from experiments.benchmarks.rag.chunking_embedding.protocol import (
+from benchmarks.rag.chunking_embedding.protocol import (
     load_protocol as load_chunking_protocol,
 )
-from experiments.benchmarks.rag.chunking_embedding.strategies import (
+from benchmarks.rag.chunking_embedding.strategies import (
     build_chunking_strategy,
 )
-from experiments.benchmarks.rag.final.protocol import (
+from benchmarks.rag.final.protocol import (
     load_protocol as load_final_protocol,
 )
-from experiments.benchmarks.rag.generation.protocol import (
+from benchmarks.rag.generation.protocol import (
     load_protocol as load_generation_protocol,
 )
-from experiments.benchmarks.rag.retrieval_reranking.protocol import (
+from benchmarks.rag.retrieval_reranking.protocol import (
     load_protocol as load_retrieval_protocol,
 )
-from experiments.benchmarks.rag.retrieval_reranking.run import main as retrieval_main
-from experiments.benchmarks.vectordb.protocol import (
+from benchmarks.rag.retrieval_reranking.run import main as retrieval_main
+from benchmarks.vectordb.protocol import (
     load_protocol as load_vector_protocol,
 )
 
@@ -41,49 +41,49 @@ ROOT = Path(__file__).resolve().parents[1]
 PROTOCOL_CASES = (
     (
         "document",
-        ROOT / "experiments/benchmarks/extraction/document/protocol.yaml",
+        ROOT / "benchmarks/extraction/document/protocol.yaml",
         load_document_protocol,
         ("parser", "image_scale"),
     ),
     (
         "audio",
-        ROOT / "experiments/benchmarks/extraction/audio/protocol.yaml",
+        ROOT / "benchmarks/extraction/audio/protocol.yaml",
         load_audio_protocol,
         ("alignment", "content_f1_threshold"),
     ),
     (
         "video",
-        ROOT / "experiments/benchmarks/extraction/video/protocol.yaml",
+        ROOT / "benchmarks/extraction/video/protocol.yaml",
         load_video_protocol,
         ("visual_text", "occurrence_content_f1_threshold"),
     ),
     (
         "chunking_embedding",
-        ROOT / "experiments/benchmarks/rag/chunking_embedding/protocol.yaml",
+        ROOT / "benchmarks/rag/chunking_embedding/protocol.yaml",
         load_chunking_protocol,
         ("quality", "alpha_ndcg_alpha"),
     ),
     (
         "retrieval",
-        ROOT / "experiments/benchmarks/rag/retrieval_reranking/protocol.yaml",
+        ROOT / "benchmarks/rag/retrieval_reranking/protocol.yaml",
         load_retrieval_protocol,
         ("retrieval", "bm25", "k1"),
     ),
     (
         "generation",
-        ROOT / "experiments/benchmarks/rag/generation/protocol.yaml",
+        ROOT / "benchmarks/rag/generation/protocol.yaml",
         load_generation_protocol,
         ("decoding", "qwen3-0.6b-direct", "temperature"),
     ),
     (
         "final_rag",
-        ROOT / "experiments/benchmarks/rag/final/protocol.yaml",
+        ROOT / "benchmarks/rag/final/protocol.yaml",
         load_final_protocol,
         ("selection", "top_k", 0),
     ),
     (
         "vector_database",
-        ROOT / "experiments/benchmarks/vectordb/protocol.yaml",
+        ROOT / "benchmarks/vectordb/protocol.yaml",
         load_vector_protocol,
         ("synthetic", "cluster_noise"),
     ),
@@ -300,7 +300,7 @@ def test_retrieval_uses_the_supplied_chunking_smoke_pair(tmp_path, monkeypatch) 
     chunk_root["smoke_pair"] = "token-256-32|Snowflake/snowflake-arctic-embed-m-v2.0"
     chunk_path = _write_protocol(tmp_path, "chunking-smoke", chunk_root)
     monkeypatch.setattr(
-        "experiments.benchmarks.rag.retrieval_reranking.run.verify_inputs",
+        "benchmarks.rag.retrieval_reranking.run.verify_inputs",
         lambda *_, **__: (tmp_path / "validated.json", {}),
     )
 
@@ -309,7 +309,7 @@ def test_retrieval_uses_the_supplied_chunking_smoke_pair(tmp_path, monkeypatch) 
         raise RuntimeError("supplied smoke pair reached model lock")
 
     monkeypatch.setattr(
-        "experiments.benchmarks.rag.retrieval_reranking.run.load_selected_model_lock",
+        "benchmarks.rag.retrieval_reranking.run.load_selected_model_lock",
         check_model_selection,
     )
     with pytest.raises(RuntimeError, match="supplied smoke pair reached model lock"):
@@ -327,7 +327,7 @@ def test_retrieval_uses_the_supplied_chunking_smoke_pair(tmp_path, monkeypatch) 
 def test_candidate_rosters_live_in_protocols_or_supported_adapters(
     tmp_path: Path,
 ) -> None:
-    assert not list((ROOT / "experiments/benchmarks").rglob("candidates.yaml"))
+    assert not list((ROOT / "benchmarks").rglob("candidates.yaml"))
 
     audio = load_audio_protocol()
     assert len(audio.candidates) == 4

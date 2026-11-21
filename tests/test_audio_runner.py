@@ -7,9 +7,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from benchmarks.common.contracts import CandidateExecutionError
+from benchmarks.extraction.audio import evaluate, runner
 from edumind.common.artifacts import atomic_write_json, stable_hash
-from experiments.benchmarks.common.contracts import CandidateExecutionError
-from experiments.benchmarks.extraction.audio import evaluate, runner
 
 
 @pytest.fixture

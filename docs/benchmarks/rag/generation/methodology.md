@@ -350,7 +350,7 @@ timings, and hidden reasoning are not judge inputs.
 After preparing and reviewing all prerequisites, the normal command is:
 
 ```powershell
-python -m experiments.benchmarks.rag.generation.run --profile development --judge-transport PATH_TO_TRANSPORT_JSON
+python -m benchmarks.rag.generation.run --profile development --judge-transport PATH_TO_TRANSPORT_JSON
 ```
 
 The runner saves `generation_schedule.json` before loading/inference and
@@ -372,7 +372,7 @@ remain recorded. Accepted replies are revalidated and reused, not regenerated.
 If judging is interrupted, use the original protocol and sealed execution:
 
 ```powershell
-python -m experiments.benchmarks.rag.generation.run --protocol PATH_TO_ORIGINAL_PROTOCOL_YAML --resume-execution CHILD_DIRECTORY/generation_execution.json --judge-transport PATH_TO_TRANSPORT_JSON --evaluation-output NEW_EVALUATION_DIRECTORY
+python -m benchmarks.rag.generation.run --protocol PATH_TO_ORIGINAL_PROTOCOL_YAML --resume-execution CHILD_DIRECTORY/generation_execution.json --judge-transport PATH_TO_TRANSPORT_JSON --evaluation-output NEW_EVALUATION_DIRECTORY
 ```
 
 This path never resolves model snapshots, starts a generation worker, repeats

@@ -34,7 +34,7 @@ python -m pytest tests/test_benchmark_metrics.py tests/test_benchmark_datasets.p
 
 - Reusable Python code belongs in `src/edumind/`.
 - Deployable UI code belongs in `src/edumind/ui/`.
-- Benchmark code, candidates, metrics, and procedures belong in `experiments/benchmarks/`.
+- Benchmark code, candidates, metrics, and procedures belong in `benchmarks/`.
 - Do not add an API/service layer until deployment requirements justify it.
 - Long-form notes belong in `docs/`.
 

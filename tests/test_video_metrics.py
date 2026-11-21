@@ -7,9 +7,9 @@ from itertools import product
 import numpy as np
 import pytest
 
-from experiments.benchmarks.common.metrics import normalized_tokens
-from experiments.benchmarks.extraction.scoring import attempt_rates, bootstrap_sources
-from experiments.benchmarks.extraction.video.metrics import (
+from benchmarks.common.metrics import normalized_tokens
+from benchmarks.extraction.scoring import attempt_rates, bootstrap_sources
+from benchmarks.extraction.video.metrics import (
     QUALITY_DIRECTIONS,
     _occurrence_matches,
     aggregate_quality,
@@ -759,7 +759,7 @@ def test_non_finite_saved_metric_is_unavailable_not_a_numeric_quality_or_ci(valu
 
 def test_operational_ratios_video_median_percentiles_and_first_selection_counts():
     # Main owns this pure worker helper; this test only consumes saved timings.
-    from experiments.benchmarks.extraction.video.visual_worker import (
+    from benchmarks.extraction.video.visual_worker import (
         _operational_statistics,
     )
 
@@ -779,7 +779,7 @@ def test_operational_ratios_video_median_percentiles_and_first_selection_counts(
 
 
 def test_failed_speed_is_not_successful_speed_and_known_zero_selection_is_retained():
-    from experiments.benchmarks.extraction.video.visual_worker import (
+    from benchmarks.extraction.video.visual_worker import (
         _operational_statistics,
     )
 
@@ -799,7 +799,7 @@ def test_failed_speed_is_not_successful_speed_and_known_zero_selection_is_retain
 
 
 def test_operational_bootstrap_preserves_failed_first_selection_and_every_repetition():
-    from experiments.benchmarks.extraction.video.visual_worker import (
+    from benchmarks.extraction.video.visual_worker import (
         _operational_statistics,
     )
 

@@ -11,18 +11,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from edumind.common.artifacts import atomic_write_json, sha256_file, stable_hash
-from experiments.benchmarks.common.process import WorkerExecutionError
-from experiments.benchmarks.extraction.audio.adapters import Transcript, profiles
-from experiments.benchmarks.extraction.audio.evaluate import score_speech
-from experiments.benchmarks.extraction.audio.protocol import load_protocol as load_audio
-from experiments.benchmarks.extraction.scoring import bootstrap_sources
-from experiments.benchmarks.extraction.video import frozen_asr, validation
-from experiments.benchmarks.extraction.video import frozen_asr_worker as worker
-from experiments.benchmarks.extraction.video.protocol import (
+from benchmarks.common.process import WorkerExecutionError
+from benchmarks.extraction.audio.adapters import Transcript, profiles
+from benchmarks.extraction.audio.evaluate import score_speech
+from benchmarks.extraction.audio.protocol import load_protocol as load_audio
+from benchmarks.extraction.scoring import bootstrap_sources
+from benchmarks.extraction.video import frozen_asr, validation
+from benchmarks.extraction.video import frozen_asr_worker as worker
+from benchmarks.extraction.video.protocol import (
     load_protocol,
     protocol_from_mapping,
 )
+from edumind.common.artifacts import atomic_write_json, sha256_file, stable_hash
 
 VIDEO, AUDIO = load_protocol(), load_audio()
 CANDIDATE = "whisper-small-en-control"

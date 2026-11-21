@@ -9,28 +9,28 @@ import pandas as pd
 import pytest
 import yaml
 
-from experiments.benchmarks.common.contracts import CandidateExecutionError
-from experiments.benchmarks.vectordb import benchmark, conformance, run, validation
-from experiments.benchmarks.vectordb.adapters import Hit, Record
-from experiments.benchmarks.vectordb.adapters.base import DimensionMismatch
-from experiments.benchmarks.vectordb.integration import (
+from benchmarks.common.contracts import CandidateExecutionError
+from benchmarks.vectordb import benchmark, conformance, run, validation
+from benchmarks.vectordb.adapters import Hit, Record
+from benchmarks.vectordb.adapters.base import DimensionMismatch
+from benchmarks.vectordb.integration import (
     SelectedServer,
     verify_inventory,
 )
-from experiments.benchmarks.vectordb.metrics import (
+from benchmarks.vectordb.metrics import (
     aggregate_condition,
     interval,
     repeatability,
 )
-from experiments.benchmarks.vectordb.protocol import (
+from benchmarks.vectordb.protocol import (
     DEFAULT_PROTOCOL_PATH,
     load_protocol,
 )
-from experiments.benchmarks.vectordb.selection import (
+from benchmarks.vectordb.selection import (
     candidate_config,
     resolve_selected_config,
 )
-from experiments.benchmarks.vectordb.workload import (
+from benchmarks.vectordb.workload import (
     Corpus,
     tie_recall,
     tie_reference,
@@ -397,7 +397,7 @@ def test_document_operations_verify_visibility_and_restore_baseline():
     payload, corpora = validation.load_inputs(validation.manifest_path("smoke"))
     _, config = candidate_config(fixture_protocol(), "chroma|smoke-hnsw", 2)
     adapter = MemoryAdapter(config)
-    from experiments.benchmarks.vectordb.workload import records
+    from benchmarks.vectordb.workload import records
 
     baseline = records(corpora["fixture"])
     adapter.upsert(baseline)
@@ -516,8 +516,8 @@ def test_temporary_mlflow_parent_child_keep_statuses_and_csv_evidence(
     import mlflow
     from mlflow import MlflowClient
 
-    from experiments.benchmarks.common.tracking import benchmark_experiment
-    from experiments.benchmarks.vectordb.selection import STAGE, SUITE
+    from benchmarks.common.tracking import benchmark_experiment
+    from benchmarks.vectordb.selection import STAGE, SUITE
 
     previous_uri = mlflow.get_tracking_uri()
     uri = "sqlite:///" + (tmp_path / "mlflow.db").as_posix()
@@ -552,7 +552,7 @@ def test_temporary_mlflow_parent_child_keep_statuses_and_csv_evidence(
 def test_selected_config_is_explicit_not_inferred_from_workload_name(
     tmp_path, dimension
 ):
-    from experiments.benchmarks.vectordb.selection import STAGE, SUITE
+    from benchmarks.vectordb.selection import STAGE, SUITE
 
     protocol = load_protocol()
     declaration = {
@@ -611,7 +611,7 @@ def test_selected_config_is_explicit_not_inferred_from_workload_name(
 
 
 def test_storage_fallback_preserves_apparent_bytes_and_no_block_conversion(monkeypatch):
-    from experiments.benchmarks.vectordb import docker_metrics
+    from benchmarks.vectordb import docker_metrics
 
     calls = []
 
@@ -634,7 +634,7 @@ def test_storage_fallback_preserves_apparent_bytes_and_no_block_conversion(monke
 
 @pytest.mark.parametrize("reverse", [False, True])
 def test_postbuild_checkpoint_and_configuration_are_corpus_scoped(monkeypatch, reverse):
-    from experiments.benchmarks.vectordb.docker_metrics import DockerMonitor
+    from benchmarks.vectordb.docker_metrics import DockerMonitor
 
     payload, corpora = validation.load_inputs(validation.manifest_path("smoke"))
     fixture = corpora["fixture"]
@@ -689,7 +689,7 @@ def test_postbuild_checkpoint_and_configuration_are_corpus_scoped(monkeypatch, r
 def test_deployment_lock_rejects_malformed_or_changed_identities(
     tmp_path, monkeypatch, mismatch
 ):
-    from experiments.benchmarks.vectordb import docker_metrics
+    from benchmarks.vectordb import docker_metrics
 
     payload = json.loads(
         (
@@ -714,7 +714,7 @@ def test_deployment_lock_rejects_malformed_or_changed_identities(
 
 def test_startup_excludes_stop_and_checks_preserved_contents(monkeypatch):
     _, corpora = validation.load_inputs(validation.manifest_path("smoke"))
-    from experiments.benchmarks.vectordb.workload import records
+    from benchmarks.vectordb.workload import records
 
     protocol = fixture_protocol()
     _, config = candidate_config(protocol, "chroma|smoke-hnsw", 2)
@@ -757,7 +757,7 @@ def test_bm25_malformed_outputs_rejected_before_fusion(positions):
 
 
 def test_integration_explicit_six_tuple_uses_question_medians(monkeypatch):
-    from experiments.benchmarks.vectordb import retrieval_run
+    from benchmarks.vectordb import retrieval_run
 
     server, _, _ = make_server()
     index = server.index
@@ -834,7 +834,7 @@ def test_integration_explicit_six_tuple_uses_question_medians(monkeypatch):
 
 
 def test_bootstrap_retains_null_groups_and_reports_undefined_degenerate_draws():
-    from experiments.benchmarks.vectordb.metrics import mean
+    from benchmarks.vectordb.metrics import mean
 
     protocol = replace(
         fixture_protocol(),
@@ -878,8 +878,8 @@ def test_qdrant_and_weaviate_transport_limits_are_applied(monkeypatch):
     import qdrant_client
     import weaviate
 
-    from experiments.benchmarks.vectordb.adapters.qdrant import Qdrant
-    from experiments.benchmarks.vectordb.adapters.weaviate import Weaviate
+    from benchmarks.vectordb.adapters.qdrant import Qdrant
+    from benchmarks.vectordb.adapters.weaviate import Weaviate
 
     _, config = candidate_config(fixture_protocol(), "chroma|smoke-hnsw", 2)
     qdrant_calls, weaviate_calls = [], []
@@ -905,7 +905,7 @@ def test_qdrant_and_weaviate_transport_limits_are_applied(monkeypatch):
 
 
 def test_pgvector_rejects_unhonored_collection_override_before_connect():
-    from experiments.benchmarks.vectordb.adapters.pgvector import PgVector
+    from benchmarks.vectordb.adapters.pgvector import PgVector
 
     _, config = candidate_config(fixture_protocol(), "pgvector|smoke-hnsw", 2)
     with pytest.raises(ValueError, match="collection"):
@@ -913,7 +913,7 @@ def test_pgvector_rejects_unhonored_collection_override_before_connect():
 
 
 def test_weaviate_missing_distance_never_becomes_perfect_similarity():
-    from experiments.benchmarks.vectordb.adapters.weaviate import Weaviate
+    from benchmarks.vectordb.adapters.weaviate import Weaviate
 
     adapter = object.__new__(Weaviate)
     adapter.collection = SimpleNamespace(
@@ -966,7 +966,7 @@ def test_configuration_infrastructure_errors_never_become_unsupported(
 
 
 def test_native_query_gate_precedes_embedding_and_server_dispatch():
-    from experiments.benchmarks.rag.evaluation import InputCompatibilityError
+    from benchmarks.rag.evaluation import InputCompatibilityError
 
     server, embeddings, _ = make_server()
     server.index.embedder.spec.maximum_length = 2
@@ -990,7 +990,7 @@ def test_native_query_gate_precedes_embedding_and_server_dispatch():
     ],
 )
 def test_invalid_live_query_vectors_rejected_before_server(vector):
-    from experiments.benchmarks.rag.evaluation import OutputIntegrityError
+    from benchmarks.rag.evaluation import OutputIntegrityError
 
     server, _, _ = make_server()
     server.index.embedder.embed_query = lambda query: vector
@@ -1002,7 +1002,7 @@ def test_invalid_live_query_vectors_rejected_before_server(vector):
 
 @pytest.mark.parametrize("counts", [[True], [0], [], [1, 2]])
 def test_malformed_native_query_count_envelope_rejected(counts):
-    from experiments.benchmarks.rag.evaluation import InputCompatibilityError
+    from benchmarks.rag.evaluation import InputCompatibilityError
 
     server, embeddings, _ = make_server()
     server.index.embedder.input_token_counts = lambda texts, role: counts

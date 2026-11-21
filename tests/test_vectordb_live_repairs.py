@@ -6,12 +6,12 @@ from unittest.mock import Mock
 
 import pytest
 
-from experiments.benchmarks.vectordb.adapters import Record
-from experiments.benchmarks.vectordb.adapters.qdrant import Qdrant
-from experiments.benchmarks.vectordb.adapters.weaviate import Weaviate
-from experiments.benchmarks.vectordb.integration import verify_inventory
-from experiments.benchmarks.vectordb.protocol import load_protocol
-from experiments.benchmarks.vectordb.selection import candidate_config
+from benchmarks.vectordb.adapters import Record
+from benchmarks.vectordb.adapters.qdrant import Qdrant
+from benchmarks.vectordb.adapters.weaviate import Weaviate
+from benchmarks.vectordb.integration import verify_inventory
+from benchmarks.vectordb.protocol import load_protocol
+from benchmarks.vectordb.selection import candidate_config
 
 
 def test_qdrant_real_rest_transport_accepts_frozen_connection_limits(monkeypatch):

@@ -10,9 +10,9 @@ from types import ModuleType, SimpleNamespace
 import pytest
 from omegaconf import OmegaConf
 
-from experiments.benchmarks.extraction.audio import adapters
-from experiments.benchmarks.extraction.audio.evaluate import validate_prediction
-from experiments.benchmarks.extraction.audio.protocol import (
+from benchmarks.extraction.audio import adapters
+from benchmarks.extraction.audio.evaluate import validate_prediction
+from benchmarks.extraction.audio.protocol import (
     load_protocol,
     protocol_from_mapping,
 )

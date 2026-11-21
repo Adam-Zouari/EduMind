@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from experiments.benchmarks.vectordb.protocol import load_protocol
+from benchmarks.vectordb.protocol import load_protocol
 
 
 def _load(side, durations, successes):
@@ -40,7 +40,7 @@ def _load(side, durations, successes):
 
 
 def test_paired_load_uses_ratio_of_totals_and_aligned_window_draws():
-    from experiments.benchmarks.vectordb.comparisons import paired_operational
+    from benchmarks.vectordb.comparisons import paired_operational
 
     protocol = replace(
         load_protocol(),
@@ -77,7 +77,7 @@ def test_paired_load_uses_ratio_of_totals_and_aligned_window_draws():
 
 
 def test_paired_load_missing_review_keeps_point_but_null_bounds():
-    from experiments.benchmarks.vectordb.comparisons import paired_operational
+    from benchmarks.vectordb.comparisons import paired_operational
 
     condition = {
         "id": "load",
@@ -103,7 +103,7 @@ def test_paired_load_missing_review_keeps_point_but_null_bounds():
 
 
 def test_paired_load_rejects_duplicate_or_unaligned_logical_operations():
-    from experiments.benchmarks.vectordb.comparisons import paired_operational
+    from benchmarks.vectordb.comparisons import paired_operational
 
     condition = {
         "id": "load",
@@ -129,8 +129,8 @@ def _run_retained(tmp_path, monkeypatch, *, fail_scoring=False):
     import yaml
     from test_vectordb_migration import MemoryAdapter
 
-    from experiments.benchmarks.vectordb import benchmark, run, validation
-    from experiments.benchmarks.vectordb.protocol import DEFAULT_PROTOCOL_PATH
+    from benchmarks.vectordb import benchmark, run, validation
+    from benchmarks.vectordb.protocol import DEFAULT_PROTOCOL_PATH
 
     root = yaml.safe_load(DEFAULT_PROTOCOL_PATH.read_text(encoding="utf-8"))
     root["candidates"]["smoke"] = root["candidates"]["smoke"][:1]
@@ -182,8 +182,8 @@ def _run_retained(tmp_path, monkeypatch, *, fail_scoring=False):
 def test_recovery_after_offline_failure_never_dispatches_and_keeps_original_bytes(
     tmp_path, monkeypatch
 ):
+    from benchmarks.vectordb import benchmark, recover, retrieval_run
     from edumind.common.artifacts import sha256_file
-    from experiments.benchmarks.vectordb import benchmark, recover, retrieval_run
 
     source = _run_retained(tmp_path, monkeypatch, fail_scoring=True)
     original = {
@@ -209,7 +209,7 @@ def test_recovery_after_offline_failure_never_dispatches_and_keeps_original_byte
 
 
 def test_recovery_rejects_changed_prediction_seal(tmp_path, monkeypatch):
-    from experiments.benchmarks.vectordb import recover
+    from benchmarks.vectordb import recover
 
     source = _run_retained(tmp_path, monkeypatch)
     snapshot = next(source.glob("retained-*-server.json"))
@@ -221,7 +221,7 @@ def test_recovery_rejects_changed_prediction_seal(tmp_path, monkeypatch):
 
 
 def test_recovery_rejects_changed_input_bytes_before_scoring(tmp_path, monkeypatch):
-    from experiments.benchmarks.vectordb import recover
+    from benchmarks.vectordb import recover
 
     source = _run_retained(tmp_path, monkeypatch)
     context = next(source.glob("retained-*-context.json"))
@@ -258,7 +258,7 @@ def test_recovery_rejects_changed_input_bytes_before_scoring(tmp_path, monkeypat
 def test_selected_server_qualification_envelope_stops_inference_before_both_models():
     from test_vectordb_migration import make_server
 
-    from experiments.benchmarks.rag.evaluation import InputCompatibilityError
+    from benchmarks.rag.evaluation import InputCompatibilityError
 
     server, calls, _ = make_server()
     with pytest.raises(InputCompatibilityError, match="qualification"):
@@ -282,7 +282,7 @@ def test_selected_server_qualification_envelope_stops_inference_before_both_mode
 
 
 def test_paired_operations_keep_repetitions_inside_reviewed_source_groups():
-    from experiments.benchmarks.vectordb.comparisons import paired_operational
+    from benchmarks.vectordb.comparisons import paired_operational
 
     operations = [
         {"id": name, "condition_id": "updates"} for name in ("doc1", "doc2", "doc3")
@@ -339,9 +339,9 @@ def test_locked_recovery_preserves_failed_first_and_consumption_marker(
 ):
     from test_vectordb_migration import MemoryAdapter
 
+    from benchmarks.common.contracts import CandidateExecutionError
+    from benchmarks.vectordb import benchmark, recover, run, validation
     from edumind.common.artifacts import sha256_file, stable_hash
-    from experiments.benchmarks.common.contracts import CandidateExecutionError
-    from experiments.benchmarks.vectordb import benchmark, recover, run, validation
 
     source = _run_retained(tmp_path, monkeypatch)
     context = recover.read_seal(
@@ -439,8 +439,8 @@ def test_locked_recovery_preserves_failed_first_and_consumption_marker(
 def test_paired_quality_uses_document_macro_not_question_mean():
     from types import SimpleNamespace
 
-    from experiments.benchmarks.common.contracts import SampleResult
-    from experiments.benchmarks.vectordb.comparisons import paired_quality
+    from benchmarks.common.contracts import SampleResult
+    from benchmarks.vectordb.comparisons import paired_quality
 
     key = "quality.evidence_unit_recall_at_5.condition.integration"
 
@@ -472,7 +472,7 @@ def test_paired_quality_uses_document_macro_not_question_mean():
 
 
 def test_partial_paired_schedule_keeps_diagnostics_without_supported_bounds():
-    from experiments.benchmarks.vectordb.comparisons import paired_operational
+    from benchmarks.vectordb.comparisons import paired_operational
 
     condition = {
         "id": "load",
@@ -502,8 +502,8 @@ def test_retained_integration_pool_can_be_scored_without_live_search(
 
     from test_vectordb_migration import MemoryAdapter, fixture_protocol, make_server
 
-    from experiments.benchmarks.common.datasets import manifest_content_checksum
-    from experiments.benchmarks.vectordb import (
+    from benchmarks.common.datasets import manifest_content_checksum
+    from benchmarks.vectordb import (
         integration,
         recover,
         retrieval_run,

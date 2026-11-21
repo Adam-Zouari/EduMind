@@ -7,6 +7,39 @@ from types import SimpleNamespace
 
 import pytest
 
+from benchmarks.common.data_validation import manifest_path
+from benchmarks.common.metrics import (
+    character_error_rate,
+    normalize_prose,
+    paired_bootstrap_interval,
+    word_error_rate,
+)
+from benchmarks.extraction.document import benchmark as document_benchmark
+from benchmarks.extraction.document.adapters import _paddle_blocks
+from benchmarks.extraction.document.benchmark import comparison_candidates
+from benchmarks.extraction.document.cli import _validate_document_arguments
+from benchmarks.extraction.document.metrics import (
+    METRIC_DIRECTIONS,
+    _document_fingerprint,
+    aggregate_evaluations,
+    load_reference,
+    validate_reference,
+)
+from benchmarks.extraction.document.metrics import (
+    score_document as _score_document,
+)
+from benchmarks.extraction.document.protocol import (
+    load_protocol as default_document_protocol,
+)
+from benchmarks.extraction.document.protocol import (
+    load_protocol as load_document_protocol,
+)
+from benchmarks.rag.chunking_embedding.protocol import (
+    load_protocol as default_chunking_protocol,
+)
+from benchmarks.rag.chunking_embedding.strategies import (
+    build_chunking_strategy,
+)
 from edumind.extraction import (
     ExtractedDocument,
     ExtractedSegment,
@@ -16,39 +49,6 @@ from edumind.extraction import (
     SourceKind,
 )
 from edumind.extraction.structured import build_structured_document
-from experiments.benchmarks.common.data_validation import manifest_path
-from experiments.benchmarks.common.metrics import (
-    character_error_rate,
-    normalize_prose,
-    paired_bootstrap_interval,
-    word_error_rate,
-)
-from experiments.benchmarks.extraction.document import benchmark as document_benchmark
-from experiments.benchmarks.extraction.document.adapters import _paddle_blocks
-from experiments.benchmarks.extraction.document.benchmark import comparison_candidates
-from experiments.benchmarks.extraction.document.cli import _validate_document_arguments
-from experiments.benchmarks.extraction.document.metrics import (
-    METRIC_DIRECTIONS,
-    _document_fingerprint,
-    aggregate_evaluations,
-    load_reference,
-    validate_reference,
-)
-from experiments.benchmarks.extraction.document.metrics import (
-    score_document as _score_document,
-)
-from experiments.benchmarks.extraction.document.protocol import (
-    load_protocol as default_document_protocol,
-)
-from experiments.benchmarks.extraction.document.protocol import (
-    load_protocol as load_document_protocol,
-)
-from experiments.benchmarks.rag.chunking_embedding.protocol import (
-    load_protocol as default_chunking_protocol,
-)
-from experiments.benchmarks.rag.chunking_embedding.strategies import (
-    build_chunking_strategy,
-)
 
 
 def score_document(*args, **kwargs):
@@ -63,7 +63,7 @@ def score_document(*args, **kwargs):
 def test_official_metric_worker_bootstraps_both_omnidocbench_import_roots(
     tmp_path, monkeypatch
 ) -> None:
-    from experiments.benchmarks.extraction.document import omnidocbench_worker
+    from benchmarks.extraction.document import omnidocbench_worker
 
     input_path = tmp_path / "input.json"
     output_path = tmp_path / "output.json"
@@ -176,7 +176,7 @@ def test_document_metrics_use_element_order_and_grouped_aggregates() -> None:
 def test_table_metrics_separate_detection_content_and_tree_similarity(
     monkeypatch,
 ) -> None:
-    from experiments.benchmarks.extraction.document import metrics as document_metrics
+    from benchmarks.extraction.document import metrics as document_metrics
 
     monkeypatch.setattr(
         document_metrics,
@@ -560,7 +560,7 @@ def test_authoritative_reference_rejects_contradictory_structured_negatives(
 
 
 def test_document_directions_omit_unclaimed_reference_metrics() -> None:
-    from experiments.benchmarks.extraction.document.runner import directions_for
+    from benchmarks.extraction.document.runner import directions_for
 
     selected = directions_for(
         [
@@ -581,7 +581,7 @@ def test_document_directions_omit_unclaimed_reference_metrics() -> None:
 
 
 def test_docling_candidate_requires_every_behavior_component() -> None:
-    from experiments.benchmarks.extraction.document.runner import (
+    from benchmarks.extraction.document.runner import (
         validate_prepared_components,
     )
 
@@ -619,8 +619,8 @@ def test_docling_candidate_requires_every_behavior_component() -> None:
 def test_document_runner_preserves_first_attempt_quality(
     monkeypatch, outcomes, quality, repeat
 ):
-    from experiments.benchmarks.common.contracts import BenchmarkPlan
-    from experiments.benchmarks.extraction.document import runner
+    from benchmarks.common.contracts import BenchmarkPlan
+    from benchmarks.extraction.document import runner
 
     document = _document(
         "alpha", (ExtractedSegment("alpha", 0, 5, page_number=1),), kind=SourceKind.PDF

@@ -14,21 +14,21 @@ Choose the smallest target that covers the comparison:
 
 | Prepare | Command |
 |---|---|
-| Only the six benchmark embeddings | `python -m experiments.benchmarks.prepare embedding-models` |
-| All approved benchmark embeddings, rerankers and generators | `python -m experiments.benchmarks.prepare rag-models` |
-| Extraction candidates and benchmark Docling components | `python -m experiments.benchmarks.prepare extraction-models` |
-| All benchmark model groups | `python -m experiments.benchmarks.prepare all-models` |
+| Only the six benchmark embeddings | `python -m benchmarks.prepare embedding-models` |
+| All approved benchmark embeddings, rerankers and generators | `python -m benchmarks.prepare rag-models` |
+| Extraction candidates and benchmark Docling components | `python -m benchmarks.prepare extraction-models` |
+| All benchmark model groups | `python -m benchmarks.prepare all-models` |
 
 Preview a target with `--dry-run`. To prepare just one included candidate,
 pass its exact ID with `--candidate`; repeat the option to select more than one
 candidate in the same target. For example:
 
 ```powershell
-python -m experiments.benchmarks.prepare embedding-models --candidate Alibaba-NLP/gte-modernbert-base --dry-run
+python -m benchmarks.prepare embedding-models --candidate Alibaba-NLP/gte-modernbert-base --dry-run
 ```
 
 Remove `--dry-run` to download and verify the files. Use
-`python -m experiments.benchmarks.prepare --list` to inspect the benchmark
+`python -m benchmarks.prepare --list` to inspect the benchmark
 catalog. Neither listing nor a dry run verifies local files.
 
 No unselected judge is downloaded. A hosted judge needs credentials rather
@@ -113,7 +113,7 @@ evidence; Docling component-pin migration and evaluator readiness are separate.
 To recheck just that existing GTE entry without downloads, inference, or writes:
 
 ```powershell
-python -c "from pathlib import Path; from experiments.benchmarks.preparation.models import load_selected_model_lock; lock = load_selected_model_lock(Path('data/benchmarks/models/selected.json'), candidates=['Alibaba-NLP/gte-modernbert-base']); print(lock['Alibaba-NLP/gte-modernbert-base']['model_path'])"
+python -c "from pathlib import Path; from benchmarks.preparation.models import load_selected_model_lock; lock = load_selected_model_lock(Path('data/benchmarks/models/selected.json'), candidates=['Alibaba-NLP/gte-modernbert-base']); print(lock['Alibaba-NLP/gte-modernbert-base']['model_path'])"
 ```
 
 ### Snapshot size metadata
@@ -166,7 +166,7 @@ Only if migration is needed, and after coordinating the required downloads,
 prepare a separate generated benchmark lock:
 
 ```powershell
-python -m experiments.benchmarks.prepare all-models --output data/benchmarks/models/selected-next.json
+python -m benchmarks.prepare all-models --output data/benchmarks/models/selected-next.json
 ```
 
 Review and verify the new lock before passing it to a benchmark that supports
@@ -214,7 +214,7 @@ The extraction download contains:
 
 Docling's `runtime_version` is separate from `component_models`. The evidence-backed
 [shared component pins](../../src/edumind/common/docling_pins.py) and
-[benchmark-only component pins](../../experiments/benchmarks/preparation/docling_pins.py) record
+[benchmark-only component pins](../../benchmarks/preparation/docling_pins.py) record
 immutable Hub commits for layout, TableFormer, and CodeFormula, plus measured
 RapidOCR/EasyOCR SHA256 inventories. Their evidence comes from the retained local
 download metadata/files, not invented SHAs or a quality assessment. Fresh
@@ -234,5 +234,5 @@ the Python 3.12 project environment from `requirements/benchmarks.lock`; do not
 combine this lock with unrelated ML environments.
 
 If a model is missing, rerun the matching preparation target. If a pinned
-revision no longer resolves, review the [selection evidence](../../experiments/benchmarks/selection_evidence.csv);
+revision no longer resolves, review the [selection evidence](../../benchmarks/selection_evidence.csv);
 do not substitute the repository's current head.

@@ -102,14 +102,14 @@ Human annotation review remains necessary.
 Available preparation commands:
 
 ```powershell
-python -m experiments.benchmarks.validate audio --profile development
-python -m experiments.benchmarks.validate audio --profile all
-python -m experiments.benchmarks.validate document --profile all
-python -m experiments.benchmarks.validate video --profile all
-python -m experiments.benchmarks.validate chunking-embedding --profile all
-python -m experiments.benchmarks.validate retrieval-reranking --profile all
-python -m experiments.benchmarks.validate generation --profile all
-python -m experiments.benchmarks.validate all --profile all
+python -m benchmarks.validate audio --profile development
+python -m benchmarks.validate audio --profile all
+python -m benchmarks.validate document --profile all
+python -m benchmarks.validate video --profile all
+python -m benchmarks.validate chunking-embedding --profile all
+python -m benchmarks.validate retrieval-reranking --profile all
+python -m benchmarks.validate generation --profile all
+python -m benchmarks.validate all --profile all
 ```
 
 One domain validator serves its applicable profiles; the coordinator uses the
@@ -118,6 +118,8 @@ make a validation batch incomplete, not successful. `all --profile smoke` checks
 only applicable smoke fixtures when authoritative data is unavailable. Preflight uses validated
 development/stress inputs and never inspects held-out answers. Generated reports
 live under `artifacts/benchmarks/data-validation/<benchmark>/<fingerprint>.json`.
+After moving to the top-level `benchmarks` package, rerun validation for any
+profiles you plan to use: fingerprints include validator source paths and contents.
 
 Each profile uses its own inputs and matching report; validating development
 does not certify the unseen validation or locked datasets. The benchmark
@@ -166,7 +168,7 @@ and source provenance. `--profile` selects the project manifest automatically.
 Use `--manifest PATH` only to run an alternate reviewed manifest.
 
 Model preparation is separate from these input overrides. Inspect plans with
-`python -m experiments.benchmarks.prepare --list` or a target's `--dry-run`;
+`python -m benchmarks.prepare --list` or a target's `--dry-run`;
 every target stops before network, Docker, preparation helpers, or writes.
 Planning is not input validation or hardware qualification. Follow the
 [model-lock preparation and migration instructions](model-preparation.md#legacy-lock-and-component-pin-migration)
@@ -270,9 +272,9 @@ reference tables or formulas requiring reconstruction scores. Verified-negative
 presence annotations alone do not require an official reconstruction scorer:
 
 ```powershell
-python -m experiments.benchmarks.prepare evaluators --dry-run
+python -m benchmarks.prepare evaluators --dry-run
 docker version
-python -m experiments.benchmarks.prepare evaluators
+python -m benchmarks.prepare evaluators
 ```
 
 The non-dry command requires coordinated source/image downloads and Docker's
@@ -290,7 +292,7 @@ verified source are stored under `data/benchmarks/evaluators/OmniDocBench/`.
 After preparation, inspect the verified identity without invoking Docker:
 
 ```powershell
-python -c "import json; from experiments.benchmarks.extraction.document.official_metrics import official_evaluator_identity; print(json.dumps(official_evaluator_identity(), indent=2))"
+python -c "import json; from benchmarks.extraction.document.official_metrics import official_evaluator_identity; print(json.dumps(official_evaluator_identity(), indent=2))"
 ```
 
 Retain the source revision/content hash, image digest, and image-lock hash with
@@ -312,15 +314,15 @@ preparation checks.
 Run wiring and hardware qualification:
 
 ```powershell
-python -m experiments.benchmarks.extraction.document.run --profile smoke
-python -m experiments.benchmarks.extraction.document.run --profile preflight
+python -m benchmarks.extraction.document.run --profile smoke
+python -m benchmarks.extraction.document.run --profile preflight
 ```
 
 Document development has two deliberate comparisons. First screen Docling
 configuration candidates:
 
 ```powershell
-python -m experiments.benchmarks.extraction.document.run --profile development
+python -m benchmarks.extraction.document.run --profile development
 ```
 
 Review the PDF and image parents and create
@@ -329,7 +331,7 @@ Then compare the chosen Standard configurations with Granite Docling and
 PaddleOCR-VL:
 
 ```powershell
-python -m experiments.benchmarks.extraction.document.run `
+python -m benchmarks.extraction.document.run `
   --profile development --comparison architecture `
   --pdf-selection data/benchmarks/decisions/document-pdf-configuration.json `
   --image-selection data/benchmarks/decisions/document-image-configuration.json
@@ -339,7 +341,7 @@ After reviewing those architecture parents, create the PDF and image validation
 decisions and run:
 
 ```powershell
-python -m experiments.benchmarks.extraction.document.run `
+python -m benchmarks.extraction.document.run `
   --profile validation --comparison architecture
 ```
 
@@ -348,7 +350,7 @@ After validation, record exactly one winner from each PDF and image parent in
 source-routing report on the untouched locked-test manifest:
 
 ```powershell
-python -m experiments.benchmarks.extraction.document.run --profile locked
+python -m benchmarks.extraction.document.run --profile locked
 ```
 
 The locked profile selects the architecture comparison automatically, resolves
@@ -404,11 +406,11 @@ in the [document metric reference](extraction/document/metrics.md).
 ## 5. ASR
 
 ```powershell
-python -m experiments.benchmarks.extraction.audio.run --profile smoke
-python -m experiments.benchmarks.extraction.audio.run --profile preflight
-python -m experiments.benchmarks.extraction.audio.run --profile development
-python -m experiments.benchmarks.extraction.audio.run --profile validation
-python -m experiments.benchmarks.extraction.audio.run --profile locked
+python -m benchmarks.extraction.audio.run --profile smoke
+python -m benchmarks.extraction.audio.run --profile preflight
+python -m benchmarks.extraction.audio.run --profile development
+python -m benchmarks.extraction.audio.run --profile validation
+python -m benchmarks.extraction.audio.run --profile locked
 ```
 
 After development, create `audio-validation.json`. After validation, create
@@ -448,9 +450,9 @@ parser, phase manifest, and frozen-artifact location.
 Commands:
 
 ```powershell
-python -m experiments.benchmarks.extraction.video.run --profile smoke
-python -m experiments.benchmarks.extraction.video.run --profile preflight
-python -m experiments.benchmarks.extraction.video.run --profile development --phase scene-selection
+python -m benchmarks.extraction.video.run --profile smoke
+python -m benchmarks.extraction.video.run --profile preflight
+python -m benchmarks.extraction.video.run --profile development --phase scene-selection
 ```
 
 Smoke creates `smoke-cpu` and `smoke-cuda`, each with its own frozen-ASR
@@ -468,8 +470,8 @@ checksum changed, then evaluates all qualified members of the final nine-policy
 roster under that checksum:
 
 ```powershell
-python -m experiments.benchmarks.extraction.video.run --profile preflight
-python -m experiments.benchmarks.extraction.video.run --profile development --phase all
+python -m benchmarks.extraction.video.run --profile preflight
+python -m benchmarks.extraction.video.run --profile development --phase all
 ```
 
 Create `data/benchmarks/decisions/video-validation.json` after reviewing the
@@ -477,8 +479,8 @@ complete main development comparison. Evaluate its finalists on validation,
 then record one validation winner in `video-locked.json`:
 
 ```powershell
-python -m experiments.benchmarks.extraction.video.run --profile validation --phase all
-python -m experiments.benchmarks.extraction.video.run --profile locked --phase all
+python -m benchmarks.extraction.video.run --profile validation --phase all
+python -m benchmarks.extraction.video.run --profile locked --phase all
 ```
 
 Each parent contains one phase-specific `frozen-asr — <selected candidate>`
@@ -518,15 +520,15 @@ Validate the inputs once before running either smoke device. Authoritative
 reports require all three reviewed split manifests in the frozen inventory.
 
 ```powershell
-python -m experiments.benchmarks.validate chunking-embedding --profile smoke
-python -m experiments.benchmarks.rag.chunking_embedding.run --profile smoke
-python -m experiments.benchmarks.rag.chunking_embedding.run --profile preflight
-python -m experiments.benchmarks.rag.chunking_embedding.run --profile development
-python -m experiments.benchmarks.rag.chunking_embedding.run --profile validation
-python -m experiments.benchmarks.rag.chunking_embedding.run --profile locked
+python -m benchmarks.validate chunking-embedding --profile smoke
+python -m benchmarks.rag.chunking_embedding.run --profile smoke
+python -m benchmarks.rag.chunking_embedding.run --profile preflight
+python -m benchmarks.rag.chunking_embedding.run --profile development
+python -m benchmarks.rag.chunking_embedding.run --profile validation
+python -m benchmarks.rag.chunking_embedding.run --profile locked
 ```
 
-Use `python -m experiments.benchmarks.validate chunking-embedding --profile all`
+Use `python -m benchmarks.validate chunking-embedding --profile all`
 after preparing the authoritative inputs. Every run verifies the matching report
 before loading candidates; it does not repeat full annotation validation.
 
@@ -610,11 +612,11 @@ Retrieval uses the selected chunking–embedding pair from
 `chunking-embedding-locked.json` by default:
 
 ```powershell
-python -m experiments.benchmarks.rag.retrieval_reranking.run --profile smoke
-python -m experiments.benchmarks.rag.retrieval_reranking.run --profile preflight
-python -m experiments.benchmarks.rag.retrieval_reranking.run --profile development
-python -m experiments.benchmarks.rag.retrieval_reranking.run --profile validation
-python -m experiments.benchmarks.rag.retrieval_reranking.run --profile locked
+python -m benchmarks.rag.retrieval_reranking.run --profile smoke
+python -m benchmarks.rag.retrieval_reranking.run --profile preflight
+python -m benchmarks.rag.retrieval_reranking.run --profile development
+python -m benchmarks.rag.retrieval_reranking.run --profile validation
+python -m benchmarks.rag.retrieval_reranking.run --profile locked
 ```
 
 Development crosses Dense, BM25, and RRF with no reranker and the four learned
@@ -678,14 +680,14 @@ remain prerequisites; a mocked test is not server verification.
 Prepare and digest-lock the four server images:
 
 ```powershell
-python -m experiments.benchmarks.prepare vectordb
+python -m benchmarks.prepare vectordb
 ```
 
 The compared servers are [Chroma](https://docs.trychroma.com/guides/deploy/docker), [Qdrant](https://qdrant.tech/documentation/installation/), [Weaviate](https://docs.weaviate.io/deploy/installation-guides/docker-installation), and [PostgreSQL with pgvector](https://github.com/pgvector/pgvector). The command writes `data/benchmarks/models/vectordb.json` and a digest-based Compose environment.
 
 With `--output PATH`, the image lock can use a relative or absolute custom file;
 the Compose environment remains at
-`experiments/benchmarks/vectordb/.env` under the project root. Directory/file
+`benchmarks/vectordb/.env` under the project root. Directory/file
 conflicts, a lock/environment collision, or escaped Compose ownership fail
 before Docker calls or publication. Do not derive the environment location from
 the custom lock path. Image identities must be full immutable SHA256 digests;
@@ -702,12 +704,12 @@ reviewed exact configurations without retuning. Follow the
 [implementation boundary](vectordb/methodology.md#implementation-status).
 
 ```powershell
-docker compose -f experiments/benchmarks/vectordb/compose.yml up -d
-python -m experiments.benchmarks.vectordb.run --profile smoke
-python -m experiments.benchmarks.vectordb.run --profile development
-python -m experiments.benchmarks.vectordb.run --profile validation
-python -m experiments.benchmarks.vectordb.run --profile locked
-docker compose -f experiments/benchmarks/vectordb/compose.yml down
+docker compose -f benchmarks/vectordb/compose.yml up -d
+python -m benchmarks.vectordb.run --profile smoke
+python -m benchmarks.vectordb.run --profile development
+python -m benchmarks.vectordb.run --profile validation
+python -m benchmarks.vectordb.run --profile locked
+docker compose -f benchmarks/vectordb/compose.yml down
 ```
 
 ### Lifecycle and selection
@@ -727,7 +729,7 @@ per-request artifacts; they do not produce independently selected winners.
 
 After validation, `vector-database-locked.json` in that decisions directory
 records exactly one selected pair and its source-run/protocol provenance. The
-`python -m experiments.benchmarks.vectordb.run --profile locked` command
+`python -m benchmarks.vectordb.run --profile locked` command
 uses held-out inputs and frozen
 settings, without new tuning. Final RAG consumes that same choice. Advancement
 uses decisions, not edits to the protocol roster.
@@ -747,8 +749,8 @@ and apply before authoritative execution.
 ### Generation execution and judge setup
 
 ```powershell
-python -m experiments.benchmarks.rag.generation.run --profile smoke
-python -m experiments.benchmarks.rag.generation.run --profile preflight
+python -m benchmarks.rag.generation.run --profile smoke
+python -m benchmarks.rag.generation.run --profile preflight
 ```
 
 Its smoke command runs every model-mode configuration independently on CPU and
@@ -790,8 +792,8 @@ array containing your reviewed adapter's executable and arguments. The
 benchmark chooses no provider or judge automatically.
 
 ```powershell
-python -m experiments.benchmarks.rag.generation.run --profile development --judge-transport path/to/judge-transport.json
-python -m experiments.benchmarks.rag.generation.run --resume-execution path/to/generation_execution.json --judge-transport path/to/judge-transport.json
+python -m benchmarks.rag.generation.run --profile development --judge-transport path/to/judge-transport.json
+python -m benchmarks.rag.generation.run --resume-execution path/to/generation_execution.json --judge-transport path/to/judge-transport.json
 ```
 
 Resume verifies the saved schedule/output binding and reuses accepted journal
@@ -855,9 +857,9 @@ No placeholder decision is committed; author it only from reviewed evidence.
 After authoring the reviewed composition and preparing its required inputs:
 
 ```powershell
-python -m experiments.benchmarks.rag.final.run --profile smoke
-python -m experiments.benchmarks.rag.final.run --profile preflight
-python -m experiments.benchmarks.rag.final.run --profile locked --confirm-locked-test
+python -m benchmarks.rag.final.run --profile smoke
+python -m benchmarks.rag.final.run --profile preflight
+python -m benchmarks.rag.final.run --profile locked --confirm-locked-test
 ```
 
 The approved report uses the calibrated LLM judge and deterministic scoring of

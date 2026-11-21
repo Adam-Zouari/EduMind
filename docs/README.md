@@ -70,7 +70,7 @@ their shared rules.
 | How are benchmark data acquired, annotated and split into manifests? | [Dataset preparation](benchmarks/dataset-preparation.md) |
 | How are prepared inputs checked, and how are validation reports verified before execution? | [Data-validation guide and implementation status](benchmarks/data-validation.md) |
 | Which benchmark decisions remain blocked on inspecting downloaded data? | [Temporary data-review checklist](benchmarks/pending-data-review.md) |
-| What are the machine-readable model decisions and revisions? | [`selection_evidence.csv`](../experiments/benchmarks/selection_evidence.csv) |
+| What are the machine-readable model decisions and revisions? | [`selection_evidence.csv`](../benchmarks/selection_evidence.csv) |
 
 ## Project maintenance
 
@@ -84,7 +84,7 @@ Human documentation explains the system; it does not override executable
 inputs:
 
 - `config/base.yaml` defines provisional production settings.
-- `experiments/benchmarks/selection_evidence.csv` records screening include/exclude
+- `benchmarks/selection_evidence.csv` records screening include/exclude
   decisions, checkpoint identities/revisions, and supporting public evidence.
 - Each benchmark's `protocol.yaml` defines its settings and, where needed, its
   candidate roster; fixed adapter support is defined in code.

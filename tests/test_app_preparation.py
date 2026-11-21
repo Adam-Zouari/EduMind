@@ -71,9 +71,9 @@ from edumind.rag import tokenizers
 from tiktoken import load
 
 assert app.PROJECT_ROOT == Path.cwd()
-assert not Path('experiments').exists()
+assert not Path('benchmarks').exists()
 assert not Path('data/benchmarks').exists()
-sys.modules['experiments'] = None
+sys.modules['benchmarks'] = None
 
 def run(*args):
     sys.argv = ['prepare_models', *args]

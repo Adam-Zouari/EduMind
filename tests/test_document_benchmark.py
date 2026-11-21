@@ -7,19 +7,19 @@ from pathlib import Path
 
 import pytest
 
-from edumind.common.artifacts import atomic_write_json
-from edumind.extraction import ExtractedDocument, ExtractionProfile, SourceKind
-from experiments.benchmarks.common.contracts import (
+from benchmarks.common.contracts import (
     BenchmarkPlan,
     CandidateExecutionError,
 )
-from experiments.benchmarks.common.process import WorkerMeasurementError
-from experiments.benchmarks.extraction.document import benchmark, runner, validation
-from experiments.benchmarks.extraction.document.metrics import (
+from benchmarks.common.process import WorkerMeasurementError
+from benchmarks.extraction.document import benchmark, runner, validation
+from benchmarks.extraction.document.metrics import (
     _document_fingerprint,
     load_reference,
 )
-from experiments.benchmarks.extraction.document.protocol import load_protocol
+from benchmarks.extraction.document.protocol import load_protocol
+from edumind.common.artifacts import atomic_write_json
+from edumind.extraction import ExtractedDocument, ExtractionProfile, SourceKind
 
 
 @pytest.fixture
@@ -161,7 +161,7 @@ def test_post_inference_failure_keeps_completed_first_quality(
 def test_document_prediction_is_saved_outside_worker_temporary_files(
     monkeypatch, worker_result, tmp_path
 ):
-    from experiments.benchmarks.common.runner import _write_candidate_artifact
+    from benchmarks.common.runner import _write_candidate_artifact
 
     artifacts = evaluate(monkeypatch, worker_result)[-1]
     path = _write_candidate_artifact(
@@ -178,7 +178,7 @@ def test_document_prediction_is_saved_outside_worker_temporary_files(
 def test_completed_worker_window_and_quality_survive_integrity_failure_in_mlflow(
     monkeypatch, worker_result, tmp_path, request
 ):
-    from experiments.benchmarks.common.runner import run_benchmark
+    from benchmarks.common.runner import run_benchmark
 
     mlflow = pytest.importorskip("mlflow")
     previous = mlflow.get_tracking_uri()
@@ -276,7 +276,7 @@ def test_worker_supervisor_preserves_written_result_on_measurement_gap(
 ):
     from types import SimpleNamespace
 
-    from experiments.benchmarks.common import process
+    from benchmarks.common import process
 
     class Monitor:
         peak_vram_mb = 20
@@ -403,7 +403,7 @@ def test_decisions_use_current_protocol_and_qualification(
 
 
 def test_reference_page_requires_physical_page_even_without_page_metrics(tmp_path):
-    from experiments.benchmarks.common.datasets import manifest_content_checksum
+    from benchmarks.common.datasets import manifest_content_checksum
 
     root = Path(__file__).resolve().parents[1]
     manifest = json.loads(

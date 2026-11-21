@@ -17,28 +17,28 @@ from test_generation_benchmark import Backend, FixtureJudge, Monitor
 from test_generation_recovery import calibrated_inputs as base_calibrated_inputs
 from test_generation_recovery import fixture_transport
 
-from edumind.common.artifacts import atomic_write_json, sha256_file
-from experiments.benchmarks.common import runner as common_runner
-from experiments.benchmarks.common.contracts import (
+from benchmarks.common import runner as common_runner
+from benchmarks.common.contracts import (
     BenchmarkPlan,
     CandidateExecutionError,
 )
-from experiments.benchmarks.common.datasets import load_manifest
-from experiments.benchmarks.rag.evaluation import Chunk
-from experiments.benchmarks.rag.final import benchmark, run, worker
-from experiments.benchmarks.rag.final.validation import manifest_path
-from experiments.benchmarks.rag.generation.evidence import (
+from benchmarks.common.datasets import load_manifest
+from benchmarks.rag.evaluation import Chunk
+from benchmarks.rag.final import benchmark, run, worker
+from benchmarks.rag.final.validation import manifest_path
+from benchmarks.rag.generation.evidence import (
     load_execution,
     save_evaluation,
 )
-from experiments.benchmarks.rag.generation.judge import SemanticJudge
-from experiments.benchmarks.rag.generation.metrics import (
+from benchmarks.rag.generation.judge import SemanticJudge
+from benchmarks.rag.generation.metrics import (
     PRIMARY_METRICS,
     REPEAT_KEYS,
     parse_response,
     question_statistics,
 )
-from experiments.benchmarks.rag.generation.validation import questions_from_manifest
+from benchmarks.rag.generation.validation import questions_from_manifest
+from edumind.common.artifacts import atomic_write_json, sha256_file
 
 GENERATOR = "qwen3-0.6b-direct"
 STREAM_MARKER = "test-only native stream retained after inference"
