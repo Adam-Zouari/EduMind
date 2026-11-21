@@ -1,12 +1,12 @@
-# Benchmark datasets
+# Prepare benchmark datasets
 
 [Project overview](../../README.md) · [Documentation map](../README.md) ·
 [Installation guide](../setup/installation.md) ·
 [Benchmark methodology](methodology.md)
 
-This guide defines the public source pools for the document, audio, video, and
-RAG benchmarks, how to download them, and how to turn them into EduMind's frozen
-manifests. Sources and links were reviewed on **2026-09-14**.
+The [dataset-selection rationale](dataset-selection.md) records which sources
+were chosen and why. This guide covers acquisition, sample allocations, and
+conversion of those sources into EduMind's frozen manifests.
 
 Downloading a public release does not make it a runnable EduMind dataset. A
 public release is a **source pool**. An authoritative run uses a smaller,
@@ -21,48 +21,32 @@ standalone commands and report verification.
 Dataset annotation rules live here; prediction scoring lives in each metric
 reference, not in the validator.
 
-Use the [dataset plan](#1-final-dataset-plan) to understand each source's role.
+Use the [source allocations](#1-source-inventory-and-split-allocations) to plan the files to prepare.
 For downloads, go to [RAG](#3-install-the-rag-datasets),
 [documents](#4-install-the-document-datasets), [audio](#5-install-the-audio-datasets),
 or [video](#6-install-the-video-datasets). Then follow
 [manifest construction](#7-build-the-frozen-edumind-manifests) before validation.
 
-## 1. Final dataset plan
+## 1. Source inventory and split allocations
 
 ### Document extraction
 
-| Source | Required role | What it contributes | Download size |
-|---|---|---|---:|
-| [OmniDocBench v1.6](https://huggingface.co/datasets/opendatalab/OmniDocBench/tree/d386947f7fc3bafdcd756c8485845a2f43a19875) | Main structured-page source | Text, element boxes and types, reading order, tables, formulas, and page attributes | About 1.55 GB |
-| [OHR-Bench v2](https://huggingface.co/datasets/opendatalab/OHR-Bench/tree/7f833e3eda9a571a9ea545a8f6d476fa1685033d) | Real multi-page PDF source | Original PDFs, page-level structured references, varied document domains, and page attribution | About 1.84 GB for the complete repository |
-| [PureDocBench v1.0](https://huggingface.co/datasets/zhihengli-casia/puredocbench/tree/dbc6d20b49c7feba5aa43ba7a191dd56374943b6) | Controlled image-robustness source | The same pages rendered as clean, digitally degraded, and real-degraded images, with text, table, formula, and reading-order references | About 37.6 GB |
-| [DocPTBench](https://huggingface.co/datasets/topdu/DocPTBench/tree/bb88a1e78588c7ab9ee7fc0dd0dc86cc7e40546c) | Photographed-document source | Matched original and photographed documents with perspective, lighting, blur, folds, and camera artifacts | About 16.9 GB |
-| EduMind native-DOCX set | Native DOCX behavior | Paragraphs, headings, lists, captions, images, tables, formulas, and document order in actual `.docx` files | Depends on the selected files |
+| Source or release | Download size |
+|---|---|
+| [OmniDocBench v1.6](https://huggingface.co/datasets/opendatalab/OmniDocBench/tree/d386947f7fc3bafdcd756c8485845a2f43a19875) | About 1.55 GB |
+| [OHR-Bench v2](https://huggingface.co/datasets/opendatalab/OHR-Bench/tree/7f833e3eda9a571a9ea545a8f6d476fa1685033d) | About 1.84 GB for the complete repository |
+| [OpenDataLoader Bench](https://github.com/opendataloader-project/opendataloader-bench) | Depends on the selected files |
+| [PureDocBench v1.0](https://huggingface.co/datasets/zhihengli-casia/puredocbench/tree/dbc6d20b49c7feba5aa43ba7a191dd56374943b6) | About 37.6 GB |
+| [DocPTBench](https://huggingface.co/datasets/topdu/DocPTBench/tree/bb88a1e78588c7ab9ee7fc0dd0dc86cc7e40546c) | About 16.9 GB |
+| MIT OpenCourseWare editable DOCX, reviewed by EduMind | Depends on the selected files |
 
-These sources answer different questions and are not interchangeable:
+For OpenDataLoader, take original multi-page files from `pdfs/` and match
+them to `ground-truth/` at the same recorded revision. Count them within the
+PDF allocation. For OmniDocBench, use English pages from the dataset release
+matched to the pinned evaluator. Keep related originals, photographed pages,
+and degradation variants in the same source family, including across datasets.
 
-- OmniDocBench supplies the richest element-level references for EduMind's
-  layout, table, and formula metrics. The project deliberately pins v1.6 because
-  its evaluator is pinned to the matching v1.6 revision. Do not download the
-  moving `main` revision for an authoritative run. It is one source within the
-  combined corpus rather than a request to reproduce its complete leaderboard:
-  selected English pages are scored alongside real multi-page PDFs, degradation
-  pairs, phone photos, and native DOCX.
-- OHR-Bench supplies real, complete, multi-page PDFs. It is used for PDF text,
-  page-content, page-attribution, and whole-document behavior; it does not
-  replace OmniDocBench's element-level annotations.
-- PureDocBench provides matched clean/degraded views. This makes degradation
-  robustness measurable without confusing harder source content with worse
-  image quality.
-- DocPTBench supplies the real phone-camera conditions that the other sources
-  do not isolate. Use its matched original and photographed inputs, but not its
-  unwarped outputs: unwarping is a separate preprocessing question and is not a
-  candidate in the current experiment.
-- A native DOCX set remains necessary. Image/PDF benchmarks cannot demonstrate
-  how Docling handles Word headings, lists, captions, relationships, and native
-  document order.
-
-The intended authoritative corpus remains:
+Prepare these sample counts for the authoritative profiles:
 
 | Input | Development | Validation | Locked test | Total |
 |---|---:|---:|---:|---:|
@@ -72,24 +56,13 @@ The intended authoritative corpus remains:
 
 ### Audio extraction
 
-| Source | Required role | What it contributes | Download size |
-|---|---|---|---:|
-| [LibriSpeech test-clean and test-other](https://www.openslr.org/12/) | Read-speech control | Carefully segmented English read speech with speaker IDs and verified transcripts | About 674 MB combined |
-| [M³AV v1.0](https://huggingface.co/datasets/CHHHH/M3AV_v1.0/tree/fd0ef99ec1fcf5a4ab946317e32923209b802389) | Academic-lecture speech | Technical lectures in computer science, mathematics, medicine, and biology with transcripts and word timestamps | About 45.5 GB |
-| [EdAcc v1.0](https://datashare.ed.ac.uk/items/355c07b4-500d-4e80-8f12-225e646293c9/full) | Accent-diversity source | Natural remote conversations across many first- and second-language English varieties | About 5.51 GB |
-| [AMI Meeting Corpus](https://groups.inf.ed.ac.uk/ami/corpus/) | Noisy and multi-speaker speech | Far-field and mixed meeting audio with manual orthographic transcription and timed words | Variable; only selected meetings need to be downloaded |
-| [MUSAN](https://www.openslr.org/17/) | Nonspeech reliability controls | Music and environmental/background noise | About 11 GB |
-| Generated silence | Nonspeech reliability control | Deterministic silence with no licensing or transcription ambiguity | Negligible |
-
-The recommended 90-clip allocation is deliberately simple:
-
-| Source | Development | Validation | Locked test | Total |
-|---|---:|---:|---:|---:|
-| LibriSpeech | 10 | 4 | 4 | 18 |
-| M³AV | 14 | 5 | 5 | 24 |
-| EdAcc | 14 | 5 | 5 | 24 |
-| AMI | 16 | 4 | 4 | 24 |
-| **Total speech clips** | **54** | **18** | **18** | **90** |
+| Speech source | Development | Validation | Locked test | Download size |
+|---|---:|---:|---:|---|
+| [LibriSpeech test-clean and test-other](https://www.openslr.org/12/) | 10 | 4 | 4 | About 674 MB combined |
+| [M³AV v1.0](https://huggingface.co/datasets/CHHHH/M3AV_v1.0/tree/fd0ef99ec1fcf5a4ab946317e32923209b802389) | 14 | 5 | 5 | About 45.5 GB |
+| [EdAcc v1.0](https://datashare.ed.ac.uk/items/355c07b4-500d-4e80-8f12-225e646293c9/full) | 14 | 5 | 5 | About 5.51 GB |
+| [AMI Meeting Corpus](https://groups.inf.ed.ac.uk/ami/corpus/) | 16 | 4 | 4 | Only selected meetings needed |
+| **90 speech clips total** | **54** | **18** | **18** | |
 
 The allocation does not assign conditions automatically. A reviewer listens to
 every selected clip and records a `conditions` list. Every clip is either
@@ -98,15 +71,12 @@ For example, `['noisy', 'accented']` is valid. Each split must cover all four
 labels. Corpus names such as `test-other` are not substitutes for listening and
 labeling.
 
-MUSAN and generated silence are stored in a separate reliability manifest. They
-never enter Corpus WER or CER.
+[MUSAN](https://www.openslr.org/17/) (about 11 GB) and generated silence are
+stored in a separate reliability manifest. They never enter Corpus WER or CER.
 
 ### Video extraction
 
-Use three complementary sources rather than forcing one lecture corpus to cover
-every presentation style:
-
-| Source | Development | Validation | Locked test | Total | What it contributes |
+| Source | Development | Validation | Locked test | Total | Excerpts to select |
 |---|---:|---:|---:|---:|---|
 | [SlideSpeech](https://www.openslr.org/144/) | 8 | 2 | 2 | 12 | Slide-based lectures and presenter-plus-slide layouts |
 | [AVLectures](https://github.com/Darshansingh11/AVLectures) | 5 | 2 | 2 | 9 | Blackboard, digital-board, and mixed lecture modes |
@@ -120,10 +90,11 @@ same verification rules apply to SlideSpeech, AVLectures, and owned recordings.
 
 ### Chunking, embedding, retrieval, and generation
 
-| Source | Development | Validation | Locked test | What it contributes |
+| Source | Development | Validation | Locked test | Records to prepare |
 |---|---:|---:|---:|---|
 | [QASPER](https://huggingface.co/datasets/allenai/qasper/tree/3065362e337ded696bbb0171b073c73e513c9410) | 100 papers | 40 papers | 40 papers | Scientific documents, answerable and unanswerable questions, accepted answers, and text evidence. |
-| EduMind verified structured supplement | Reviewed separately | Reviewed separately | Reviewed separately | Table, formula, and mixed-evidence questions with exact canonical-text intervals. |
+| [EduQG](https://github.com/hadifar/question-generation) | Reviewed by book family | Reviewed by book family | Reviewed by book family | Standalone textbook questions and sentence evidence, remapped to the frozen source. Do not index answer keys. |
+| EduMind-authored structured supplement on OHR-Bench documents | Reviewed separately | Reviewed separately | Reviewed separately | Table, formula, and mixed-evidence questions with exact canonical-text intervals. |
 
 QASPER supplies the paper-level split foundation. The preparation step samples
 whole papers with seed `42`, so one paper and its questions never cross splits.
@@ -201,18 +172,15 @@ configuration lifecycle and its separate real-service/data prerequisites.
 
 ## 2. Prerequisites and storage layout
 
-Activate the project virtual environment and install the benchmark dependencies
-before using the Hugging Face CLI:
+Follow the [environment setup](../setup/installation.md) for benchmarks first.
+In the activated environment, check that the data tools are available:
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements/benchmarks.lock
 hf --help
 ffmpeg -version
 ```
 
-Install FFmpeg from the [official FFmpeg download page](https://ffmpeg.org/download.html)
-if `ffmpeg` is unavailable. Git Bash is useful for the split PureDocBench and
+Git Bash is useful for the split PureDocBench and
 M³AV archives and the SlideSpeech fallback downloader.
 
 Keep raw public releases under the ignored `data/benchmarks/raw` directory:
@@ -270,14 +238,31 @@ performs the requested preparation and requires the corresponding inputs and
 explicit download coordination. This guarantee applies to the project CLI, not
 to the direct `hf`, `curl.exe`, or upstream download commands below.
 
-Model/component locks and official evaluator source/image identities are separate
-from dataset provenance. Follow the
-[snapshot and component migration instructions](../setup/installation.md#legacy-lock-and-component-pin-migration)
-without deleting existing model downloads or relabeling dataset revisions.
-The retained 17-model cache passed read-only integrity verification; its existing
-GTE snapshot does not need repreparation for stage-scoped use. That check does
-not supply reviewed manifests, model/GPU qualification, judge calibration, or
-official-scoring acceptance.
+Model locks are separate from dataset provenance. See
+[model verification and migration](model-preparation.md#legacy-lock-and-component-pin-migration)
+for existing snapshots and [official scorer setup](running.md#official-document-scorer)
+for the document evaluator.
+
+### Smoke fixtures
+
+The small committed fixtures are sufficient for smoke tests. To regenerate
+them explicitly, use the preparation CLI:
+
+```powershell
+python -m experiments.benchmarks.prepare smoke-fixtures
+```
+
+Regenerate only one fixture group when working on a single experiment:
+
+```powershell
+python -m experiments.benchmarks.prepare smoke-fixtures --modality document
+python -m experiments.benchmarks.prepare smoke-fixtures --modality audio
+python -m experiments.benchmarks.prepare smoke-fixtures --modality video
+```
+
+Audio and video regeneration requires an FFmpeg build containing the optional
+`flite` filter. This is needed only to recreate the committed synthetic speech;
+running the existing smoke benchmarks does not require `flite`.
 
 ## 3. Install the RAG datasets
 
@@ -293,8 +278,12 @@ This creates `qasper-dev.json`, `qasper-validation.json`, and
 `3065362e337ded696bbb0171b073c73e513c9410`, the split seed is `42`, and the
 generated manifests record their selected paper IDs and content checksums.
 
-Create one reviewed structured manifest per matching split, then combine it with
-QASPER only after all evidence offsets and evidence-type counts pass validation:
+The command above prepares QASPER only. For the other sources, prepare one
+reviewed supplement per matching split: include eligible EduQG records as
+text-evidence questions and EduMind-authored OHR records under their actual
+evidence types. Record each source's identity and revision; textbook questions
+do not count toward the table, formula or mixed quotas. Combine with QASPER
+only after checking the evidence offsets and counts:
 
 ```powershell
 python -m experiments.benchmarks.prepare rag-selection `
@@ -318,29 +307,23 @@ split seed. IDs must be globally unique, source-document families must remain
 isolated, and the locked-test manifest must not be inspected during component
 selection.
 
-Each component benchmark has its own locked execution. Sharing a locked manifest
-with Final RAG follows the [shared locked-data isolation rule](methodology.md#locked-data-isolation).
-If component locked results inform further choices, reserve a separate untouched
-Final RAG holdout instead. Reviewed manifests must record the intended uses;
-locked reports never authorize reselection on the same data.
+Each component benchmark has its own locked execution. This dataset plan uses
+a separate untouched Final RAG holdout: reserve its document families before
+component selection, and record the intended uses in the manifests. See the
+[shared locked-data isolation rule](methodology.md#locked-data-isolation).
+Locked reports never authorize reselection on the same data.
 
 ## 4. Install the document datasets
 
-For positive table/formula references requiring official reconstruction checks,
-prepare the pinned evaluator separately from these dataset downloads. Its
-`.edumind-source.json` must verify actual source/dependency content alongside
-the immutable image lock; a revision marker alone is insufficient. See
-[official evaluator preparation and identity verification](../setup/installation.md#official-document-metric-code).
-Preserve a legacy evaluator directory before explicit migration; do not mint a
-manifest for unverified source or treat evaluator corruption as candidate quality
-zero. Full document validation seals the verified evaluator identity, and a
-changed identity requires a new matching validation report.
+For a manifest with positive table or formula references, also
+[prepare and verify the official scorer](running.md#official-document-scorer).
+Document validation seals its identity separately from dataset checksums.
 
-Dataset downloads and a source/image identity check do not prove nonempty
-TEDS/TEDS-S/CDM conformance. Live acceptance has separately passed on the pinned
-image; current source/image identity and reference validation remain required.
-No authoritative references, model scores or comparisons are created by these
-preparation and conformance checks.
+Start with a small development batch: a page and its photograph, multi-page
+PDFs with a table or formula and nested headings, and DOCX files from different
+courses. Check the proposed references against the originals before scaling
+up. This pilot is not a full development manifest; the validator also checks
+profile counts.
 
 ### 4.1 OmniDocBench v1.6
 
@@ -475,7 +458,10 @@ DOCX files and EduMind's required verified text, hierarchy, list, table, formula
 caption, image, and order references. Reconstructed DOCX files alone would test
 the reconstruction procedure, not ordinary author-created documents.
 
-Create 45 licensed documents under:
+Collect 45 original, licensed editable teaching documents from MIT
+OpenCourseWare across courses and templates. The
+[selection rationale](dataset-selection.md#document-extraction) links example
+courses. Store the originals and their reviewed references under:
 
 ```text
 data/benchmarks/raw/document/native-docx/
@@ -1021,37 +1007,3 @@ and answerability labels; chunking–embedding and retrieval–reranking retain
 `data/benchmarks/rag/smoke.json`. Smoke verifies code paths only and does not replace any
 public or manually verified dataset above. Use the
 [benchmark runbook](running.md) for all execution commands.
-
-## 8. Sources deliberately not required
-
-- [olmOCR-Bench](https://huggingface.co/datasets/allenai/olmOCR-bench) is a
-  useful document-parser unit-test suite, but its property/unit-test protocol
-  does not supply the complete element references required by EduMind's current
-  metric contract.
-- [DocLayNet](https://github.com/DS4SD/DocLayNet) is a strong layout-only corpus,
-  but OmniDocBench and PureDocBench already provide layout together with text,
-  table, formula, and reading-order evidence for this first comparison.
-- [PubTabNet](https://github.com/ibm-aur-nlp/PubTabNet) is table-specific and is
-  unnecessary when the question is complete document-parser quality.
-- [IAM Handwriting](https://fki.tic.heia-fr.ch/databases/iam-handwriting-database)
-  and [HierText](https://github.com/google-research-datasets/hiertext) are useful
-  text-recognition corpora, but the current benchmark asks for complete document
-  parsing. OmniDocBench already supplies handwritten-note samples together with
-  layout, order, table, and formula annotations.
-- [TED-LIUM 3](https://www.openslr.org/51/) is a strong ASR corpus, but its
-  prepared-talk role is covered more directly by M³AV's academic lectures, while
-  EdAcc supplies the missing accent and natural-conversation coverage. Keeping
-  all three would add source conversion work without adding another required
-  condition.
-- [L2-ARCTIC](https://psi.engr.tamu.edu/l2-arctic-corpus/) provides carefully
-  aligned non-native read speech, but it overlaps LibriSpeech's read-speech
-  control and EdAcc's accent-diversity role.
-- M³AV is used for audio, not for the keyframe-policy benchmark. Its official
-  packaged release provides audio, OCR images, and annotations, but not the
-  stable continuous-video assets required to compare frame-selection policies.
-- [How2](https://github.com/srvk/how2-dataset) is not used because its official
-  repository warns that most source videos have disappeared and the downloader
-  no longer produces a useful corpus.
-
-These exclusions keep the download plan tied to a concrete metric or coverage
-gap rather than collecting datasets that answer the same question.

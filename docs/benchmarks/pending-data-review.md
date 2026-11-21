@@ -1,6 +1,6 @@
 # Temporary benchmark data-review checklist
 
-[Benchmark program](../README.md#experiments) · [Dataset guide](datasets.md) ·
+[Benchmark program](../README.md#experiments) · [Dataset preparation](dataset-preparation.md) ·
 [Methodology](methodology.md)
 
 This is a temporary checklist for decisions that require downloading and

@@ -2,7 +2,8 @@
 
 [Project overview](../../README.md) · [Documentation map](../README.md) ·
 [Benchmark program](../README.md#experiments) · [Shared methodology](methodology.md) ·
-[Selection evidence](../../experiments/benchmarks/selection_evidence.csv)
+[Selection evidence](../../experiments/benchmarks/selection_evidence.csv) ·
+[Dataset selection](dataset-selection.md) · [Benchmark model preparation](model-preparation.md)
 
 Status: **public-evidence shortlist; EduMind's local benchmarks inform the engineer's final decisions**
 
@@ -149,7 +150,12 @@ The public screen uses **`avg` WER (%)** from the pinned Open ASR English short-
 | >800M–1.5B | [`OpenMOSS-Team/MOSS-Transcribe-Diarize`](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize/blob/0844c4adb24300bc7c6cd91e379bc790f939f2d6/README.md) | **4.7429** | Segment timestamps and diarization are part of the documented output. |
 | Control | [`openai/whisper-small.en`](https://huggingface.co/openai/whisper-small.en/tree/e8727524f962ee844a7319d92be39ac1bd25655a) | Local control | Established reference implementation with timestamp output. |
 
-Shared quality source: [Open ASR methodology](https://github.com/huggingface/open_asr_leaderboard) and the [revision-pinned English short-form result file](https://huggingface.co/datasets/hf-audio/open-asr-leaderboard-results/blob/a0c08d3ac1ef99ea7148666061839b853cbfa89a/english_short_latest.csv).
+Shared quality source: the English short-form [Open ASR Leaderboard](https://huggingface.co/spaces/hf-audio/open_asr_leaderboard)
+and its [methodology](https://github.com/huggingface/open_asr_leaderboard).
+The [selection evidence](../../experiments/benchmarks/selection_evidence.csv)
+records the scores and original CSV revision used for this shortlist. That
+revision was not publicly retrievable during link review; the live leaderboard
+is for browsing, not a replacement for the historical evidence.
 
 Short-form public WER only creates the shortlist. Final ASR evaluation follows
 the frozen [audio methodology](extraction/audio/methodology.md) and

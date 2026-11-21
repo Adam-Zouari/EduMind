@@ -1,6 +1,6 @@
 # Benchmark data validation
 
-[Dataset preparation](datasets.md) · [Shared methodology](methodology.md) ·
+[Dataset preparation](dataset-preparation.md) · [Shared methodology](methodology.md) ·
 [Run commands](running.md)
 
 Data validation establishes whether the exact inputs are ready for a benchmark.

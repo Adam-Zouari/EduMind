@@ -8,10 +8,12 @@ from the repository root in the prepared Python 3.12 environment.
 
 ## 1. Prepare the environment
 
-Follow the [installation guide](../setup/installation.md). It is the authority
-for dependencies, model snapshots, data preparation, evaluator images, and
-vector-server images. A benchmark does not download missing models while it is
-running.
+Install the [benchmark environment](../setup/installation.md) first. For the
+chosen benchmark, [prepare its models](model-preparation.md) and
+[prepare its datasets](dataset-preparation.md) as applicable. Before an
+authoritative run, [validate its inputs](data-validation.md). The document
+scorer and database images have their own preparation steps below. Runners
+do not download missing components.
 
 ### Implementation status
 
@@ -167,7 +169,7 @@ Model preparation is separate from these input overrides. Inspect plans with
 `python -m experiments.benchmarks.prepare --list` or a target's `--dry-run`;
 every target stops before network, Docker, preparation helpers, or writes.
 Planning is not input validation or hardware qualification. Follow the
-[model-lock preparation and migration instructions](../setup/installation.md#legacy-lock-and-component-pin-migration)
+[model-lock preparation and migration instructions](model-preparation.md#legacy-lock-and-component-pin-migration)
 only when additional preparation is needed and downloads are coordinated.
 Fresh snapshots require immutable-commit/file-inventory verification and a
 completion receipt; legacy paths remain usable when the requested model's
@@ -261,6 +263,8 @@ former process/delta policy cannot qualify this device-total contract.
 
 ## 4. Document extraction
 
+### Official document scorer
+
 Prepare the official table/formula evaluator when the manifest contains positive
 reference tables or formulas requiring reconstruction scores. Verified-negative
 presence annotations alone do not require an official reconstruction scorer:
@@ -272,12 +276,16 @@ python -m experiments.benchmarks.prepare evaluators
 ```
 
 The non-dry command requires coordinated source/image downloads and Docker's
-Linux engine. Preparation verifies the clean pinned checkout before recording
+Linux engine. The evaluator uses [pinned OmniDocBench source](https://github.com/opendatalab/OmniDocBench/tree/193627ae9e97d89188468ed1ee3b7a856ff76044)
+and a Python 3.10 image (`ghcr.io/zeng-weijun/omnidocbench-eval:repro-ubuntu2204`)
+identified by immutable digest. Its TeX, ImageMagick and Ghostscript dependencies
+are isolated from the Python 3.12 host. Preparation verifies the clean pinned checkout before recording
 `.edumind-source.json`; scoring verifies actual mounted evaluator/dependency
 content as well as the immutable image lock. A marker-only legacy tree or a
 changed/deleted/added source file fails integrity before scoring. Preserve such
 directories explicitly before preparing a clean destination; do not overwrite
-historical evidence or create a manifest from unverified bytes.
+historical evidence or create a manifest from unverified bytes. The lock and
+verified source are stored under `data/benchmarks/evaluators/OmniDocBench/`.
 
 After preparation, inspect the verified identity without invoking Docker:
 
@@ -290,13 +298,16 @@ scoring provenance. Document validation seals bind this identity, so an identity
 change requires full validation again and a matching new report. Identity
 verification alone is not nonempty TEDS/TEDS-S/CDM conformance. Live acceptance
 has passed on the pinned image, including header perturbations and formula
-count/status checks; the runtime gate remains active. See the
-[evaluator setup and migration details](../setup/installation.md#official-document-metric-code).
+count/status checks; the runtime gate remains active. Only reference/prediction pairs are sent
+to this offline scorer, not model execution; its time is excluded from parser
+latency. See the [document evaluation setup](extraction/document/methodology.md#evaluation-setup).
 Docling model bundles separately require the
-[evidence-backed component pins](../setup/installation.md#extraction-models), not
+[evidence-backed component pins](model-preparation.md#extraction-models), not
 just the installed Docling package version. No model downloads, real scoring,
 GPU qualification, authoritative data, or winner selection are implied by these
 preparation checks.
+
+### Run the document profiles
 
 Run wiring and hardware qualification:
 
@@ -661,6 +672,27 @@ Ranking Repeatability, operation-specific error rates, p50/p95/QPS, and verified
 write/startup boundaries. The runner uses explicit frozen configurations and
 sealed prepared inputs. Real-service checks and reviewed authoritative inputs
 remain prerequisites; a mocked test is not server verification.
+
+### Prepare the database images
+
+Prepare and digest-lock the four server images:
+
+```powershell
+python -m experiments.benchmarks.prepare vectordb
+```
+
+The compared servers are [Chroma](https://docs.trychroma.com/guides/deploy/docker), [Qdrant](https://qdrant.tech/documentation/installation/), [Weaviate](https://docs.weaviate.io/deploy/installation-guides/docker-installation), and [PostgreSQL with pgvector](https://github.com/pgvector/pgvector). The command writes `data/benchmarks/models/vectordb.json` and a digest-based Compose environment.
+
+With `--output PATH`, the image lock can use a relative or absolute custom file;
+the Compose environment remains at
+`experiments/benchmarks/vectordb/.env` under the project root. Directory/file
+conflicts, a lock/environment collision, or escaped Compose ownership fail
+before Docker calls or publication. Do not derive the environment location from
+the custom lock path. Image identities must be full immutable SHA256 digests;
+preparation pulls images but does not start services.
+
+The benchmark servers bind to loopback and use data separate from the
+[application's Chroma server](../setup/running.md#2-start-chroma).
 
 ### Commands
 

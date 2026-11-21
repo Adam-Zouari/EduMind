@@ -65,7 +65,7 @@ English clips split 54 development, 18 validation, and 18 locked. It requires:
 - accents and multiple speakers;
 - technical and educational vocabulary.
 
-The [dataset guide](../../datasets.md) defines the LibriSpeech, M³AV, EdAcc, and AMI
+The [dataset preparation guide](../../dataset-preparation.md#audio-extraction) defines the LibriSpeech, M³AV, EdAcc, and AMI
 source pools and the recommended allocation. The exact recordings are
 fixed by the manifests, which record source, revision, selected clip interval,
 license, checksum, duration, and speaker/document family. Public leaderboard

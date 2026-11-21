@@ -1,11 +1,11 @@
 # Run the current EduMind application
 
 [Project overview](../../README.md) · [Documentation map](../README.md) ·
-[Complete preparation guide](installation.md) ·
+[Model preparation](model-preparation.md) ·
 [Application internals](../architecture/ui.md)
 
-This page is the application operations guide. Complete the one-time
-[installation and model preparation](installation.md) first.
+Complete the one-time [environment setup](installation.md) and
+[app-model preparation](model-preparation.md#preparation-commands) first.
 
 ## 1. Activate the environment
 
@@ -15,9 +15,9 @@ Run from the repository root:
 .\.venv\Scripts\Activate.ps1
 ```
 
-If `.venv` or `data/benchmarks/models/selected.json` is missing, return to the
-[installation guide](installation.md); this page does not duplicate environment
-creation or download instructions.
+If `.venv` is missing, return to [environment setup](installation.md).
+If `data/benchmarks/models/selected.json` is missing, follow
+[model preparation](model-preparation.md#preparation-commands).
 
 ## 2. Start Chroma
 
@@ -57,6 +57,26 @@ docker compose -f infrastructure/chroma.yml down
 This preserves the named Chroma volume. Add `-v` only when you intentionally want
 to delete the stored index.
 
+## Migrating an existing MiniLM index
+
+GTE produces 768-dimensional vectors, so an existing 384-dimensional MiniLM
+collection cannot be reused. EduMind keeps the `edumind` collection name and
+checks its embedding/chunking fingerprint at startup; it rejects the old index
+instead of deleting or silently mixing vectors.
+
+Only if you need to migrate this old index, confirm that you can re-ingest the
+original documents and that you intend to delete the app's existing Chroma
+data. Stop the app, remove its dedicated volume, then recreate the service:
+
+```powershell
+docker compose -f infrastructure/chroma.yml down -v
+docker compose -f infrastructure/chroma.yml up -d
+```
+
+Re-upload the source documents to
+rebuild the index with GTE. No application or benchmark command performs this
+destructive migration automatically.
+
 ## Common failures
 
 | Symptom | What to check |
@@ -68,6 +88,6 @@ to delete the stored index.
 | Python dependency conflicts | Confirm the prompt shows `(.venv)`, then use `python -m pip check`; do not repair a global environment in place. |
 | CUDA benchmark failure | The application does not require CUDA. For benchmarks, install the matching PyTorch/CUDA environment and use one explicit common device. |
 
-For model and dataset preparation beyond the application controls, continue with
-the [complete guide](installation.md). For internal behavior, read the
+For benchmark setup beyond the application controls, see the
+[benchmark runbook](../benchmarks/running.md). For internal behavior, read the
 [architecture overview](../architecture/overview.md).

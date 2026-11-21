@@ -15,7 +15,7 @@ applies to authorized contributions.
 ## Workflow
 
 1. Create a feature branch from `main`.
-2. Install the app and benchmark lock files in a fresh virtual environment.
+2. Install `requirements/benchmarks.lock` in a fresh virtual environment; it includes the app lock.
 3. Install the source once with `python -m pip install -e . --no-deps`.
 4. Run focused checks for the changed behavior; run the relevant benchmark's
    `--profile smoke` command when runtime behavior changes. Documentation-only
@@ -42,8 +42,11 @@ python -m pytest tests/test_benchmark_metrics.py tests/test_benchmark_datasets.p
 
 - Keep [README.md](README.md) focused on purpose, current status, first use, and
   navigation.
-- Put complete installation/download instructions in the
-  [installation guide](docs/setup/installation.md).
+- Keep [environment installation](docs/setup/installation.md),
+  [app model preparation](docs/setup/model-preparation.md),
+  [benchmark model preparation](docs/benchmarks/model-preparation.md), and
+  [dataset preparation](docs/benchmarks/dataset-preparation.md) separate.
+  Selection guides explain why a source or candidate was chosen.
 - Put shared lifecycle and decision rules in the
   [shared methodology](docs/benchmarks/methodology.md). Keep each benchmark's
   candidates, data, procedures, metric rationale, and limitations in its linked

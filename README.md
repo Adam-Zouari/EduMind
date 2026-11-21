@@ -1,133 +1,82 @@
 # EduMind
 
-EduMind is a local study assistant for educational material. It extracts content
-from PDFs, DOCX files, images, audio, and video; indexes that content; and answers
-questions with citations to the source. The application keeps pages, timestamps,
-and other provenance with extracted evidence so an answer can be checked against
-the original material. Extraction, retrieval, and generation run locally.
+**A local study assistant and a benchmark suite for choosing the models and
+strategies behind it.**
 
-The repository also contains the experiments used to choose those components.
-Instead of treating public model rankings as the answer, EduMind benchmarks
-document and speech extraction, video, chunking and embedding, retrieval and
-reranking, vector databases, and generation on project-specific data before any
-winner is promoted to the application.
+EduMind lets you ask questions about course notes, documents, and recorded
+lectures. It answers using your material and cites numbered passages so you can
+check the answer against the source.
 
-> **Under active development.** The application and benchmark code are available,
-> but authoritative dataset review, comparative runs, and final component
-> selection are still pending. Current defaults are provisional, and smoke tests
-> do not establish model quality. This notice will be removed once validated
-> results are ready.
+The benchmarks ask a practical engineering question: **on a laptop with 4 GiB
+of GPU memory, which choices improve answer quality enough to justify their
+cost in latency and memory?** Suppose the retriever finds the paragraph you
+need but ranks it twelfth. Can a reranker move it into the first five results,
+and how much time does that extra step add?
 
-## Project journey and evidence
+> **Under active development.** The application and benchmark code are
+> available. Dataset review, comparative runs, and final component selection
+> are still in progress. The app's current defaults are provisional, not
+> benchmark winners.
 
-Read the project in this order:
+## How the assistant works
 
-1. [Architecture overview](docs/architecture/overview.md) explains the local application and its separation from experiments.
-2. [Dataset guide](docs/benchmarks/datasets.md) describes benchmark sources, manifests, and evidence requirements.
-3. [Model selection](docs/benchmarks/model-selection.md) records why candidates entered or left the shortlist; [selection evidence](experiments/benchmarks/selection_evidence.csv) pins their identities and revisions.
-4. [Shared methodology](docs/benchmarks/methodology.md) explains the benchmark lifecycle and links to each benchmark's procedure; [metric conventions](docs/benchmarks/metrics.md) links to their scoring definitions.
-5. [Benchmark runbook](docs/benchmarks/running.md) gives preparation and execution commands.
-6. [Pending data review](docs/benchmarks/pending-data-review.md) tracks decisions that require the real, reviewed datasets before results can be trusted.
+1. **Add your material.** EduMind extracts content from PDFs, Word documents
+   (DOCX), images, audio, and video. It preserves source locations such as page
+   numbers and timestamps where available.
+2. **Ask a question.** The assistant searches the indexed material for passages
+   relevant to your question.
+3. **Check the answer.** The local language model uses those passages to answer.
+   The interface shows the numbered evidence so you can inspect what was cited.
 
-```text
-candidate roster + reviewed datasets -> CPU/CUDA smoke -> GPU preflight
-    -> qualified-candidate development -> finalist validation
-    -> frozen component choices -> Final RAG CPU/CUDA smoke + integrated preflight
-    -> component locked reports
-    -> one Final RAG locked report
-    -> explicit application configuration change
-```
+## What the benchmarks compare
 
-Benchmark protocols, model snapshots, input manifests, per-sample artifacts,
-and MLflow runs preserve what was actually evaluated. Experiments never silently
-change the application's configuration. No final comparative result or selected
-component is claimed yet.
+| Benchmark | Question it answers |
+|---|---|
+| [Document extraction](docs/benchmarks/extraction/document/methodology.md) | Which parser preserves text, reading order, tables, and formulas in course materials? |
+| [Audio extraction](docs/benchmarks/extraction/audio/methodology.md) | Which speech model transcribes technical lectures accurately and locates the words in time? |
+| [Video extraction](docs/benchmarks/extraction/video/methodology.md) | Which frame-selection strategy captures slide changes, board writing, and screen edits without repeatedly extracting the same text while it remains visible? |
+| [Chunking and embedding](docs/benchmarks/rag/chunking_embedding/methodology.md) | Which way of splitting and representing a document makes the evidence easiest to find? |
+| [Retrieval and reranking](docs/benchmarks/rag/retrieval_reranking/methodology.md) | Which search method puts useful evidence near the top, and when is reranking worth the extra latency? |
+| [Vector database](docs/benchmarks/vectordb/methodology.md) | On the same vectors, how do database configurations compare in search quality, speed, and storage use? |
+| [Generation](docs/benchmarks/rag/generation/methodology.md) | Given the same evidence, which model gives a correct, supported answer, cites it accurately, and refuses when a question is unanswerable? |
+| [Final RAG](docs/benchmarks/rag/final/methodology.md) | How well does the selected system answer held-out questions using evidence it retrieves itself? |
 
-The lifecycle implementations have regression coverage, including vector-database
-locked execution and single-system Final RAG. Complete runs still require
-reviewed data, decisions, calibrated judging, prepared components, and live
-services; the [runbook's implementation status](docs/benchmarks/running.md#implementation-status)
-distinguishes those requirements from code availability. Vector-server checks
-are CPU workloads and do not use CUDA preflight.
+The stages are separate so their results are interpretable. A model that
+answers correctly when given the right passage can still fail when the system
+has to find that passage. The generation benchmark tests the first situation;
+Final RAG tests the second. Final RAG starts from a prepared document corpus.
+Raw-file extraction is evaluated separately.
 
-## Reproduction
+## How components are chosen
 
-The [installation guide](docs/setup/installation.md) covers Python 3.12, system
-tools, model preparation, and the pinned environments. After that one-time setup,
-start the provisional application from the repository root:
+Public evaluations help decide which candidates are worth testing. Local
+experiments compare them on EduMind's material and hardware. Development runs
+compare candidates; validation evaluates finalists on unseen data; locked tests
+report the performance of choices already made. Smoke tests check that the
+software runs, not how well a candidate performs.
 
-```powershell
-.\.venv\Scripts\Activate.ps1
-docker compose -f infrastructure/chroma.yml up -d
-streamlit run src/edumind/ui/streamlit_app.py
-```
+MLflow records quality, latency, memory use, and supporting artifacts. An
+engineer reviews the results and decides what to adopt; benchmark runs never
+change the application's configuration.
 
-The [application guide](docs/setup/running.md) covers readiness, shutdown, and
-troubleshooting. If you have an older MiniLM index, follow the documented
-[reset and reindex procedure](docs/setup/installation.md#migrating-an-existing-minilm-index);
-the application does not delete it automatically.
+## Getting started
 
-For experiments, the [benchmark runbook](docs/benchmarks/running.md) gives the
-commands in stage order. Smoke fixtures test execution without authoritative
-datasets, while preflight establishes target-GPU feasibility without ranking
-quality. Development, validation, and locked comparisons require the reviewed
-manifests described in the [dataset guide](docs/benchmarks/datasets.md).
-
-## Repository layout
-
-```text
-.
-|-- src/edumind/              # Application, extraction, RAG, and Streamlit UI
-|-- experiments/benchmarks/   # Benchmark protocols, runners, metrics, preparation
-|-- data/benchmarks/          # Smoke fixtures and local prepared assets
-|-- config/base.yaml          # Provisional application defaults
-|-- infrastructure/           # Local Chroma Docker Compose service
-|-- requirements/             # Pinned application and benchmark environments
-|-- tests/                    # Unit and benchmark-contract tests
-|-- docs/                     # Architecture, setup, and benchmark guides
-`-- artifacts/                # Ignored local run output
-```
-
-## Local application
-
-```text
-PDF / DOCX / image / audio / video
-    -> extraction with pages, timestamps, and source provenance
-    -> chunking and embedding -> Chroma HTTP
-    -> evidence retrieval -> local generation -> cited answer
-```
-
-The Streamlit interface accepts uploads, indexes extracted evidence, and shows
-numbered citations with answers. Configurable defaults live in
-[config/base.yaml](config/base.yaml); default extraction routes are explicit
-profiles in the extraction pipeline. Neither is inferred from benchmark results. The
-application does not download models, start Docker, or promote benchmark winners
-on its own. See the [architecture overview](docs/architecture/overview.md) for
-the implementation boundaries.
-
-## Tests
-
-After installing the pinned environment, run the repository test suite with:
-
-```powershell
-python -m pytest -q
-```
-
-These tests do not replace real-model smoke inference or dataset-backed
-benchmark comparisons. EduMind is currently English-first and local; it does
-not expose a public API or require hosted inference.
+- **Run the assistant:** [install the environment](docs/setup/installation.md),
+  [prepare the app models](docs/setup/model-preparation.md#preparation-commands),
+  then [start the application](docs/setup/running.md). No benchmark datasets are needed.
+- **Understand the choices:** see [dataset selection](docs/benchmarks/dataset-selection.md)
+  and [model selection](docs/benchmarks/model-selection.md).
+- **Reproduce an experiment:** start with the [shared methodology](docs/benchmarks/methodology.md),
+  prepare the [candidates](docs/benchmarks/model-preparation.md) and
+  [datasets](docs/benchmarks/dataset-preparation.md) as applicable, then follow the
+  [runbook](docs/benchmarks/running.md). The [metric reference](docs/benchmarks/metrics.md)
+  explains how to interpret the results.
+- **Explore the codebase:** the [architecture overview](docs/architecture/overview.md)
+  shows how the app and experiments fit together. The [documentation map](docs/README.md)
+  links to the individual guides.
 
 ## License
 
-Copyright (c) 2026 EduMind-AI.
-
-EduMind's source code and project documentation are available under the
-[PolyForm Strict License 1.0.0](LICENSE). This is a source-available license:
-it permits the uses defined in its terms but does not grant permission to
-modify or redistribute the software. Uses outside those permissions require
-a separate license from the copyright holder.
-
-Third-party dependencies, model weights, and benchmark datasets retain their
-own upstream licenses; this project license does not replace them. Consult the
-[dataset guide](docs/benchmarks/datasets.md) and
-[model-selection record](docs/benchmarks/model-selection.md) before redistribution.
+EduMind's source code and documentation are available under the
+[PolyForm Strict License 1.0.0](LICENSE). Third-party dependencies, models,
+and datasets retain their own licenses.

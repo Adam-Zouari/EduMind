@@ -75,7 +75,7 @@ the fixed intervals for direct cost comparison.
 Smoke uses two committed videos. The authoritative corpus target is 30
 educational videos: 18 development, 6 validation, and 6 locked. Sources cover
 slides, screen recordings, presenter video, gradual changes, and genuine repeated
-appearances. The [dataset guide](../../datasets.md#video-extraction) defines the
+appearances. The [dataset preparation guide](../../dataset-preparation.md#video-extraction) defines the
 SlideSpeech, AVLectures, and EduMind-owned allocation.
 
 These targets define the corpus allocation contract. Authoritative manifests

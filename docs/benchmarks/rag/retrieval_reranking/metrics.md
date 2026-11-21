@@ -1173,7 +1173,7 @@ size remains available even if Dense size is missing; see
 
 Model snapshot size is preparation metadata (`snapshot_size_bytes`) in the model
 lock, not a per-candidate benchmark metric. See the
-[installation guide](../../../setup/installation.md#snapshot-size-metadata).
+[benchmark model preparation guide](../../model-preparation.md#snapshot-size-metadata).
 
 ## Worked result interpretation
 
