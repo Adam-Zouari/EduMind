@@ -7,8 +7,11 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
+from huggingface_hub.errors import HfHubHTTPError, LocalEntryNotFoundError
 
+from edumind.common import model_assets
 from edumind.common.artifacts import atomic_write_json, sha256_file, stable_hash
 from edumind.common.models import (
     ModelPreparationError,
@@ -16,6 +19,8 @@ from edumind.common.models import (
     load_model_lock,
     require_model,
 )
+from edumind.prepare_models import APP_MODELS
+from edumind.rag.tokenizers import prepare_tiktoken
 from experiments.benchmarks import prepare
 from experiments.benchmarks.common.selection import selection_entries
 from experiments.benchmarks.preparation import evaluators, models, vectordb
@@ -43,14 +48,14 @@ def test_prepare_tiktoken_certifies_destination_not_cached_encoding(
     monkeypatch.setenv("TIKTOKEN_CACHE_DIR", str(tmp_path / "previous"))
     destination = tmp_path / "new-cache"
     if valid:
-        models._prepare_tiktoken(destination)
+        prepare_tiktoken(destination)
         assert {path.read_bytes() for path in destination.iterdir()} == {
             expected,
             b"cl100k_base\n",
         }
     else:
         with pytest.raises(ValueError, match="Hash mismatch"):
-            models._prepare_tiktoken(destination)
+            prepare_tiktoken(destination)
         assert not (destination / "cl100k_base.ready").exists()
     assert os.environ["TIKTOKEN_CACHE_DIR"] == str(tmp_path / "previous")
 
@@ -73,7 +78,6 @@ def entry_for(directory, candidate="openai/whisper-small.en"):
 @pytest.mark.parametrize(
     "target,extra",
     [
-        ("app-models", []),
         ("embedding-models", []),
         ("rag-models", []),
         ("extraction-models", []),
@@ -103,7 +107,6 @@ def test_every_cli_dry_run_stops_before_mutating_dispatch(
         pytest.fail("Dry-run crossed a mutating preparation boundary")
 
     for name in (
-        "prepare_app_models",
         "prepare_selected_models",
         "prepare_qasper",
         "prepare_rag_selection_manifest",
@@ -173,49 +176,23 @@ def test_merge_preserves_app_and_unrequested_missing_snapshot(tmp_path):
     entry = entry_for(tmp_path / "new")
     app = {
         **entry,
-        "model": models.APP_GENERATOR.candidate,
-        "revision": models.APP_GENERATOR.revision,
-        "selection_revision": models.APP_GENERATOR.revision,
+        "model": "Qwen/Qwen3-1.7B",
+        "revision": APP_MODELS["Qwen/Qwen3-1.7B"][1],
+        "selection_revision": APP_MODELS["Qwen/Qwen3-1.7B"][1],
         "model_path": "unavailable-but-unrequested",
     }
     path = tmp_path / "lock.json"
-    atomic_write_json(
-        path, {"schema_version": 3, "models": {models.APP_GENERATOR.candidate: app}}
-    )
+    atomic_write_json(path, {"schema_version": 3, "models": {"Qwen/Qwen3-1.7B": app}})
     models._merge_model_lock(path, {entry["model"]: entry})
     payload = json.loads(path.read_text())
-    assert payload["models"][models.APP_GENERATOR.candidate] == app
+    assert payload["models"]["Qwen/Qwen3-1.7B"] == app
     assert payload["models"][entry["model"]]["snapshot_size_bytes"] == len(
         b"unit-test-only bytes"
     )
     assert set(models.load_selected_model_lock(path, candidates=[entry["model"]])) == {
         entry["model"]
     }
-    assert models.APP_GENERATOR.candidate not in models.selected_model_names(
-        models.MODEL_COMPONENTS
-    )
-
-
-def test_app_preparation_uses_pinned_excluded_generator_without_changing_roster(
-    tmp_path, monkeypatch
-):
-    prepared = []
-
-    def snapshot(cache, repository, revision, *args):
-        prepared.append((repository, revision))
-        directory = cache / repository.replace("/", "--") / revision
-        directory.mkdir(parents=True)
-        (directory / "weights.bin").write_bytes(b"test only")
-        return directory
-
-    monkeypatch.setattr(models, "_prepare_snapshot", snapshot)
-    monkeypatch.setattr(models, "_prepare_docling_standard", lambda *args: None)
-    monkeypatch.setattr(models, "_prepare_tiktoken", lambda *args: None)
-    before = models.selected_model_names(models.MODEL_COMPONENTS)
-    outputs = models.prepare_app_models(tmp_path)
-    assert (models.APP_GENERATOR.candidate, models.APP_GENERATOR.revision) in prepared
-    assert models.APP_GENERATOR.candidate in load_model_lock(outputs[0])
-    assert models.selected_model_names(models.MODEL_COMPONENTS) == before
+    assert "Qwen/Qwen3-1.7B" not in models.selected_model_names(models.MODEL_COMPONENTS)
 
 
 def hub_fixture(
@@ -223,7 +200,7 @@ def hub_fixture(
 ):
     import huggingface_hub
 
-    revision = models.APP_GENERATOR.revision
+    revision = APP_MODELS["Qwen/Qwen3-1.7B"][1]
     repository = "unit-test/model"
     cache = tmp_path / "models"
     directory = (
@@ -258,9 +235,16 @@ def hub_fixture(
     return cache, repository, revision, directory
 
 
-@pytest.mark.parametrize("mode", ["wrong_revision", "stale_export", "corrupt"])
+@pytest.mark.parametrize(
+    ("mode", "message"),
+    [
+        ("wrong_revision", "unverifiable snapshot revision"),
+        ("stale_export", "missing, mixed or stale excluded files"),
+        ("corrupt", "file size differs"),
+    ],
+)
 def test_snapshot_fallback_mixed_files_and_corruption_cannot_publish(
-    tmp_path, monkeypatch, mode
+    tmp_path, monkeypatch, mode, message
 ):
     cache, repo, revision, _ = hub_fixture(
         tmp_path,
@@ -269,8 +253,8 @@ def test_snapshot_fallback_mixed_files_and_corruption_cannot_publish(
         extra=mode == "stale_export",
         corrupt=mode == "corrupt",
     )
-    with pytest.raises(RuntimeError):
-        models._prepare_snapshot(cache, repo, revision, ("*.onnx",))
+    with pytest.raises(RuntimeError, match=message):
+        model_assets._prepare_snapshot(cache, repo, revision, ("*.onnx",))
     assert not list(cache.rglob("*.complete.json"))
     assert not (cache / repo.replace("/", "--") / revision).exists()
 
@@ -281,18 +265,18 @@ def test_completed_snapshot_can_resume_offline_and_rechecks_bytes(
     import huggingface_hub
 
     cache, repo, revision, _ = hub_fixture(tmp_path, monkeypatch)
-    result = models._prepare_snapshot(cache, repo, revision)
+    result = model_assets._prepare_snapshot(cache, repo, revision)
     monkeypatch.setattr(
         huggingface_hub,
         "HfApi",
         lambda: pytest.fail("completed resume must not contact Hub"),
     )
-    assert models._prepare_snapshot(cache, repo, revision) == result
+    assert model_assets._prepare_snapshot(cache, repo, revision) == result
     receipt = json.loads(result.with_name(revision + ".complete.json").read_text())
     assert receipt["snapshot_size_bytes"] == len(b"unit-test snapshot")
     (result / "weights.bin").write_bytes(b"changed")
     with pytest.raises(ModelPreparationError, match="checksum mismatch"):
-        models._prepare_snapshot(cache, repo, revision)
+        model_assets._prepare_snapshot(cache, repo, revision)
 
 
 def test_interrupted_snapshot_never_publishes_or_erases_old_downloads(
@@ -306,28 +290,105 @@ def test_interrupted_snapshot_never_publishes_or_erases_old_downloads(
         lambda *args, **kwargs: (_ for _ in ()).throw(OSError("interrupted copy")),
     )
     with pytest.raises(OSError, match="interrupted"):
-        models._prepare_snapshot(cache, repo, revision)
+        model_assets._prepare_snapshot(cache, repo, revision)
     assert (old / "weights.bin").is_file()
     assert not list(cache.rglob("*.complete.json"))
     monkeypatch.setattr(models.shutil, "copy2", original)
-    assert models._prepare_snapshot(cache, repo, revision).is_dir()
+    assert model_assets._prepare_snapshot(cache, repo, revision).is_dir()
 
 
-def test_unavailable_new_revision_does_not_relabel_old_bytes(tmp_path, monkeypatch):
+@pytest.mark.parametrize("tamper", [False, True])
+def test_snapshot_recovers_after_interrupted_receipt_write(
+    tmp_path, monkeypatch, tamper
+):
+    import huggingface_hub
+
+    cache, repo, revision, _ = hub_fixture(tmp_path, monkeypatch)
+    target = cache / repo.replace("/", "--") / revision
+    receipt = target.with_suffix(".complete.json")
+
+    def interrupt(path, payload):
+        assert path == receipt and target.is_dir()
+        raise OSError("interrupted receipt")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(model_assets, "atomic_write_json", interrupt)
+        with pytest.raises(OSError, match="interrupted receipt"):
+            model_assets._prepare_snapshot(cache, repo, revision)
+    assert not receipt.exists()
+
+    def unexpected_download(**kwargs):
+        pytest.fail("Recovery must not redownload weights")
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", unexpected_download)
+    weights = target / "weights.bin"
+    original = weights.read_bytes()
+    if tamper:
+        changed = b"X" + original[1:]
+        weights.write_bytes(changed)
+        with pytest.raises(RuntimeError, match="file content differs"):
+            model_assets._prepare_snapshot(cache, repo, revision)
+        assert weights.read_bytes() == changed
+        assert not receipt.exists()
+    else:
+        assert model_assets._prepare_snapshot(cache, repo, revision) == target
+        assert weights.read_bytes() == original
+        assert receipt.is_file()
+
+
+@pytest.mark.parametrize(
+    ("step", "error"),
+    [
+        ("inventory", httpx.ReadTimeout("timed out")),
+        ("weights", LocalEntryNotFoundError("snapshot unavailable")),
+    ],
+    ids=["inventory-timeout", "weights-cache-miss"],
+)
+def test_hub_failure_does_not_relabel_old_bytes(tmp_path, monkeypatch, step, error):
     import huggingface_hub
 
     cache, repo, revision, old = hub_fixture(tmp_path, monkeypatch)
-    monkeypatch.setattr(
-        huggingface_hub,
-        "HfApi",
-        lambda: SimpleNamespace(
-            model_info=lambda *args, **kwargs: (_ for _ in ()).throw(OSError("offline"))
-        ),
-    )
-    with pytest.raises(OSError, match="offline"):
-        models._prepare_snapshot(cache, repo, revision)
+
+    def fail(*args, **kwargs):
+        raise error
+
+    if step == "inventory":
+        monkeypatch.setattr(
+            huggingface_hub, "HfApi", lambda: SimpleNamespace(model_info=fail)
+        )
+    else:
+        monkeypatch.setattr(huggingface_hub, "snapshot_download", fail)
+
+    with pytest.raises(
+        ModelPreparationError, match=rf"{step} for {repo}@{revision}.*retry"
+    ) as caught:
+        model_assets._prepare_snapshot(cache, repo, revision)
+    assert caught.value.__cause__ is error
     assert (old / "weights.bin").read_bytes() == b"unit-test snapshot"
     assert not list(cache.rglob("*.complete.json"))
+    assert not (cache / repo.replace("/", "--") / revision).exists()
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_hub_download_preserves_status(tmp_path, monkeypatch, wrapped):
+    import huggingface_hub
+
+    cache, repo, revision, _ = hub_fixture(tmp_path, monkeypatch)
+    request = httpx.Request("HEAD", f"https://huggingface.co/{repo}")
+    denied = HfHubHTTPError(
+        "403 Forbidden: check token permissions",
+        response=httpx.Response(403, request=request),
+    )
+
+    def fail(**kwargs):
+        if wrapped:
+            raise LocalEntryNotFoundError("file unavailable") from denied
+        raise denied
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", fail)
+    with pytest.raises(HfHubHTTPError, match="403 Forbidden") as caught:
+        model_assets._prepare_snapshot(cache, repo, revision)
+    assert caught.value is denied
 
 
 def evaluator_fixture(root):
@@ -495,8 +556,8 @@ def test_docling_fresh_preparation_requests_immutable_component_commits(
         (directory / "test-only.bin").write_bytes(b"mocked component bytes")
         return directory
 
-    monkeypatch.setattr(models, "version", lambda name: models.DOCLING_VERSION)
-    monkeypatch.setattr(models, "_prepare_snapshot", snapshot)
+    monkeypatch.setattr(model_assets, "version", lambda name: models.DOCLING_VERSION)
+    monkeypatch.setattr(model_assets, "_prepare_snapshot", snapshot)
     path = tmp_path / "lock.json"
     models._prepare_docling_standard(
         path, tmp_path / "cache", tuple(models.HF_COMPONENTS)
@@ -508,7 +569,7 @@ def test_docling_fresh_preparation_requests_immutable_component_commits(
     assert models.load_selected_model_lock(path, candidates=[models.DOCLING_STANDARD])
 
 
-def test_docling_app_subset_preserves_verified_components_and_systems(
+def test_docling_preparation_preserves_verified_superset_and_systems(
     tmp_path, monkeypatch
 ):
     entry = entry_for(tmp_path / "bundle")
@@ -544,14 +605,14 @@ def test_docling_app_subset_preserves_verified_components_and_systems(
         path, {"schema_version": 3, "models": {models.DOCLING_STANDARD: entry}}
     )
     before = path.read_bytes()
-    monkeypatch.setattr(models, "version", lambda name: models.DOCLING_VERSION)
+    monkeypatch.setattr(model_assets, "version", lambda name: models.DOCLING_VERSION)
     monkeypatch.setattr(
-        models,
+        model_assets,
         "_prepare_snapshot",
         lambda *args: pytest.fail("subset must reuse verified components"),
     )
     models._prepare_docling_standard(
-        path, tmp_path / "cache", models.DOCLING_APP_COMPONENTS
+        path, tmp_path / "cache", model_assets.DOCLING_APP_COMPONENTS
     )
     assert path.read_bytes() == before
 
@@ -588,8 +649,8 @@ def test_docling_augmentation_copies_old_components_without_relabelling(
         (directory / "weights.bin").write_bytes(b"unit-test table bytes")
         return directory
 
-    monkeypatch.setattr(models, "version", lambda name: models.DOCLING_VERSION)
-    monkeypatch.setattr(models, "_prepare_snapshot", snapshot)
+    monkeypatch.setattr(model_assets, "version", lambda name: models.DOCLING_VERSION)
+    monkeypatch.setattr(model_assets, "_prepare_snapshot", snapshot)
     models._prepare_docling_standard(path, tmp_path / "cache", ["tableformer"])
     entry = load_model_lock(path)[models.DOCLING_STANDARD]
     assert requested == [models.HF_COMPONENTS["tableformer"][0]]

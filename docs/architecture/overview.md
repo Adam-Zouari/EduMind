@@ -80,8 +80,9 @@ override only the small set documented in `.env.example`, including selection
 of another configuration file. Benchmark decisions do not override these sources.
 
 Models are never downloaded at import or application startup. Explicit preparation
-writes exact snapshots under `data/benchmarks/downloads/` and generates
-`data/benchmarks/models/selected.json`. Runtime profiles include the model revision
+writes the app snapshots under `data/models/snapshots/` and generates
+`data/models/app.json`. Benchmarks prepare their own snapshots and lock.
+Runtime profiles include the model revision
 and all behavior-changing options in their fingerprints. Extraction verifies the
 requested bundles before looking up a cached result; its cache identity and
 document provenance also retain the verified bundle checksums, including composed

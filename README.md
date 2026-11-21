@@ -61,9 +61,10 @@ change the application's configuration.
 
 ## Getting started
 
-- **Run the assistant:** [install the environment](docs/setup/installation.md),
-  [prepare the app models](docs/setup/model-preparation.md#preparation-commands),
-  then [start the application](docs/setup/running.md). No benchmark datasets are needed.
+- **Run the assistant on Windows:** [install Python 3.12, FFmpeg, and Docker Desktop](docs/setup/installation.md#1-system-requirements),
+  start Docker Desktop, then run `.\start.ps1` in PowerShell from the extracted
+  release folder. The first launch asks before downloading models.
+  [Manual setup and launch](docs/setup/running.md) are also available.
 - **Understand the choices:** see [dataset selection](docs/benchmarks/dataset-selection.md)
   and [model selection](docs/benchmarks/model-selection.md).
 - **Reproduce an experiment:** start with the [shared methodology](docs/benchmarks/methodology.md),

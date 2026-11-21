@@ -18,15 +18,15 @@ def test_missing_or_corrupt_encoding_fails_without_any_loader_call(
     import tiktoken
     import tiktoken.load
 
-    from edumind.common import paths
+    from edumind.rag import tokenizers
 
-    cache = tmp_path / "data/benchmarks/downloads/tiktoken"
+    cache = tmp_path / "data/models/tiktoken"
     cache.mkdir(parents=True)
     if state != "missing_marker":
         (cache / "cl100k_base.ready").write_text("cl100k_base\n")
     if state != "stale_marker":
         (cache / KEY).write_bytes(b"corrupt encoding")
-    monkeypatch.setattr(paths, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(tokenizers, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(
         tiktoken,
         "get_encoding",
@@ -36,7 +36,7 @@ def test_missing_or_corrupt_encoding_fails_without_any_loader_call(
         tiktoken.load, "read_file", lambda *a: pytest.fail("downloader called")
     )
     before = {path.name: path.read_bytes() for path in cache.iterdir()}
-    with pytest.raises(RuntimeError, match="prepare models"):
+    with pytest.raises(RuntimeError, match="edumind.prepare_models"):
         TiktokenOffsetTokenizer()
     assert {path.name: path.read_bytes() for path in cache.iterdir()} == before
 
@@ -45,7 +45,7 @@ def test_verified_encoding_is_offline_even_with_invalid_external_cache(monkeypat
     import tiktoken
     import tiktoken.load
 
-    assert (PROJECT_ROOT / "data/benchmarks/downloads/tiktoken" / KEY).is_file()
+    assert (PROJECT_ROOT / "data/models/tiktoken" / KEY).is_file()
     monkeypatch.setenv("TIKTOKEN_CACHE_DIR", "unprepared-user-cache")
     monkeypatch.setattr(
         tiktoken, "get_encoding", lambda *a: pytest.fail("global loader called")

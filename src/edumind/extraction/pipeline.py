@@ -10,7 +10,12 @@ from pathlib import Path
 from edumind.common.artifacts import stable_hash
 from edumind.common.config import Settings, load_settings
 from edumind.common.gpu import release_runtime_memory
-from edumind.common.models import load_model_lock, require_model
+from edumind.common.models import (
+    PREPARE_MODELS_COMMAND,
+    ModelPreparationError,
+    load_model_lock,
+    require_model,
+)
 
 from .cache import ExtractionCache
 from .contracts import (
@@ -246,9 +251,8 @@ class ExtractionPipeline:
                 or profile.engine in LOCK_CANDIDATE_BY_ENGINE
                 or profile.engine.startswith("video-")
             ):
-                raise RuntimeError(
-                    f"Missing extraction model lock {lock_path}; run `python "
-                    "-m experiments.benchmarks.prepare app-models`"
+                raise ModelPreparationError(
+                    f"Missing extraction model lock {lock_path}; run `{PREPARE_MODELS_COMMAND}`."
                 )
             return profile, {}
         models = load_model_lock(lock_path)

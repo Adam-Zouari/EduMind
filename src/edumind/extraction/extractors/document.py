@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from edumind.common.artifacts import sha256_file, stable_hash
+from edumind.common.models import PREPARE_MODELS_COMMAND, ModelPreparationError
 from edumind.common.onnx_placement import cuda_shape_session, verified_cuda_graph
 
 from ..contracts import (
@@ -97,7 +98,12 @@ class DoclingExtractor:
             raise MissingDependencyError(
                 f"Docling {DOCLING_VERSION} is required; found {installed}"
             )
-        artifacts = required_directory(request, "model_path", "Docling Standard")
+        artifacts = required_directory(
+            request,
+            "model_path",
+            "Docling Standard",
+            prepare_command=PREPARE_MODELS_COMMAND,
+        )
         options = request.options
         ocr_engine = str(options.get("ocr_engine", "rapidocr"))
         ocr_mode = (
@@ -305,12 +311,18 @@ def _require_cuda_ocr(converter, input_format) -> None:
             runtime.session = cuda_shape_session(session)
 
 
-def required_directory(request: ExtractionRequest, key: str, label: str) -> Path:
+def required_directory(
+    request: ExtractionRequest,
+    key: str,
+    label: str,
+    *,
+    prepare_command: str | None = None,
+) -> Path:
     raw_path = request.options.get(key)
     path = Path(str(raw_path)).expanduser() if raw_path else None
     if path is None or not path.is_dir():
-        raise FileNotFoundError(
-            f"{label} is not prepared locally; run `python "
-            "-m experiments.benchmarks.prepare app-models`."
-        )
+        message = f"{label} is not prepared locally ({key}: {path or 'unset'})"
+        if prepare_command:
+            message += f"; run `{prepare_command}`"
+        raise ModelPreparationError(message + ".")
     return path

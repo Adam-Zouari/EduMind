@@ -6,7 +6,12 @@ from pathlib import Path
 import pytest
 
 from edumind.common.config import ConfigurationError, load_settings
+from edumind.common.model_assets import (
+    INFERENCE_SNAPSHOT_IGNORE_PATTERNS,
+    snapshot_ignore_patterns,
+)
 from edumind.extraction.pipeline import LOCK_CANDIDATE_BY_ENGINE
+from edumind.prepare_models import APP_MODELS
 from edumind.rag.contracts import EMBEDDING_SPECS, PRODUCTION_EMBEDDING_MODEL
 from experiments.benchmarks.common.selection import (
     included_candidates,
@@ -17,17 +22,14 @@ from experiments.benchmarks.extraction.audio.protocol import (
 )
 from experiments.benchmarks.extraction.document.profiles import DOCUMENT_LOCK_CANDIDATES
 from experiments.benchmarks.preparation.models import (
-    APP_CANDIDATES,
     DOCLING_BENCHMARK_COMPONENTS,
     EMBEDDING_COMPONENTS,
     EXTRACTION_COMPONENTS,
-    INFERENCE_SNAPSHOT_IGNORE_PATTERNS,
     MODEL_COMPONENTS,
     RAG_COMPONENTS,
     load_selected_model_lock,
     preparation_plan,
     selected_model_names,
-    snapshot_ignore_patterns,
     snapshot_specs,
 )
 from experiments.benchmarks.rag.chunking_embedding.profiles import (
@@ -107,7 +109,7 @@ def test_gte_production_contract_and_fixed_chunking_tokenizer() -> None:
     settings = load_settings(ROOT / "config/base.yaml")
     assert settings.embedding.model_name == PRODUCTION_EMBEDDING_MODEL
     assert settings.chunking.tokenizer == "cl100k_base"
-    assert PRODUCTION_EMBEDDING_MODEL in APP_CANDIDATES
+    assert PRODUCTION_EMBEDDING_MODEL in APP_MODELS
 
     with pytest.raises(ConfigurationError, match="frozen 'cl100k_base'"):
         load_settings(
@@ -197,7 +199,7 @@ def test_embedding_and_reranker_preparation_excludes_unused_exports() -> None:
 
 
 def test_snapshot_size_counts_nested_files_without_temporary_caches(tmp_path) -> None:
-    from experiments.benchmarks.preparation.models import _snapshot_size_bytes
+    from edumind.common.model_assets import _snapshot_size_bytes
 
     (tmp_path / "weights.bin").write_bytes(b"weights")
     (tmp_path / "tokenizer").mkdir()
@@ -212,7 +214,7 @@ def test_snapshot_size_counts_nested_files_without_temporary_caches(tmp_path) ->
 def test_snapshot_size_rejects_missing_or_empty_snapshots(
     tmp_path, directory_state
 ) -> None:
-    from experiments.benchmarks.preparation.models import _snapshot_size_bytes
+    from edumind.common.model_assets import _snapshot_size_bytes
 
     root = tmp_path / "model"
     if directory_state != "missing":

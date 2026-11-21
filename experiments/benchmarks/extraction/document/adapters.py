@@ -31,6 +31,8 @@ from edumind.extraction.structured import (
 )
 from experiments.benchmarks.extraction.evidence import rejected_diagnostic
 
+PREPARE_EXTRACTION_MODELS = "python -m experiments.benchmarks.prepare extraction-models"
+
 
 class ExperimentalDocumentExtractor:
     supported_kinds = frozenset({SourceKind.IMAGE, SourceKind.PDF})
@@ -130,7 +132,12 @@ class ExperimentalDocumentExtractor:
             raise MissingDependencyError(
                 f"Docling {DOCLING_VERSION} is required; found {installed}"
             )
-        model_path = required_directory(request, "model_path", "Granite Docling")
+        model_path = required_directory(
+            request,
+            "model_path",
+            "Granite Docling",
+            prepare_command=PREPARE_EXTRACTION_MODELS,
+        )
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
         options = vlm_model_specs.GRANITEDOCLING_TRANSFORMERS.model_copy(deep=True)
@@ -186,8 +193,18 @@ class ExperimentalDocumentExtractor:
         return elements, tuple(warnings)
 
     def _paddle_runtime(self, request: ExtractionRequest):
-        model_path = required_directory(request, "model_path", "PaddleOCR-VL-1.6")
-        paddle_cache = required_directory(request, "paddle_cache_path", "PaddleOCR-VL")
+        model_path = required_directory(
+            request,
+            "model_path",
+            "PaddleOCR-VL-1.6",
+            prepare_command=PREPARE_EXTRACTION_MODELS,
+        )
+        paddle_cache = required_directory(
+            request,
+            "paddle_cache_path",
+            "PaddleOCR-VL components",
+            prepare_command=PREPARE_EXTRACTION_MODELS,
+        )
         os.environ["PADDLE_PDX_CACHE_HOME"] = str(paddle_cache)
         os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
         try:

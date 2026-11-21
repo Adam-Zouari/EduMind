@@ -5,8 +5,72 @@ from __future__ import annotations
 import base64
 import bisect
 import hashlib
+import os
 from functools import lru_cache
+from pathlib import Path
 from typing import Protocol
+
+from edumind.common.artifacts import atomic_write_text
+from edumind.common.models import ModelPreparationError
+from edumind.common.paths import PROJECT_ROOT
+
+_CL100K_URL = (
+    "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken"
+)
+_CL100K_KEY = hashlib.sha1(_CL100K_URL.encode(), usedforsecurity=False).hexdigest()
+_CL100K_SHA256 = "223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7"
+_READY_FILE = "cl100k_base.ready"
+
+
+def tokenizer_cache_directory() -> Path:
+    return PROJECT_ROOT / "data/models/tiktoken"
+
+
+def _read_tiktoken(cache_directory: Path) -> bytes | None:
+    try:
+        content = (cache_directory / _CL100K_KEY).read_bytes()
+    except FileNotFoundError:
+        if not (cache_directory / _READY_FILE).exists():
+            return None
+        raise ModelPreparationError(
+            f"Prepared tokenizer file is missing from {cache_directory}"
+        ) from None
+    if hashlib.sha256(content).hexdigest() != _CL100K_SHA256:
+        raise ModelPreparationError(
+            f"Pinned tokenizer checksum mismatch: {cache_directory}"
+        )
+    return content
+
+
+def tiktoken_ready() -> bool:
+    cache_directory = tokenizer_cache_directory()
+    return (
+        _read_tiktoken(cache_directory) is not None
+        and (cache_directory / _READY_FILE).is_file()
+    )
+
+
+def prepare_tiktoken(cache_directory: Path | None = None) -> None:
+    """Prepare the shared tokenizer explicitly; runtime never fetches it."""
+    from tiktoken.load import read_file_cached
+
+    cache_directory = cache_directory or tokenizer_cache_directory()
+    if _read_tiktoken(cache_directory) is None:
+        previous = os.environ.get("TIKTOKEN_CACHE_DIR")
+        os.environ["TIKTOKEN_CACHE_DIR"] = str(cache_directory)
+        try:
+            read_file_cached(_CL100K_URL, expected_hash=_CL100K_SHA256)
+            if _read_tiktoken(cache_directory) is None:
+                raise ModelPreparationError(
+                    f"Tokenizer download missing from {cache_directory}"
+                )
+        finally:
+            if previous is None:
+                os.environ.pop("TIKTOKEN_CACHE_DIR", None)
+            else:
+                os.environ["TIKTOKEN_CACHE_DIR"] = previous
+    if not (cache_directory / _READY_FILE).is_file():
+        atomic_write_text(cache_directory / _READY_FILE, "cl100k_base\n")
 
 
 class OffsetTokenizer(Protocol):
@@ -23,27 +87,15 @@ class TiktokenOffsetTokenizer:
     """Tiktoken with UTF-8 byte-to-character boundary reconstruction."""
 
     def __init__(self, encoding_name: str = "cl100k_base") -> None:
-        from edumind.common.paths import PROJECT_ROOT
-
-        cache_directory = PROJECT_ROOT / "data/benchmarks/downloads/tiktoken"
         if encoding_name != "cl100k_base":
             raise RuntimeError(f"Unsupported pinned tiktoken encoding: {encoding_name}")
-        # The cache key and content digest are pinned by tiktoken's cl100k_base
-        # constructor. Read once and construct directly from verified bytes: even
-        # deletion after this read cannot trigger the network-capable loader.
-        url = (
-            "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken"
-        )
-        cache_path = cache_directory / hashlib.sha1(url.encode()).hexdigest()
+        cache_directory = tokenizer_cache_directory()
         try:
-            content = cache_path.read_bytes()
-        except OSError as exc:
-            raise RuntimeError(_PREPARATION_GUIDANCE) from exc
-        if (
-            not (cache_directory / f"{encoding_name}.ready").is_file()
-            or hashlib.sha256(content).hexdigest() != _CL100K_SHA256
-        ):
-            raise RuntimeError(_PREPARATION_GUIDANCE)
+            content = _read_tiktoken(cache_directory)
+        except (OSError, ModelPreparationError) as exc:
+            raise ModelPreparationError(f"{exc}. {_PREPARATION_GUIDANCE}") from exc
+        if content is None or not (cache_directory / _READY_FILE).is_file():
+            raise ModelPreparationError(_PREPARATION_GUIDANCE)
         self.encoding = _offline_encoding(content)
         self.name = f"tiktoken:{encoding_name}"
 
@@ -76,11 +128,10 @@ class TiktokenOffsetTokenizer:
         return self.encoding.decode(ids[:maximum_tokens], errors="ignore")
 
 
-_CL100K_SHA256 = "223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7"
 _PREPARATION_GUIDANCE = (
-    "Pinned tiktoken cl100k_base assets are missing or corrupt; repair with "
-    "python -m experiments.benchmarks.prepare models before execution. "
-    "Runtime tokenizer loading is offline and does not download or repair assets."
+    "Pinned tiktoken cl100k_base assets are missing or corrupt. Use "
+    "`python -m edumind.prepare_models` for the app or rerun the benchmark's "
+    "model preparation command. Runtime tokenizer loading is offline."
 )
 
 

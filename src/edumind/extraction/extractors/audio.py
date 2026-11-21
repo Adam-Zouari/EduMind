@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from edumind.common.gpu import release_runtime_memory
+from edumind.common.models import PREPARE_MODELS_COMMAND, ModelPreparationError
 
 from ..contracts import (
     ExtractedDocument,
@@ -125,9 +126,8 @@ def model_directory(request: ExtractionRequest) -> Path:
     raw_path = request.options.get("model_path")
     path = Path(str(raw_path)).expanduser() if raw_path else None
     if path is None or not path.is_dir():
-        raise FileNotFoundError(
-            "Pinned ASR weights are missing; run `python "
-            "-m experiments.benchmarks.prepare app-models`."
+        raise ModelPreparationError(
+            f"Pinned ASR weights are missing; run `{PREPARE_MODELS_COMMAND}`."
         )
     return path
 

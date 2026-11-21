@@ -133,15 +133,20 @@ def test_audio_unload_releases_its_runtime(monkeypatch):
 
 @pytest.mark.parametrize("wrapped", [False, True])
 def test_preparation_command_is_visible_in_application_errors(wrapped):
+    from edumind.common.models import ModelPreparationError
     from edumind.ui.controller import safe_error
 
-    command = "Run python -m experiments.benchmarks.prepare app-models"
-    error = (
-        ExtractionBackendError("Extraction failed", detail=command)
-        if wrapped
-        else FileNotFoundError(command)
-    )
-    assert safe_error(error) == command
+    command = "Run python -m edumind.prepare_models"
+    error = ModelPreparationError(command)
+    if wrapped:
+        try:
+            raise ExtractionBackendError("Extraction failed") from error
+        except ExtractionBackendError as wrapped_error:
+            assert safe_error(wrapped_error) == command
+    else:
+        assert safe_error(error) == command
+
+    assert safe_error(FileNotFoundError(command)) != command
 
 
 @pytest.mark.parametrize("changed", ["device", "model_path"])

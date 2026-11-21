@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Mapping, Sequence
+from http.client import IncompleteRead
 from typing import Any, cast
 from urllib.parse import urlparse
+from urllib.request import urlopen
 
 from edumind.common.config import load_settings
 
@@ -27,6 +30,31 @@ START = "__start"
 END = "__end"
 TOKEN_COUNT = "__token_count"
 COMPATIBILITY = "edumind:compatibility"
+
+
+def wait_for_chroma(*, timeout_seconds: float = 60.0) -> None:
+    """Wait for the configured server without opening or modifying a collection."""
+    endpoint = urlparse(load_settings().vector.endpoint)
+    heartbeat = endpoint._replace(
+        path="/api/v2/heartbeat", params="", query="", fragment=""
+    ).geturl()
+    deadline = time.monotonic() + timeout_seconds
+    while (remaining := deadline - time.monotonic()) > 0:
+        try:
+            with urlopen(heartbeat, timeout=min(2.0, remaining)) as response:
+                payload = json.load(response)
+            if (
+                isinstance(payload, dict)
+                and type(payload.get("nanosecond heartbeat")) is int
+            ):
+                return
+        except (OSError, ValueError, IncompleteRead):
+            pass  # Chroma may still be starting.
+        time.sleep(max(0.0, min(1.0, deadline - time.monotonic())))
+    raise RAGConfigurationError(
+        f"Chroma at {endpoint.geturl()} did not answer its heartbeat within "
+        f"{timeout_seconds:g}s. Check `docker compose -f infrastructure/chroma.yml logs`."
+    )
 
 
 class VectorStore:

@@ -15,15 +15,12 @@ from experiments.benchmarks.preparation.datasets import (
 from experiments.benchmarks.preparation.evaluators import prepare_evaluators
 from experiments.benchmarks.preparation.fixtures import prepare_smoke_fixtures
 from experiments.benchmarks.preparation.models import (
-    APP_CANDIDATES,
-    DOCLING_APP_COMPONENTS,
     DOCLING_BENCHMARK_COMPONENTS,
     EMBEDDING_COMPONENTS,
     EXTRACTION_COMPONENTS,
     MODEL_COMPONENTS,
     RAG_COMPONENTS,
     preparation_plan,
-    prepare_app_models,
     prepare_selected_models,
     selected_model_names,
 )
@@ -44,7 +41,6 @@ def main() -> int:
         "target",
         nargs="?",
         choices=(
-            "app-models",
             *benchmark_targets,
             "qasper",
             "rag-selection",
@@ -82,11 +78,7 @@ def main() -> int:
         print(
             json.dumps(
                 preparation_plan(
-                    tuple(
-                        dict.fromkeys(
-                            (*selected_model_names(MODEL_COMPONENTS), *APP_CANDIDATES)
-                        )
-                    ),
+                    selected_model_names(MODEL_COMPONENTS),
                     DOCLING_BENCHMARK_COMPONENTS,
                 ),
                 indent=2,
@@ -97,8 +89,6 @@ def main() -> int:
         parser.error("target is required unless --list is used")
     if arguments.target != "smoke-fixtures" and arguments.modality != "all":
         parser.error("--modality is only valid with smoke-fixtures")
-    if arguments.target == "app-models" and arguments.candidate:
-        parser.error("app-models has a fixed provisional control set")
     if arguments.target == "assets" and arguments.plan is None:
         parser.error("assets requires --plan")
     if arguments.target == "rag-selection" and not all(
@@ -136,9 +126,7 @@ def main() -> int:
         # Dispatch must stop before *any* mutating preparation helper. Input
         # paths are described, not opened or repaired by a planning invocation.
         models = None
-        if arguments.target == "app-models":
-            models = preparation_plan(APP_CANDIDATES, DOCLING_APP_COMPONENTS)
-        elif arguments.target in benchmark_targets:
+        if arguments.target in benchmark_targets:
             models = preparation_plan(selected, docling_components)
         print(
             json.dumps(
@@ -163,11 +151,7 @@ def main() -> int:
         )
         return 0
 
-    if arguments.target == "app-models":
-        outputs = prepare_app_models(
-            root, dry_run=arguments.dry_run, output_path=arguments.output
-        )
-    elif arguments.target == "qasper":
+    if arguments.target == "qasper":
         outputs = prepare_qasper(arguments.output or root / "data/benchmarks/rag")
     elif arguments.target == "rag-selection":
         outputs = [

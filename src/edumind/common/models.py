@@ -15,6 +15,9 @@ class ModelPreparationError(RuntimeError):
     """A required pinned model entry or local snapshot is unavailable."""
 
 
+PREPARE_MODELS_COMMAND = "python -m edumind.prepare_models"
+
+
 @dataclass(frozen=True)
 class ModelSnapshot:
     name: str
@@ -196,8 +199,7 @@ def verify_system_component(value: object, label: str, *, verify: bool = True) -
 def load_model_lock(path: Path) -> dict[str, dict[str, object]]:
     if not path.is_file():
         raise ModelPreparationError(
-            f"Missing model lock {path}; run `python "
-            "-m experiments.benchmarks.prepare app-models`."
+            f"Missing model lock {path}; run `{PREPARE_MODELS_COMMAND}`."
         )
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -207,19 +209,16 @@ def load_model_lock(path: Path) -> dict[str, dict[str, object]]:
     models = payload.get("models")
     if not isinstance(models, Mapping):
         raise ModelPreparationError(f"Malformed model lock: {path}")
-    return {
-        str(name): dict(entry)
-        for name, entry in models.items()
-        if isinstance(entry, Mapping)
-    }
+    if any(not isinstance(entry, Mapping) for entry in models.values()):
+        raise ModelPreparationError(f"Malformed model entry in {path}")
+    return {str(name): dict(entry) for name, entry in models.items()}
 
 
 def require_model(lock: Mapping[str, Mapping[str, object]], name: str) -> ModelSnapshot:
     entry = lock.get(name)
     if not isinstance(entry, Mapping):
         raise ModelPreparationError(
-            f"Model {name} is absent from selected.json; run `python "
-            "-m experiments.benchmarks.prepare app-models`."
+            f"Model {name} is absent from the lock; run `{PREPARE_MODELS_COMMAND}`."
         )
     validate_model_entry(entry, name)
     revision = entry.get("revision")
@@ -232,7 +231,6 @@ def require_model(lock: Mapping[str, Mapping[str, object]], name: str) -> ModelS
         or not (path := Path(raw_path).expanduser()).is_dir()
     ):
         raise ModelPreparationError(
-            f"Prepared model {name} is incomplete; run `python "
-            "-m experiments.benchmarks.prepare app-models`."
+            f"Prepared model {name} is incomplete; run `{PREPARE_MODELS_COMMAND}`."
         )
     return ModelSnapshot(name, revision.strip(), path.resolve(), dict(entry))

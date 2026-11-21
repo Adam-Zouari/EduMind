@@ -57,3 +57,4 @@ data/benchmarks/raw/
 data/benchmarks/downloads/
 data/benchmarks/evaluators/
 data/benchmarks/models/*.json
+data/models/

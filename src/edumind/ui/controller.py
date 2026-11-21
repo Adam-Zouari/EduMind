@@ -119,8 +119,11 @@ class AppController:
 
 def safe_error(exc: Exception) -> str:
     if isinstance(exc, ExtractionError):
-        if exc.detail and "experiments.benchmarks.prepare" in exc.detail:
-            return exc.detail
+        cause = exc.__cause__
+        while isinstance(cause, ExtractionError):
+            cause = cause.__cause__
+        if isinstance(cause, ModelPreparationError):
+            return str(cause)
         return exc.public_message
     if isinstance(
         exc,
@@ -130,10 +133,6 @@ def safe_error(exc: Exception) -> str:
             ModelLoadError,
             RAGConfigurationError,
         ),
-    ):
-        return str(exc)
-    if isinstance(exc, FileNotFoundError) and "experiments.benchmarks.prepare" in str(
-        exc
     ):
         return str(exc)
     return "Processing failed. Check the local application logs for details."

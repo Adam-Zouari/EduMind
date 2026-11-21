@@ -2,6 +2,11 @@
 
 [Project overview](../../README.md) · [Documentation map](../README.md)
 
+For the app on Windows, install the system requirements below, start Docker
+Desktop, and run `.\start.ps1` from the extracted release folder in PowerShell.
+The launcher sets up the Python environment, asks before downloading models,
+and starts the app. Use the rest of this guide for manual setup or benchmarks.
+
 Run the commands from the repository root in PowerShell. The app and benchmarks
 use Python 3.12, but the app does not require the benchmark dependencies or
 evaluation datasets.
@@ -12,8 +17,8 @@ Install the tools needed for your chosen workflow:
 
 | Program | Required for | Download |
 |---|---|---|
-| Python 3.12.x (64-bit) | application and benchmarks; this is the project's supported Python minor release | [python.org](https://www.python.org/downloads/windows/) |
-| Git | editable installation and provenance | [git-scm.com](https://git-scm.com/download/win) |
+| Python 3.12.x (64-bit) | application and benchmarks; include the Windows `py` launcher for first-time setup | [python.org](https://www.python.org/downloads/windows/) |
+| Git | benchmark provenance and cloning the repository; not needed to run the app from an extracted release | [git-scm.com](https://git-scm.com/download/win) |
 | Docker Desktop with Compose | Chroma, vector-server benchmarks, and official OmniDocBench table/formula scoring | [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/) |
 | FFmpeg | audio/video decoding and video keyframes | [FFmpeg download page](https://ffmpeg.org/download.html) |
 | Tesseract 5 with English data | one Docling Standard configuration | [Tesseract installation](https://tesseract-ocr.github.io/tessdoc/Installation.html) and [Windows builds](https://tesseract-ocr.github.io/tessdoc/Downloads.html) |
@@ -24,13 +29,13 @@ or a model-serving service automatically.
 
 ```powershell
 py -3.12 --version
-git --version
 docker version
 docker compose version
 ffmpeg -version
 ```
 
-Only the Tesseract benchmark configuration needs `tesseract --version` and
+For benchmarks, check `git --version` as well. Only the Tesseract benchmark
+configuration needs `tesseract --version` and
 `tesseract --list-langs` (check that `eng` is listed). For CUDA profiles, check
 `nvidia-smi` too. The provisional CPU app and CPU smoke runs do not need CUDA.
 Authoritative GPU-backed benchmarks must use their declared hardware and
@@ -105,7 +110,7 @@ needed by unrelated packages in another environment.
 
 ## 4. Choose the next step
 
-- **Run the app:** [prepare the default models (`app-models`)](model-preparation.md#preparation-commands),
+- **Run the app manually:** [prepare the default models](model-preparation.md#preparation-commands),
   then [start Chroma and launch the assistant](running.md). No benchmark
   datasets, judge, or benchmark database services are needed.
 - **Run a benchmark:** [prepare its candidates](../benchmarks/model-preparation.md#preparation-commands)

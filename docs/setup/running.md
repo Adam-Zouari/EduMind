@@ -4,6 +4,24 @@
 [Model preparation](model-preparation.md) ·
 [Application internals](../architecture/ui.md)
 
+## Start with the Windows launcher
+
+Install the [system requirements](installation.md#1-system-requirements), start
+Docker Desktop, and run this from the extracted release folder in PowerShell:
+
+```powershell
+.\start.ps1
+```
+
+The launcher sets up `.venv` if needed and asks before downloading missing
+models. Declining or a failed preparation leaves Chroma and Streamlit
+unstarted. The launcher waits up to 60 seconds for Chroma to answer before it
+starts Streamlit. On later launches it verifies the local models and reuses the
+environment without reinstalling unchanged requirements. Use the individual
+commands below if you prefer to prepare or start each part yourself.
+
+## Start manually
+
 Complete the one-time [environment setup](installation.md) and
 [app-model preparation](model-preparation.md#preparation-commands) first.
 
@@ -16,7 +34,7 @@ Run from the repository root:
 ```
 
 If `.venv` is missing, return to [environment setup](installation.md).
-If `data/benchmarks/models/selected.json` is missing, follow
+If `data/models/app.json` is missing, follow
 [model preparation](model-preparation.md#preparation-commands).
 
 ## 2. Start Chroma
@@ -57,16 +75,21 @@ docker compose -f infrastructure/chroma.yml down
 This preserves the named Chroma volume. Add `-v` only when you intentionally want
 to delete the stored index.
 
-## Migrating an existing MiniLM index
+## Migrating an existing index
 
 GTE produces 768-dimensional vectors, so an existing 384-dimensional MiniLM
 collection cannot be reused. EduMind keeps the `edumind` collection name and
 checks its embedding/chunking fingerprint at startup; it rejects the old index
 instead of deleting or silently mixing vectors.
 
-Only if you need to migrate this old index, confirm that you can re-ingest the
-original documents and that you intend to delete the app's existing Chroma
-data. Stop the app, remove its dedicated volume, then recreate the service:
+An index built with the same GTE revision but a different snapshot path
+also has a different fingerprint. If you need to keep the old index, set
+a new `vector.collection_name` in a copy of `config/base.yaml` and point
+`EDUMIND_CONFIG` at that file. Re-upload the source documents into the new
+collection.
+
+Only if you intend to delete the old data and can re-ingest the original
+documents, stop the app, remove its dedicated volume, and recreate the service:
 
 ```powershell
 docker compose -f infrastructure/chroma.yml down -v
@@ -81,12 +104,10 @@ destructive migration automatically.
 
 | Symptom | What to check |
 |---|---|
-| Missing `selected.json` or model directory | Rerun `python -m experiments.benchmarks.prepare app-models` in the activated environment. |
+| Missing `app.json` or model directory | Run `python -m edumind.prepare_models` in the activated environment. Check the reported path before replacing any damaged files. |
 | Chroma unavailable | Start Docker Desktop, run the Compose `up -d` command, then inspect `docker compose -f infrastructure/chroma.yml logs`. |
-| Tesseract benchmark error | Tesseract is experiment-only; run `tesseract --list-langs` and confirm `eng` is present before the document configuration benchmark. |
 | FFmpeg not found | Install FFmpeg and reopen the terminal so `ffmpeg` is on `PATH`. |
 | Python dependency conflicts | Confirm the prompt shows `(.venv)`, then use `python -m pip check`; do not repair a global environment in place. |
-| CUDA benchmark failure | The application does not require CUDA. For benchmarks, install the matching PyTorch/CUDA environment and use one explicit common device. |
 
 For benchmark setup beyond the application controls, see the
 [benchmark runbook](../benchmarks/running.md). For internal behavior, read the

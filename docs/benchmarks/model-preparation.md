@@ -28,14 +28,11 @@ python -m experiments.benchmarks.prepare embedding-models --candidate Alibaba-NL
 ```
 
 Remove `--dry-run` to download and verify the files. Use
-`python -m experiments.benchmarks.prepare --list` to inspect the full catalog
-(including app controls). Neither listing nor a dry run verifies local files.
+`python -m experiments.benchmarks.prepare --list` to inspect the benchmark
+catalog. Neither listing nor a dry run verifies local files.
 
 No unselected judge is downloaded. A hosted judge needs credentials rather
 than a local snapshot; a self-hosted judge needs an explicitly pinned model.
-The application's provisional CPU Qwen3-1.7B snapshot is pinned independently of
-benchmark eligibility; later benchmark preparation preserves its lock entry.
-It is not a generation benchmark candidate.
 Embedding and reranker preparation exclude alternate ONNX, OpenVINO, GGUF, TensorFlow,
 Flax, and TFLite exports because these benchmarks load the native Transformers
 checkpoint. The exact exclusions and resulting directory checksum are recorded
@@ -60,10 +57,12 @@ All prepared weights are stored inside:
 data/benchmarks/downloads/models/
 ```
 
-Hugging Face transfer metadata/cache and the pinned tiktoken encoding are also
-kept under `data/benchmarks/downloads/huggingface/` and
-`data/benchmarks/downloads/tiktoken/`; preparation does not rely on the user's
-shared model cache.
+Hugging Face transfer metadata and cache files are kept under
+`data/benchmarks/downloads/huggingface/`. Benchmark model preparation also
+verifies or prepares the shared pinned tokenizer under `data/models/tiktoken/`;
+no app model download is required. To reuse an existing tokenizer, copy the
+contents of the old `data/benchmarks/downloads/tiktoken/` into the empty new
+location before running model preparation. The pinned checksum is still checked.
 
 The default generated runtime lock is:
 
@@ -74,8 +73,9 @@ data/benchmarks/models/selected.json
 That file records repositories, revisions, local paths, checksums, composite
 submodels, and Docling component/system identities. Benchmark loading checks
 only the models requested by that stage against selection evidence and actual
-local bytes. Application loading verifies integrity without importing benchmark
-eligibility. Do not hand-edit paths, revisions, or checksums to bypass checks.
+local bytes. An old mixed lock remains readable for benchmark models; app
+preparation writes a separate lock. Do not hand-edit paths, revisions, or
+checksums to bypass checks.
 
 ### Verified snapshots and retained locks
 
@@ -163,18 +163,14 @@ requires the component inventory described below. Do not copy current checksums
 onto old entries or replace historical artifacts to make validation pass.
 
 Only if migration is needed, and after coordinating the required downloads,
-prepare a separate generated lock. For a lock shared with the app, retain its
-app-only entries: prepare the app target first, then add the benchmark targets.
-For a benchmark-only lock, only the second command is needed:
+prepare a separate generated benchmark lock:
 
 ```powershell
-python -m experiments.benchmarks.prepare app-models --output data/benchmarks/models/selected-next.json
 python -m experiments.benchmarks.prepare all-models --output data/benchmarks/models/selected-next.json
 ```
 
-Review and verify the new lock before explicitly configuring its consumers;
-application `models.lock_path` and supported benchmark `--model-lock` overrides
-are deliberate choices. These commands do not promote benchmark winners or
+Review and verify the new lock before passing it to a benchmark that supports
+the `--model-lock` override. This command does not promote benchmark winners or
 require deleting/repreparing an already verified GTE snapshot for current use.
 An interrupted unpublished target or conflicting snapshot policy may need a
 separate `cache_directory` through the preparation Python API; retain the old
@@ -217,7 +213,8 @@ The extraction download contains:
 - [Whisper small.en](https://huggingface.co/openai/whisper-small.en), [Canary 180M](https://huggingface.co/nvidia/canary-180m-flash), [Parakeet TDT 0.6B v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2), and [MOSS Transcribe-Diarize](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize).
 
 Docling's `runtime_version` is separate from `component_models`. The evidence-backed
-[component pins](../../experiments/benchmarks/preparation/docling_pins.py) record
+[shared component pins](../../src/edumind/common/docling_pins.py) and
+[benchmark-only component pins](../../experiments/benchmarks/preparation/docling_pins.py) record
 immutable Hub commits for layout, TableFormer, and CodeFormula, plus measured
 RapidOCR/EasyOCR SHA256 inventories. Their evidence comes from the retained local
 download metadata/files, not invented SHAs or a quality assessment. Fresh

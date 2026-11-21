@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from edumind.common.models import ModelPreparationError
 from edumind.extraction import (
     ExtractedDocument,
     ExtractedSegment,
@@ -344,6 +345,12 @@ def test_granite_executes_and_logs_the_protocol_image_scale(monkeypatch, tmp_pat
     assert set(parameters) == {f"0:InitializedPipeline:{InputFormat.IMAGE.value}"}
     logged = next(iter(parameters.values()))
     assert logged["images_scale"] == logged["vlm_options"]["scale"] == 4.0
+    with pytest.raises(
+        ModelPreparationError, match=r"benchmarks\.prepare extraction-models"
+    ):
+        extractor._docling_converter(
+            replace(request, options={**options, "model_path": ""})
+        )
 
 
 def test_asr_bootstrap_preserves_speech_and_control_allocation():

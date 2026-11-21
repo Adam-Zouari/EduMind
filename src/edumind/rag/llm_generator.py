@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from edumind.common.gpu import release_runtime_memory
+from edumind.common.models import PREPARE_MODELS_COMMAND
 
 from .contracts import GenerationProfile
 from .errors import GenerationError, ModelLoadError
@@ -247,8 +248,7 @@ class HuggingFaceGenerator:
         path = Path(self.profile.model_path)
         if not path.is_dir():
             raise ModelLoadError(
-                f"Pinned model is missing at {path}; run `python "
-                "-m experiments.benchmarks.prepare app-models` or `all-models`."
+                f"Pinned model is missing at {path}; run `{PREPARE_MODELS_COMMAND}`."
             )
         started = time.perf_counter()
         try:

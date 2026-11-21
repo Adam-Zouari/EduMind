@@ -1,3 +1,5 @@
+from http.client import IncompleteRead
+from io import BytesIO
 from types import SimpleNamespace
 
 import numpy as np
@@ -6,11 +8,52 @@ import pytest
 import edumind.rag.vector_store as vector_store_module
 from edumind.rag.contracts import IndexManifest
 from edumind.rag.errors import IndexCompatibilityError, RAGConfigurationError
-from edumind.rag.vector_store import COMPATIBILITY, VectorStore
+from edumind.rag.vector_store import COMPATIBILITY, VectorStore, wait_for_chroma
 
 
 class NotFoundError(Exception):
     pass
+
+
+@pytest.mark.parametrize("ready", [True, False])
+def test_chroma_wait_checks_heartbeat_with_a_bounded_retry(monkeypatch, ready):
+    elapsed = 0.0
+    attempts = []
+
+    def sleep(seconds):
+        nonlocal elapsed
+        elapsed += seconds
+
+    class TruncatedHeartbeat(BytesIO):
+        def read(self, *args):
+            raise IncompleteRead(b'{"nanosecond heart')
+
+    def open_heartbeat(url, *, timeout):
+        attempts.append(timeout)
+        assert url == "http://127.0.0.1:1234/api/v2/heartbeat"
+        if len(attempts) == 1:
+            raise ConnectionRefusedError
+        if len(attempts) == 2:
+            return TruncatedHeartbeat()
+        if ready and len(attempts) == 3:
+            return BytesIO(b'{"nanosecond heartbeat": 42}')
+        return BytesIO(b"{}")
+
+    monkeypatch.setenv("EDUMIND_VECTOR_ENDPOINT", "http://127.0.0.1:1234")
+    monkeypatch.setattr(
+        vector_store_module,
+        "time",
+        SimpleNamespace(monotonic=lambda: elapsed, sleep=sleep),
+    )
+    monkeypatch.setattr(vector_store_module, "urlopen", open_heartbeat)
+    if ready:
+        wait_for_chroma(timeout_seconds=2.5)
+        assert elapsed == 2.0
+    else:
+        with pytest.raises(RAGConfigurationError, match="heartbeat within 2.5s"):
+            wait_for_chroma(timeout_seconds=2.5)
+        assert elapsed == 2.5
+    assert attempts == [2.0, 1.5, 0.5]
 
 
 def _store(client) -> VectorStore:

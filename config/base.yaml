@@ -1,6 +1,6 @@
 # Provisional application defaults. Experiments never modify this file automatically.
 models:
-  lock_path: data/benchmarks/models/selected.json
+  lock_path: data/models/app.json
 
 extraction:
   cache_enabled: true
