@@ -245,8 +245,17 @@ for the document evaluator.
 
 ### Smoke fixtures
 
-The small committed fixtures are sufficient for smoke tests. To regenerate
-them explicitly, use the preparation CLI:
+The smoke inputs are committed; no public dataset download is needed.
+
+| Benchmark | Smoke manifest under `data/benchmarks/` |
+|---|---|
+| Document, ASR, Video | `extraction/smoke.json`; ASR also uses `extraction/audio-reliability-smoke.json` |
+| Chunking–embedding, Retrieval–reranking | `rag/smoke.json` |
+| Generation, Final RAG | `rag/generation-smoke.json` |
+| Vector Database | `vectordb/smoke.json` |
+
+The following command regenerates **extraction fixtures only**. It does not
+regenerate the RAG or Vector Database manifests:
 
 ```powershell
 python -m benchmarks.prepare smoke-fixtures
@@ -282,8 +291,38 @@ The command above prepares QASPER only. For the other sources, prepare one
 reviewed supplement per matching split: include eligible EduQG records as
 text-evidence questions and EduMind-authored OHR records under their actual
 evidence types. Record each source's identity and revision; textbook questions
-do not count toward the table, formula or mixed quotas. Combine with QASPER
-only after checking the evidence offsets and counts:
+do not count toward the table, formula or mixed quotas.
+
+**Worked EduQG example (illustrative, not an upstream record).** Suppose a
+reviewer assigns a textbook family to development. For this example, the
+entire frozen document `eduqg:demo:ch1` is
+`Heat transfer. Conduction transfers heat by contact.`. The source question
+asks which process transfers heat by contact. Without the choices or answer
+key, it still has a clear answer: *conduction*. Keep the choices and key out of
+the searchable document. Add a question like this to the `samples` list in
+`structured-dev.json`, alongside its document record:
+
+```json
+{
+  "id": "eduqg:demo:q1", "kind": "question", "document_id": "eduqg:demo:ch1",
+  "question": "Which process transfers heat by contact?",
+  "answerable": true, "answer": "Conduction", "accepted_answers": ["Conduction"],
+  "evidence_type": "text",
+  "evidence": [
+    {"id": "eduqg:demo:q1:e1", "evidence_type": "text", "document_id": "eduqg:demo:ch1", "start": 15, "end": 52}
+  ]
+}
+```
+
+The offsets refer to the **document**, not to the question:
+`text[15:52]` is exactly `Conduction transfers heat by contact.`.
+On the real document record, retain the source revision, license, and book
+family ID so other chapters or editions do not cross splits. This example
+shows retrieval evidence; for generation, also supply the reviewed gold
+claims, checksummed verification material, and frozen context described above.
+
+Combine the reviewed supplement with QASPER only after checking the evidence
+offsets and counts:
 
 ```powershell
 python -m benchmarks.prepare rag-selection `
@@ -309,7 +348,13 @@ selection.
 
 Each component benchmark has its own locked execution. This dataset plan uses
 a separate untouched Final RAG holdout: reserve its document families before
-component selection, and record the intended uses in the manifests. See the
+component selection and write its reviewed corpus and questions to
+`data/benchmarks/rag/final-rag-locked-test.json` (split: `locked-test`).
+Check its family IDs against **all** component splits, including the component
+locked set; a different filename does not establish independence. This is a
+separate reviewed input, not a copy or output of the QASPER merge. Use it for
+both [Final RAG validation and execution](running.md#final-rag-frozen-system-workflow).
+See the
 [shared locked-data isolation rule](methodology.md#locked-data-isolation).
 Locked reports never authorize reselection on the same data.
 
@@ -863,6 +908,7 @@ structured-locked-test.json
 rag-selection-dev.json
 rag-selection-validation.json
 rag-selection-locked-test.json
+final-rag-locked-test.json
 ```
 
 Every extraction sample requires:
@@ -1000,10 +1046,6 @@ that were not public during candidate development. If only public sources are
 available, the run remains useful but must be described as public-corpus
 confirmation rather than proof of unseen real-world generalization.
 
-The tiny committed extraction assets and RAG smoke fixtures remain the only
-benchmark data stored in Git. Generation uses its own
-`data/benchmarks/rag/generation-smoke.json`, including explicit claim references
-and answerability labels; chunking–embedding and retrieval–reranking retain
-`data/benchmarks/rag/smoke.json`. Smoke verifies code paths only and does not replace any
-public or manually verified dataset above. Use the
+The [committed smoke fixtures](#smoke-fixtures) verify code paths only; they do
+not replace the public or manually verified datasets above. Use the
 [benchmark runbook](running.md) for all execution commands.

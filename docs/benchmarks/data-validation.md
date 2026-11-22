@@ -175,14 +175,18 @@ report's content seal; it neither repairs inputs nor creates a passed report.
 Additional benchmark commands:
 
 ```powershell
-python -m benchmarks.validate final-rag --profile all
+python -m benchmarks.validate final-rag --profile smoke
+python -m benchmarks.validate final-rag --profile preflight
+python -m benchmarks.validate final-rag --profile locked --manifest data/benchmarks/rag/final-rag-locked-test.json
 python -m benchmarks.validate vectordb --profile all
 ```
 
 `--profile smoke|development|validation|locked` chooses one applicable dataset;
 `all` validates every applicable dataset and the cross-split inventory. Final
 RAG's validator supports smoke and locked datasets; its `all` input check
-also validates the separately declared integrated-preflight stress inputs. This
+also validates the separately declared integrated-preflight stress inputs. Batch
+commands use default manifests: their Final RAG locked check uses the component
+locked file. It does not seal the separate holdout shown above. This
 does not create Final RAG development or validation selection profiles. In the
 coordinator, an all-benchmark batch skips inapplicable profiles; an explicit
 unsupported benchmark/profile combination is rejected. Missing required

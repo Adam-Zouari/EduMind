@@ -854,18 +854,31 @@ revisions. `sequential` unloads retrieval models before generator loading and
 switches them again for each request; `resident` keeps the selected runtimes
 together. The declared transitions are measured, not hidden setup work.
 No placeholder decision is committed; author it only from reviewed evidence.
-After authoring the reviewed composition and preparing its required inputs:
+After authoring the reviewed composition, sealing the smoke and preflight
+inputs, and [configuring the calibrated judge](#generation-execution-and-judge-setup),
+set `$judgeTransport` to the path of your reviewed transport configuration:
 
 ```powershell
-python -m benchmarks.rag.final.run --profile smoke
+$judgeTransport = "path/to/judge-transport.json"
+python -m benchmarks.rag.final.run --profile smoke --judge-transport $judgeTransport
 python -m benchmarks.rag.final.run --profile preflight
-python -m benchmarks.rag.final.run --profile locked --confirm-locked-test
+```
+
+For the [independent holdout in the dataset plan](dataset-preparation.md#3-install-the-rag-datasets),
+seal the Final RAG validation report first, then run the frozen system on the
+**same manifest**. Without `--manifest`, both locked commands default to the
+component file `rag-selection-locked-test.json`.
+
+```powershell
+$holdout = "data/benchmarks/rag/final-rag-locked-test.json"
+python -m benchmarks.validate final-rag --profile locked --manifest $holdout
+python -m benchmarks.rag.final.run --profile locked --manifest $holdout --judge-transport $judgeTransport --confirm-locked-test
 ```
 
 The approved report uses the calibrated LLM judge and deterministic scoring of
-saved outputs. Supply `--judge-transport` as for Generation. Final RAG has no
+saved outputs. Integrated preflight does not use the judge. Final RAG has no
 human-review prerequisite or finalist-combination stage. For interrupted judging,
-use `--profile locked --resume-evaluation path/to/generation_execution.json`
+use `--profile locked --manifest $holdout --resume-evaluation path/to/generation_execution.json`
 with the same manifest, composition, protocol, and judge transport. This verifies
 the saved binding and resumes the original journal without model loading.
 
