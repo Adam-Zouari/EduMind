@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 from pathlib import Path
 from uuid import uuid4
 
@@ -26,7 +25,12 @@ from edumind.common.artifacts import (
 from .adapters import Hit
 from .protocol import load_protocol
 from .validation import load_inputs
-from .workload import validate_hits
+from .workload import (
+    SELECTED_FILES,
+    classify_hits,
+    global_inventory,
+    search_rows,
+)
 
 
 def _plain(value):
@@ -46,7 +50,7 @@ def _plain(value):
 
 def write_seal(path, kind, payload):
     path = Path(path)
-    envelope = _plain({"schema_version": 1, "kind": kind, "payload": payload})
+    envelope = _plain({"schema_version": 2, "kind": kind, "payload": payload})
     envelope["checksum"] = stable_hash(envelope)
     path.parent.mkdir(parents=True, exist_ok=True)
     with local_file_lock(path.with_suffix(".lock")):
@@ -67,7 +71,7 @@ def read_seal(path, kind=None):
     if (
         set(envelope) != {"schema_version", "kind", "payload", "checksum"}
         or type(envelope["schema_version"]) is not int
-        or envelope["schema_version"] != 1
+        or envelope["schema_version"] != 2
         or kind is not None
         and envelope["kind"] != kind
         or envelope["checksum"]
@@ -128,7 +132,11 @@ def load_retained(directory, *, verify_inputs=True):
             "Original input validation fingerprint does not cover its identity"
         )
     protocol = context["protocol"]
-    if protocol.get("checksum") != stable_hash(protocol["resolved"]):
+    if protocol["resolved"].get(
+        "protocol_version"
+    ) != "vector-database-v6" or protocol.get("checksum") != stable_hash(
+        protocol["resolved"]
+    ):
         raise ValueError("Retained protocol checksum mismatch")
     if (
         report.get("requirements") != protocol["resolved"]
@@ -187,220 +195,277 @@ def load_retained(directory, *, verify_inputs=True):
 
 
 def validate_server_ledger(raw, workloads, corpora, protocol, profile):
-    expected = {
-        (condition["id"], window, query, attempt)
-        for condition in workloads["conditions"]
-        for window in range(condition["windows"])
-        for query in condition["query_ids"]
-        for attempt in range(1, protocol.profile(profile).repetitions + 1)
-    }
-    observed = set()
-    conditions = {row["id"]: row for row in workloads["conditions"]}
+    from dataclasses import asdict
+
+    from .metrics import usable_duration
+    from .selection import candidate_config
+
+    known = global_inventory(corpora)
+    expected = []
+    for session in workloads["sessions"]:
+        corpus = corpora[session["id"]]
+        session_ids = frozenset(corpus.ids)
+        _, config = candidate_config(
+            protocol, raw["candidate"], int(corpus.vectors.shape[1])
+        )
+        for identity, _, allowed in search_rows(session, corpus):
+            expected.append(
+                (
+                    {**identity, "configuration_checksum": stable_hash(asdict(config))},
+                    session_ids,
+                    allowed,
+                )
+            )
+    observed = [row for row in raw["requests"] if row["operation"] == "search"]
+    if len(observed) != len(expected):
+        raise ValueError(
+            "Missing/duplicate retained scheduled search outcomes; recovery cannot manufacture attempts"
+        )
     for row in raw["requests"]:
         if row["status"] not in {"success", "failed", "not_executed"}:
             raise ValueError("Unknown retained logical-operation status")
-        if row["status"] == "success" and (
-            not isinstance(row["latency_seconds"], (int, float))
-            or not math.isfinite(row["latency_seconds"])
-            or row["latency_seconds"] < 0
+        timing = row["latency_seconds"]
+        if timing is not None and (
+            row["status"] != "success" or not usable_duration(timing)
         ):
             raise ValueError("Invalid retained successful request timing")
-        if row["operation"] != "search":
-            continue
-        key = (row["condition"], row["window"], row["query_id"], row["attempt"])
-        if key in observed or key not in expected:
-            raise ValueError("Duplicate/unscheduled retained search identity")
-        observed.add(key)
-        if row["quality_designated"] != (row["window"] == 0 and row["attempt"] == 1):
-            raise ValueError("Retained designated-first identity changed")
-        condition = conditions[row["condition"]]
-        corpus = corpora[condition["corpus"]]
+    for row, (identity, session_ids, allowed) in zip(observed, expected, strict=True):
+        if any(row.get(key) != value for key, value in identity.items()):
+            raise ValueError(
+                "Retained search identity differs from the sealed ordered schedule"
+            )
         if row["status"] == "success":
-            if len(row["ids"]) != len(row["scores"]):
+            if (
+                not isinstance(row["ids"], list)
+                or not isinstance(row["scores"], list)
+                or len(row["ids"]) != len(row["scores"])
+            ):
                 raise ValueError("Retained ranking ID/score mismatch")
-            violation = validate_hits(
+            checks = classify_hits(
                 [
                     Hit(identifier, score, {})
                     for identifier, score in zip(row["ids"], row["scores"], strict=True)
                 ],
-                dict(zip(corpus.ids, corpus.metadata, strict=True)),
-                20,
-                condition["filters"],
+                known,
+                session_ids,
+                allowed,
+                filtered=row["condition"] == SELECTED_FILES,
             )
-            if condition["filters"] and bool(violation) != row["filter_violation"]:
+            if any(row.get(name) != value for name, value in checks.items()):
                 raise ValueError(
-                    "Retained filter outcome differs from trusted metadata"
+                    "Retained session/filter outcome differs from trusted inventory"
                 )
-    if observed != expected:
-        raise ValueError(
-            "Missing retained scheduled search outcomes; recovery cannot manufacture attempts"
-        )
-    for row in raw["windows"]:
-        rows = [
-            request
-            for request in raw["requests"]
-            if request["operation"] == "search"
-            and request["condition"] == row["condition"]
-            and request["window"] == row["window"]
-        ]
-        if (
-            not math.isfinite(row["wall_seconds"])
-            or row["wall_seconds"] < 0
-            or row["successful"]
-            != sum(request["status"] == "success" for request in rows)
-            or row["submitted"]
-            != sum(request["status"] != "not_executed" for request in rows)
+        elif (
+            row["filter_violation"] is not None
+            or row["session_isolation_violation"] is not None
+            or row["outside_session_ids"]
+            or row["outside_selection_ids"]
         ):
             raise ValueError(
-                "Retained load window does not reconcile to its logical requests"
+                "Retained unsuccessful request claims unavailable integrity checks"
             )
+        if row["status"] == "not_executed" and (
+            row["ids"] is not None or row["scores"] is not None
+        ):
+            raise ValueError("An unexecuted search cannot retain an output")
 
 
 def validate_integration_ledger(raw, workloads, corpora, protocol, profile):
-    """Validate saved live pools without querying, embedding or re-ranking."""
+    """Reconcile all saved session scopes and pools; never call a live runtime."""
     from dataclasses import asdict
 
-    from benchmarks.common.datasets import load_manifest
+    from benchmarks.common.datasets import load_manifest, validate_evidence
 
+    from .metrics import usable_duration
     from .selection import candidate_config
 
     spec = workloads["integration"]
-    corpus = corpora[spec["corpus"]]
-    if raw["spec"] != spec or [row["identifier"] for row in raw["chunks"]] != list(
-        corpus.ids
-    ):
-        raise ValueError("Retained integration corpus/spec identity mismatch")
+    if raw["spec"] != spec or len(raw["sessions"]) != len(spec["session_ids"]):
+        raise ValueError("Retained integration session/spec identity mismatch")
+    sessions = [
+        session
+        for session in workloads["sessions"]
+        if session["id"] in spec["session_ids"]
+    ]
     references = load_manifest(
         Path(workloads["manifest_path"]).parent / spec["manifest"]
     )
+    sources = validate_evidence(references)
     expected_questions = {
-        str(row["id"]): row
+        row["id"]: {**row, **sources[row["id"]].metadata()}
         for row in references.samples
-        if row.get("kind") == "question" and row.get("answerable")
+        if row["kind"] == "question" and row["answerable"]
     }
-    if {str(row["id"]) for row in raw["questions"]} != set(corpus.query_ids) or len(
-        raw["questions"]
-    ) != len(corpus.query_ids):
-        raise ValueError("Retained integration question identity mismatch")
-    for question in raw["questions"]:
-        expected = expected_questions[str(question["id"])]
-        if any(
-            question.get(key) != expected.get(key)
-            for key in ("question", "document_id", "evidence", "answerable")
-        ):
-            raise ValueError("Retained integration reference content changed")
-    _, config = candidate_config(
-        protocol, raw["candidate"], int(corpus.vectors.shape[1])
-    )
-    records = []
-    for position, (chunk, metadata) in enumerate(
-        zip(raw["chunks"], raw["metadata"], strict=True)
-    ):
-        trusted = corpus.metadata[position]
+    globally_known = global_inventory(corpora)
+    for session, bundle in zip(sessions, raw["sessions"], strict=True):
+        sid = session["id"]
+        corpus = corpora[sid]
+        session_ids = frozenset(corpus.ids)
         if (
-            chunk["text"] != corpus.texts[position]
-            or chunk["document_id"] != trusted["source_id"]
-            or chunk["start"] != trusted["start"]
-            or chunk["end"] != trusted["end"]
-            or metadata["source_id"] != trusted["source_id"]
+            bundle["session_id"] != sid
+            or [row["identifier"] for row in bundle["chunks"]] != list(corpus.ids)
+            or bundle["questions"]
+            != [expected_questions[qid] for qid in corpus.query_ids]
         ):
-            raise ValueError("Retained integration chunk spans/text/source differ")
-        records.append(
-            {
-                "id": chunk["identifier"],
-                "text": chunk["text"],
-                "metadata": metadata,
-                "vector": list(map(float, corpus.vectors[position])),
-            }
+            raise ValueError(
+                "Retained integration session/chunk/question identity mismatch"
+            )
+        _, config = candidate_config(
+            protocol, raw["candidate"], int(corpus.vectors.shape[1])
         )
-    identity = stable_hash({"configuration": asdict(config), "records": records})
-    expected = {
-        (query_id, attempt)
-        for query_id in corpus.query_ids
-        for attempt in range(1, protocol.profile(profile).repetitions + 1)
-    }
-    requests = {(row["query_id"], row["attempt"]): row for row in raw["requests"]}
-    rankings = {(row["query_id"], row["attempt"]): row for row in raw["rankings"]}
-    if (
-        len(requests) != len(raw["requests"])
-        or len(rankings) != len(raw["rankings"])
-        or set(requests) != expected
-        or set(rankings) != expected
-    ):
-        raise ValueError("Missing/duplicate retained integration attempts")
-    for key, row in rankings.items():
-        if {
-            name: value for name, value in row.items() if name != "evidence"
-        } != requests[key]:
-            raise ValueError(
-                "Retained integration request and ranking ledgers disagree"
-            )
-        evidence = row["evidence"]
-        pool, ranking = evidence.get("pool"), evidence.get("ranking")
-        if pool is None:
-            if ranking is not None or row["status"] == "success":
-                raise ValueError("Retained success/ranking has no verified pool")
-            continue
-        if (
-            evidence.get("identity") != identity
-            or evidence.get("configuration") != asdict(config)
-            or any(
-                type(position) is not int or not 0 <= position < len(corpus.ids)
-                for position in pool
-            )
-            or len(pool) != len(set(pool))
-            or evidence.get("pool_ids") != [corpus.ids[position] for position in pool]
+        configuration = asdict(config)
+        records = []
+        for position, (chunk, metadata) in enumerate(
+            zip(bundle["chunks"], bundle["metadata"], strict=True)
         ):
-            raise ValueError("Retained integration pool identity mismatch")
-        if ranking is not None and (
-            len(ranking) != len(pool) or sorted(ranking) != sorted(pool)
-        ):
-            raise ValueError(
-                "Retained reranker output is not the actual pool permutation"
-            )
-        allowed = [
-            i
-            for i, metadata in enumerate(raw["metadata"])
-            if all(
-                metadata.get(name) == value for name, value in spec["filters"].items()
-            )
-        ]
-        if len(pool) != min(20, len(allowed)) or not set(pool) <= set(allowed):
-            raise ValueError(
-                "Retained integration pool is short or contains forbidden records"
-            )
-        if evidence.get("database_executed"):
-            ids, scores = (
-                evidence.get("database_ids", []),
-                evidence.get("database_scores", []),
-            )
-            if len(ids) != len(scores) or validate_hits(
-                [
-                    Hit(identifier, score, {})
-                    for identifier, score in zip(ids, scores, strict=True)
-                ],
-                dict(zip(corpus.ids, raw["metadata"], strict=True)),
-                20,
-                spec["filters"],
+            trusted = corpus.metadata[position]
+            if (
+                chunk["text"] != corpus.texts[position]
+                or chunk["document_id"] != trusted["source_id"]
+                or chunk["start"] != trusted["start"]
+                or chunk["end"] != trusted["end"]
+                or metadata
+                != {
+                    "source_id": chunk["document_id"],
+                    "document_id": chunk["document_id"],
+                    "start": chunk["start"],
+                    "end": chunk["end"],
+                    "token_count": chunk["tokens"],
+                }
             ):
-                raise ValueError("Retained integration database pool is invalid")
-        if ranking is not None and evidence.get("ranking_ids") != [
-            corpus.ids[position] for position in ranking
-        ]:
-            raise ValueError("Retained integration ranking IDs disagree with positions")
-        question = expected_questions[key[0]]
-        checksum = stable_hash(
-            {
-                "identity": identity,
-                "query": str(question["question"]),
-                "filters": spec.get("filters"),
-                "database_ids": evidence.get("database_ids"),
-                "database_scores": evidence.get("database_scores"),
-                "pool_ids": evidence["pool_ids"],
+                raise ValueError("Retained integration chunk spans/text/source differ")
+            records.append(
+                {
+                    "id": chunk["identifier"],
+                    "text": chunk["text"],
+                    "metadata": metadata,
+                    "vector": list(map(float, corpus.vectors[position])),
+                }
+            )
+        identity = stable_hash({"configuration": configuration, "records": records})
+        expected = list(search_rows(session, corpus))
+        if len(bundle["requests"]) != len(expected) or len(bundle["rankings"]) != len(
+            expected
+        ):
+            raise ValueError("Missing/duplicate retained integration attempts")
+        for request, row, (scheduled, filters, allowed) in zip(
+            bundle["requests"], bundle["rankings"], expected, strict=True
+        ):
+            frozen = {
+                **scheduled,
+                "operation": "integration",
+                "configuration_checksum": stable_hash(configuration),
             }
-        )
-        if checksum != evidence.get("pool_checksum"):
-            raise ValueError("Retained integration observed-pool checksum mismatch")
+            if (
+                any(request.get(key) != value for key, value in frozen.items())
+                or {name: value for name, value in row.items() if name != "evidence"}
+                != request
+            ):
+                raise ValueError(
+                    "Retained integration request order, scope or ranking ledger differs"
+                )
+            if request["status"] not in {"success", "failed", "not_executed"}:
+                raise ValueError("Unknown retained integration outcome")
+            if request["latency_seconds"] is not None and (
+                request["status"] != "success"
+                or not usable_duration(request["latency_seconds"])
+            ):
+                raise ValueError("Invalid retained integration timing")
+            observed = row["evidence"]
+            if request["status"] == "not_executed":
+                if observed:
+                    raise ValueError(
+                        "Unexecuted integration request has observed evidence"
+                    )
+                continue
+            if (
+                observed.get("identity") != identity
+                or observed.get("configuration") != configuration
+            ):
+                raise ValueError("Retained integration runtime identity mismatch")
+            for field, evidence_field in (
+                ("ids", "database_ids"),
+                ("filter_violation", "filter_violation"),
+                ("session_isolation_violation", "session_isolation_violation"),
+                ("database_latency_seconds", "database_latency_seconds"),
+            ):
+                if row.get(field) != observed.get(evidence_field):
+                    raise ValueError("Retained database stage evidence disagrees")
+            if row["database_executed"] != observed["database_executed"]:
+                raise ValueError("Retained database stage outcome disagrees")
+            if observed.get("session_isolation_violation") is not None:
+                ids, scores = observed["database_ids"], observed["database_scores"]
+                checks = classify_hits(
+                    [
+                        Hit(identifier, score, {})
+                        for identifier, score in zip(ids, scores, strict=True)
+                    ],
+                    globally_known,
+                    session_ids,
+                    allowed,
+                    filtered=bool(filters),
+                )
+                if any(observed.get(key) != value for key, value in checks.items()):
+                    raise ValueError(
+                        "Retained database stage differs from trusted session inventory"
+                    )
+                if (
+                    checks["session_isolation_violation"] or checks["filter_violation"]
+                ) and observed.get("pool") is not None:
+                    raise ValueError(
+                        "Retained forbidden database response has a downstream pool"
+                    )
+            pool, ranking = observed.get("pool"), observed.get("ranking")
+            if pool is None:
+                if ranking is not None or row["status"] == "success":
+                    raise ValueError("Retained success/ranking has no verified pool")
+                continue
+            if (
+                observed.get("expected_count") != min(20, len(allowed))
+                or len(pool) != min(20, len(allowed))
+                or any(
+                    type(position) is not int or not 0 <= position < len(corpus.ids)
+                    for position in pool
+                )
+                or len(pool) != len(set(pool))
+                or observed.get("pool_ids")
+                != [corpus.ids[position] for position in pool]
+                or not set(observed["pool_ids"]) <= allowed
+            ):
+                raise ValueError(
+                    "Retained integration pool is short or contains forbidden records"
+                )
+            if observed["database_executed"] and (
+                observed.get("session_isolation_violation") is not False
+                or len(observed["database_ids"]) != min(20, len(allowed))
+            ):
+                raise ValueError(
+                    "Retained downstream pool has no verified complete database source"
+                )
+            if (row["status"] == "success") != (ranking is not None) or (
+                ranking is not None
+                and (
+                    any(type(position) is not int for position in ranking)
+                    or sorted(ranking) != sorted(pool)
+                    or observed.get("ranking_ids")
+                    != [corpus.ids[position] for position in ranking]
+                )
+            ):
+                raise ValueError(
+                    "Retained reranker output is not the actual pool permutation"
+                )
+            checksum = stable_hash(
+                {
+                    "identity": identity,
+                    "query": str(expected_questions[scheduled["query_id"]]["question"]),
+                    "filters": filters,
+                    "database_ids": observed.get("database_ids"),
+                    "database_scores": observed.get("database_scores"),
+                    "pool_ids": observed["pool_ids"],
+                }
+            )
+            if checksum != observed.get("pool_checksum"):
+                raise ValueError("Retained integration observed-pool checksum mismatch")
 
 
 def recover(candidate_directory, output_directory, *, tokenizer=None):
@@ -419,6 +484,12 @@ def recover(candidate_directory, output_directory, *, tokenizer=None):
     ):
         raise ValueError(
             "Original manifest split differs from retained execution profile"
+        )
+    if context["workloads"] != {
+        name: workloads[name] for name in ("sessions", "operations")
+    }:
+        raise ValueError(
+            "Retained session and operation schedules differ from original inputs"
         )
     if {key: value.content_checksum for key, value in corpora.items()} != context[
         "corpus_checksums"
@@ -502,8 +573,8 @@ def recover(candidate_directory, output_directory, *, tokenizer=None):
                 pd.read_csv(output / (name + ".csv"), dtype=str, keep_default_na=False),
             )
     report = {
-        "schema_version": 1,
-        "evaluation_version": "vector-evaluation-recovery-v1",
+        "schema_version": 2,
+        "evaluation_version": "vector-evaluation-recovery-v2",
         "evaluation_id": str(uuid4()),
         "candidate": context["candidate"],
         "source_run_id": context["source_run_id"],

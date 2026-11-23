@@ -505,7 +505,12 @@ def test_citation_support_has_slices_completeness_and_source_intervals(inputs):
     q = inputs[2][0]
     records = []
     for source in ("A", "B"):
-        question = {**q, "id": source, "document_id": source, "source_id": source}
+        question = {
+            **q,
+            "id": source,
+            "source_document_ids": (source,),
+            "independent_source_id": source,
+        }
         rows = [
             score_attempt(
                 question, attempt(seed), FixtureJudge().response(question, answer())

@@ -7,7 +7,7 @@ import time
 
 from .adapters import Record, create
 from .adapters.base import DimensionMismatch
-from .workload import clustered, records, validate_hits
+from .workload import clustered, matches_filters, records, validate_hits
 
 
 def check(name, config, compose, protocol):
@@ -46,6 +46,24 @@ def check(name, config, compose, protocol):
         )
         report["compound_filter"] = {
             "status": "passed" if hits and not violation else "failed"
+        }
+        sources = tuple(sorted({row.metadata["source_id"] for row in expected})[:2])
+        if len(sources) != 2:
+            raise ValueError("Multi-file conformance requires two distinct source IDs")
+        union = {"source_id": sources}
+        eligible = {
+            identifier
+            for identifier, metadata in trusted.items()
+            if matches_filters(metadata, union)
+        }
+        hits = adapter.search(corpus.vectors[0], len(eligible), union)
+        violation = validate_hits(hits, trusted, len(eligible), union)
+        report["selected_file_union"] = {
+            "status": "passed"
+            if not violation and {hit.identifier for hit in hits} == eligible
+            else "failed",
+            "selected_source_ids": list(sources),
+            "eligible_count": len(eligible),
         }
         filters = {protocol.conformance["empty_filter"]: "missing"}
         hits = adapter.search(

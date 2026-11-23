@@ -669,8 +669,8 @@ def score_execution(
                 {key: single[key]["value"] for key in BASE_KEYS},
                 single["operational.latency_p50_seconds"]["value"],
                 {
-                    "document_id": q["document_id"],
-                    "source_id": q["source_id"],
+                    "source_document_ids": q["source_document_ids"],
+                    "independent_source_id": q["independent_source_id"],
                     "answerable": q["answerable"],
                     "evidence_type": q["evidence_type"],
                 },

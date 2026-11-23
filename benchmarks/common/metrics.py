@@ -65,6 +65,31 @@ class ConfidenceInterval:
     confidence: float = 0.95
 
 
+def cluster_bootstrap(groups, statistic, *, resamples, seed, confidence):
+    """Resample whole groups, retaining draw copies and undefined-draw counts."""
+    rng = np.random.default_rng(seed)
+    draws = []
+    for _ in range(resamples):
+        value = statistic(
+            [groups[i] for i in rng.integers(0, len(groups), len(groups))]
+        )
+        if value is not None and np.isfinite(value):
+            draws.append(value)
+    result = {
+        "defined_resamples": len(draws),
+        "undefined_resamples": resamples - len(draws),
+        "resampling_performed": True,
+    }
+    if draws:
+        lower, upper = np.quantile(draws, [(1 - confidence) / 2, (1 + confidence) / 2])
+        result.update(
+            lower=float(lower), upper=float(upper), degenerate=bool(lower == upper)
+        )
+    else:
+        result["reason"] = "no_defined_resamples"
+    return result
+
+
 def paired_bootstrap_interval(
     left: Sequence[float],
     right: Sequence[float] | None = None,

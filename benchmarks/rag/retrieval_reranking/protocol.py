@@ -56,9 +56,9 @@ class RetrievalProtocol:
     reranker_maximum_tokens: Mapping[str, int]
     quality_cutoffs: tuple[int, ...]
     alpha_ndcg_alpha: float
-    minimum_quality_ci_documents: int | None
-    minimum_repeatability_ci_documents: int | None
-    minimum_latency_ci_documents: int
+    minimum_quality_ci_sources: int | None
+    minimum_repeatability_ci_sources: int | None
+    minimum_latency_ci_sources: int | None
     confidence_level: float
     maximum_finalists: int
     authoritative_peak_vram_mb: float
@@ -313,9 +313,9 @@ def protocol_from_mapping(
         root["statistics"],
         "statistics",
         {
-            "minimum_quality_ci_documents",
-            "minimum_repeatability_ci_documents",
-            "minimum_latency_ci_documents",
+            "minimum_quality_ci_sources",
+            "minimum_repeatability_ci_sources",
+            "minimum_latency_ci_sources",
             "confidence_level",
         },
     )
@@ -326,14 +326,15 @@ def protocol_from_mapping(
             else None
         )
         for name in (
-            "minimum_quality_ci_documents",
-            "minimum_repeatability_ci_documents",
+            "minimum_quality_ci_sources",
+            "minimum_repeatability_ci_sources",
         )
     }
-    minimum_documents = integer(
-        statistics["minimum_latency_ci_documents"],
-        "statistics.minimum_latency_ci_documents",
-        minimum=1,
+    latency_support = statistics["minimum_latency_ci_sources"]
+    minimum_sources = (
+        integer(latency_support, "statistics.minimum_latency_ci_sources", minimum=2)
+        if latency_support is not None
+        else None
     )
     confidence = number(
         statistics["confidence_level"],
@@ -394,11 +395,9 @@ def protocol_from_mapping(
         reranker_maximum_tokens=maximum_tokens,
         quality_cutoffs=cutoffs,
         alpha_ndcg_alpha=alpha,
-        minimum_quality_ci_documents=support["minimum_quality_ci_documents"],
-        minimum_repeatability_ci_documents=support[
-            "minimum_repeatability_ci_documents"
-        ],
-        minimum_latency_ci_documents=minimum_documents,
+        minimum_quality_ci_sources=support["minimum_quality_ci_sources"],
+        minimum_repeatability_ci_sources=support["minimum_repeatability_ci_sources"],
+        minimum_latency_ci_sources=minimum_sources,
         confidence_level=confidence,
         maximum_finalists=maximum_finalists,
         authoritative_peak_vram_mb=peak_vram,

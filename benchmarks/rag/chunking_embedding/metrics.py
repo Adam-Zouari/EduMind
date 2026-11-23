@@ -13,6 +13,16 @@ import numpy as np
 
 from benchmarks.common.contracts import SampleResult
 from benchmarks.common.datasets import EvidenceUnit, evidence_units
+from benchmarks.rag.statistics import (
+    QUALITY_SCOPES,
+    in_quality_scope,
+    question_documents,
+    question_macro,
+    require_aligned_questions,
+    source_groups,
+    source_ids,
+    source_interval,
+)
 
 
 class RankedChunk(Protocol):
@@ -166,10 +176,11 @@ def covered_unit_ids(chunk: RankedChunk, units: Sequence[EvidenceUnit]) -> set[s
     }
 
 
-def prefixed_quality(values, evidence_type):
+def prefixed_quality(values, metadata):
     return {
         f"quality.{scope}.{name}": value
-        for scope in ("overall", evidence_type)
+        for scope in QUALITY_SCOPES
+        if in_quality_scope(metadata, scope)
         for name, value in values.items()
     }
 
@@ -177,119 +188,20 @@ def prefixed_quality(values, evidence_type):
 def eligible_counts(samples: Sequence[SampleResult]):
     # Eligibility is identical for all four metric families.
     result = {}
-    for scope in ("overall", "text", "table", "formula", "mixed"):
+    for scope in QUALITY_SCOPES:
         rows = _scope(samples, scope)
         prefix = f"validity.quality.{scope}"
         result[f"{prefix}.eligible_question_count"] = float(len(rows))
-        result[f"{prefix}.eligible_document_count"] = float(len(_groups(rows)))
+        result[f"{prefix}.eligible_document_count"] = float(_document_count(rows))
     return result
 
 
 def _scope(samples, scope):
-    return [
-        row
-        for row in samples
-        if scope == "overall" or row.metadata["evidence_type"] == scope
-    ]
+    return [row for row in samples if in_quality_scope(row.metadata, scope)]
 
 
-def _groups(samples):
-    groups = {}
-    for row in samples:
-        groups.setdefault(str(row.metadata["document_id"]), []).append(row)
-    return list(groups.values())
-
-
-def source_groups(samples):
-    """Reviewed independent groups containing whole documents, never group-macro weights."""
-    sources = {}
-    for document in _groups(samples):
-        ids = {
-            str(
-                row.metadata.get("independent_source_id")
-                or row.metadata.get("source_group_id")
-                or row.metadata["document_id"]
-            )
-            for row in document
-        }
-        if len(ids) != 1:
-            raise ValueError("A document has contradictory independent source groups")
-        sources.setdefault(ids.pop(), []).append(document)
-    return list(sources.values())
-
-
-def _document_macro(groups, metric):
-    return _mean(
-        [
-            _mean([row.metrics.get(metric) for row in document])
-            for source in groups
-            for document in source
-        ]
-    )
-
-
-def _mean(values):
-    values = [value for value in values if value is not None]
-    return float(np.mean(values)) if values else None
-
-
-def _interval(groups, statistic, *, resamples, seed, minimum_documents, confidence):
-    estimate = statistic(groups)
-    support = sum(statistic([group]) is not None for group in groups)
-    reason = (
-        "no_contributing_documents"
-        if estimate is None
-        else "ci_support_not_frozen"
-        if minimum_documents is None
-        else "insufficient_independent_sources"
-        if support < max(2, minimum_documents)
-        else None
-    )
-    bounds = {
-        "estimate": estimate,
-        "lower": None,
-        "upper": None,
-        "confidence": confidence,
-        "independent_unit": "reviewed_source_group",
-        "independent_source_count": len(groups),
-        "contributing_source_count": support,
-        "eligible_document_count": sum(len(source) for source in groups),
-        "contributing_document_count": sum(
-            statistic([[document]]) is not None
-            for source in groups
-            for document in source
-        ),
-        "requested_resamples": resamples,
-        "defined_resamples": 0,
-        "undefined_resamples": 0,
-        "resampling_performed": False,
-        "degenerate": False,
-        "reason": reason,
-    }
-    if reason:
-        return bounds
-    rng = np.random.default_rng(seed)
-    draws = []
-    for _ in range(resamples):
-        # Copies remain distinct; never regroup a draw by original document ID.
-        value = statistic(
-            [groups[i] for i in rng.integers(0, len(groups), len(groups))]
-        )
-        if value is not None:
-            draws.append(value)
-    bounds.update(
-        defined_resamples=len(draws),
-        undefined_resamples=resamples - len(draws),
-        resampling_performed=True,
-    )
-    if draws:
-        lower, upper = np.quantile(draws, [(1 - confidence) / 2, (1 + confidence) / 2])
-        bounds.update(
-            lower=float(lower), upper=float(upper), degenerate=bool(lower == upper)
-        )
-    else:
-        bounds["reason"] = "no_defined_resamples"
-    return bounds
+def _document_count(rows):
+    return len(question_documents(row.metadata for row in rows))
 
 
 def aggregate_quality(
@@ -298,7 +210,7 @@ def aggregate_quality(
     resamples,
     seed,
     confidence,
-    minimum_documents=2,
+    minimum_sources=None,
     diagnostics=None,
     metric_names=None,
 ):
@@ -310,7 +222,6 @@ def aggregate_quality(
     )
     for name in names:
         eligible = _scope(samples, name.split(".", 2)[1])
-        groups = _groups(eligible)
         sources = source_groups(eligible)
         scored = [row for row in eligible if row.metrics.get(name) is not None]
         failed = sum(
@@ -333,47 +244,46 @@ def aggregate_quality(
             if len(scored) < len(eligible)
             else "complete"
         )
-        document_values = [
-            _mean([row.metrics.get(name) for row in group]) for group in groups
-        ]
-        estimate = _mean(document_values)
+        estimate = question_macro(sources, name)
         details = {
             "status": status,
             "estimate": estimate,
-            "sample_unit": "source_document_macro_value",
-            "independent_source_count": len(sources),
-            "contributing_source_count": len(source_groups(scored)),
+            "sample_unit": "question",
+            "independent_source_count": len(
+                source_ids(row.metadata for row in eligible)
+            ),
+            "contributing_source_count": len(
+                source_ids(row.metadata for row in scored)
+            ),
             "eligible_question_count": len(eligible),
             "scheduled_question_count": len(eligible),
             "scored_question_count": len(scored),
             "failed_question_count": failed,
             "unavailable_question_count": len(eligible) - len(scored),
             "unexecuted_question_count": len(unexecuted),
-            "eligible_document_count": len(groups),
-            "scored_document_count": len(_groups(scored)),
-            "failed_document_count": len(
-                _groups(
-                    [
-                        row
-                        for row in eligible
-                        if row.metadata.get("first_attempt_status") == "failed"
-                    ]
-                )
+            "eligible_document_count": _document_count(eligible),
+            "scored_document_count": _document_count(scored),
+            "failed_document_count": _document_count(
+                [
+                    row
+                    for row in eligible
+                    if row.metadata.get("first_attempt_status") == "failed"
+                ]
             ),
-            "unavailable_document_count": sum(
-                any(row.metrics.get(name) is None for row in group) for group in groups
+            "unavailable_document_count": _document_count(
+                row for row in eligible if row.metrics.get(name) is None
             ),
-            "unexecuted_document_count": len(_groups(unexecuted)),
+            "unexecuted_document_count": _document_count(unexecuted),
         }
         aggregates[name] = estimate if status == "complete" else None
-        aggregates[name + ".sample_count"] = float(len(_groups(scored)))
+        aggregates[name + ".sample_count"] = float(len(scored))
         if resamples:
-            bounds = _interval(
+            bounds = source_interval(
                 sources,
-                lambda draw, name=name: _document_macro(draw, name),
+                lambda draw, name=name: question_macro(draw, name),
                 resamples=resamples,
                 seed=seed,
-                minimum_documents=minimum_documents,
+                minimum_sources=minimum_sources,
                 confidence=confidence,
             )
             details["interval"] = bounds
@@ -430,9 +340,8 @@ def ranking_repeatability(attempts, *, depth):
     }
 
 
-def aggregate_repeatability(samples, *, resamples, seed, minimum_documents, confidence):
+def aggregate_repeatability(samples, *, resamples, seed, minimum_sources, confidence):
     name = "diagnostic.ranking_repeatability"
-    groups = _groups(samples)
     sources = source_groups(samples)
     scored = [row for row in samples if row.metrics.get(name) is not None]
     inapplicable = all(
@@ -445,18 +354,19 @@ def aggregate_repeatability(samples, *, resamples, seed, minimum_documents, conf
         if len(scored) == len(samples)
         else "incomplete"
     )
-    values = [_mean([row.metrics.get(name) for row in group]) for group in groups]
     details = {
         "status": status,
-        "estimate": _mean(values),
-        "sample_unit": "source_document_macro_value",
+        "estimate": question_macro(sources, name),
+        "sample_unit": "question",
         "eligible_question_count": 0 if inapplicable else len(samples),
         "scored_question_count": len(scored),
         "unavailable_question_count": 0 if inapplicable else len(samples) - len(scored),
-        "eligible_document_count": len(groups),
-        "independent_source_count": len(sources),
-        "contributing_source_count": len(source_groups(scored)),
-        "contributing_document_count": len(_groups(scored)),
+        "eligible_document_count": _document_count(samples) if not inapplicable else 0,
+        "independent_source_count": len(source_ids(row.metadata for row in samples))
+        if not inapplicable
+        else 0,
+        "contributing_source_count": len(source_ids(row.metadata for row in scored)),
+        "contributing_document_count": _document_count(scored),
         "scheduled_pair_count": sum(
             row.metadata.get("scheduled_pair_count", 0) for row in samples
         ),
@@ -466,19 +376,19 @@ def aggregate_repeatability(samples, *, resamples, seed, minimum_documents, conf
     }
     intervals = {}
     if resamples and status == "complete":
-        intervals[name] = _interval(
+        intervals[name] = source_interval(
             sources,
-            lambda draw: _document_macro(draw, name),
+            lambda draw: question_macro(draw, name),
             resamples=resamples,
             seed=seed,
-            minimum_documents=minimum_documents,
+            minimum_sources=minimum_sources,
             confidence=confidence,
         )
         details["interval"] = intervals[name]
     return (
         {
             name: details["estimate"] if status == "complete" else None,
-            name + ".sample_count": float(len(_groups(scored))),
+            name + ".sample_count": float(len(scored)),
         },
         intervals,
         details,
@@ -490,7 +400,7 @@ def latency_intervals(
     *,
     resamples,
     seed,
-    minimum_documents,
+    minimum_sources,
     confidence,
     metric="query_latency_ms",
 ):
@@ -506,8 +416,7 @@ def latency_intervals(
                 if metric == "query_latency_ms"
                 else row.metadata[metric]
                 for group in groups
-                for document in group
-                for row in document
+                for row in group
                 if (
                     row.latency_seconds
                     if metric == "query_latency_ms"
@@ -517,19 +426,19 @@ def latency_intervals(
             ]
             return float(np.percentile(values, percentile)) if values else None
 
-        result[f"operational.{metric}_{label}"] = _interval(
+        result[f"operational.{metric}_{label}"] = source_interval(
             groups,
             statistic,
             resamples=resamples,
             seed=seed,
-            minimum_documents=minimum_documents,
+            minimum_sources=minimum_sources,
             confidence=confidence,
         )
     return result
 
 
-def paired_quality(results, metrics, *, resamples, seed, minimum_documents, confidence):
-    """Aligned source draws; document-macro differences, not group-macro differences."""
+def paired_quality(results, metrics, *, resamples, seed, minimum_sources, confidence):
+    """Aligned source draws; question-macro differences, not group-macro differences."""
     comparisons = []
     for left, right in combinations(
         [row for row in results if row.status == "success"], 2
@@ -541,9 +450,7 @@ def paired_quality(results, metrics, *, resamples, seed, minimum_documents, conf
         differences = []
         for identifier in sorted(left_rows):
             a, b = left_rows[identifier], right_rows[identifier]
-            for field in ("document_id", "independent_source_id"):
-                if a.metadata.get(field) != b.metadata.get(field):
-                    raise ValueError(f"Paired candidates have inconsistent {field}")
+            require_aligned_questions(a, b)
             if any(
                 a.metrics.get(name) is None or b.metrics.get(name) is None
                 for name in metrics
@@ -562,12 +469,12 @@ def paired_quality(results, metrics, *, resamples, seed, minimum_documents, conf
         sources = source_groups(differences)
         values = {}
         for name in metrics:
-            interval = _interval(
+            interval = source_interval(
                 sources,
-                lambda draw, name=name: _document_macro(draw, name),
+                lambda draw, name=name: question_macro(draw, name),
                 resamples=resamples,
                 seed=seed,
-                minimum_documents=minimum_documents,
+                minimum_sources=minimum_sources,
                 confidence=confidence,
             )
             values[name] = {
@@ -575,8 +482,8 @@ def paired_quality(results, metrics, *, resamples, seed, minimum_documents, conf
                 "left_minus_right": interval["estimate"],
                 "direction": "max",
                 "paired_samples": len(differences),
-                "paired_documents": sum(len(source) for source in sources),
-                "paired_resampling_units": len(sources),
+                "paired_documents": _document_count(differences),
+                "paired_resampling_units": interval["independent_source_count"],
             }
         comparisons.append(
             {"left": left.candidate, "right": right.candidate, "metrics": values}

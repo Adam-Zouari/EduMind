@@ -13,15 +13,14 @@ from pathlib import Path
 import numpy as np
 
 from benchmarks.common.protocol import (
-    integer,
     strict_object,
     string,
 )
 from edumind.common.artifacts import atomic_write_json, sha256_file, stable_hash
 from edumind.common.paths import PROJECT_ROOT
 
-from .protocol import DEFAULT_PROTOCOL_PATH, FILTER_FIELDS, load_protocol
-from .workload import Corpus
+from .protocol import DEFAULT_PROTOCOL_PATH, load_protocol
+from .workload import SCOPES, Corpus, freeze_session_search, global_inventory
 
 REPORT_ROOT = PROJECT_ROOT / "artifacts/benchmarks/data-validation"
 
@@ -41,8 +40,10 @@ def _array(value, parent):
 def load_inputs(path):
     path = Path(path)
     payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("schema_version") != 2:
+        raise ValueError("Unsupported vector session manifest schema")
     corpora = {}
-    for row in payload["corpora"]:
+    for row in payload["sessions"]:
         records = row["records"]
         vectors = _array(row["vectors"], path.parent)
         queries = _array(row["queries"], path.parent)
@@ -86,7 +87,7 @@ def _identity(path, profile, protocol, inventory):
     for source in sources:
         files[str(source)] = sha256_file(source)
         payload = json.loads(source.read_text(encoding="utf-8"))
-        for corpus in payload["corpora"]:
+        for corpus in payload["sessions"]:
             for field in ("vectors", "queries"):
                 if isinstance(corpus[field], str):
                     asset = (source.parent / corpus[field]).resolve()
@@ -115,7 +116,7 @@ def _identity(path, profile, protocol, inventory):
             files[str(asset)] = sha256_file(asset)
     identity = {
         "schema_version": 1,
-        "validator_version": "vector-data-v1",
+        "validator_version": "vector-session-data-v2",
         "benchmark": "vectordb",
         "profile": profile,
         "manifest_path": str(path),
@@ -147,8 +148,7 @@ def _validate(path, profile, protocol, inventory):
             "schema_version",
             "name",
             "split",
-            "corpora",
-            "conditions",
+            "sessions",
             "operations",
             "integration",
             "review",
@@ -156,14 +156,39 @@ def _validate(path, profile, protocol, inventory):
     )
     if (
         type(payload["schema_version"]) is not int
-        or payload["schema_version"] != 1
+        or payload["schema_version"] != 2
         or payload["split"] != ("locked-test" if profile == "locked" else profile)
     ):
         raise ValueError("Unsupported vector manifest schema/split")
-    if not corpora or not payload["conditions"]:
-        raise ValueError("Nonempty vector corpus and conditions are required")
-    seen = set()
+    if not corpora:
+        raise ValueError("Nonempty study session inventory is required")
+    seen = set(SCOPES)
+    by_query = set()
+    by_family = {}
+    pair_offset = 0
     for name, corpus in corpora.items():
+        session = next(row for row in payload["sessions"] if row["id"] == name)
+        strict_object(
+            session,
+            "study session",
+            {
+                "id",
+                "session_group_id",
+                "records",
+                "vectors",
+                "queries",
+                "query_ids",
+                "query_sources",
+                "provenance",
+                "selected_sources",
+                "schedule",
+                "exact_references",
+            },
+        )
+        string(name, "session.id")
+        group = string(session["session_group_id"], "session.session_group_id")
+        for record in session["records"]:
+            strict_object(record, "canonical chunk", {"id", "text", "metadata"})
         for field, array in (("vectors", corpus.vectors), ("queries", corpus.queries)):
             if (
                 array.ndim != 2
@@ -199,8 +224,10 @@ def _validate(path, profile, protocol, inventory):
                 "kind",
             ):
                 string(corpus.provenance.get(field), "provenance." + field)
-            if corpus.provenance["kind"] not in {"representative", "synthetic-stress"}:
-                raise ValueError("Synthetic stress provenance must be explicit")
+            if corpus.provenance["kind"] != "representative":
+                raise ValueError(
+                    "Authoritative primary sessions must be representative; synthetic stress is separate"
+                )
             for group in corpus.source_groups:
                 string(group, "independent query source")
             for row in corpus.metadata:
@@ -208,74 +235,69 @@ def _validate(path, profile, protocol, inventory):
                     row.get("independent_source_id") or row.get("source_group_id"),
                     "reviewed record source group",
                 )
-        if any(not isinstance(text, str) for text in corpus.texts):
+        if any(not isinstance(text, str) or not text.strip() for text in corpus.texts):
             raise ValueError("Canonical record texts must be strings")
-    for condition in payload["conditions"]:
-        strict_object(
-            condition,
-            "condition",
-            {
-                "id",
-                "corpus",
-                "mode",
-                "filters",
-                "query_ids",
-                "concurrency",
-                "windows",
-                "warmup_requests",
-            }
-            | (
-                {"independent_window_groups"}
-                if "independent_window_groups" in condition
-                else set()
-            ),
+        for qid in corpus.query_ids:
+            string(qid, "session query ID")
+            if qid in by_query:
+                raise ValueError(f"Query {qid} is scheduled in more than one session")
+            by_query.add(qid)
+        files = {row["source_id"] for row in corpus.metadata}
+        families = {("file", source) for source in files}
+        for item in corpus.metadata:
+            for field in (
+                "independent_source_id",
+                "source_group_id",
+                "duplicate_group_id",
+            ):
+                if field in item:
+                    families.add(
+                        (
+                            "duplicate" if field == "duplicate_group_id" else "family",
+                            string(item[field], field),
+                        )
+                    )
+        families.update(
+            ("family", string(value, "query source group"))
+            for value in corpus.source_groups
         )
-        name = string(condition["id"], "condition.id")
-        if name in seen or any(
-            char
-            not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
-            for char in name
-        ):
-            raise ValueError("Duplicate/unsafe condition identity")
-        seen.add(name)
-        corpus = corpora[condition["corpus"]]
-        if (
-            condition["mode"] not in {"controlled", "load"}
-            or not set(condition["filters"]) <= FILTER_FIELDS
-        ):
-            raise ValueError("Unsupported condition mode/trusted filter field")
-        if (
-            not condition["query_ids"]
-            or len(set(condition["query_ids"])) != len(condition["query_ids"])
-            or not set(condition["query_ids"]) <= set(corpus.query_ids)
-        ):
-            raise ValueError("Unknown/duplicate condition query identity")
-        integer(condition["concurrency"], "condition.concurrency", minimum=1)
-        integer(condition["windows"], "condition.windows", minimum=1)
-        integer(condition["warmup_requests"], "condition.warmup_requests", minimum=1)
-        if "independent_window_groups" in condition:
-            groups = condition["independent_window_groups"]
-            if (
-                not isinstance(groups, list)
-                or len(groups) != condition["windows"]
-                or any(
-                    not isinstance(group, str) or not group.strip() for group in groups
+        for family in families:
+            if by_family.setdefault(family, group) != group:
+                raise ValueError(
+                    "Sessions sharing reviewed sources must share a session_group_id"
                 )
+        selected = session["selected_sources"]
+        if not isinstance(selected, dict) or not set(selected) <= set(corpus.query_ids):
+            raise ValueError(
+                "Selected files must be keyed by a scheduled session query"
+            )
+        for sources in selected.values():
+            if (
+                not isinstance(sources, list)
+                or not sources
+                or any(not isinstance(source, str) for source in sources)
+                or sources != sorted(set(sources))
+                or not set(sources) < files
             ):
                 raise ValueError(
-                    "Reviewed independent window groups must cover every scheduled window"
+                    "Selected files must be a canonical nonempty proper subset of session files"
                 )
-        if condition["mode"] == "controlled" and (
-            condition["concurrency"] != 1 or condition["windows"] != 1
-        ):
-            raise ValueError("Controlled conditions require one serial window")
-        for key, value in condition["filters"].items():
-            if (
-                not isinstance(value, (str, int, float, bool))
-                or isinstance(value, float)
-                and not np.isfinite(value)
-            ):
-                raise ValueError(f"Invalid trusted filter value: {key}")
+        schedule, references = freeze_session_search(
+            session,
+            corpus,
+            repetitions=protocol.profile(profile).repetitions,
+            pair_offset=pair_offset,
+        )
+        pair_offset += len(selected)
+        if stable_hash(schedule) != stable_hash(session["schedule"]):
+            raise ValueError(
+                "Session schedule differs from the frozen counterbalanced order"
+            )
+        if stable_hash(references) != stable_hash(session["exact_references"]):
+            raise ValueError(
+                "Session exact references differ from the scoped exhaustive oracle"
+            )
+    global_inventory(corpora)
     op_ids = set()
     operation_corpora = {}
     for operation in payload["operations"]:
@@ -350,20 +372,24 @@ def _validate(path, profile, protocol, inventory):
     integration = payload["integration"]
     if integration:
         required = {
-            "corpus",
+            "session_ids",
             "manifest",
             "embedding_selection",
             "retrieval_selection",
             "chunking_protocol",
             "retrieval_protocol",
             "model_lock",
-            "filters",
             "files",
         }
         strict_object(integration, "integration", required)
-        corpus = corpora[integration["corpus"]]
-        if not set(integration["filters"]) <= FILTER_FIELDS:
-            raise ValueError("Unsupported integration filter")
+        session_ids = integration["session_ids"]
+        if (
+            not isinstance(session_ids, list)
+            or not session_ids
+            or len(set(session_ids)) != len(session_ids)
+            or not set(session_ids) <= corpora.keys()
+        ):
+            raise ValueError("Integration must identify its sealed study sessions")
         from benchmarks.common.datasets import evidence_units, load_manifest
         from benchmarks.rag.chunking_embedding.protocol import (
             load_protocol as load_chunking,
@@ -390,41 +416,41 @@ def _validate(path, profile, protocol, inventory):
             for row in manifest.samples
             if row.get("kind") == "document"
         }
-        for record_id, text, metadata in zip(
-            corpus.ids, corpus.texts, corpus.metadata, strict=True
-        ):
-            document = documents[metadata["source_id"]]
-            start, end = metadata.get("start"), metadata.get("end")
-            if (
-                type(start) is not int
-                or type(end) is not int
-                or not 0 <= start < end <= len(document["text"])
-                or text != document["text"][start:end]
+        questions = {
+            str(row["id"]): row
+            for row in manifest.samples
+            if row.get("kind") == "question" and row["answerable"]
+        }
+        if set(questions) != {
+            qid for name in session_ids for qid in corpora[name].query_ids
+        }:
+            raise ValueError("Integration/vector query allocation mismatch")
+        for name in session_ids:
+            corpus = corpora[name]
+            for record_id, text, metadata in zip(
+                corpus.ids, corpus.texts, corpus.metadata, strict=True
+            ):
+                document = documents.get(metadata["source_id"])
+                start, end = metadata.get("start"), metadata.get("end")
+                if (
+                    document is None
+                    or type(start) is not int
+                    or type(end) is not int
+                    or not 0 <= start < end <= len(document["text"])
+                    or text != document["text"][start:end]
+                ):
+                    raise ValueError(
+                        f"Canonical integration span/text mismatch: {record_id}"
+                    )
+            eligible_documents = {row["source_id"] for row in corpus.metadata}
+            if any(
+                unit.document_id not in eligible_documents
+                for qid in corpus.query_ids
+                for unit in evidence_units(questions[qid])
             ):
                 raise ValueError(
-                    f"Canonical integration span/text mismatch: {record_id}"
+                    "Gold evidence lies outside the question's all-session scope"
                 )
-        eligible_documents = {
-            row["source_id"]
-            for row in corpus.metadata
-            if all(
-                row.get(key) == value for key, value in integration["filters"].items()
-            )
-        }
-        questions = [
-            row
-            for row in manifest.samples
-            if row.get("kind") == "question" and row.get("answerable")
-        ]
-        if {str(row["id"]) for row in questions} != set(corpus.query_ids):
-            raise ValueError("Integration/vector query allocation mismatch")
-        for question in questions:
-            if any(
-                interval.document_id not in eligible_documents
-                for unit in evidence_units(question)
-                for interval in unit.intervals
-            ):
-                raise ValueError("Gold evidence lies outside integration filter scope")
     elif profile != "smoke":
         raise ValueError(
             "Authoritative vector inputs require frozen integration evidence"
@@ -439,13 +465,25 @@ def _validate(path, profile, protocol, inventory):
         for source in inventory:
             other, groups = load_inputs(source)
             splits.add(other["split"])
-            for corpus in groups.values():
+            for session in other["sessions"]:
+                corpus = groups[session["id"]]
                 record_groups = {
-                    row.get("independent_source_id") or row.get("source_group_id")
+                    row[field]
                     for row in corpus.metadata
+                    for field in ("independent_source_id", "source_group_id")
+                    if field in row
+                }
+                duplicate_groups = {
+                    row["duplicate_group_id"]
+                    for row in corpus.metadata
+                    if "duplicate_group_id" in row
                 }
                 for key in [
+                    "session:" + session["id"],
+                    "session-group:" + session["session_group_id"],
+                    *("query:" + qid for qid in corpus.query_ids),
                     *("source:" + group for group in record_groups if group),
+                    *("duplicate:" + group for group in duplicate_groups),
                     *("document:" + row["source_id"] for row in corpus.metadata),
                     *("source:" + group for group in corpus.source_groups),
                     *("chunk:" + value for value in corpus.ids),
@@ -460,7 +498,9 @@ def _validate(path, profile, protocol, inventory):
         "corpus_checksums": {
             name: corpus.content_checksum for name, corpus in corpora.items()
         },
-        "condition_count": len(seen),
+        "session_count": len(corpora),
+        "query_count": len(by_query),
+        "paired_query_count": pair_offset,
         "ci_support": "reviewed" if protocol.ci_support else "unfrozen",
     }
 

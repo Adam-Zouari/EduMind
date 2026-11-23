@@ -15,6 +15,7 @@ from edumind.common.artifacts import atomic_write_json, sha256_file, stable_hash
 from edumind.common.paths import PROJECT_ROOT
 
 from .contracts import DatasetManifest
+from .datasets import answerable_questions, manifest_content_checksum, validate_evidence
 from .preflight_reports import qualification_groups
 from .process import WorkerMeasurementError, WorkerResourceLimitError
 from .protocol import ProtocolMetadata
@@ -40,35 +41,32 @@ def model_lock_fingerprints(
 
 
 def rag_stress_manifest(manifest: DatasetManifest) -> DatasetManifest:
-    """Keep one demanding reviewed document and one of its answerable questions."""
-
+    """Keep one demanding reviewed question and every canonical source it needs."""
+    sources = validate_evidence(manifest)
     documents = {
-        str(row.get("id")): row
-        for row in manifest.samples
-        if row.get("kind") == "document"
+        row["id"]: row for row in manifest.samples if row["kind"] == "document"
     }
-    questions = [
-        row
-        for row in manifest.samples
-        if row.get("kind") == "question"
-        and row.get("answerable")
-        and str(row.get("document_id")) in documents
-    ]
+    questions = answerable_questions(manifest)
     if not questions:
         raise ValueError("GPU preflight requires an answerable reviewed RAG question")
     question = max(
         questions,
         key=lambda row: (
-            len(str(documents[str(row["document_id"])].get("text", ""))),
-            len(str(row.get("question", ""))),
-            str(row.get("id", "")),
+            sum(
+                len(documents[source]["text"])
+                for source in sources[row["id"]].document_ids
+            ),
+            len(row["question"]),
+            row["id"],
         ),
     )
-    document = documents[str(question["document_id"])]
+    needed = set(sources[question["id"]].document_ids)
+    samples = (*[row for key, row in documents.items() if key in needed], question)
     return replace(
         manifest,
         name=f"{manifest.name}-preflight",
-        samples=(document, question),
+        samples=samples,
+        checksum=manifest_content_checksum(samples),
     )
 
 

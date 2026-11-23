@@ -83,6 +83,8 @@ def load_protocol(path=DEFAULT_PROTOCOL_PATH):
             "shortlist_limit",
         },
     )
+    if root["protocol_version"] != "vector-database-v6":
+        raise ValueError("Vector database requires the v6 study-session protocol")
     profiles = execution_profiles(
         root["profiles"], names=("smoke", "development", "validation", "locked")
     )

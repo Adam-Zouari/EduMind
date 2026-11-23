@@ -29,10 +29,9 @@ Undefined values retain their reasons and support counts in artifacts under
 [metric status and MLflow storage](../metrics.md#metric-status-and-mlflow-storage).
 All numbers below illustrate arithmetic, not measured database results.
 
-The [implementation status](methodology.md#implementation-status) distinguishes
-the existing v5 condition-level driver and its sealed recovery from the session
-contract below. Its cross-candidate comparisons are not the within-candidate
-paired search table. Do not rename or reinterpret historical measurements.
+The [within-candidate paired search table](methodology.md#reading-the-paired-search-comparison)
+compares the two search scopes on the same scheduled questions. Cross-candidate
+tables instead compare two database configurations on the same workload.
 
 ## Metric summary
 

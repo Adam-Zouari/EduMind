@@ -11,7 +11,7 @@ from edumind.rag.tokenizers import TiktokenOffsetTokenizer
 def requirements(protocol, profile):
     return {
         "tokenizer": protocol.tokenizer,
-        "evidence_schema": "complete-source-unit-v2",
+        "evidence_schema": "canonical-unit-linked-questions-v3",
         "data": dict(protocol.data_requirements) if profile != "smoke" else {},
     }
 

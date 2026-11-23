@@ -19,6 +19,20 @@ class UnsupportedConfiguration(ValueError):
     """An explicitly attributable unsupported setting, never a transport outage."""
 
 
+def filter_values(key, value):
+    """A sequence is allowed only for source-ID membership, never generic OR."""
+    if not isinstance(value, (list, tuple)):
+        return (value,)
+    if (
+        key != "source_id"
+        or not value
+        or any(not isinstance(item, str) or not item for item in value)
+        or len(set(value)) != len(value)
+    ):
+        raise ValueError("Source-ID membership requires a nonempty unique ID union")
+    return tuple(value)
+
+
 @dataclass(frozen=True)
 class Config:
     dimension: int

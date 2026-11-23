@@ -19,7 +19,11 @@ from benchmarks.common.contracts import (
     DatasetManifest,
     SampleResult,
 )
-from benchmarks.common.datasets import answerable_questions, evidence_units
+from benchmarks.common.datasets import (
+    answerable_questions,
+    evidence_units,
+    validate_evidence,
+)
 from benchmarks.common.process import (
     benchmark_objects_from_payload,
     candidate_execution_payload,
@@ -105,12 +109,9 @@ def evaluate_candidate(
     if preparation_only and candidate.reranker != "none":
         raise ValueError("Input preparation requires a no-reranker pool owner")
     random.Random(plan.seed).shuffle(questions)
-    documents = {
-        str(row["id"]): row for row in manifest.samples if row.get("kind") == "document"
-    }
+    sources = validate_evidence(manifest)
     for question in questions:
-        document = documents[str(question["document_id"])]
-        question["independent_source_id"] = m.source_id({**document, **question})
+        question.update(sources[question["id"]].metadata())
 
     attempts = (
         []
@@ -118,8 +119,7 @@ def evaluate_candidate(
         else [
             {
                 "question_id": str(q["id"]),
-                "document_id": str(q["document_id"]),
-                "independent_source_id": m.source_id(q),
+                **sources[q["id"]].metadata(),
                 "repetition": rep,
                 "status": "not_executed",
                 "valid": False,
@@ -320,7 +320,8 @@ def evaluate_candidate(
         first = next((row for row in rows if row["repetition"] == 1), None)
         values = {
             f"quality.{scope}.{name}": None
-            for scope in ("overall", q["evidence_type"])
+            for scope in m.SCOPES
+            if m.in_quality_scope(q, scope)
             for name in protocol.quality_metrics
         }
         quality_error, score_diagnostics = None, {}
@@ -343,7 +344,7 @@ def evaluate_candidate(
                     cutoffs=protocol.quality_cutoffs,
                     alpha=protocol.alpha_ndcg_alpha,
                 )
-                values.update(prefixed_quality(score.metrics, str(q["evidence_type"])))
+                values.update(prefixed_quality(score.metrics, q))
                 score_diagnostics = dict(score.diagnostics)
                 score_diagnostics["upstream_fragmentation"] = not any(
                     m.covered_unit_ids(chunk, evidence_units(q))
@@ -388,8 +389,7 @@ def evaluate_candidate(
             )
         )
         meta = {
-            "document_id": str(q["document_id"]),
-            "independent_source_id": m.source_id(q),
+            **sources[q["id"]].metadata(),
             "evidence_type": str(q["evidence_type"]),
             "first_attempt_status": first["status"] if first else "not_executed",
             "retrieval_latency_ms": retrieval,
@@ -465,7 +465,7 @@ def evaluate_candidate(
         resamples=plan.bootstrap_resamples,
         seed=plan.seed,
         confidence=protocol.confidence_level,
-        minimum_documents=protocol.minimum_quality_ci_documents,
+        minimum_sources=protocol.minimum_quality_ci_sources,
     )
     repeat_values, repeat_intervals, repeat_support = m.aggregate_quality(
         samples if plan.repetitions > 1 else [],
@@ -473,7 +473,7 @@ def evaluate_candidate(
         resamples=plan.bootstrap_resamples,
         seed=plan.seed,
         confidence=protocol.confidence_level,
-        minimum_documents=protocol.minimum_repeatability_ci_documents,
+        minimum_sources=protocol.minimum_repeatability_ci_sources,
     )
     if plan.repetitions == 1:
         repeat_support[m.REPEATABILITY].update(
@@ -487,7 +487,7 @@ def evaluate_candidate(
         samples,
         resamples=plan.bootstrap_resamples,
         seed=plan.seed,
-        minimum_documents=protocol.minimum_latency_ci_documents,
+        minimum_sources=protocol.minimum_latency_ci_sources,
         confidence=protocol.confidence_level,
     )
     intervals.update(latency_bounds)
@@ -596,8 +596,9 @@ def evaluate_candidate(
             _candidate_contract_errors(candidate, aggregate, operational, protocol)
         )
         if plan.profile != "smoke" and (
-            protocol.minimum_quality_ci_documents is None
-            or protocol.minimum_repeatability_ci_documents is None
+            protocol.minimum_quality_ci_sources is None
+            or protocol.minimum_repeatability_ci_sources is None
+            or protocol.minimum_latency_ci_sources is None
         ):
             errors.append(
                 "Exploratory only: CI support policy must be frozen before authoritative advancement"
@@ -639,7 +640,9 @@ def evaluate_candidate(
                 "manifest_fingerprint": manifest.fingerprint,
             },
             "input_inventory": {
-                "corpus_document_count": len(documents),
+                "corpus_document_count": sum(
+                    row["kind"] == "document" for row in manifest.samples
+                ),
                 "answerable_query_count": len(questions),
                 "chunk_count": len(index.chunks)
                 if index is not None
@@ -847,7 +850,7 @@ def _ranking_rows(row, index):
         key: row.get(key)
         for key in (
             "question_id",
-            "document_id",
+            "source_document_ids",
             "independent_source_id",
             "repetition",
             "status",

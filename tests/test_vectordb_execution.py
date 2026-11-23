@@ -8,7 +8,12 @@ import numpy as np
 import pandas as pd
 import pytest
 import yaml
-from vectordb_fixtures import MemoryAdapter, fixture_protocol, make_server
+from vectordb_fixtures import (
+    MemoryAdapter,
+    fixture_protocol,
+    freeze_test_sessions,
+    make_server,
+)
 
 from benchmarks.common.contracts import CandidateExecutionError
 from benchmarks.vectordb import benchmark, conformance, run, validation
@@ -16,8 +21,9 @@ from benchmarks.vectordb.adapters import Hit, Record
 from benchmarks.vectordb.adapters.base import DimensionMismatch
 from benchmarks.vectordb.integration import verify_inventory
 from benchmarks.vectordb.metrics import (
-    aggregate_condition,
+    aggregate_session_scope,
     interval,
+    paired_search_summary,
     repeatability,
 )
 from benchmarks.vectordb.protocol import (
@@ -29,7 +35,11 @@ from benchmarks.vectordb.selection import (
     resolve_selected_config,
 )
 from benchmarks.vectordb.workload import (
+    ALL_SESSION,
+    SELECTED_FILES,
     Corpus,
+    global_inventory,
+    search_rows,
     tie_recall,
     tie_reference,
     validate_hits,
@@ -89,71 +99,166 @@ def test_forged_echoed_metadata_does_not_hide_filter_violation():
     assert not validate_hits([], {"a": {}}, 20, {"source_id": "missing"})
 
 
-def test_load_all_failures_zero_qps_and_zero_duration_unavailable(monkeypatch):
-    _, corpora = validation.load_inputs(validation.manifest_path("smoke"))
+def test_frozen_serial_schedule_warms_each_scope_and_matches_sealed_order():
+    payload, corpora = validation.load_inputs(validation.manifest_path("smoke"))
+    payload = freeze_test_sessions(payload, corpora, 3)
+    known = global_inventory(corpora)
+    for session in payload["sessions"]:
+        corpus = corpora[session["id"]]
+        _, config = candidate_config(fixture_protocol(), "chroma|smoke-hnsw", 2)
+        adapter = MemoryAdapter(config)
+        adapter.upsert(benchmark.records(corpus))
+        actual = []
+        search = adapter.search
+
+        def record_order(vector, limit, filters=None, *, actual=actual, search=search):
+            actual.append(filters)
+            return search(vector, limit, filters)
+
+        adapter.search = record_order
+        rows, failures = benchmark.search_session(
+            adapter, session, corpus, known, "config", warmups=1
+        )
+        assert not failures
+        planned = list(search_rows(session, corpus))
+        assert actual[2:] == [filters for _, filters, _ in planned]
+        assert [row["condition"] for row in rows] == [
+            row["condition"] for row, _, _ in planned
+        ]
+        paired = [row for row in rows if row["paired"]]
+        assert paired[0]["condition"] == paired[3]["condition"]
+        assert paired[0]["condition"] != paired[2]["condition"]
+        assert all(row["status"] == "success" for row in rows)
+
+
+def test_schedule_reuses_allowed_sets_but_not_query_reference_identities():
+    payload, corpora = validation.load_inputs(validation.manifest_path("smoke"))
+    session, corpus = payload["sessions"][0], corpora["fixture"]
+    session["selected_sources"]["q2"] = session["selected_sources"]["q1"]
+    freeze_test_sessions(payload, corpora, 3)
+    for scope in (ALL_SESSION, SELECTED_FILES):
+        rows = [
+            (identity, allowed)
+            for identity, _, allowed in search_rows(session, corpus)
+            if identity["condition"] == scope
+        ]
+        assert len({id(allowed) for _, allowed in rows}) == 1
+        assert isinstance(rows[0][1], frozenset)
+        assert len({row["allowed_set_checksum"] for row, _ in rows}) == 1
+        assert len({row["exact_reference_checksum"] for row, _ in rows}) == 2
+
+
+@pytest.mark.parametrize("scope", [ALL_SESSION, SELECTED_FILES])
+def test_global_known_but_outside_session_keeps_completed_timing_and_blocks_quality(
+    scope,
+):
+    payload, corpora = validation.load_inputs(validation.manifest_path("smoke"))
     corpus = corpora["fixture"]
-    protocol = fixture_protocol()
-    _, config = candidate_config(protocol, "chroma|smoke-hnsw", 2)
-    adapter = MemoryAdapter(config)
-    adapter.failure = ConnectionError("offline")
-    condition = {
-        "id": "load",
-        "corpus": "fixture",
-        "concurrency": 2,
-        "mode": "load",
-        "filters": {},
-    }
-    rows, window = benchmark.search_window(
-        adapter, corpus, condition, [("q1", 1), ("q2", 1)], 0
+    session = payload["sessions"][0]
+    identity, filters, allowed = next(
+        item for item in search_rows(session, corpus) if item[0]["condition"] == scope
     )
-    assert all(
-        row["status"] == "failed" and row["elapsed_to_failure_seconds"] is not None
-        for row in rows
-    )
-    window["wall_seconds"] = 2
-    metrics, _, _ = aggregate_condition(
-        [], rows, [window], condition, protocol, "smoke"
-    )
-    assert metrics["operational.qps.condition.load"] == 0
-    assert metrics["diagnostic.request_error_rate.search.condition.load"] == 1
-    window["wall_seconds"] = 0
-    metrics, _, _ = aggregate_condition(
-        [], rows, [window], condition, protocol, "smoke"
-    )
-    assert metrics["operational.qps.condition.load"] is None
-
-
-def test_known_forbidden_result_is_execution_success_in_load():
-    _, corpora = validation.load_inputs(validation.manifest_path("smoke"))
-    condition = {
-        "id": "filter",
-        "corpus": "fixture",
-        "concurrency": 1,
-        "mode": "load",
-        "filters": {"source_id": "absent"},
-    }
     adapter = SimpleNamespace(
-        search=lambda *args: [Hit("a", 1, {"source_id": "absent"})]
+        search=lambda *args: [Hit("d", 1, {"source_id": "doc-a"})]
     )
-    rows, window = benchmark.search_window(
-        adapter, corpora["fixture"], condition, [("q1", 1)], 0
+    row = benchmark.search_request(
+        adapter,
+        corpus.queries[0],
+        identity,
+        filters,
+        allowed,
+        set(corpus.ids),
+        global_inventory(corpora),
     )
-    assert rows[0]["status"] == "success" and rows[0]["filter_violation"] is True
-    metrics, _, _ = aggregate_condition(
-        [], rows, [window], condition, fixture_protocol(), "smoke"
+    assert row["status"] == "success" and row["latency_seconds"] is not None
+    assert row["outside_session_ids"] == ["d"] and row["session_isolation_violation"]
+    assert row["filter_violation"] is (True if scope == SELECTED_FILES else None)
+    adapter.search = lambda *args: [Hit("unknown", 1, {})]
+    row = benchmark.search_request(
+        adapter,
+        corpus.queries[0],
+        identity,
+        filters,
+        allowed,
+        set(corpus.ids),
+        global_inventory(corpora),
     )
-    assert metrics["diagnostic.request_error_rate.search.condition.filter"] == 0
-    assert metrics["diagnostic.filter_violation_rate.condition.filter"] == 1
-    assert metrics["operational.qps.condition.filter"] > 0
+    assert row["status"] == "failed" and row["latency_seconds"] is None
 
 
-def test_repeatability_counts_failed_pairs_and_missing_schedule():
-    success = {"status": "success", "ids": ["a"]}
-    failed = {"status": "failed", "ids": []}
-    assert repeatability([failed, success, success], 3)["value"] == 1 / 3
-    assert repeatability([failed] * 3, 3)["value"] == 0
-    assert repeatability([success] * 2, 3)["status"] == "incomplete"
-    assert repeatability([success], 1)["status"] == "inapplicable"
+def test_repeatability_aligns_attempts_and_rejects_identical_outside_session_rankings():
+    first = {"attempt": 1, "status": "success", "ids": ["a"]}
+    second = {**first, "attempt": 2}
+    third = {"attempt": 3, "status": "failed", "ids": None}
+    reference = repeatability([first, second, third], 3)
+    assert reference["value"] == 1 / 3
+    assert repeatability([second, third, first], 3) == reference
+    violated = [
+        {**row, "session_isolation_violation": True, "filter_violation": None}
+        for row in (first, second)
+    ]
+    assert repeatability([*violated, third], 3)["value"] == 0
+    assert repeatability([first, second], 3)["status"] == "incomplete"
+    assert repeatability([first], 1)["status"] == "inapplicable"
+
+
+def test_session_macro_and_paired_timing_use_distinct_denominators():
+    key = "quality.ann_recall_at_20"
+    rows = [
+        {
+            "session_id": session,
+            "session_group_id": session,
+            "query_id": qid,
+            "condition": ALL_SESSION,
+            "paired": paired,
+            "metrics": {key: score, "diagnostic.ranking_repeatability": None},
+            "metric_statuses": {
+                key: "scored",
+                "diagnostic.ranking_repeatability": "inapplicable",
+            },
+        }
+        for session, qid, score, paired in (
+            ("one", "q1", 1, True),
+            ("two", "q2", 0, False),
+            ("two", "q3", 0, False),
+        )
+    ]
+    filtered_key = "quality.filtered_ann_recall_at_20"
+    rows.append(
+        {
+            **rows[0],
+            "condition": SELECTED_FILES,
+            "metrics": {filtered_key: 1},
+            "metric_statuses": {filtered_key: "scored"},
+        }
+    )
+    requests = [
+        {
+            **row,
+            "status": "success",
+            "filter_violation": None,
+            "latency_seconds": latency,
+        }
+        for row, latency in (
+            (rows[0], 0.01),
+            (rows[1], 100),
+            (rows[2], 200),
+            (rows[3], None),
+        )
+    ]
+    metrics, _, statuses, sessions = aggregate_session_scope(
+        rows[:3], requests[:3], ALL_SESSION, fixture_protocol(), "smoke"
+    )
+    assert metrics[key + ".condition.all-session"] == 0.5
+    assert metrics[key + ".condition.all-session.sample_count"] == 2
+    assert [row["eligible_questions"] for row in sessions] == [1, 2]
+    paired = paired_search_summary(rows, requests)
+    assert paired["paired_sessions"] == paired["paired_questions"] == 1
+    assert paired["unfiltered_search_latency_ms_p95"] == 10
+    assert paired["filtered_completed"] == paired["filtered_missing_timing"] == 1
+    assert paired["filtered_timed"] == paired["filtered_failed"] == 0
+    assert paired["filtered_search_latency_ms_p95"] is None
+    assert statuses[key + ".condition.all-session"]["contributing_questions"] == 3
 
 
 def test_vector_input_seal_detects_actual_vector_and_metadata_changes(tmp_path):
@@ -169,19 +274,35 @@ def test_vector_input_seal_detects_actual_vector_and_metadata_changes(tmp_path):
         validation.verify_inputs(path, "smoke", protocol, report_root=tmp_path)[0]
         == report_path
     )
-    payload["corpora"][0]["vectors"][0][0] = 0.5
+    payload["sessions"][0]["vectors"][0][0] = 0.5
     path.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="stale"):
         validation.verify_inputs(path, "smoke", protocol, report_root=tmp_path)
 
 
-@pytest.mark.parametrize("change", ["duplicate", "filter"])
-def test_validator_rejects_duplicate_conditions_and_unknown_filters(tmp_path, change):
+@pytest.mark.parametrize(
+    "change",
+    ["duplicate", "filter", "all-files", "schedule", "reference", "legacy", "empty"],
+)
+def test_session_validator_rejects_invalid_membership_schedule_and_reference(
+    tmp_path, change
+):
     payload = json.loads(validation.manifest_path("smoke").read_text())
+    session = payload["sessions"][0]
     if change == "duplicate":
-        payload["conditions"].append(payload["conditions"][0])
+        payload["sessions"].append(session)
+    elif change == "filter":
+        session["selected_sources"]["q1"] = ["unknown"]
+    elif change == "all-files":
+        session["selected_sources"]["q1"] = ["doc-a", "doc-b", "doc-c"]
+    elif change == "schedule":
+        session["schedule"][:2] = reversed(session["schedule"][:2])
+    elif change == "reference":
+        session["exact_references"]["q1"]["selected-files"]["boundary_slots"] = 0
+    elif change == "legacy":
+        payload["schema_version"] = 1
     else:
-        payload["conditions"][0]["filters"] = {"unknown": "x"}
+        session["queries"], session["query_ids"], session["query_sources"] = [], [], []
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     _, report = validation.prepare_report(
@@ -297,7 +418,7 @@ def test_document_operations_verify_visibility_and_restore_baseline():
 def test_evaluator_retains_failed_first_and_later_success(monkeypatch):
     payload, corpora = validation.load_inputs(validation.manifest_path("smoke"))
     payload["operations"] = []
-    payload["conditions"] = [payload["conditions"][0]]
+    payload = freeze_test_sessions(payload, corpora, 3)
     protocol = fixture_protocol()
 
     def factory(database, config):
@@ -308,7 +429,7 @@ def test_evaluator_retains_failed_first_and_later_success(monkeypatch):
         def fail_first(vector, limit, filters=None):
             nonlocal calls
             calls += 1
-            if calls == 2:  # warmup then designated first q1
+            if calls == 3:  # two scope warmups, then designated first q1
                 raise TimeoutError("first failed")
             return search(vector, limit, filters)
 
@@ -329,11 +450,12 @@ def test_evaluator_retains_failed_first_and_later_success(monkeypatch):
         )
     error = caught.value
     requests = error.artifacts["requests"]
-    assert (
-        len(requests) == 6
-        and requests[0]["status"] == "failed"
-        and requests[2]["status"] == "success"
-    )
+    q1 = [
+        row
+        for row in requests
+        if row["query_id"] == "q1" and row["condition"] == ALL_SESSION
+    ]
+    assert [row["status"] for row in q1] == ["failed", "success", "success"]
     row = error.artifacts["query_metrics"][0]
     assert row["metrics"]["quality.ann_recall_at_20"] is None
     assert row["metrics"]["diagnostic.ranking_repeatability"] == 1 / 3
@@ -424,6 +546,8 @@ def test_temporary_mlflow_parent_child_keep_statuses_and_csv_evidence(
         runs = client.search_runs([experiment_id])
         assert len(runs) == 2
         child = next(item for item in runs if item.data.tags.get("mlflow.parentRunId"))
+        parent = next(item for item in runs if item.info.run_id != child.info.run_id)
+        assert parent.info.run_name == "smoke"
         names = {item.path for item in client.list_artifacts(child.info.run_id)}
         assert {"requests.csv", "requests.parquet", "metric_statuses.json"} <= names
         assert not any(
@@ -522,12 +646,13 @@ def test_postbuild_checkpoint_and_configuration_are_corpus_scoped(monkeypatch, r
     from benchmarks.vectordb.docker_metrics import DockerMonitor
 
     payload, corpora = validation.load_inputs(validation.manifest_path("smoke"))
-    fixture = corpora["fixture"]
-    corpora["wide"] = replace(
+    fixture = corpora["fixture-extra"]
+    corpora["fixture-extra"] = replace(
         fixture,
         vectors=np.pad(fixture.vectors, ((0, 0), (0, 1))),
         queries=np.pad(fixture.queries, ((0, 0), (0, 1))),
     )
+    payload = freeze_test_sessions(payload, corpora, 1)
     if reverse:
         corpora = dict(reversed(corpora.items()))
     events = []
@@ -567,7 +692,7 @@ def test_postbuild_checkpoint_and_configuration_are_corpus_scoped(monkeypatch, r
     assert {
         row["corpus"]: row["configuration"]["dimension"]
         for row in result[5]["validation_report"]["monitoring"]
-    } == {"fixture": 2, "wide": 3}
+    } == {"fixture": 2, "fixture-extra": 3}
 
 
 @pytest.mark.parametrize("mismatch", ["digest", "client", "missing_client"])
@@ -644,6 +769,10 @@ def test_bm25_malformed_outputs_rejected_before_fusion(positions):
 def test_integration_explicit_six_tuple_uses_question_medians(monkeypatch):
     from benchmarks.vectordb import retrieval_run
 
+    payload, corpora = validation.load_inputs(validation.manifest_path("smoke"))
+    session = payload["sessions"][0]
+    session["selected_sources"] = {}
+    freeze_test_sessions(payload, corpora, 3)
     server, _, _ = make_server()
     index = server.index
     index.tokenizer = SimpleNamespace(spans=lambda text: [(0, len(text))])
@@ -651,27 +780,27 @@ def test_integration_explicit_six_tuple_uses_question_medians(monkeypatch):
         {
             "id": value,
             "question": value,
-            "document_id": "doc",
             "answerable": True,
+            "independent_source_id": "same",
+            "source_document_ids": ["doc"],
             "evidence": [
                 {
                     "id": "E1",
                     "evidence_type": "text",
                     "document_id": "doc",
-                    "start": 0,
-                    "end": 1,
+                    "intervals": [{"start": 0, "end": 1}],
                 }
             ],
         }
         for value in ("q1", "q2")
     ]
-    durations = iter([1.0, 100.0, 100.0, 2.0, 2.0, 2.0])
+    durations = iter([1.0, 2.0, 100.0, 2.0, 100.0, 2.0])
 
     class FakeServer:
         records = server.records
 
-        def __init__(self, *args, **kwargs):
-            pass
+        def __init__(self, database, config, *args, **kwargs):
+            self.config = config
 
         def prepare(self):
             pass
@@ -695,27 +824,160 @@ def test_integration_explicit_six_tuple_uses_question_medians(monkeypatch):
 
     monkeypatch.setattr(retrieval_run, "SelectedServer", FakeServer)
     prepared = {
-        "index": index,
-        "questions": questions,
-        "spec": {"corpus": "fixture", "filters": {}},
+        "sessions": [
+            {
+                "index": index,
+                "questions": questions,
+                "session": session,
+                "corpus": corpora["fixture"],
+            }
+        ],
+        "global_ids": set(corpora["fixture"].ids),
+        "spec": {"session_ids": ["fixture"]},
         "retrieval": "dense|none",
         "retrieval_protocol": SimpleNamespace(),
         "reranker_factory": lambda: None,
-        "source_groups": {"q1": "same", "q2": "same"},
     }
     result = retrieval_run.evaluate_integration(
         "chroma|smoke-hnsw", prepared, fixture_protocol(), "development"
     )
     assert len(result) == 6
-    key = (
-        "operational.full_stack_retrieval_latency_ms_p50.condition.integration-fixture"
-    )
+    key = "operational.full_stack_retrieval_latency_ms_p50.condition.integration-all-session"
     assert result[2][key] == 51000
     assert (
         result[4][key]["lower"] is None
         and result[4][key]["independent_source_count"] == 1
     )
     assert len(result[5]["integration_requests"]) == 6
+
+
+def test_integration_projects_one_embedding_runtime_and_builds_session_local_bm25(
+    monkeypatch,
+):
+    from benchmarks.common.contracts import DatasetManifest
+    from benchmarks.preparation import models
+    from benchmarks.rag import evaluation
+    from benchmarks.rag.retrieval_reranking import validation as rag_validation
+    from benchmarks.vectordb import retrieval_run
+
+    payload, corpora = validation.load_inputs(validation.manifest_path("smoke"))
+    documents, questions, chunks, vectors = [], [], [], []
+    for corpus in corpora.values():
+        for identifier, text, metadata, vector in zip(
+            corpus.ids, corpus.texts, corpus.metadata, corpus.vectors, strict=True
+        ):
+            doc = metadata["source_id"]
+            documents.append(
+                {
+                    "kind": "document",
+                    "id": doc,
+                    "text": text,
+                    "source_group_id": doc,
+                }
+            )
+            chunks.append(evaluation.Chunk(identifier, doc, text, 0, len(text), 1))
+            vectors.append(vector)
+        for qid in corpus.query_ids:
+            doc = corpus.metadata[0]["source_id"]
+            questions.append(
+                {
+                    "kind": "question",
+                    "id": qid,
+                    "question": "What?",
+                    "answerable": True,
+                    "evidence_type": "text",
+                    "evidence": [
+                        {
+                            "id": "e",
+                            "evidence_type": "text",
+                            "document_id": doc,
+                            "intervals": [{"start": 0, "end": 1}],
+                        }
+                    ],
+                }
+            )
+    manifest = DatasetManifest(
+        "smoke",
+        "test",
+        "rag",
+        "smoke",
+        "fixture",
+        "CC0",
+        "test",
+        "content",
+        "test",
+        42,
+        (*documents, *questions),
+    )
+    runtime, tokenizer = object(), object()
+    built = []
+
+    def build(*args, **kwargs):
+        built.append(kwargs)
+        return evaluation.ExactIndex(
+            chunks,
+            np.array(vectors),
+            runtime,
+            tokenizer,
+            None,
+            None,
+            "test",
+            {},
+            0.0,
+            {},
+        )
+
+    lexical = []
+
+    def bm25(texts, **kwargs):
+        lexical.append(tuple(texts))
+        return SimpleNamespace(texts=tuple(texts))
+
+    monkeypatch.setattr(evaluation, "build_index", build)
+    monkeypatch.setattr(retrieval_run, "BM25", bm25)
+    monkeypatch.setattr(retrieval_run, "load_manifest", lambda _: manifest)
+    monkeypatch.setattr(retrieval_run, "sha256_file", lambda _: "test")
+    monkeypatch.setattr(rag_validation, "verify_inputs", lambda *a, **kw: None)
+    monkeypatch.setattr(models, "load_selected_model_lock", lambda _: {})
+    monkeypatch.setattr(
+        retrieval_run,
+        "load_engineer_decision",
+        lambda path, **kw: SimpleNamespace(
+            source_run_id="test",
+            selected_candidates=(
+                "rrf|none"
+                if path.name == "retrieval.decision"
+                else "token-256-32|bge-small",
+            ),
+        ),
+    )
+    from pathlib import Path
+
+    from benchmarks.rag.chunking_embedding.protocol import DEFAULT_PROTOCOL_PATH as ce
+    from benchmarks.rag.retrieval_reranking.protocol import DEFAULT_PROTOCOL_PATH as rr
+
+    prepared = retrieval_run.prepare_integration(
+        {
+            "session_ids": list(corpora),
+            "manifest": "fixture.json",
+            "embedding_selection": "embedding.decision",
+            "retrieval_selection": "retrieval.decision",
+            "chunking_protocol": ce,
+            "retrieval_protocol": rr,
+            "model_lock": "fixture.lock",
+        },
+        Path("."),
+        "smoke",
+        corpora,
+        payload["sessions"],
+    )
+    assert len(built) == 1 and built[0]["with_bm25"] is False
+    assert len(prepared["sessions"]) == 2
+    assert all(
+        bundle["index"].embedder is runtime and bundle["index"].tokenizer is tokenizer
+        for bundle in prepared["sessions"]
+    )
+    assert lexical == [corpus.texts for corpus in corpora.values()]
 
 
 def test_bootstrap_retains_null_groups_and_reports_undefined_degenerate_draws():

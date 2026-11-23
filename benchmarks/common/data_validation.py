@@ -179,7 +179,11 @@ def validate_inventory(benchmark, profile, path, inventory):
                         "Authoritative documents require reviewed independent source/group IDs"
                     )
                 keys = [
-                    "source:" + group,
+                    *(
+                        "source:" + item[field]
+                        for field in ("independent_source_id", "source_group_id")
+                        if field in item
+                    ),
                     "id:" + str(item["id"]),
                     "text:" + stable_hash(item["text"]),
                 ]

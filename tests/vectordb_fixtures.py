@@ -9,6 +9,7 @@ from benchmarks.vectordb.adapters import Hit
 from benchmarks.vectordb.integration import SelectedServer
 from benchmarks.vectordb.protocol import load_protocol
 from benchmarks.vectordb.selection import candidate_config
+from benchmarks.vectordb.workload import freeze_session_search, matches_filters
 
 
 class MemoryAdapter:
@@ -59,11 +60,7 @@ class MemoryAdapter:
         if self.failure:
             raise self.failure
         rows = [
-            row
-            for row in self.rows.values()
-            if all(
-                row.metadata.get(key) == value for key, value in (filters or {}).items()
-            )
+            row for row in self.rows.values() if matches_filters(row.metadata, filters)
         ]
         rows.sort(
             key=lambda row: (
@@ -78,6 +75,20 @@ class MemoryAdapter:
 
 def fixture_protocol():
     return replace(load_protocol(), monitor_storage=False, monitor_server_memory=False)
+
+
+def freeze_test_sessions(payload, corpora, repetitions):
+    pair_offset = 0
+    for session in payload["sessions"]:
+        schedule, references = freeze_session_search(
+            session,
+            corpora[session["id"]],
+            repetitions=repetitions,
+            pair_offset=pair_offset,
+        )
+        session.update(schedule=schedule, exact_references=references)
+        pair_offset += len(session["selected_sources"])
+    return payload
 
 
 def make_server(strategy="dense", reranker=None):

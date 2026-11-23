@@ -1,25 +1,323 @@
 {
-  "schema_version": 1, "name": "vector-controlled-smoke", "split": "smoke",
-  "corpora": [{
-    "id": "fixture", "vectors": [[1.0,0.0],[0.0,1.0],[-1.0,0.0]],
-    "queries": [[1.0,0.0],[0.0,1.0]], "query_ids": ["q1","q2"],
-    "query_sources": ["synthetic-a","synthetic-b"],
-    "provenance": {"kind":"synthetic-smoke"},
-    "records": [
-      {"id":"a", "text":"fixture alpha", "metadata":{"source_id":"doc-a"}},
-      {"id":"b", "text":"fixture beta", "metadata":{"source_id":"doc-b"}},
-      {"id":"c", "text":"fixture gamma", "metadata":{"source_id":"doc-c"}}
-    ]
-  }],
-  "conditions": [
-    {"id":"serial", "corpus":"fixture", "mode":"controlled", "filters":{}, "query_ids":["q1","q2"], "concurrency":1, "windows":1, "warmup_requests":1},
-    {"id":"filtered", "corpus":"fixture", "mode":"controlled", "filters":{"source_id":"doc-a"}, "query_ids":["q1"], "concurrency":1, "windows":1, "warmup_requests":1},
-    {"id":"empty", "corpus":"fixture", "mode":"controlled", "filters":{"source_id":"missing"}, "query_ids":["q1"], "concurrency":1, "windows":1, "warmup_requests":1},
-    {"id":"load", "corpus":"fixture", "mode":"load", "filters":{}, "query_ids":["q1","q2"], "concurrency":2, "windows":1, "warmup_requests":2}
+  "schema_version": 2,
+  "name": "vector-study-session-smoke",
+  "split": "smoke",
+  "sessions": [
+    {
+      "id": "fixture",
+      "vectors": [
+        [
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0
+        ],
+        [
+          -1.0,
+          0.0
+        ]
+      ],
+      "queries": [
+        [
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0
+        ]
+      ],
+      "query_ids": [
+        "q1",
+        "q2"
+      ],
+      "query_sources": [
+        "synthetic-a",
+        "synthetic-b"
+      ],
+      "provenance": {
+        "kind": "synthetic-smoke"
+      },
+      "records": [
+        {
+          "id": "a",
+          "text": "fixture alpha",
+          "metadata": {
+            "source_id": "doc-a"
+          }
+        },
+        {
+          "id": "b",
+          "text": "fixture beta",
+          "metadata": {
+            "source_id": "doc-b"
+          }
+        },
+        {
+          "id": "c",
+          "text": "fixture gamma",
+          "metadata": {
+            "source_id": "doc-c"
+          }
+        }
+      ],
+      "session_group_id": "fixture-group",
+      "selected_sources": {
+        "q1": [
+          "doc-a",
+          "doc-c"
+        ]
+      },
+      "schedule": [
+        {
+          "query_id": "q1",
+          "attempt": 1,
+          "condition": "all-session"
+        },
+        {
+          "query_id": "q1",
+          "attempt": 1,
+          "condition": "selected-files"
+        },
+        {
+          "query_id": "q2",
+          "attempt": 1,
+          "condition": "all-session"
+        }
+      ],
+      "exact_references": {
+        "q1": {
+          "all-session": {
+            "effective_count": 3,
+            "cutoff_distance": 2.0,
+            "strict_ids": [
+              "a",
+              "b"
+            ],
+            "boundary_ids": [
+              "c"
+            ],
+            "boundary_slots": 1,
+            "tolerance": 0.0
+          },
+          "selected-files": {
+            "effective_count": 2,
+            "cutoff_distance": 2.0,
+            "strict_ids": [
+              "a"
+            ],
+            "boundary_ids": [
+              "c"
+            ],
+            "boundary_slots": 1,
+            "tolerance": 0.0
+          }
+        },
+        "q2": {
+          "all-session": {
+            "effective_count": 3,
+            "cutoff_distance": 1.0,
+            "strict_ids": [
+              "b"
+            ],
+            "boundary_ids": [
+              "a",
+              "c"
+            ],
+            "boundary_slots": 2,
+            "tolerance": 0.0
+          }
+        }
+      }
+    },
+    {
+      "id": "fixture-extra",
+      "vectors": [
+        [
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0
+        ],
+        [
+          -1.0,
+          0.0
+        ]
+      ],
+      "queries": [
+        [
+          0.0,
+          1.0
+        ],
+        [
+          1.0,
+          0.0
+        ],
+        [
+          -1.0,
+          0.0
+        ]
+      ],
+      "query_ids": [
+        "q3",
+        "q4",
+        "q5"
+      ],
+      "query_sources": [
+        "synthetic-d",
+        "synthetic-e",
+        "synthetic-f"
+      ],
+      "provenance": {
+        "kind": "synthetic-smoke"
+      },
+      "records": [
+        {
+          "id": "d",
+          "text": "second fixture delta",
+          "metadata": {
+            "source_id": "doc-d"
+          }
+        },
+        {
+          "id": "e",
+          "text": "second fixture epsilon",
+          "metadata": {
+            "source_id": "doc-e"
+          }
+        },
+        {
+          "id": "f",
+          "text": "second fixture zeta",
+          "metadata": {
+            "source_id": "doc-f"
+          }
+        }
+      ],
+      "session_group_id": "fixture-extra-group",
+      "selected_sources": {
+        "q3": [
+          "doc-e"
+        ]
+      },
+      "schedule": [
+        {
+          "query_id": "q3",
+          "attempt": 1,
+          "condition": "selected-files"
+        },
+        {
+          "query_id": "q3",
+          "attempt": 1,
+          "condition": "all-session"
+        },
+        {
+          "query_id": "q4",
+          "attempt": 1,
+          "condition": "all-session"
+        },
+        {
+          "query_id": "q5",
+          "attempt": 1,
+          "condition": "all-session"
+        }
+      ],
+      "exact_references": {
+        "q3": {
+          "all-session": {
+            "effective_count": 3,
+            "cutoff_distance": 1.0,
+            "strict_ids": [
+              "e"
+            ],
+            "boundary_ids": [
+              "d",
+              "f"
+            ],
+            "boundary_slots": 2,
+            "tolerance": 0.0
+          },
+          "selected-files": {
+            "effective_count": 1,
+            "cutoff_distance": 0.0,
+            "strict_ids": [],
+            "boundary_ids": [
+              "e"
+            ],
+            "boundary_slots": 1,
+            "tolerance": 0.0
+          }
+        },
+        "q4": {
+          "all-session": {
+            "effective_count": 3,
+            "cutoff_distance": 2.0,
+            "strict_ids": [
+              "d",
+              "e"
+            ],
+            "boundary_ids": [
+              "f"
+            ],
+            "boundary_slots": 1,
+            "tolerance": 0.0
+          }
+        },
+        "q5": {
+          "all-session": {
+            "effective_count": 3,
+            "cutoff_distance": 2.0,
+            "strict_ids": [
+              "e",
+              "f"
+            ],
+            "boundary_ids": [
+              "d"
+            ],
+            "boundary_slots": 1,
+            "tolerance": 0.0
+          }
+        }
+      }
+    }
   ],
-  "operations": [{"id":"doc-a", "corpus":"fixture", "source_id":"doc-a",
-    "replacement":[{"id":"a-new", "vector":[0.0,-1.0], "text":"replacement", "metadata":{"source_id":"doc-a"}}],
-    "insert":[{"id":"insert", "vector":[1.0,1.0], "text":"insert fixture", "metadata":{"source_id":"new-doc"}}]
-  }],
-  "integration": {}, "review": {}
+  "operations": [
+    {
+      "id": "doc-a",
+      "corpus": "fixture",
+      "source_id": "doc-a",
+      "replacement": [
+        {
+          "id": "a-new",
+          "vector": [
+            0,
+            -1
+          ],
+          "text": "replacement",
+          "metadata": {
+            "source_id": "doc-a"
+          }
+        }
+      ],
+      "insert": [
+        {
+          "id": "insert",
+          "vector": [
+            1,
+            1
+          ],
+          "text": "insert fixture",
+          "metadata": {
+            "source_id": "new-doc"
+          }
+        }
+      ]
+    }
+  ],
+  "integration": {},
+  "review": {}
 }

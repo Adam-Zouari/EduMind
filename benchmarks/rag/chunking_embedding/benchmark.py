@@ -17,7 +17,11 @@ from benchmarks.common.contracts import (
     CandidateExecutionError,
     SampleResult,
 )
-from benchmarks.common.datasets import answerable_questions, evidence_units
+from benchmarks.common.datasets import (
+    answerable_questions,
+    evidence_units,
+    validate_evidence,
+)
 from benchmarks.common.process import (
     WorkerExecutionError,
     benchmark_objects_from_payload,
@@ -37,6 +41,12 @@ from benchmarks.rag.evaluation import (
     dense_rank_with_scores,
     validate_ranking,
 )
+from benchmarks.rag.statistics import (
+    QUALITY_SCOPES,
+    question_documents,
+    source_ids,
+    source_scope,
+)
 from edumind.common.artifacts import stable_hash
 from edumind.rag.errors import RAGConfigurationError
 
@@ -48,7 +58,6 @@ from .metrics import (
     prefixed_quality,
     ranking_repeatability,
     score_question,
-    source_groups,
 )
 from .profiles import embedding_spec, split_candidate
 from .protocol import ChunkingEmbeddingProtocol, protocol_from_settings
@@ -73,9 +82,12 @@ WORKER = Path(__file__).with_name("worker.py")
 
 
 def directions_for(manifest, protocol):
+    sources = validate_evidence(manifest)
+    questions = answerable_questions(manifest)
     scopes = {
         "overall",
-        *(str(q["evidence_type"]) for q in answerable_questions(manifest)),
+        *(q["evidence_type"] for q in questions),
+        *(source_scope(sources[q["id"]].metadata()) for q in questions),
     }
     directions = {
         **{
@@ -118,9 +130,7 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
     if not questions:
         raise ValueError("Chunking/embedding requires answerable questions")
     random.Random(plan.seed).shuffle(questions)
-    document_records = {
-        str(row["id"]): row for row in manifest.samples if row.get("kind") == "document"
-    }
+    sources = validate_evidence(manifest)
     attempts = [
         {
             "phase": "query",
@@ -358,12 +368,7 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
     }
     samples, retrievals, matches, query_rows = [], [], [], []
     for question in questions:
-        document = document_records[str(question["document_id"])]
-        source_id = str(
-            document.get("independent_source_id")
-            or document.get("source_group_id")
-            or question["document_id"]
-        )
+        source = sources[question["id"]].metadata()
         rows = [row for row in attempts if row["question_id"] == str(question["id"])]
         first = rows[0]
         successful = [row for row in rows if row["status"] == "success"]
@@ -430,8 +435,7 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
         for row in rows:
             identity = {
                 "question_id": str(question["id"]),
-                "source_document_id": str(question["document_id"]),
-                "independent_source_id": source_id,
+                **source,
                 "repetition": row["repetition"],
                 "status": row["status"],
                 "error": row["error"],
@@ -465,9 +469,7 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
                 for rank, (position, score) in enumerate(row["ranking"], 1)
             )
         metadata = {
-            "document_id": str(question["document_id"]),
-            "independent_source_id": source_id,
-            "source_group_id": document.get("source_group_id"),
+            **source,
             "evidence_type": str(question["evidence_type"]),
             "first_attempt_status": first["status"],
             "quality_status": status,
@@ -494,7 +496,7 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
             SampleResult(
                 str(question["id"]),
                 {
-                    **prefixed_quality(values, str(question["evidence_type"])),
+                    **prefixed_quality(values, metadata),
                     "diagnostic.ranking_repeatability": repeatability["value"],
                 },
                 latency,
@@ -518,11 +520,11 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
         resamples=resamples,
         seed=plan.seed,
         confidence=protocol.confidence_level,
-        minimum_documents=protocol.minimum_quality_ci_documents,
+        minimum_sources=protocol.minimum_quality_ci_sources,
         diagnostics=support,
         metric_names=[
             f"quality.{scope}.{name}"
-            for scope in ("overall", "text", "table", "formula", "mixed")
+            for scope in QUALITY_SCOPES
             for name in protocol.quality_metrics
         ],
     )
@@ -531,7 +533,7 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
         resamples=resamples,
         seed=plan.seed,
         confidence=protocol.confidence_level,
-        minimum_documents=protocol.minimum_repeatability_ci_documents,
+        minimum_sources=protocol.minimum_repeatability_ci_sources,
     )
     aggregate.update(repeated)
     intervals.update(repeated_intervals)
@@ -543,7 +545,7 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
                 resamples=resamples,
                 seed=plan.seed,
                 confidence=protocol.confidence_level,
-                minimum_documents=protocol.minimum_latency_ci_documents,
+                minimum_sources=protocol.minimum_latency_ci_sources,
                 metric=name,
             )
         )
@@ -565,14 +567,14 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
             "contributing_question_count": len(contributing),
             "unavailable_question_count": len(samples) - len(contributing),
             "eligible_document_count": len(
-                {s.metadata["document_id"] for s in samples}
+                question_documents(s.metadata for s in samples)
             ),
-            "independent_source_count": len(source_groups(samples)),
+            "independent_source_count": len(source_ids(s.metadata for s in samples)),
             "contributing_source_count": len(
-                source_groups([s for s, _ in contributing])
+                source_ids(s.metadata for s, _ in contributing)
             ),
             "contributing_document_count": len(
-                {s.metadata["document_id"] for s, _ in contributing}
+                question_documents(s.metadata for s, _ in contributing)
             ),
         }
         for percentile, label in ((50, "p50"), (95, "p95")):
@@ -843,11 +845,6 @@ def evaluate_candidate(candidate, manifest, model_lock, plan, *, device, dtype):
             {
                 "chunk_id": c.identifier,
                 "document_id": c.document_id,
-                "independent_source_id": str(
-                    document_records[c.document_id].get("independent_source_id")
-                    or document_records[c.document_id].get("source_group_id")
-                    or c.document_id
-                ),
                 "start": c.start,
                 "end": c.end,
                 "evaluation_tokens": c.tokens,
@@ -944,6 +941,7 @@ def run_in_fresh_process(candidate, manifest, model_lock, plan, *, device, dtype
     except WorkerExecutionError as exc:
         # A lost worker result does not reveal which requests actually executed.
         questions = answerable_questions(manifest)
+        sources = validate_evidence(manifest)
         scheduled = len(questions) * plan.repetitions
         exc.parameters["measurement.resource_scope"] = "partial"
         exc.parameters["completeness"] = {
@@ -956,7 +954,7 @@ def run_in_fresh_process(candidate, manifest, model_lock, plan, *, device, dtype
         exc.artifacts["query_metrics"] = [
             {
                 "question_id": str(q["id"]),
-                "document_id": str(q["document_id"]),
+                **sources[q["id"]].metadata(),
                 "quality_status": "incomplete",
                 "quality_reason": "missing_worker_result",
                 **{name: None for name in protocol.quality_metrics},

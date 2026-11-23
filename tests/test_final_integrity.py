@@ -43,8 +43,8 @@ def _offline_score(monkeypatch, attempts, *, documents=None, sources=None):
         {
             "kind": "question",
             "id": f"q-{i}",
-            "document_id": document,
-            "source_id": source,
+            "source_document_ids": (document,),
+            "independent_source_id": source,
             "evidence_type": "text",
             "answerable": False,
         }
@@ -105,7 +105,7 @@ def _attempt(*, success=True, outcome=None, seconds=2.0, schema_valid=True):
     }
 
 
-def test_rr_projection_keeps_reviewed_source_and_document_macro_weights(monkeypatch):
+def test_rr_projection_keeps_reviewed_source_and_question_macro_weights(monkeypatch):
     result = _offline_score(
         monkeypatch,
         [[_attempt(success=False)], [_attempt()], [_attempt(success=False)]],
@@ -113,7 +113,7 @@ def test_rr_projection_keeps_reviewed_source_and_document_macro_weights(monkeypa
     )
     key = "reliability.request_failure_rate"
     support = result[5]["retrieval_metric_support"][key]
-    assert result[2][key] == 0.75  # Document means 0.5 and 1, not pooled 2/3.
+    assert result[2][key] == pytest.approx(2 / 3)
     assert support["eligible_question_count"] == 3
     assert support["eligible_document_count"] == 2
     assert support["independent_source_count"] == 1

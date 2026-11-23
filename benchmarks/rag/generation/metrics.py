@@ -2,10 +2,19 @@
 
 import json
 import math
-import random
-from collections import Counter, defaultdict
+from collections import Counter
 from itertools import combinations
 from statistics import mean, median
+
+from benchmarks.rag.statistics import (
+    SOURCE_SCOPES,
+    question_documents,
+    question_mean,
+    source_groups,
+    source_ids,
+    source_interval,
+    source_scope,
+)
 
 from .judge import validate_pair_labels, validate_response_labels
 
@@ -83,8 +92,14 @@ def required_ci_policy_keys(questions):
             for name, answerable in (("answerable", True), ("unanswerable", False))
         },
         **{
-            f"slice.{name}.": [q for q in questions if q["evidence_type"] == name]
+            f"slice.{name}.": [
+                q for q in questions if q["answerable"] and q["evidence_type"] == name
+            ]
             for name in ("text", "table", "formula", "mixed")
+        },
+        **{
+            f"slice.{name}.": [q for q in questions if source_scope(q) == name]
+            for name in SOURCE_SCOPES
         },
     }
     for prefix, subset in slices.items():
@@ -594,17 +609,7 @@ def _estimate(key, records):
             ],
             0.95 if "p95" in key else 0.5,
         )
-    by_document = defaultdict(list)
-    for record in records:
-        value = record["statistics"].get(key)
-        if value is not None:
-            # A bootstrap copy remains a separate document, never deduplicated by ID.
-            by_document[
-                (record.get("draw_copy", 0), record["question"]["document_id"])
-            ].append(value)
-    return (
-        mean([mean(values) for values in by_document.values()]) if by_document else None
-    )
+    return question_mean(record["statistics"].get(key) for record in records)
 
 
 def aggregate(
@@ -616,7 +621,7 @@ def aggregate(
     confidence=0.95,
     minimum_ci_sources=None,
 ):
-    """Recompute document macros, conditional percentiles and pooled work/time.
+    """Recompute question macros, conditional percentiles and pooled work/time.
 
     Bootstrap copies carry all questions, attempts, failures and pair labels.
     Numeric support requirements are supplied by reviewed protocol inputs.
@@ -638,9 +643,18 @@ def aggregate(
         },
         **{
             f"slice.{name}.": [
-                r for r in records if r["question"]["evidence_type"] == name
+                r
+                for r in records
+                if r["question"]["answerable"]
+                and r["question"]["evidence_type"] == name
             ]
             for name in ("text", "table", "formula", "mixed")
+        },
+        **{
+            f"slice.{name}.": [
+                r for r in records if source_scope(r["question"]) == name
+            ]
+            for name in SOURCE_SCOPES
         },
     }
     for prefix, subset in slices.items():
@@ -671,10 +685,10 @@ def aggregate(
                     complete = complete and all(
                         r["support"][key]["complete"] for r in eligible
                     )
-            value = _estimate(key, subset)
+            value = _estimate(key, eligible)
             contributing = [r for r in eligible if _estimate(key, [r]) is not None]
-            sources = {r["question"]["source_id"] for r in eligible}
-            contributing_sources = {r["question"]["source_id"] for r in contributing}
+            sources = source_ids(r["question"] for r in eligible)
+            contributing_sources = source_ids(r["question"] for r in contributing)
             claim_free = (
                 sum(r["support"][key]["claim_free"] for r in eligible)
                 if key in BASE_KEYS
@@ -703,6 +717,12 @@ def aggregate(
                 "partial": not complete,
                 "eligible_questions": len(eligible),
                 "contributing_questions": len(contributing),
+                "eligible_documents": len(
+                    question_documents(r["question"] for r in eligible)
+                ),
+                "contributing_documents": len(
+                    question_documents(r["question"] for r in contributing)
+                ),
                 "eligible_sources": len(sources),
                 "contributing_sources": len(contributing_sources),
                 "scheduled_attempts": sum(len(r["attempts"]) for r in eligible),
@@ -763,8 +783,7 @@ def aggregate(
                 "contributing_sources": len(contributing_sources),
                 "degenerate": False,
             }
-            minimum = minimum_ci_sources.get(name)
-            ci["reason"] = (
+            reason = (
                 "descriptor_no_interval"
                 if key.startswith("workload.")
                 else "smoke_no_interval"
@@ -773,41 +792,28 @@ def aggregate(
                 if value is None
                 else "incomplete_evidence"
                 if not complete
-                else "ci_support_not_frozen"
-                if minimum is None
-                else "insufficient_independent_sources"
-                if min(len(sources), len(contributing_sources)) < minimum
-                else "no_bootstrap_resampling"
-                if not resamples
                 else None
             )
-            if ci["reason"] is None:
-                groups = {
-                    source: [
-                        r for r in eligible if r["question"]["source_id"] == source
-                    ]
-                    for source in sorted(sources)
-                }
-                rng, draws = random.Random(seed), []
-                inventory = list(groups)
-                for _ in range(resamples):
-                    drawn = [
-                        {**r, "draw_copy": copy}
-                        for copy in range(len(inventory))
-                        for r in groups[rng.choice(inventory)]
-                    ]
-                    estimate = _estimate(key, drawn)
-                    if estimate is not None:
-                        draws.append(estimate)
+            if reason is None:
+
+                def metadata(r):
+                    return r["question"]
+
                 ci.update(
-                    defined_resamples=len(draws),
-                    undefined_resamples=resamples - len(draws),
-                    lower=percentile(draws, (1 - confidence) / 2),
-                    upper=percentile(draws, (1 + confidence) / 2),
+                    source_interval(
+                        source_groups(eligible, metadata),
+                        lambda groups, key=key: _estimate(
+                            key, [r for group in groups for r in group]
+                        ),
+                        resamples=resamples,
+                        seed=seed,
+                        confidence=confidence,
+                        minimum_sources=minimum_ci_sources.get(name),
+                        metadata=metadata,
+                    )
                 )
-                ci["degenerate"] = bool(draws and ci["lower"] == ci["upper"])
-                if not draws:
-                    ci["reason"] = "no_defined_bootstrap_draws"
+            else:
+                ci["reason"] = reason
             result["interval"] = ci
             results[name] = result
     return results

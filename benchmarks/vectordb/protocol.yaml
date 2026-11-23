@@ -1,5 +1,5 @@
 schema_version: 1
-protocol_version: vector-database-v5
+protocol_version: vector-database-v6
 seed: 42
 # Smoke fixtures are diagnostics, not a reviewed authoritative search space.
 candidates:

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import subprocess
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 
 from benchmarks.common.contracts import (
@@ -20,87 +19,121 @@ from .conformance import _finish_index, _wait_for_adapter, check
 from .docker_metrics import DockerMonitor
 from .integration import wait_inventory
 from .metrics import (
-    aggregate_condition,
+    ANN_KEYS,
     aggregate_operations,
-    percentile,
+    aggregate_session_scope,
+    paired_search_summary,
     repeatability,
 )
 from .selection import candidate_config
-from .workload import records, tie_recall, tie_reference, validate_hits
+from .workload import (
+    SCOPES,
+    SEARCH_LIMIT,
+    SELECTED_FILES,
+    classify_hits,
+    global_inventory,
+    paired_search_schedule,
+    records,
+    search_rows,
+    tie_recall,
+    validate_hits,
+)
 
 
-def search_window(adapter, corpus, condition, schedule, window):
-    """Dispatch through drain; validation is inside each common request boundary."""
-    trusted = dict(zip(corpus.ids, corpus.metadata, strict=True))
-    query_map = dict(zip(corpus.query_ids, corpus.queries, strict=True))
-    groups = dict(zip(corpus.query_ids, corpus.source_groups, strict=True))
-    configuration = (
-        stable_hash(asdict(adapter.config)) if hasattr(adapter, "config") else None
-    )
-
-    def request(item):
-        query_id, attempt = item
-        row = {
-            "condition": condition["id"],
-            "corpus": condition["corpus"],
-            "query_id": query_id,
-            "attempt": attempt,
-            "window": window,
-            "source_group": groups[query_id],
-            "operation": "search",
-            "status": "failed",
-            "filter_violation": None,
-            "latency_seconds": None,
-            "elapsed_to_failure_seconds": None,
-            "ids": [],
-            "scores": [],
-            "error": None,
-            "quality_designated": window == 0 and attempt == 1,
-            "corpus_checksum": corpus.fingerprint,
-            "configuration_checksum": configuration,
-        }
-        started = time.perf_counter()
-        try:
-            hits = adapter.search(query_map[query_id], 20, condition["filters"] or None)
-            # Preserve even invalid raw outputs, rather than losing them on validation.
-            row["ids"] = (
-                [getattr(hit, "identifier", None) for hit in hits]
-                if isinstance(hits, (list, tuple))
-                else []
-            )
-            row["scores"] = (
-                [getattr(hit, "score", None) for hit in hits]
-                if isinstance(hits, (list, tuple))
-                else []
-            )
-            violation = validate_hits(hits, trusted, 20, condition["filters"])
-            row.update(
-                status="success",
-                latency_seconds=time.perf_counter() - started,
-                filter_violation=bool(violation) if condition["filters"] else None,
-            )
-        except Exception as exc:  # noqa: BLE001 - retain backend request failures
-            row.update(
-                error=f"{type(exc).__name__}: {exc}",
-                elapsed_to_failure_seconds=time.perf_counter() - started,
-            )
-        return row
-
-    started = time.perf_counter()
-    if condition["concurrency"] == 1:
-        rows = [request(item) for item in schedule]
-    else:
-        with ThreadPoolExecutor(max_workers=condition["concurrency"]) as pool:
-            rows = list(pool.map(request, schedule))
-    elapsed = time.perf_counter() - started
-    return rows, {
-        "condition": condition["id"],
-        "window": window,
-        "wall_seconds": elapsed,
-        "submitted": len(rows),
-        "successful": sum(row["status"] == "success" for row in rows),
-        "complete": True,
+def search_request(
+    adapter, vector, identity, filters, allowed, session_ids, global_ids
+):
+    """Time one serial logical adapter operation, then validate its response."""
+    row = {
+        **identity,
+        "status": "failed" if adapter is not None else "not_executed",
+        "filter_violation": None,
+        "session_isolation_violation": None,
+        "outside_session_ids": [],
+        "outside_selection_ids": [],
+        "latency_seconds": None,
+        "elapsed_to_failure_seconds": None,
+        "ids": None,
+        "scores": None,
+        "error": "build_or_warmup_failed" if adapter is None else None,
     }
+    if adapter is None:
+        return row
+    filtered = identity["condition"] == SELECTED_FILES
+    started = time.perf_counter()
+    completed = None
+    try:
+        hits = adapter.search(vector, SEARCH_LIMIT, filters)
+        completed = time.perf_counter()
+        if isinstance(hits, (list, tuple)):
+            row["ids"] = [getattr(hit, "identifier", None) for hit in hits]
+            row["scores"] = [getattr(hit, "score", None) for hit in hits]
+        checks = classify_hits(
+            hits,
+            global_ids,
+            session_ids,
+            allowed,
+            filtered=filtered,
+        )
+    except Exception as exc:  # noqa: BLE001 - capture any client/response failure in the request ledger
+        row.update(
+            error=f"{type(exc).__name__}: {exc}",
+            elapsed_to_failure_seconds=(completed or time.perf_counter()) - started,
+        )
+    else:
+        row.update(status="success", latency_seconds=completed - started, **checks)
+    return row
+
+
+def search_session(adapter, session, corpus, global_ids, configuration, *, warmups):
+    """Warm each active scope outside the ledger, then execute the frozen order."""
+    query_map = dict(zip(corpus.query_ids, corpus.queries, strict=True))
+    session_ids = set(corpus.ids)
+    schedule = list(search_rows(session, corpus))
+    warm = {}
+    if adapter is not None:
+        for scope in SCOPES:
+            representative = next(
+                (item for item in schedule if item[0]["condition"] == scope), None
+            )
+            if representative is None:
+                continue
+            identity, filters, allowed = representative
+            rows = [
+                search_request(
+                    adapter,
+                    query_map[identity["query_id"]],
+                    {**identity, "attempt": 0, "quality_designated": False},
+                    filters,
+                    allowed,
+                    session_ids,
+                    global_ids,
+                )
+                for _ in range(warmups)
+            ]
+            warm[scope] = rows
+    blocked = {
+        scope
+        for scope, rows in warm.items()
+        if any(
+            row["status"] != "success"
+            or row["filter_violation"]
+            or row["session_isolation_violation"]
+            for row in rows
+        )
+    }
+    return [
+        search_request(
+            adapter if identity["condition"] not in blocked else None,
+            query_map[identity["query_id"]],
+            {**identity, "configuration_checksum": configuration},
+            filters,
+            allowed,
+            session_ids,
+            global_ids,
+        )
+        for identity, filters, allowed in schedule
+    ], {scope: warm[scope] for scope in sorted(blocked)}
 
 
 def _prepared(rows):
@@ -224,11 +257,14 @@ def evaluate_candidate(
     evidence_sink=None,
 ):
     execution = protocol.profile(profile)
-    requests, timings, windows, probes, resource_rows = [], [], [], {}, []
+    requests, timings, probes, resource_rows = [], [], {}, []
     problems, parameters = [], {}
     metrics = {}
     lifecycle = []
-    for corpus_id, corpus in corpora.items():
+    globally_known = global_inventory(corpora)
+    for session in payload["sessions"]:
+        corpus_id = session["id"]
+        corpus = corpora[corpus_id]
         database, config = candidate_config(
             protocol, candidate, int(corpus.vectors.shape[1])
         )
@@ -288,7 +324,10 @@ def evaluate_candidate(
             "status": "not_executed",
             "seconds": None,
         }
-        healthy = not problems
+        healthy = probes.get(corpus_id, {}).get("status") not in {
+            "failed",
+            "unsupported",
+        }
         with monitor:
             started = time.perf_counter()
             try:
@@ -322,62 +361,18 @@ def evaluate_candidate(
                 problems.append(build["error"])
                 monitor.checkpoint(corpus_id, complete=False)
             timings.append(build)
-            for condition in [
-                row for row in payload["conditions"] if row["corpus"] == corpus_id
-            ]:
-                schedule = [
-                    (query_id, attempt)
-                    for attempt in range(1, execution.repetitions + 1)
-                    for query_id in condition["query_ids"]
-                ]
-                warm = healthy
-                if warm:
-                    warm_schedule = [
-                        (condition["query_ids"][i % len(condition["query_ids"])], 0)
-                        for i in range(condition["warmup_requests"])
-                    ]
-                    warm_rows, _ = search_window(
-                        adapter, corpus, condition, warm_schedule, -1
-                    )
-                    warm = all(
-                        row["status"] == "success" and not row["filter_violation"]
-                        for row in warm_rows
-                    )
-                    if not warm:
-                        problems.append(f"Warmup failed: {condition['id']}")
-                        probes["warmup-" + condition["id"]] = warm_rows
-                for window in range(condition["windows"]):
-                    if warm:
-                        rows, timing = search_window(
-                            adapter, corpus, condition, schedule, window
-                        )
-                        requests.extend(rows)
-                        if condition["mode"] == "load":
-                            windows.append(timing)
-                        timings.append({"operation": "search_window", **timing})
-                    else:
-                        groups = dict(
-                            zip(corpus.query_ids, corpus.source_groups, strict=True)
-                        )
-                        requests.extend(
-                            {
-                                "condition": condition["id"],
-                                "corpus": corpus_id,
-                                "query_id": query_id,
-                                "attempt": attempt,
-                                "window": window,
-                                "source_group": groups[query_id],
-                                "operation": "search",
-                                "status": "not_executed",
-                                "filter_violation": None,
-                                "ids": [],
-                                "scores": [],
-                                "latency_seconds": None,
-                                "quality_designated": window == 0 and attempt == 1,
-                                "error": "build_or_warmup_failed",
-                            }
-                            for query_id, attempt in schedule
-                        )
+            search, warm_failures = search_session(
+                adapter if healthy else None,
+                session,
+                corpus,
+                globally_known,
+                stable_hash(configuration),
+                warmups=execution.warmups,
+            )
+            requests.extend(search)
+            for scope, failure in warm_failures.items():
+                problems.append(f"Warmup failed: {corpus_id}/{scope}")
+                probes[f"warmup-{corpus_id}-{scope}"] = failure
             for spec in [
                 row for row in payload["operations"] if row["corpus"] == corpus_id
             ]:
@@ -457,7 +452,6 @@ def evaluate_candidate(
         "candidate": candidate,
         "requests": requests,
         "timings": timings,
-        "windows": windows,
         "probes": probes,
         "resource_rows": resource_rows,
         "lifecycle": lifecycle,
@@ -470,12 +464,89 @@ def evaluate_candidate(
     return score_server_evidence(payload, corpora, protocol, profile, evidence)
 
 
+def _score_first_response(first, reference):
+    from .adapters import Hit
+
+    if (
+        first
+        and first["status"] == "success"
+        and not first["filter_violation"]
+        and not first["session_isolation_violation"]
+    ):
+        return tie_recall(
+            [Hit(identifier, 0, {}) for identifier in first["ids"]], reference
+        )
+    return {
+        "value": None,
+        "status": "inapplicable" if not reference["effective_count"] else "unavailable",
+        **reference,
+    }
+
+
+def paired_search_from_ledger(sessions, requests):
+    """Score the paired subset only after reconciling both sides with the schedule."""
+    expected = paired_search_schedule(sessions)
+    questions = {(sid, qid) for sid, qid, _ in expected}
+    sides = {scope: {} for scope in SCOPES}
+    for row in requests:
+        if row["operation"] != "search":
+            continue
+        scope = row["condition"]
+        question = (row["session_id"], row["query_id"])
+        if scope != SELECTED_FILES and not row["paired"] and question not in questions:
+            continue
+        identity = (*question, row["attempt"])
+        if (
+            not row["paired"]
+            or scope not in sides
+            or type(row["attempt"]) is not int
+            or identity not in expected
+            or row["quality_designated"] != (row["attempt"] == 1)
+        ):
+            raise ValueError(
+                f"Unexpected paired search ledger identity: {scope}/{identity}"
+            )
+        if identity in sides[scope]:
+            raise ValueError(
+                f"Duplicate paired search ledger identity: {scope}/{identity}"
+            )
+        if row["status"] not in {"success", "failed", "not_executed"}:
+            raise ValueError("Unknown paired search ledger status")
+        sides[scope][identity] = row
+    for scope, side in sides.items():
+        if side.keys() != expected:
+            raise ValueError(f"Missing scheduled paired search ledger rows: {scope}")
+
+    rows = []
+    for session in sessions:
+        sid = session["id"]
+        for qid in session["selected_sources"]:
+            for scope in SCOPES:
+                score = _score_first_response(
+                    sides[scope][sid, qid, 1],
+                    session["exact_references"][qid][scope],
+                )
+                name = ANN_KEYS[scope]
+                rows.append(
+                    {
+                        "session_id": sid,
+                        "query_id": qid,
+                        "condition": scope,
+                        "session_group_id": session["session_group_id"],
+                        "paired": True,
+                        "metrics": {name: score["value"]},
+                        "metric_statuses": {name: score["status"]},
+                    }
+                )
+    return paired_search_summary(
+        rows, [row for side in sides.values() for row in side.values()]
+    )
+
+
 def score_server_evidence(payload, corpora, protocol, profile, evidence):
     """Pure offline scoring: no adapter, startup, model, or measurement calls."""
     execution = protocol.profile(profile)
-    requests, timings, windows = (
-        evidence[name] for name in ("requests", "timings", "windows")
-    )
+    requests, timings = evidence["requests"], evidence["timings"]
     probes, resource_rows, lifecycle = (
         evidence[name] for name in ("probes", "resource_rows", "lifecycle")
     )
@@ -485,108 +556,95 @@ def score_server_evidence(payload, corpora, protocol, profile, evidence):
         dict(evidence["metrics"]),
     )
     intervals, statuses = {}, {}
-    references = {}
-    for condition in payload["conditions"]:
-        corpus = corpora[condition["corpus"]]
-        query_map = dict(zip(corpus.query_ids, corpus.queries, strict=True))
-        for query_id in condition["query_ids"]:
-            references[condition["id"], query_id] = tie_reference(
-                corpus, query_map[query_id], 20, condition["filters"]
-            )
-    # No offline oracle, scoring, or bootstrap runs inside server monitoring.
     query_rows, pair_rows, samples = [], [], []
-    from .adapters import Hit
 
-    for condition in payload["conditions"]:
-        condition_requests = [
-            row
-            for row in requests
-            if row["operation"] == "search" and row["condition"] == condition["id"]
-        ]
-        corpus = corpora[condition["corpus"]]
-        groups = dict(zip(corpus.query_ids, corpus.source_groups, strict=True))
-        rows = []
-        for query_id in condition["query_ids"]:
-            attempts = sorted(
-                [
-                    row
-                    for row in condition_requests
-                    if row["query_id"] == query_id and row["window"] == 0
-                ],
-                key=lambda row: row["attempt"],
-            )
-            reference = references[condition["id"], query_id]
-            first = next((row for row in attempts if row["quality_designated"]), None)
-            score = {
-                "value": None,
-                "status": "inapplicable"
-                if not reference["effective_count"]
-                else "unavailable",
-                **reference,
-            }
-            if first and first["status"] == "success" and not first["filter_violation"]:
-                score = tie_recall(
-                    [Hit(identifier, 0, {}) for identifier in first["ids"]], reference
+    search_requests = [row for row in requests if row["operation"] == "search"]
+    attempts_by_query = {}
+    for row in search_requests:
+        attempts_by_query.setdefault(
+            (row["session_id"], row["query_id"], row["condition"]), []
+        ).append(row)
+    for session in payload["sessions"]:
+        session_id = session["id"]
+        for query_id, references in session["exact_references"].items():
+            for scope, reference in references.items():
+                attempts = sorted(
+                    attempts_by_query.get((session_id, query_id, scope), ()),
+                    key=lambda row: row["attempt"],
                 )
-            name = (
-                "quality.filtered_ann_recall_at_20"
-                if condition["filters"]
-                else "quality.ann_recall_at_20"
-            )
-            repeated = repeatability(attempts, execution.repetitions)
-            row = {
-                "condition": condition["id"],
-                "query_id": query_id,
-                "source_group": groups[query_id],
-                "metrics": {
-                    name: score["value"],
-                    "diagnostic.ranking_repeatability": repeated["value"],
-                },
-                "metric_statuses": {
-                    name: score["status"],
-                    "diagnostic.ranking_repeatability": repeated["status"],
-                },
-                "tie": score,
-            }
-            rows.append(row)
-            pair_rows.extend(
-                {"condition": condition["id"], "query_id": query_id, **pair}
-                for pair in repeated["pairs"]
-            )
-            samples.append(
-                SampleResult(
-                    condition["id"] + ":" + query_id,
-                    {
-                        key + ".condition." + condition["id"]: value
-                        for key, value in row["metrics"].items()
+                first = next(
+                    (row for row in attempts if row["quality_designated"]), None
+                )
+                score = _score_first_response(first, reference)
+                name = ANN_KEYS[scope]
+                repeated = repeatability(attempts, execution.repetitions)
+                identity = {
+                    "condition": scope,
+                    "session_id": session_id,
+                    "query_id": query_id,
+                    "session_group_id": session["session_group_id"],
+                    "selected_source_ids": session["selected_sources"].get(query_id)
+                    if scope == SELECTED_FILES
+                    else None,
+                    "paired": query_id in session["selected_sources"],
+                }
+                row = {
+                    **identity,
+                    "first_attempt_status": first["status"] if first else "missing",
+                    "metrics": {
+                        name: score["value"],
+                        "diagnostic.ranking_repeatability": repeated["value"],
                     },
-                    percentile(
-                        [
-                            item["latency_seconds"]
-                            for item in attempts
-                            if item["status"] == "success"
-                        ],
-                        0.5,
-                    ),
-                    {"source_group": groups[query_id], "condition": condition["id"]},
+                    "metric_statuses": {
+                        name: score["status"],
+                        "diagnostic.ranking_repeatability": repeated["status"],
+                    },
+                    "tie": score,
+                }
+                query_rows.append(row)
+                pair_rows.extend({**identity, **pair} for pair in repeated["pairs"])
+                samples.append(
+                    SampleResult(
+                        f"{scope}:{session_id}:{query_id}",
+                        {
+                            key + ".condition." + scope: value
+                            for key, value in row["metrics"].items()
+                        },
+                        None,
+                        identity,
+                    )
                 )
-            )
-            if score["status"] == "unavailable" or repeated["status"] == "incomplete":
-                problems.append(
-                    f"Required query evidence missing: {condition['id']}/{query_id}"
-                )
-        query_rows.extend(rows)
-        point, bounds, availability = aggregate_condition(
+                if (
+                    score["status"] == "unavailable"
+                    or repeated["status"] == "incomplete"
+                ):
+                    problems.append(
+                        f"Required query evidence missing: {session_id}/{scope}/{query_id}"
+                    )
+    session_summary = []
+    for scope in SCOPES:
+        rows = [row for row in query_rows if row["condition"] == scope]
+        scoped = [row for row in search_requests if row["condition"] == scope]
+        point, bounds, availability, per_session = aggregate_session_scope(
             rows,
-            condition_requests,
-            [window for window in windows if window["condition"] == condition["id"]],
-            condition,
+            scoped,
+            scope,
             protocol,
             profile,
         )
         metrics.update(point)
         intervals.update(bounds)
         statuses.update(availability)
+        session_summary.extend(per_session)
+    for row in search_requests:
+        if row["session_isolation_violation"] or row["filter_violation"]:
+            problems.append(
+                f"Forbidden result: {row['session_id']}/{row['query_id']}/{row['condition']}/{row['attempt']}"
+            )
+        if row["status"] == "not_executed":
+            problems.append(
+                f"Search not executed: {row['session_id']}/{row['query_id']}/{row['condition']}/{row['attempt']}"
+            )
     points, bounds, availability, operation_problems = aggregate_operations(
         requests, payload["operations"], protocol, profile
     )
@@ -603,14 +661,23 @@ def score_server_evidence(payload, corpora, protocol, profile, evidence):
             key: row.get(key)
             for key in (
                 "condition",
-                "corpus",
+                "session_id",
+                "session_group_id",
                 "query_id",
                 "attempt",
-                "window",
+                "schedule_position",
+                "selected_source_ids",
+                "allowed_set_checksum",
+                "eligible_chunk_count",
+                "exact_reference_checksum",
+                "corpus_checksum",
+                "configuration_checksum",
                 "status",
                 "ids",
                 "scores",
                 "filter_violation",
+                "outside_session_ids",
+                "outside_selection_ids",
             )
         }
         for row in requests
@@ -620,6 +687,17 @@ def score_server_evidence(payload, corpora, protocol, profile, evidence):
         "requests": requests,
         "rankings": rankings,
         "query_metrics": query_rows,
+        "session_metrics": [
+            {
+                **row,
+                "chunk_count": len(corpora[row["session_id"]].ids),
+                "file_count": len(
+                    {item["source_id"] for item in corpora[row["session_id"]].metadata}
+                ),
+            }
+            for row in session_summary
+        ],
+        "paired_search": paired_search_summary(query_rows, search_requests),
         "repeatability": pair_rows,
         "timings": timings,
         "resources": resource_rows,

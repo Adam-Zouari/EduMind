@@ -136,8 +136,7 @@ def test_qasper_preparation_emits_typed_units_and_rejects_ambiguous_offsets() ->
             "id": "paper:7:22",
             "evidence_type": "text",
             "document_id": "paper",
-            "start": 7,
-            "end": 22,
+            "intervals": [{"start": 7, "end": 22}],
         }
     ]
     with pytest.raises(ValueError, match="ambiguous source offset"):
@@ -156,8 +155,7 @@ def test_alpha_ndcg_penalizes_duplicate_evidence_before_novel_evidence() -> None
                 "id": name,
                 "evidence_type": "text",
                 "document_id": "doc",
-                "start": start,
-                "end": end,
+                "intervals": [{"start": start, "end": end}],
             }
             for name, start, end in (("a", 0, 5), ("b", 6, 10))
         ],
@@ -181,22 +179,19 @@ def test_alpha_ndcg_penalizes_duplicate_evidence_before_novel_evidence() -> None
 def test_quality_uses_three_and_five_cutoffs() -> None:
     question = {
         "id": "q1",
-        "document_id": "doc",
         "evidence_type": "text",
         "evidence": [
             {
                 "id": "unit-a",
                 "evidence_type": "text",
                 "document_id": "doc",
-                "start": 0,
-                "end": 5,
+                "intervals": [{"start": 0, "end": 5}],
             },
             {
                 "id": "unit-b",
                 "evidence_type": "text",
                 "document_id": "doc",
-                "start": 6,
-                "end": 10,
+                "intervals": [{"start": 6, "end": 10}],
             },
         ],
     }
@@ -253,8 +248,7 @@ def test_single_unit_questions_receive_alpha_ndcg_and_its_metric_contract() -> N
                 "id": "q-e2",
                 "evidence_type": "text",
                 "document_id": "doc",
-                "start": 0,
-                "end": 5,
+                "intervals": [{"start": 1, "end": 4}],
             },
         ],
     }
@@ -268,15 +262,15 @@ def test_retrieval_metrics_use_complete_units_and_evaluation_tokens() -> None:
     text = "alpha beta gamma"
     question = {
         "id": "q1",
-        "document_id": "doc",
         "evidence_type": "text",
         "evidence": [
             {
                 "id": "unit-a",
                 "evidence_type": "text",
+                "document_id": "doc",
                 "intervals": [
-                    {"document_id": "doc", "start": 0, "end": 5},
-                    {"document_id": "doc", "start": 6, "end": 10},
+                    {"start": 0, "end": 5},
+                    {"start": 6, "end": 10},
                 ],
             }
         ],
@@ -374,42 +368,60 @@ def test_embedding_runtime_rejects_wrong_output_cardinality_and_dimensions(shape
         runtime.embed_query("question")
 
 
-def test_quality_aggregation_uses_documents_as_statistical_units() -> None:
+def test_quality_aggregation_uses_questions_as_statistical_units() -> None:
     samples = [
         SampleResult(
             "q1",
             {"quality.overall.alpha_ndcg_at_5": 1.0},
             0.1,
-            {"document_id": "a", "evidence_type": "text"},
+            {
+                "source_document_ids": ("a",),
+                "independent_source_id": "a",
+                "evidence_type": "text",
+            },
         ),
         SampleResult(
             "q2",
             {"quality.overall.alpha_ndcg_at_5": 1.0},
             0.1,
-            {"document_id": "a", "evidence_type": "text"},
+            {
+                "source_document_ids": ("a",),
+                "independent_source_id": "a",
+                "evidence_type": "text",
+            },
         ),
         SampleResult(
             "q3",
             {"quality.overall.alpha_ndcg_at_5": 0.0},
             0.1,
-            {"document_id": "b", "evidence_type": "text"},
+            {
+                "source_document_ids": ("b",),
+                "independent_source_id": "b",
+                "evidence_type": "text",
+            },
         ),
     ]
     aggregate, intervals = aggregate_quality(
-        samples, resamples=100, seed=42, confidence=0.95
+        samples, resamples=100, seed=42, confidence=0.95, minimum_sources=2
     )
-    assert aggregate["quality.overall.alpha_ndcg_at_5"] == 0.5
-    assert aggregate["quality.overall.alpha_ndcg_at_5.sample_count"] == 2
-    assert intervals["quality.overall.alpha_ndcg_at_5"]["estimate"] == 0.5
+    assert aggregate["quality.overall.alpha_ndcg_at_5"] == pytest.approx(2 / 3)
+    assert aggregate["quality.overall.alpha_ndcg_at_5.sample_count"] == 3
+    assert intervals["quality.overall.alpha_ndcg_at_5"]["estimate"] == pytest.approx(
+        2 / 3
+    )
 
 
-def test_latency_intervals_resample_documents_not_query_rows() -> None:
+def test_latency_intervals_resample_sources_not_query_rows() -> None:
     samples = [
         SampleResult(
             f"q{index}",
             {},
             index / 1000,
-            {"document_id": f"doc-{index}", "evidence_type": "text"},
+            {
+                "source_document_ids": [f"doc-{index}"],
+                "independent_source_id": f"doc-{index}",
+                "evidence_type": "text",
+            },
         )
         for index in range(1, 21)
     ]
@@ -417,7 +429,7 @@ def test_latency_intervals_resample_documents_not_query_rows() -> None:
         samples,
         resamples=100,
         seed=42,
-        minimum_documents=20,
+        minimum_sources=20,
         confidence=0.95,
     )
     assert set(intervals) == {
@@ -645,11 +657,16 @@ def test_rag_evidence_requires_stable_units_and_valid_mixed_types() -> None:
             {
                 "id": "q",
                 "kind": "question",
-                "document_id": "doc",
                 "question": "question",
                 "answerable": True,
                 "evidence_type": "text",
-                "evidence": [{"document_id": "doc", "start": 0, "end": 5}],
+                "evidence": [
+                    {
+                        "evidence_type": "text",
+                        "document_id": "doc",
+                        "intervals": [{"start": 0, "end": 5}],
+                    }
+                ],
             },
         ),
     )
@@ -669,15 +686,13 @@ def test_rag_evidence_requires_stable_units_and_valid_mixed_types() -> None:
                             "id": "a",
                             "evidence_type": "text",
                             "document_id": "doc",
-                            "start": 0,
-                            "end": 5,
+                            "intervals": [{"start": 0, "end": 5}],
                         },
                         {
                             "id": "b",
                             "evidence_type": "formula",
                             "document_id": "doc",
-                            "start": 6,
-                            "end": 10,
+                            "intervals": [{"start": 6, "end": 10}],
                         },
                     ],
                 },
@@ -698,8 +713,7 @@ def test_rag_evidence_requires_stable_units_and_valid_mixed_types() -> None:
                             "id": "a",
                             "evidence_type": "text",
                             "document_id": "doc",
-                            "start": 0.5,
-                            "end": 5,
+                            "intervals": [{"start": 0.5, "end": 5}],
                         }
                     ],
                 },
@@ -721,8 +735,7 @@ def test_rag_evidence_requires_stable_units_and_valid_mixed_types() -> None:
                             "id": identifier,
                             "evidence_type": "text",
                             "document_id": "doc",
-                            "start": 0,
-                            "end": 5,
+                            "intervals": [{"start": 0, "end": 5}],
                         }
                         for identifier in ("a", "b")
                     ],
@@ -863,7 +876,6 @@ def test_cl100k_boundaries_send_canonical_text_not_token_ids_to_embedder(
             {
                 "id": "q",
                 "kind": "question",
-                "document_id": "doc",
                 "question": "Who is the fan?",
                 "answerable": True,
                 "evidence_type": "text",
@@ -1177,7 +1189,12 @@ def _manifest() -> DatasetManifest:
         "v1",
         42,
         (
-            {"id": "doc", "kind": "document", "text": "alpha"},
+            {
+                "id": "doc",
+                "kind": "document",
+                "text": "alpha",
+                "independent_source_id": "doc",
+            },
             {
                 "id": "other",
                 "kind": "document",
@@ -1186,7 +1203,6 @@ def _manifest() -> DatasetManifest:
             {
                 "id": "q",
                 "kind": "question",
-                "document_id": "doc",
                 "question": "Where is alpha?",
                 "answerable": True,
                 "evidence_type": "text",
@@ -1195,8 +1211,7 @@ def _manifest() -> DatasetManifest:
                         "id": "q-e1",
                         "evidence_type": "text",
                         "document_id": "doc",
-                        "start": 0,
-                        "end": 5,
+                        "intervals": [{"start": 0, "end": 5}],
                     }
                 ],
             },
@@ -1214,8 +1229,7 @@ def test_linear_ndcg_credits_multiple_units_without_exponential_gain():
                 "id": "e2",
                 "evidence_type": "text",
                 "document_id": "doc",
-                "start": 6,
-                "end": 10,
+                "intervals": [{"start": 6, "end": 10}],
             },
         ],
     }
@@ -1247,25 +1261,45 @@ def test_partial_quality_stays_diagnostic_and_failed_documents_enter_draws():
     name = "quality.overall.ndcg_at_3"
     samples = [
         SampleResult(
-            "a", {name: 1.0}, 0.1, {"document_id": "a", "evidence_type": "text"}
+            "a",
+            {name: 1.0},
+            0.1,
+            {
+                "source_document_ids": ("a",),
+                "independent_source_id": "a",
+                "evidence_type": "text",
+            },
         ),
         SampleResult(
-            "b", {name: 0.0}, 0.2, {"document_id": "b", "evidence_type": "text"}
+            "b",
+            {name: 0.0},
+            0.2,
+            {
+                "source_document_ids": ("b",),
+                "independent_source_id": "b",
+                "evidence_type": "text",
+            },
         ),
         SampleResult(
             "c",
             {name: None},
             None,
             {
-                "document_id": "c",
                 "evidence_type": "text",
                 "first_attempt_status": "failed",
+                "source_document_ids": ["c"],
+                "independent_source_id": "c",
             },
         ),
     ]
     diagnostics = {}
     aggregate, intervals = aggregate_quality(
-        samples, resamples=100, seed=42, confidence=0.95, diagnostics=diagnostics
+        samples,
+        resamples=100,
+        seed=42,
+        confidence=0.95,
+        diagnostics=diagnostics,
+        minimum_sources=2,
     )
     assert aggregate[name] is None
     assert name not in intervals
@@ -1279,15 +1313,24 @@ def test_supported_degenerate_ci_is_retained_and_one_document_has_no_bounds():
     name = "quality.overall.ndcg_at_3"
     samples = [
         SampleResult(
-            str(i), {name: 0.0}, 0.1, {"document_id": str(i), "evidence_type": "text"}
+            str(i),
+            {name: 0.0},
+            0.1,
+            {
+                "source_document_ids": (str(i),),
+                "independent_source_id": str(i),
+                "evidence_type": "text",
+            },
         )
         for i in range(2)
     ]
-    _, intervals = aggregate_quality(samples, resamples=100, seed=42, confidence=0.95)
+    _, intervals = aggregate_quality(
+        samples, resamples=100, seed=42, confidence=0.95, minimum_sources=2
+    )
     assert intervals[name]["lower"] == intervals[name]["upper"] == 0.0
     assert intervals[name]["degenerate"] is True
     _, intervals = aggregate_quality(
-        samples[:1], resamples=100, seed=42, confidence=0.95
+        samples[:1], resamples=100, seed=42, confidence=0.95, minimum_sources=2
     )
     assert intervals[name]["lower"] is None
     assert intervals[name]["reason"] == "insufficient_independent_sources"
@@ -1406,7 +1449,7 @@ def test_protocol_rejects_missing_chunker_and_single_document_ci_support():
     with pytest.raises(ValueError, match="all eight"):
         chunking_protocol_from_mapping(payload)
     payload = deepcopy(CHUNKING_PROTOCOL.meta.resolved)
-    payload["statistics"]["minimum_latency_ci_documents"] = 1
+    payload["statistics"]["minimum_latency_ci_sources"] = 1
     with pytest.raises(ValueError):
         chunking_protocol_from_mapping(payload)
 
@@ -1504,8 +1547,7 @@ def test_alpha_greedy_exceedance_keeps_raw_ratio_and_caps_question_score():
                     "id": str(i),
                     "evidence_type": "text",
                     "document_id": "doc",
-                    "start": start,
-                    "end": end,
+                    "intervals": [{"start": start, "end": end}],
                 }
                 for i, (start, end) in enumerate(evidence)
             ],
@@ -1915,7 +1957,6 @@ def test_authoritative_data_validation_checks_complete_inventory_and_leakage(tmp
                     "id": split + scope,
                     "kind": "question",
                     "question": "Which evidence?",
-                    "document_id": split,
                     "answerable": True,
                     "evidence_type": scope,
                     "evidence": [
@@ -1923,8 +1964,7 @@ def test_authoritative_data_validation_checks_complete_inventory_and_leakage(tmp
                             "id": f"{scope}-{i}",
                             "evidence_type": kind,
                             "document_id": split,
-                            "start": i * 6,
-                            "end": i * 6 + 4,
+                            "intervals": [{"start": i * 6, "end": i * 6 + 4}],
                         }
                         for i, kind in enumerate(types)
                     ],
@@ -1968,7 +2008,9 @@ def test_phase_decisions_reject_stale_protocols_and_select_exact_winners(
 
     payload = deepcopy(CHUNKING_PROTOCOL.meta.resolved)
     payload["statistics"].update(
-        minimum_quality_ci_documents=2, minimum_repeatability_ci_documents=2
+        minimum_quality_ci_sources=2,
+        minimum_repeatability_ci_sources=2,
+        minimum_latency_ci_sources=2,
     )
     protocol = chunking_protocol_from_mapping(payload)
     candidate = protocol.smoke_pair
@@ -2070,7 +2112,8 @@ def test_ce_repeatability_depth_and_source_bootstrap_keep_query_weighting():
             {name: value},
             None,
             {
-                "document_id": source,
+                "source_document_ids": (source,),
+                "independent_source_id": source,
                 "repeatability_status": "scored",
                 "scheduled_pair_count": 3,
                 "successful_pair_count": int(value * 3),
@@ -2082,12 +2125,12 @@ def test_ce_repeatability_depth_and_source_bootstrap_keep_query_weighting():
         samples,
         resamples=100,
         seed=42,
-        minimum_documents=2,
+        minimum_sources=2,
         confidence=0.95,
     )
-    assert aggregate[name] == 0.75  # not the pooled query mean 2/3
-    assert aggregate[name + ".sample_count"] == 2
-    assert support["sample_unit"] == "source_document_macro_value"
+    assert aggregate[name] == pytest.approx(2 / 3)
+    assert aggregate[name + ".sample_count"] == 3
+    assert support["sample_unit"] == "question"
     assert support["scored_question_count"] == 3
     assert intervals[name]["independent_source_count"] == 2
     assert intervals[name]["defined_resamples"] == 100
@@ -2097,7 +2140,7 @@ def test_ce_repeatability_depth_and_source_bootstrap_keep_query_weighting():
         samples,
         resamples=100,
         seed=42,
-        minimum_documents=None,
+        minimum_sources=None,
         confidence=0.95,
     )
     assert intervals[name]["reason"] == "ci_support_not_frozen"
@@ -2107,7 +2150,7 @@ def test_ce_repeatability_depth_and_source_bootstrap_keep_query_weighting():
         samples,
         resamples=100,
         seed=42,
-        minimum_documents=2,
+        minimum_sources=2,
         confidence=0.95,
     )
     assert aggregate[name] is None and intervals == {}
@@ -2335,7 +2378,11 @@ def test_ce_component_latency_intervals_keep_all_sources_and_own_query_medians()
             str(i),
             {},
             None,
-            {"document_id": source, "query_embedding_latency_ms": value},
+            {
+                "source_document_ids": (source,),
+                "independent_source_id": source,
+                "query_embedding_latency_ms": value,
+            },
         )
         for i, (source, value) in enumerate(
             (("a", 1), ("a", 3), ("b", 10), ("c", None))
@@ -2345,7 +2392,7 @@ def test_ce_component_latency_intervals_keep_all_sources_and_own_query_medians()
         samples,
         resamples=100,
         seed=42,
-        minimum_documents=2,
+        minimum_sources=2,
         confidence=0.95,
         metric="query_embedding_latency_ms",
     )
@@ -2359,7 +2406,7 @@ def test_ce_component_latency_intervals_keep_all_sources_and_own_query_medians()
 
 @pytest.mark.parametrize(
     "field,value",
-    [("depth", 0), ("depth", 21), ("minimum_repeatability_ci_documents", 1)],
+    [("depth", 0), ("depth", 21), ("minimum_repeatability_ci_sources", 1)],
 )
 def test_ce_repeatability_protocol_rejects_invalid_controls(field, value):
     payload = deepcopy(CHUNKING_PROTOCOL.meta.resolved)
@@ -2368,7 +2415,7 @@ def test_ce_repeatability_protocol_rejects_invalid_controls(field, value):
         chunking_protocol_from_mapping(payload)
 
 
-def test_ce_reviewed_groups_preserve_document_macro_and_cluster_draw_copies():
+def test_ce_reviewed_groups_preserve_question_macro_and_cluster_draw_copies():
     from benchmarks.common.contracts import CandidateResult
 
     quality, repeat = "quality.overall.ndcg_at_3", "diagnostic.ranking_repeatability"
@@ -2378,12 +2425,12 @@ def test_ce_reviewed_groups_preserve_document_macro_and_cluster_draw_copies():
             {quality: value, repeat: value},
             latency / 1000,
             {
-                "document_id": doc,
+                "source_document_ids": (doc,),
                 "evidence_type": "text",
                 "repeatability_status": "scored",
                 "query_embedding_latency_ms": latency,
                 # Exercise the reviewed alias, not just canonical independent IDs.
-                "source_group_id" if doc == "a2" else "independent_source_id": group,
+                "independent_source_id": group,
             },
         )
         for i, (doc, group, value, latency) in enumerate(
@@ -2396,17 +2443,17 @@ def test_ce_reviewed_groups_preserve_document_macro_and_cluster_draw_copies():
             )
         )
     ]
-    options = {"resamples": 400, "seed": 42, "confidence": 0.95, "minimum_documents": 2}
+    options = {"resamples": 400, "seed": 42, "confidence": 0.95, "minimum_sources": 2}
     aggregate, intervals = aggregate_quality(samples, metric_names=[quality], **options)
-    assert aggregate[quality] == 0.625  # four document means, not two group means
-    assert aggregate[quality + ".sample_count"] == 4
+    assert aggregate[quality] == 0.6
+    assert aggregate[quality + ".sample_count"] == 5
     assert intervals[quality]["eligible_document_count"] == 4
     assert intervals[quality]["independent_source_count"] == 2
     assert intervals[quality]["lower"] == 0
-    assert intervals[quality]["upper"] == pytest.approx(5 / 6)
+    assert intervals[quality]["upper"] == 0.75
     aggregate, intervals, _ = aggregate_repeatability(samples, **options)
-    assert aggregate[repeat] == 0.625
-    assert intervals[repeat]["upper"] == pytest.approx(5 / 6)
+    assert aggregate[repeat] == 0.6
+    assert intervals[repeat]["upper"] == 0.75
     latency = latency_intervals(samples, metric="query_embedding_latency_ms", **options)
     p50 = latency["operational.query_embedding_latency_ms_p50"]
     assert p50["estimate"] == 30
@@ -2415,7 +2462,7 @@ def test_ce_reviewed_groups_preserve_document_macro_and_cluster_draw_copies():
     _, intervals = aggregate_quality(
         samples,
         metric_names=[quality],
-        **{**options, "minimum_documents": 3},
+        **{**options, "minimum_sources": 3},
     )
     assert intervals[quality]["reason"] == "insufficient_independent_sources"
     left = CandidateResult("left", "success", "left", {}, {}, tuple(samples), {})
@@ -2427,11 +2474,11 @@ def test_ce_reviewed_groups_preserve_document_macro_and_cluster_draw_copies():
     comparison = paired_quality([left, right], [quality], **options)[0]["metrics"][
         quality
     ]
-    assert comparison["left_minus_right"] == 0.625
+    assert comparison["left_minus_right"] == 0.6
     assert comparison["paired_resampling_units"] == 2
     assert comparison["paired_documents"] == 4
     assert comparison["paired_samples"] == 5
-    assert comparison["upper"] == pytest.approx(5 / 6)
+    assert comparison["upper"] == 0.75
 
 
 def test_ce_context_descriptors_are_query_weighted_and_partial_is_diagnostic(
@@ -2442,7 +2489,11 @@ def test_ce_context_descriptors_are_query_weighted_and_partial_is_diagnostic(
     manifest = replace(
         base,
         samples=(
-            {**base.samples[0], "text": "alpha " * 6, "source_group_id": "reviewed"},
+            {
+                **base.samples[0],
+                "text": "alpha " * 6,
+                "independent_source_id": "reviewed",
+            },
             base.samples[1],
             *queries,
         ),
@@ -2563,9 +2614,10 @@ def test_ce_unfrozen_ci_support_is_explicit_and_cannot_advance(monkeypatch):
 
     assert CHUNKING_PROTOCOL.unfrozen_ci_policies == (
         "quality",
+        "latency",
         "ranking_repeatability",
     )
-    assert CHUNKING_PROTOCOL.meta.version == "chunking-embedding-v6"
+    assert CHUNKING_PROTOCOL.meta.version == "chunking-embedding-v7"
     plan = run._plan(
         CHUNKING_PROTOCOL,
         _manifest(),

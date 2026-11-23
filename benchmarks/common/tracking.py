@@ -25,7 +25,7 @@ EXPERIMENT_NAMES = {
 def benchmark_name(suite: str, stage: str) -> str:
     """Return the stable benchmark identity used for MLflow grouping."""
 
-    if suite in {"vectordb-server-v4", "vectordb-server-v5"}:
+    if suite == "vectordb-server-v6":
         return "vectordb"
     for prefix, name in (
         ("document-", "document"),

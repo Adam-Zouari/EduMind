@@ -60,7 +60,7 @@ ROOT = Path(__file__).resolve().parents[1]
         ("rag", "retrieval-reranking", "EduMind / Retrieval–Reranking"),
         ("rag", "generation", "EduMind / Generation"),
         ("rag", "final", "EduMind / Final RAG"),
-        ("vectordb-server-v4", "ann", "EduMind / Vector Database"),
+        ("vectordb-server-v6", "ann", "EduMind / Vector Database"),
     ),
 )
 def test_each_benchmark_has_one_mlflow_experiment(suite, stage, expected) -> None:

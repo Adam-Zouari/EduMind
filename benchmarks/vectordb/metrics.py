@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from itertools import combinations
 
 import numpy as np
+
+from benchmarks.common.metrics import cluster_bootstrap
+
+from .workload import ALL_SESSION, SELECTED_FILES
 
 
 def mean(values):
@@ -14,7 +19,8 @@ def mean(values):
 
 
 def percentile(values, q):
-    return float(np.quantile(values, q)) if values else None
+    known = [value for value in values if value is not None]
+    return float(np.quantile(known, q)) if known else None
 
 
 def ratio(numerator, denominator):
@@ -24,24 +30,32 @@ def ratio(numerator, denominator):
 def repeatability(attempts, scheduled):
     if scheduled == 1:
         return {"value": None, "status": "inapplicable", "pairs": []}
-    complete = len(attempts) == scheduled and all(
-        row.get("status") != "not_executed" for row in attempts
+    by_attempt = {row["attempt"]: row for row in attempts}
+    complete = (
+        len(attempts) == scheduled
+        and set(by_attempt) == set(range(1, scheduled + 1))
+        and all(row.get("status") in {"success", "failed"} for row in attempts)
     )
-    pairs = [
-        {
-            "left": left + 1,
-            "right": right + 1,
-            "value": int(
-                attempts[left]["status"] == attempts[right]["status"] == "success"
-                and not attempts[left].get("filter_violation")
-                and not attempts[right].get("filter_violation")
-                and attempts[left].get("ids") == attempts[right].get("ids")
-            )
-            if complete
-            else None,
-        }
-        for left, right in combinations(range(scheduled), 2)
-    ]
+    pairs = []
+    for left, right in combinations(range(1, scheduled + 1), 2):
+        a, b = by_attempt.get(left), by_attempt.get(right)
+        pair_known = all(
+            row and row["status"] in {"success", "failed"} for row in (a, b)
+        )
+        valid = pair_known and all(
+            row["status"] == "success"
+            and row.get("ids") is not None
+            and not row.get("filter_violation")
+            and not row.get("session_isolation_violation")
+            for row in (a, b)
+        )
+        pairs.append(
+            {
+                "left": left,
+                "right": right,
+                "value": int(valid and a["ids"] == b["ids"]) if pair_known else None,
+            }
+        )
     return {
         "value": mean([row["value"] for row in pairs]) if complete else None,
         "status": "scored" if complete else "incomplete",
@@ -86,196 +100,267 @@ def interval(
     }
     if reason:
         return result
-    rng = np.random.default_rng(protocol.meta.seed)
-    result["resampling_performed"] = True
-    draws = []
-    for _ in range(result["requested_resamples"]):
-        value = statistic(
-            [groups[i] for i in rng.integers(0, len(groups), len(groups))]
-        )
-        if value is not None:
-            draws.append(value)
     result.update(
-        defined_resamples=len(draws),
-        undefined_resamples=result["requested_resamples"] - len(draws),
+        cluster_bootstrap(
+            groups,
+            statistic,
+            resamples=result["requested_resamples"],
+            seed=protocol.meta.seed,
+            confidence=protocol.confidence_level,
+        )
     )
-    if draws:
-        lower, upper = np.quantile(
-            draws,
-            [(1 - protocol.confidence_level) / 2, (1 + protocol.confidence_level) / 2],
-        )
-        result.update(
-            lower=float(lower), upper=float(upper), degenerate=bool(lower == upper)
-        )
-    else:
-        result["reason"] = "no_defined_resamples"
     return result
 
 
-def aggregate_condition(query_rows, requests, windows, condition, protocol, profile):
-    """Keep null first outcomes in group inventories and condition identities."""
-    cid = condition["id"]
-    metrics, intervals, statuses = {}, {}, {}
-    groups = defaultdict(list)
-    for row in query_rows:
-        groups[row["source_group"]].append(row)
-    grouped = list(groups.values())
-    for name in {key for row in query_rows for key in row["metrics"]}:
-        key = name + ".condition." + cid
+SESSION_UNIT = "reviewed_session_group"
+SEARCH_LATENCY = "operational.database_search_latency_ms"
+SEARCH_ERROR = "diagnostic.request_error_rate.search"
+FILTER_VIOLATION = "diagnostic.filter_violation_rate"
+REPEATABILITY = "diagnostic.ranking_repeatability"
+ANN_KEYS = {
+    ALL_SESSION: "quality.ann_recall_at_20",
+    SELECTED_FILES: "quality.filtered_ann_recall_at_20",
+}
+
+
+def usable_duration(value):
+    return type(value) in (float, int) and math.isfinite(value) and value >= 0
+
+
+def search_counts(rows):
+    completed = [row for row in rows if row["status"] == "success"]
+    timed = sum(usable_duration(row["latency_seconds"]) for row in completed)
+    failed = sum(row["status"] == "failed" for row in rows)
+    return {
+        "scheduled": len(rows),
+        "submitted": len(completed) + failed,
+        "completed": len(completed),
+        "timed": timed,
+        "failed": failed,
+        "not_executed": len(rows) - len(completed) - failed,
+        "missing_timing": len(completed) - timed,
+        "checkable": sum(
+            type(row.get("filter_violation")) is bool for row in completed
+        ),
+    }
+
+
+def session_groups(rows):
+    grouped = defaultdict(list)
+    for row in rows:
+        grouped[row["session_group_id"]].append(row)
+    return [grouped[key] for key in sorted(grouped)]
+
+
+def session_macro(draw, metric):
+    """Each repeated draw copy retains each of its workspace means once."""
+    session_values = []
+    for group in draw:
+        sessions = defaultdict(list)
+        for row in group:
+            sessions[row["session_id"]].append(row["metrics"].get(metric))
+        session_values.extend(mean(values) for values in sessions.values())
+    return mean(session_values)
+
+
+def request_statistic(requests, metric):
+    successful = [row for row in requests if row["status"] == "success"]
+    if metric.startswith("diagnostic.request_error_rate."):
+        return ratio(
+            sum(row["status"] == "failed" for row in requests),
+            sum(row["status"] != "not_executed" for row in requests),
+        )
+    if metric == FILTER_VIOLATION:
+        return mean(
+            int(row["filter_violation"])
+            for row in successful
+            if type(row.get("filter_violation")) is bool
+        )
+    return percentile(
+        [
+            row["latency_seconds"] * 1000
+            for row in successful
+            if usable_duration(row["latency_seconds"])
+        ],
+        0.95 if metric.endswith("p95") else 0.5,
+    )
+
+
+def aggregate_session_scope(query_rows, requests, scope, protocol, profile):
+    metrics, intervals, statuses, per_session = {}, {}, {}, []
+    for session_id in sorted({row["session_id"] for row in query_rows}):
+        cohort = [row for row in query_rows if row["session_id"] == session_id]
+        per_session.append(
+            {
+                "session_id": session_id,
+                "session_group_id": cohort[0]["session_group_id"],
+                "condition": scope,
+                "eligible_questions": len(cohort),
+                **{
+                    name: mean(row["metrics"].get(name) for row in cohort)
+                    for name in (ANN_KEYS[scope], REPEATABILITY)
+                },
+                "ann_contributing_questions": sum(
+                    row["metrics"].get(ANN_KEYS[scope]) is not None for row in cohort
+                ),
+                "ann_unavailable_questions": sum(
+                    row["metric_statuses"].get(ANN_KEYS[scope]) == "unavailable"
+                    for row in cohort
+                ),
+                "repeatability_contributing_questions": sum(
+                    row["metrics"].get(REPEATABILITY) is not None for row in cohort
+                ),
+            }
+        )
+    for name in (ANN_KEYS[scope], REPEATABILITY):
+        key = name + ".condition." + scope
+        states = [row["metric_statuses"][name] for row in query_rows]
+        eligible = [
+            row for row in query_rows if row["metric_statuses"][name] != "inapplicable"
+        ]
+        scored = [row for row in eligible if row["metrics"][name] is not None]
+        unavailable = any(state in {"unavailable", "incomplete"} for state in states)
+        counts = {
+            "eligible_questions": len(eligible),
+            "contributing_questions": len(scored),
+            "unavailable_questions": len(eligible) - len(scored),
+            "failed_first_questions": sum(
+                row.get("first_attempt_status") == "failed" for row in eligible
+            ),
+            "eligible_sessions": len({row["session_id"] for row in eligible}),
+            "contributing_sessions": len({row["session_id"] for row in scored}),
+        }
 
         def statistic(draw, name=name):
-            return mean([row["metrics"].get(name) for group in draw for row in group])
+            return session_macro(draw, name)
 
-        values = [row["metrics"].get(name) for row in query_rows]
         bounds = interval(
-            grouped,
+            session_groups(eligible),
             statistic,
             protocol=protocol,
             profile=profile,
             metric=key,
-            unit="query_source",
+            unit=SESSION_UNIT,
+            blocked_reason="required_quality_coverage_incomplete"
+            if unavailable
+            else None,
         )
-        metrics[key] = bounds["estimate"]
-        metrics[key + ".sample_count"] = sum(value is not None for value in values)
+        metrics[key] = bounds["estimate"] if not unavailable else None
+        metrics[key + ".sample_count"] = counts["contributing_sessions"]
         metrics[key + ".independent_source_count"] = bounds["contributing_source_count"]
         intervals[key] = bounds
         statuses[key] = {
+            **counts,
             "status": "incomplete"
-            if any(
-                row["metric_statuses"].get(name) in {"unavailable", "incomplete"}
-                for row in query_rows
-            )
+            if unavailable
             else "scored"
-            if any(value is not None for value in values)
+            if scored
             else "inapplicable",
-            "scheduled": len(values),
-            "contributing": sum(value is not None for value in values),
             "ci": bounds,
         }
-    submitted = [row for row in requests if row["status"] != "not_executed"]
-    successes = [row for row in submitted if row["status"] == "success"]
-    checkable = [row for row in successes if condition["filters"]]
-    complete = len(submitted) == len(requests)
-    ops_groups = defaultdict(list)
-    design = condition.get("independent_window_groups")
-    for row in requests:
-        ops_groups[
-            (design[row["window"]] if design else "unreviewed-window-dependence")
-            if condition["mode"] == "load"
-            else row["source_group"]
-        ].append(row)
-    request_groups = list(ops_groups.values())
-
-    def flattened(draw):
-        return [row for group in draw for row in group]
-
-    estimators = {
-        "diagnostic.request_error_rate.search": lambda draw: ratio(
-            sum(row["status"] == "failed" for row in flattened(draw)),
-            sum(row["status"] != "not_executed" for row in flattened(draw)),
-        ),
-        "diagnostic.filter_violation_rate": lambda draw: mean(
-            [
-                int(row["filter_violation"])
-                for row in flattened(draw)
-                if row["status"] == "success" and condition["filters"]
-            ]
-        ),
-        **{
-            f"operational.database_search_latency_ms_p{int(q * 100)}": lambda draw, q=q: (
-                percentile(
-                    [
-                        row["latency_seconds"] * 1000
-                        for row in flattened(draw)
-                        if row["status"] == "success"
-                    ],
-                    q,
-                )
-            )
-            for q in (0.5, 0.95)
-        },
-    }
-    for name, statistic in estimators.items():
-        key = name + ".condition." + cid
-        bounds = interval(
-            request_groups,
-            statistic,
-            protocol=protocol,
-            profile=profile,
-            metric=key,
-            unit="independent_load_window"
-            if condition["mode"] == "load"
-            else "query_source",
-            blocked_reason="load_window_dependence_design_not_frozen"
-            if condition["mode"] == "load" and not design
-            else "required_execution_incomplete"
-            if not complete
-            else None,
+    counts = search_counts(requests)
+    request_groups = session_groups(requests)
+    for name in (
+        SEARCH_ERROR,
+        FILTER_VIOLATION,
+        SEARCH_LATENCY + "_p50",
+        SEARCH_LATENCY + "_p95",
+    ):
+        key = name + ".condition." + scope
+        applicable = bool(requests) and (
+            name != FILTER_VIOLATION or scope == SELECTED_FILES
         )
+        if not applicable:
+            bounds = interval(
+                [],
+                lambda _: None,
+                protocol=protocol,
+                profile=profile,
+                metric=key,
+                unit=SESSION_UNIT,
+                blocked_reason="inapplicable",
+            )
+        else:
+            bounds = interval(
+                request_groups,
+                lambda draw, name=name: request_statistic(
+                    [row for group in draw for row in group], name
+                ),
+                protocol=protocol,
+                profile=profile,
+                metric=key,
+                unit=SESSION_UNIT,
+                blocked_reason="required_execution_incomplete"
+                if counts["not_executed"]
+                else None,
+            )
         metrics[key], intervals[key] = bounds["estimate"], bounds
         metrics[key + ".sample_count"] = (
-            len(checkable)
-            if name.endswith("filter_violation_rate")
-            else len(submitted)
-            if name.endswith("rate.search")
-            else len(successes)
+            counts["checkable"]
+            if name == FILTER_VIOLATION
+            else counts["submitted"]
+            if name == SEARCH_ERROR
+            else counts["timed"]
         )
         metrics[key + ".independent_source_count"] = bounds["contributing_source_count"]
         statuses[key] = {
-            "status": "scored"
+            **counts,
+            "execution_complete": not counts["not_executed"],
+            "status": "inapplicable"
+            if not applicable
+            else "incomplete"
+            if counts["not_executed"]
+            else "scored"
             if metrics[key] is not None
-            else "inapplicable"
-            if name.endswith("filter_violation_rate") and not condition["filters"]
             else "unavailable",
-            "submitted": len(submitted),
-            "successful": len(successes),
-            "checkable": len(checkable),
-            "execution_complete": complete,
             "ci": bounds,
         }
-    if windows and condition["mode"] == "load":
-        name = "operational.qps"
-        key = name + ".condition." + cid
-        window_groups = defaultdict(list)
-        for row in windows:
-            window_groups[
-                design[row["window"]] if design else "unreviewed-window-dependence"
-            ].append(row)
-        bounds = interval(
-            list(window_groups.values()),
-            lambda draw: ratio(
-                sum(row["successful"] for group in draw for row in group),
-                sum(row["wall_seconds"] for group in draw for row in group),
-            ),
-            protocol=protocol,
-            profile=profile,
-            metric=key,
-            unit="independent_load_window",
-            blocked_reason="load_window_dependence_design_not_frozen"
-            if not design
-            else "required_execution_incomplete"
-            if not complete or len(windows) != condition["windows"]
-            else None,
+    for label, value in counts.items():
+        metrics[f"validity.search.{label}_count.condition.{scope}"] = value
+    return metrics, intervals, statuses, per_session
+
+
+def paired_search_summary(query_rows, requests):
+    paired_ids = {
+        (row["session_id"], row["query_id"]) for row in query_rows if row["paired"]
+    }
+    summary = {
+        "paired_sessions": len({session for session, _ in paired_ids}),
+        "paired_questions": len(paired_ids),
+    }
+    for condition, prefix in (
+        (ALL_SESSION, "unfiltered"),
+        (SELECTED_FILES, "filtered"),
+    ):
+        rows = [
+            row for row in query_rows if row["condition"] == condition and row["paired"]
+        ]
+        scheduled = [
+            row for row in requests if row["condition"] == condition and row["paired"]
+        ]
+        key = ANN_KEYS[condition]
+        unavailable = any(row["metric_statuses"][key] == "unavailable" for row in rows)
+        summary.update(
+            {
+                f"{prefix}_{name}": count
+                for name, count in search_counts(scheduled).items()
+            }
         )
-        metrics[key], intervals[key] = bounds["estimate"], bounds
-        metrics[key + ".sample_count"] = len(windows)
-        metrics[key + ".independent_source_count"] = bounds["contributing_source_count"]
-        statuses[key] = {
-            "status": "scored" if metrics[key] is not None else "unavailable",
-            "ci": bounds,
-        }
-    for label, value in {
-        "submitted_count": len(submitted),
-        "successful_count": len(successes),
-        "failed_count": len(submitted) - len(successes),
-        "not_executed_count": len(requests) - len(submitted),
-    }.items():
-        metrics[f"validity.search.{label}.condition.{cid}"] = value
-    return metrics, intervals, statuses
+        summary[f"{prefix}_recall_at_20"] = (
+            session_macro(session_groups(rows), key) if not unavailable else None
+        )
+        summary[f"{prefix}_recall_status"] = (
+            "inapplicable" if not rows else "incomplete" if unavailable else "scored"
+        )
+        for p in ("p50", "p95"):
+            summary[f"{prefix}_search_latency_ms_{p}"] = request_statistic(
+                scheduled, SEARCH_LATENCY + "_" + p
+            )
+    return summary
 
 
 def aggregate_operations(requests, operations, protocol, profile):
-    from .comparisons import operation_condition, request_statistic
+    from .comparisons import operation_condition
 
     specs = defaultdict(list)
     for spec in operations:

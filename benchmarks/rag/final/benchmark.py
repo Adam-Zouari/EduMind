@@ -38,7 +38,13 @@ from benchmarks.rag.generation.validation import questions_from_manifest
 from benchmarks.rag.retrieval_reranking.metrics import (
     aggregate_quality,
     pool_evidence_unit_recall,
+)
+from benchmarks.rag.statistics import (
+    SOURCE_KEYS,
+    SOURCE_SCOPES,
+    source_groups,
     source_interval,
+    source_scope,
 )
 from edumind.common.artifacts import atomic_write_json, stable_hash
 from edumind.common.gpu import release_runtime_memory
@@ -494,7 +500,7 @@ def score(raw, manifest, generation_protocol, retrieval_protocol, *, judge=None)
     questions = {q["id"]: q for q in manifest.samples if q.get("kind") == "question"}
     cutoff = raw["composition"]["top_k"]
     cutoffs = [k for k in retrieval_protocol.quality_cutoffs if k <= cutoff]
-    quality_rows, timing_groups, request_rows = [], {}, []
+    quality_rows, timing_samples, request_rows = [], [], []
     tokenizer = None
     for record in raw["records"]:
         q = record["question"]
@@ -551,9 +557,7 @@ def score(raw, manifest, generation_protocol, retrieval_protocol, *, judge=None)
                 values,
                 None,
                 {
-                    "document_id": q["document_id"],
-                    "source_id": q["source_id"],
-                    "independent_source_id": q["source_id"],
+                    **{key: q[key] for key in SOURCE_KEYS},
                     "evidence_type": q["evidence_type"],
                     "answerable": q["answerable"],
                 },
@@ -570,12 +574,15 @@ def score(raw, manifest, generation_protocol, retrieval_protocol, *, judge=None)
                     "evidence": json.dumps(a, ensure_ascii=False),
                 }
             )
-        group = timing_groups.setdefault(q["source_id"], [])
-        group.append(
+        timing_samples.append(
             SampleResult(
-                q["id"], {}, None, {"document_id": q["document_id"], "record": record}
+                q["id"],
+                {},
+                None,
+                {**{key: q[key] for key in SOURCE_KEYS}, "record": record},
             )
         )
+    timing_groups = source_groups(timing_samples)
     names = sorted(set().union(*(row.metrics for row in quality_rows)))
     support = {}
     for diagnostic in (False, True):
@@ -591,11 +598,29 @@ def score(raw, manifest, generation_protocol, retrieval_protocol, *, judge=None)
             resamples=generation_protocol.profile(profile).bootstrap_resamples,
             seed=generation_protocol.meta.seed,
             confidence=generation_protocol.confidence_level,
-            minimum_documents=retrieval_protocol.minimum_quality_ci_documents,
+            minimum_sources=retrieval_protocol.minimum_quality_ci_sources,
         )
         metrics.update(added)
         intervals.update(bounds)
         support.update(details)
+    for scope in SOURCE_SCOPES:
+        cohort = [row for row in quality_rows if source_scope(row.metadata) == scope]
+        added, bounds, details = aggregate_quality(
+            cohort,
+            names=[name for name in names if name.startswith("diagnostic.")],
+            resamples=generation_protocol.profile(profile).bootstrap_resamples,
+            seed=generation_protocol.meta.seed,
+            confidence=generation_protocol.confidence_level,
+            minimum_sources=retrieval_protocol.minimum_quality_ci_sources,
+        )
+        for target, values in (
+            (metrics, added),
+            (intervals, bounds),
+            (support, details),
+        ):
+            target.update(
+                {f"slice.{scope}.{name}": value for name, value in values.items()}
+            )
     for field, path in (
         ("request", "request_latency_seconds"),
         ("retrieval", "retrieval"),
@@ -636,14 +661,14 @@ def score(raw, manifest, generation_protocol, retrieval_protocol, *, judge=None)
                 return float(np.quantile(observed, quantile)) if observed else None
 
             key = f"{field}_{percentile}_seconds"
-            operational[key] = statistic(list(timing_groups.values()))
+            operational[key] = statistic(timing_groups)
             intervals["operational." + key] = source_interval(
-                list(timing_groups.values()),
+                timing_groups,
                 statistic,
                 resamples=generation_protocol.profile(profile).bootstrap_resamples,
                 seed=generation_protocol.meta.seed,
                 confidence=generation_protocol.confidence_level,
-                minimum_documents=retrieval_protocol.minimum_latency_ci_documents,
+                minimum_sources=retrieval_protocol.minimum_latency_ci_sources,
             )
     artifacts.update(
         final_attempts=request_rows,
@@ -656,7 +681,9 @@ def score(raw, manifest, generation_protocol, retrieval_protocol, *, judge=None)
     parameters.update(
         composition_checksum=raw["composition_checksum"], run_type="selected-system"
     )
-    complete_retrieval = all(row["complete"] for row in support.values())
+    complete_retrieval = all(
+        row["complete"] or row["status"] == "inapplicable" for row in support.values()
+    )
     if failure or not complete_retrieval:
         raise CandidateExecutionError(
             str(failure) if failure else "Final retrieval quality incomplete",

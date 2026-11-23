@@ -199,21 +199,44 @@ def test_known_noncompletion_is_conditional_not_missing_schema(inputs):
     assert summary["operational.latency_p50_seconds"]["value"] is None
 
 
-def test_document_macro_and_unfrozen_ci_support(inputs):
+def test_question_macro_and_unfrozen_ci_support(inputs):
     q = inputs[2][0]
     records = [
         record({**q, "id": f"q{i}"}, [attempt(response=answer(citations=[]))])
         for i in range(4)
     ]
     records.append(
-        record({**q, "id": "qB", "document_id": "B", "source_id": "B"}, [attempt()])
+        record(
+            {
+                **q,
+                "id": "qB",
+                "source_document_ids": ("B",),
+                "independent_source_id": "B",
+            },
+            [attempt()],
+        )
     )
     summary = aggregate(records, profile="development", resamples=30)
     point = summary["quality.citation_f1"]
-    assert point["value"] == 0.5
+    assert point["value"] == 0.2
     assert point["interval"]["lower"] is None
     assert point["interval"]["reason"] == "ci_support_not_frozen"
     assert point["contributing_sources"] == 2
+
+
+def test_unanswerable_provenance_does_not_create_gold_evidence_slices(inputs):
+    from benchmarks.rag.generation.metrics import required_ci_policy_keys
+
+    q = inputs[2][1]
+    assert not q["answerable"] and q["evidence_type"] is None
+    summary = aggregate([record(q, [attempt(outcome="timeout")])], profile="smoke")
+    key = "reliability.timeout_rate"
+    assert summary[key]["value"] == 1
+    assert summary[f"slice.unanswerable.{key}"]["value"] == 1
+    for scope in ("text", "single_source", "multi_source"):
+        sliced = f"slice.{scope}.{key}"
+        assert summary[sliced]["eligible_questions"] == 0
+        assert sliced not in required_ci_policy_keys([q])
 
 
 def test_pooled_decode_and_supported_grouped_bootstrap(inputs):
@@ -222,7 +245,10 @@ def test_pooled_decode_and_supported_grouped_bootstrap(inputs):
     b["workload"]["total_output_tokens"] = 5
     b["token_event_seconds"] = [0.1, 0.2, 0.3, 0.4, 0.5]
     b["timing"]["last_token_seconds"] = 0.5
-    records = [record(q, [a]), record({**q, "document_id": "B", "source_id": "B"}, [b])]
+    records = [
+        record(q, [a]),
+        record({**q, "source_document_ids": ("B",), "independent_source_id": "B"}, [b]),
+    ]
     summary = aggregate(
         records,
         profile="development",
@@ -549,7 +575,12 @@ def test_generation_citation_coverage_requires_all_unit_intervals(inputs):
         for left, right in ((0, 41), (41, len(text)))
     ]
     question["evidence"] = [
-        {"id": "photosynthesis-energy", "evidence_type": "text", "intervals": intervals}
+        {
+            "id": "photosynthesis-energy",
+            "evidence_type": "text",
+            "document_id": rows[0]["id"],
+            "intervals": [{"start": i["start"], "end": i["end"]} for i in intervals],
+        }
     ]
     block = question["supplied_evidence"][0]
     block.update(intervals=intervals[:1], text=text[:41])
@@ -611,7 +642,11 @@ def test_missing_ttft_instrumentation_suppresses_only_affected_intervals(inputs)
     records = []
     for index in range(2):
         item = deepcopy(question)
-        item.update(id=str(index), document_id=str(index), source_id=str(index))
+        item.update(
+            id=str(index),
+            source_document_ids=(str(index),),
+            independent_source_id=str(index),
+        )
         records.append(record(item, [attempt(seed) for seed in (42, 43, 44)]))
     records[0]["attempts"][0]["timing"]["ttft_seconds"] = None
     keys = ("operational.ttft_p50_seconds", "operational.latency_p50_seconds")

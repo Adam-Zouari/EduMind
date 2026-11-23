@@ -49,14 +49,14 @@ def prepare_qasper(output_directory: Path, *, seed: int = 42) -> list[Path]:
         samples = _qasper_samples(selected)
         payload = {
             "name": f"qasper-{manifest_split}",
-            "version": "2.0.0",
+            "version": "3.0.0",
             "task": "rag",
             "split": manifest_split,
             "source": QASPER_DATASET,
             "license": "CC-BY-4.0",
             "revision": QASPER_REVISION,
             "checksum": manifest_content_checksum(samples),
-            "preprocessing_version": "qasper-evidence-units-v2",
+            "preprocessing_version": "qasper-linked-questions-v3",
             "split_seed": seed,
             "selected_ids": sorted(paper_ids),
             "samples": samples,
@@ -73,7 +73,10 @@ def prepare_rag_selection_manifest(
 ) -> Path:
     """Combine one QASPER split with verified table/formula/mixed RAG samples."""
     qasper = load_manifest(qasper_path)
-    structured = load_manifest(structured_path)
+    # Structured questions may reference canonical documents from either input.
+    structured = load_manifest(structured_path, validate_annotations=False)
+    if qasper.task != "rag" or structured.task != "rag":
+        raise ValueError("RAG preparation requires two RAG manifests")
     if qasper.split != structured.split:
         raise ValueError(
             f"RAG source splits differ: {qasper.split!r} versus {structured.split!r}"
@@ -91,7 +94,8 @@ def prepare_rag_selection_manifest(
         {
             str(sample.get("evidence_type", ""))
             for sample in structured_questions
-            if str(sample.get("evidence_type", "")) not in required_types | {"text"}
+            if sample.get("answerable")
+            and str(sample.get("evidence_type", "")) not in required_types | {"text"}
         }
     )
     if invalid_types:
@@ -129,14 +133,14 @@ def prepare_rag_selection_manifest(
         )
     payload = {
         "name": f"edumind-rag-selection-{qasper.split}",
-        "version": "2.0.0",
+        "version": "3.0.0",
         "task": "rag",
         "split": qasper.split,
         "source": f"{qasper.source}+{structured.source}",
         "license": f"{qasper.license};{structured.license}",
         "revision": f"{qasper.revision}+{structured.revision}",
         "checksum": manifest_content_checksum(combined),
-        "preprocessing_version": "structured-rag-evidence-units-v2",
+        "preprocessing_version": "structured-rag-linked-questions-v3",
         "split_seed": qasper.split_seed,
         "samples": combined,
     }
@@ -246,7 +250,7 @@ def _qasper_samples(papers: Sequence[Mapping[str, Any]]) -> list[dict[str, objec
                 {
                     "id": str(qa.get("question_id", "")),
                     "kind": "question",
-                    "document_id": paper_id,
+                    **({} if answerable else {"reviewed_document_ids": [paper_id]}),
                     "question": str(qa.get("question", "")),
                     "answer": answers[0] if answers else "",
                     "accepted_answers": answers,
@@ -322,8 +326,7 @@ def _answers_and_evidence(
                         "id": f"{paper_id}:{start}:{start + len(normalized)}",
                         "evidence_type": "text",
                         "document_id": paper_id,
-                        "start": start,
-                        "end": start + len(normalized),
+                        "intervals": [{"start": start, "end": start + len(normalized)}],
                     }
                     if item not in evidence:
                         evidence.append(item)

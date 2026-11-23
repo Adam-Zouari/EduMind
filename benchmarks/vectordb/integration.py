@@ -13,7 +13,7 @@ from edumind.common.artifacts import stable_hash
 
 from .adapters import Record, create
 from .conformance import _finish_index
-from .workload import validate_hits
+from .workload import classify_hits, matches_filters
 
 
 def verify_inventory(adapter, expected):
@@ -98,6 +98,7 @@ class SelectedServer:
         *,
         reranker=None,
         adapter=None,
+        global_ids=None,
     ):
         self.database, self.config, self.index = database, config, index
         self.strategy = strategy.split("|", 1)[0]
@@ -127,6 +128,7 @@ class SelectedServer:
             for i, chunk in enumerate(index.chunks)
         ]
         self.trusted = {row.identifier: row.metadata for row in self.records}
+        self.global_ids = self.trusted if global_ids is None else global_ids
         self.by_id = {row.identifier: i for i, row in enumerate(self.records)}
         self.identity = stable_hash(
             {
@@ -161,9 +163,7 @@ class SelectedServer:
         eligible = [
             i
             for i, row in enumerate(self.records)
-            if all(
-                row.metadata.get(key) == value for key, value in (filters or {}).items()
-            )
+            if matches_filters(row.metadata, filters)
         ]
         expected = min(self.limit, len(eligible))
         database_hits, dense, lexical = [], [], []
@@ -222,21 +222,29 @@ class SelectedServer:
             db_started = time.perf_counter()
             details["database_executed"] = True
             database_hits = self.adapter.search(vector, self.limit, filters)
+            db_completed = time.perf_counter()
             details.update(
                 database_ids=[
                     getattr(hit, "identifier", None) for hit in database_hits
                 ],
                 database_scores=[getattr(hit, "score", None) for hit in database_hits],
             )
-            violation = validate_hits(database_hits, self.trusted, self.limit, filters)
+            checks = classify_hits(
+                database_hits,
+                self.global_ids,
+                self.trusted,
+                {self.records[position].identifier for position in eligible},
+                filtered=bool(filters),
+                limit=self.limit,
+            )
             details.update(
                 database_executed=True,
-                database_latency_seconds=time.perf_counter() - db_started,
+                database_latency_seconds=db_completed - db_started,
                 database_ids=[hit.identifier for hit in database_hits],
                 database_scores=[hit.score for hit in database_hits],
-                filter_violation=violation,
+                **checks,
             )
-            if violation:
+            if checks["filter_violation"] or checks["session_isolation_violation"]:
                 raise ValueError("Known forbidden ID returned by selected server")
             if len(database_hits) != expected:
                 raise ValueError("Unexpectedly short integration database pool")

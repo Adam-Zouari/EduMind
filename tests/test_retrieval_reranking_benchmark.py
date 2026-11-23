@@ -78,8 +78,8 @@ def _settings(
     **overrides: object,
 ) -> dict[str, object]:
     payload = deepcopy(default_protocol().meta.resolved)
-    payload["statistics"]["minimum_quality_ci_documents"] = 2
-    payload["statistics"]["minimum_repeatability_ci_documents"] = 2
+    payload["statistics"]["minimum_quality_ci_sources"] = 2
+    payload["statistics"]["minimum_repeatability_ci_sources"] = 2
     execution = payload["profiles"][profile]
     if warmups is not None:
         execution["warmups"] = warmups
@@ -214,9 +214,9 @@ def test_pool_recall_requires_complete_evidence_unit() -> None:
         "evidence": [
             {
                 "id": "e1",
+                "evidence_type": "text",
                 "document_id": "doc",
-                "start": 2,
-                "end": 8,
+                "intervals": [{"start": 2, "end": 8}],
             }
         ],
     }
@@ -420,15 +420,14 @@ def _fixture_manifest() -> DatasetManifest:
                 "id": "q1",
                 "kind": "question",
                 "question": "Where is the verified evidence?",
-                "document_id": "doc",
                 "answerable": True,
                 "evidence_type": "text",
                 "evidence": [
                     {
                         "id": "e1",
+                        "evidence_type": "text",
                         "document_id": "doc",
-                        "start": 0,
-                        "end": 8,
+                        "intervals": [{"start": 0, "end": 8}],
                     }
                 ],
             },
@@ -752,7 +751,11 @@ def test_parent_comparisons_are_separated_and_csv_matches_parquet(
                     "diagnostic.pool_evidence_unit_recall_at_20": value,
                 },
                 0.01,
-                {"document_id": "d1", "evidence_type": "text"},
+                {
+                    "source_document_ids": ("d1",),
+                    "independent_source_id": "d1",
+                    "evidence_type": "text",
+                },
             ),
             SampleResult(
                 "q2",
@@ -761,7 +764,11 @@ def test_parent_comparisons_are_separated_and_csv_matches_parquet(
                     "diagnostic.pool_evidence_unit_recall_at_20": value + 0.01,
                 },
                 0.02,
-                {"document_id": "d2", "evidence_type": "text"},
+                {
+                    "source_document_ids": ("d2",),
+                    "independent_source_id": "d2",
+                    "evidence_type": "text",
+                },
             ),
         )
         results.append(
@@ -1093,7 +1100,14 @@ def test_repeatability_source_ci_policy_and_degenerate_bounds():
     key = "diagnostic.ranking_repeatability"
     samples = [
         SampleResult(
-            str(i), {key: 1.0}, None, {"document_id": str(i), "evidence_type": "text"}
+            str(i),
+            {key: 1.0},
+            None,
+            {
+                "source_document_ids": (str(i),),
+                "independent_source_id": str(i),
+                "evidence_type": "text",
+            },
         )
         for i in range(2)
     ]
@@ -1103,7 +1117,7 @@ def test_repeatability_source_ci_policy_and_degenerate_bounds():
         resamples=100,
         seed=42,
         confidence=0.95,
-        minimum_documents=2,
+        minimum_sources=2,
     )
     assert values[key] == 1
     assert intervals[key]["lower"] == intervals[key]["upper"] == 1
@@ -1115,13 +1129,13 @@ def test_repeatability_source_ci_policy_and_degenerate_bounds():
         resamples=100,
         seed=42,
         confidence=0.95,
-        minimum_documents=None,
+        minimum_sources=None,
     )
     assert intervals[key]["lower"] is None
     assert intervals[key]["reason"] == "ci_support_not_frozen"
 
 
-def test_document_macro_weights_survive_reviewed_multi_document_source_groups():
+def test_question_macro_weights_survive_reviewed_multi_document_source_groups():
     from benchmarks.rag.retrieval_reranking.metrics import aggregate_quality
 
     name = "quality.overall.ndcg_at_5"
@@ -1131,7 +1145,7 @@ def test_document_macro_weights_survive_reviewed_multi_document_source_groups():
             {name: value},
             None,
             {
-                "document_id": document,
+                "source_document_ids": (document,),
                 "independent_source_id": source,
                 "evidence_type": "text",
             },
@@ -1149,37 +1163,44 @@ def test_document_macro_weights_survive_reviewed_multi_document_source_groups():
         resamples=200,
         seed=42,
         confidence=0.95,
-        minimum_documents=2,
+        minimum_sources=2,
     )
-    assert metrics[name] == pytest.approx(2 / 3)
-    assert metrics[name + ".sample_count"] == 3
+    assert metrics[name] == pytest.approx(2 / 7)
+    assert metrics[name + ".sample_count"] == 7
     assert support[name]["eligible_question_count"] == 7
     assert intervals[name]["independent_source_count"] == 2
-    assert intervals[name]["lower"] == 0.5
+    assert intervals[name]["lower"] == pytest.approx(1 / 6)
     assert intervals[name]["upper"] == 1
 
 
 def test_paired_latency_recalculates_percentiles_not_mean_query_differences():
     from benchmarks.rag.retrieval_reranking.metrics import (
-        paired_document_interval,
+        paired_question_interval,
     )
 
     def rows(times):
         return [
             SampleResult(
-                str(i), {}, seconds, {"document_id": str(i), "evidence_type": "text"}
+                str(i),
+                {},
+                seconds,
+                {
+                    "source_document_ids": (str(i),),
+                    "independent_source_id": str(i),
+                    "evidence_type": "text",
+                },
             )
             for i, seconds in enumerate(times)
         ]
 
-    bounds, questions, documents, sources = paired_document_interval(
+    bounds, questions, documents, sources = paired_question_interval(
         rows([1.0, 2.0, 100.0]),
         rows([2.0, 10.0, 101.0]),
         "operational.full_stack_latency_ms_p50",
         resamples=200,
         seed=42,
         confidence=0.95,
-        minimum_documents=2,
+        minimum_sources=2,
     )
     assert bounds["estimate"] == 8000  # median 10 minus median 2, in milliseconds
     assert bounds["estimate"] != pytest.approx((1000 + 8000 + 1000) / 3)

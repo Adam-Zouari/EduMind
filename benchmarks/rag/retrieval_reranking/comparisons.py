@@ -13,7 +13,7 @@ from benchmarks.common.contracts import (
 )
 from edumind.common.artifacts import atomic_write_json, sha256_file, stable_hash
 
-from .metrics import paired_document_interval
+from .metrics import paired_question_interval
 from .profiles import RETRIEVERS, parse_candidate
 from .protocol import RetrievalProtocol, protocol_from_settings
 
@@ -368,19 +368,19 @@ def _comparison_row(
     latency = metric.startswith("operational.") and "_latency_ms_p" in metric
     if _is_question_level_quality(metric) or latency:
         minimum = (
-            protocol.minimum_latency_ci_documents
+            protocol.minimum_latency_ci_sources
             if latency
-            else protocol.minimum_quality_ci_documents
+            else protocol.minimum_quality_ci_sources
         )
         bounds, eligible_questions, eligible_documents, eligible_sources = (
-            paired_document_interval(
+            paired_question_interval(
                 baseline.samples,
                 candidate.samples,
                 metric,
                 resamples=plan.bootstrap_resamples,
                 seed=plan.seed,
                 confidence=protocol.confidence_level,
-                minimum_documents=minimum,
+                minimum_sources=minimum,
             )
         )
         ci_status = (

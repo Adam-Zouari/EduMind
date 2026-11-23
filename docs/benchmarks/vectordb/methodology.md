@@ -50,30 +50,18 @@ the work in the operation artifact.
 
 ### Implementation status
 
-The replacement driver uses protocol `vector-database-v5`, suite
-`vectordb-server-v5`, and stage `database-configuration`. Each child is an
+The session driver uses protocol `vector-database-v6`, suite
+`vectordb-server-v6`, and stage `database-configuration`. Each child is an
 explicit `<database>|<configuration-alias>` pair; there is no hidden HNSW trial
-selection, recall gate, or workload-name/dimension inference. Do not relabel
-v4 artifacts as v5; use their original protocol and code revision for replay.
+selection, recall gate, or workload-name/dimension inference.
 Validation consumes development decisions and locked consumes one validation
 decision, with matching protocol and recorded configuration settings. Locked
 consumption is reserved before model/corpus preparation, including failed runs.
 
-The v5 driver and committed smoke fixture exercise condition-level search,
-scalar metadata filters, load windows, lifecycle probes and integration.
-They do **not** implement the session inventories, multi-file membership
-predicates, balanced paired schedule, cross-session summaries or paired search
-table specified below. Historical measurements retain their original contract.
-Use a new protocol identity and validation seals before authoritative evaluation.
-
 The default roster is smoke-only. Reviewed session and operation inventories,
 upstream decisions, eligible configurations and CI support are prerequisites;
-an unfrozen support policy does not imply a minimum. The session workload needs
-live acceptance for every adapter as well as offline validation.
-
-Existing service checks cover such operations as source-ID filtering, replacement,
-deletion, restart persistence and storage measurement. Single-ID conformance
-does not establish correct multi-file selection or session isolation.
+an unfrozen support policy does not imply a minimum. Smoke verifies execution
+on synthetic inputs; it supplies no evidence for database selection.
 
 Execution snapshots are sealed before offline scoring. Evaluation-only recovery
 verifies original inputs, protocol, candidate, logical schedules, actual pools,
@@ -95,28 +83,28 @@ python -m benchmarks.vectordb.recover --candidate-directory ORIGINAL_CANDIDATE_D
 
 The smoke driver command requires the coordinated, already-prepared pinned
 services; validation itself starts no services and loads no models.
-`retrieval_run` is a live imported integration/scoring module; its separate CLI
-is retired. Development/validation/locked require reviewed inputs and the matching
+Development, validation, and locked require reviewed inputs and the matching
 standalone report; their command availability is not a claim those inputs exist.
 
-The following describes the executable **v5 input**, not the new session schema.
-The manifest shape is illustrated by the explicitly synthetic committed
-`data/benchmarks/vectordb/smoke.json`. Each corpus has canonical record
-IDs/text/metadata, vectors, query vectors/IDs/source groups and provenance.
+The synthetic fixture `data/benchmarks/vectordb/smoke.json` illustrates the
+session manifest. Each session identifies its records (chunk ID, text, and
+source metadata), vectors, queries, source groups, and provenance.
 Matrices may be inline floating arrays or relative `.npy` paths; actual matrix
-bytes are sealed. Conditions declare corpus/filter/query inventory, controlled
-or load mode, concurrency, repeated windows and warmup request count. The fixed
-schedule is query order inside measured-attempt order inside window order;
-only window zero/attempt one supplies quality, and window zero's three attempts
-supply repeatability. All windows contribute request/load statistics. Operations
+bytes are sealed. Every query has an all-session search. Queries with a
+reviewed file selection also have a selected-file search on the same index.
+Validation checks the exact reference for each scope and the serial,
+counterbalanced request order. Attempt one supplies quality; all prescribed
+attempts supply repeatability and eligible request timings. Operations
 declare prepared new-document and replacement records and an existing source ID.
 The manifest owns these workload values, including for smoke. The protocol
 owns the explicit candidate index settings and the separate conformance probe.
 Full validation checks all three authoritative splits, reviewed record/query
 source groups, mutation identities, canonical integration spans and allowed gold
-evidence. Integration inputs name corpus, RAG manifest, embedding/retrieval
-decisions, chunking/retrieval protocols, model lock, filters and extra dependency
-files. Required input files and decision source summaries are sealed explicitly.
+evidence. Integration inputs identify the sessions, RAG manifest,
+embedding/retrieval decisions, chunking/retrieval protocols, model lock, and
+additional input files. File selections come from the session manifest, not a
+separate set of integration filters. Input files and decision source summaries
+are sealed explicitly.
 Immutable `retained-*-context.json`, `retained-*-server.json` and, when applicable,
 `retained-*-integration.json` files preserve pre-scoring execution. Do not edit
 these snapshots to repair a failed run. Recovery accepts a new output directory
@@ -134,7 +122,6 @@ from benchmarks.vectordb.selection import (
     candidate_config,
     resolve_selected_config,
 )
-from benchmarks.vectordb.workload import validate_hits
 ```
 
 `candidate_config(protocol, candidate_id, actual_dimension)` returns backend and
@@ -143,10 +130,11 @@ also validates the one validation winner and returns provenance. `SelectedServer
 owns an actual adapter and exposes `prepare`, `retrieve`, and `close`; it never
 uses ExactIndex search or cached rankings. `retrieve(..., evidence=dict)` retains
 the actual observed pool on downstream reranker failure. The reranker must
-permute that whole pool. `validate_hits(hits, trusted_metadata_by_id, limit,
-filters)` rejects malformed/duplicate/unknown IDs and nonfinite scores, and
-separately returns a Boolean filter-violation event. It does not trust echoed
-metadata. A valid short database result remains an ANN observation but cannot
+permute that whole pool. Search checks returned IDs and scores against the
+global inventory, then checks workspace membership and the selected files
+separately. A globally unknown ID is an invalid response; an ID known only in
+another session is evidence of an isolation violation. Neither check trusts
+echoed metadata. A valid short database result remains an ANN observation but cannot
 silently become a complete integration pool. PostgreSQL's dynamic `finish_index`
 and all four adapter factories remain live.
 Dense/RRF requests validate complete native query-token counts before embedding,
@@ -170,8 +158,7 @@ not merely accept the same database alias.
 Reviewed session workloads, configuration ranges, and independent-support
 requirements remain in [pending data review](../pending-data-review.md#vector-databases).
 Historical runs retain their original protocols; they are not relabeled with
-these metrics. A successful existing driver exit does not establish conformance
-with this contract.
+these metrics.
 
 ## Candidates and configurations
 
@@ -591,26 +578,61 @@ artifacts and metric-specific support fields.
 | `validation_report.json` | Runtime conformance, visibility, provenance, permutation, filter and output-integrity evidence, with the effective configuration and resource coverage for each corpus. Separate from the input-validation seal. |
 | `metric_statuses.json` | Scored/inapplicable/unavailable/incomplete statuses, units, counts, CI support, and reasons. |
 
-For the session contract, open the profile parent in **EduMind / Vector Database**
-→ **Artifacts** → `paired_search_comparison.csv`. This proposed artifact contains
-one row per database/configuration: paired-session and question counts, both
-recalls, and four separate timing columns (ms): Unfiltered Search Latency p50,
-Unfiltered Search Latency p95, Filtered Search Latency p50, and Filtered Search
-Latency p95. Use the same predeclared paired schedule, not all baseline
-questions. Alongside the percentiles, report request counts **separately for
-each side**: scheduled, completed, timed (completed with a usable duration),
-and failed. For example, if ten requests are scheduled per side and two
-selected-file requests time out, unfiltered p95 can use ten timings and
-filtered p95 eight. These percentiles describe the same scheduled workload,
-not necessarily the same successful requests. Do not discard good timings
-from the other side or substitute elapsed-to-timeout. Retain incomplete pairs,
-unexecuted requests, missing timings and their reasons.
-If no question has a meaningful file selection, keep the configuration row with
-zero paired sessions/questions and inapplicable paired recalls and percentiles.
-The main unfiltered result still uses all scheduled unfiltered questions.
-Child request and query-metric artifacts retain the session, question, selection,
-condition and attempt IDs. Retain per-session recall, file/chunk and question
-counts. No filtered-minus-unfiltered leaderboard metric or per-session runs.
+### Reading the paired search comparison
+
+Open the profile parent in **EduMind / Vector Database** → **Artifacts** →
+`paired_search_comparison.csv` (or the equivalent Parquet table). Each row compares
+one database/configuration with and without file selection **on the same scheduled
+questions**. Unfiltered-only questions contribute to the main ANN result, not this table.
+
+Read the 17 columns from left to right:
+
+| What to read | Columns, in order |
+|---|---|
+| Candidate and outcome of the whole run | `candidate`, `status` |
+| Matched workload | `paired_sessions`, `paired_questions`, `scheduled_requests_per_side` |
+| ANN recall against each scope's exact neighbours | `unfiltered_recall_at_20`, `filtered_recall_at_20` |
+| Median search latency (ms) | `unfiltered_search_latency_ms_p50`, `filtered_search_latency_ms_p50` |
+| 95th-percentile search latency (ms) | `unfiltered_search_latency_ms_p95`, `filtered_search_latency_ms_p95` |
+| Usable responses | `unfiltered_completed`, `filtered_completed` |
+| Requests sent but failed | `unfiltered_failed`, `filtered_failed` |
+| Usable responses with a valid duration | `unfiltered_timed`, `filtered_timed` |
+
+The shared scheduled count is **per side**, not a sum: ten paired questions
+with three attempts means 30 scheduled requests unfiltered and 30 filtered.
+The two schedules must match on session, question, and attempt, not just count.
+A verified failure before dispatch has zero completed, failed, and timed
+searches: the candidate failed, but no search request failed. If paired
+requests were scheduled and their execution ledger is missing or inconsistent,
+the parent records the problem and withholds the paired table rather than
+publishing unknown counts as zero. A verified pre-dispatch failure still gets a row.
+
+```text
+Scheduled request
+├── Never sent → not_executed
+└── Sent → submitted
+    ├── No usable response → failed
+    └── Usable response → completed
+        ├── Valid duration recorded → timed
+        └── No valid duration → missing_timing
+```
+
+For each side, `submitted = completed + failed`,
+`not_executed = scheduled_requests_per_side − submitted`, and
+`missing_timing = completed − timed`. Only `timed` responses enter p50/p95.
+If two of ten filtered requests time out, unfiltered p95 may use ten durations
+and filtered p95 only eight. Even equal timed counts need not cover the same
+successful attempts. Elapsed time to failure is not successful-search latency.
+
+Recall uses the designated first search for each paired question and weights
+sessions equally. Numeric zero is a scored result. With no paired questions,
+retain the candidate row with zero workload counts and blank (inapplicable)
+recalls and percentiles. With paired questions, blank recall on a side means
+its required quality evidence is incomplete. Use the child request, query-metric
+and integrity artifacts for the affected IDs, filter checks, and failure reasons.
+Per-session recall and file, chunk, and question counts stay in the child
+artifacts. The paired table does not add a filtered-minus-unfiltered leaderboard
+metric or create separate runs for sessions.
 
 Parent comparison tables preserve conditions and upstream identities. Paired
 differences retain aligned session/query inventories and independent source groups as

@@ -16,11 +16,13 @@ from benchmarks.common.contracts import (
 from benchmarks.common.runner import run_benchmark
 from edumind.common.artifacts import sha256_file, stable_hash
 
-from .benchmark import evaluate_candidate
+from .benchmark import evaluate_candidate, paired_search_from_ledger
 from .docker_metrics import image_lock, verify_image
+from .metrics import paired_search_summary
 from .protocol import DEFAULT_PROTOCOL_PATH, load_protocol
 from .selection import STAGE, SUITE, candidate_config, selected_candidates
 from .validation import REPORT_ROOT, load_inputs, manifest_path, verify_inputs
+from .workload import ALL_SESSION, SELECTED_FILES, paired_search_schedule
 
 DIRECTORY = Path(__file__).parent
 COMPOSE = DIRECTORY / "compose.yml"
@@ -28,6 +30,7 @@ CSV_TABLES = (
     "requests",
     "rankings",
     "query_metrics",
+    "session_metrics",
     "repeatability",
     "timings",
     "resources",
@@ -35,8 +38,26 @@ CSV_TABLES = (
     "integration_requests",
     "integration_rankings",
     "integration_query_metrics",
-    "integration_repeatability",
     "integration_resources",
+)
+PAIRED_SEARCH_COLUMNS = (
+    "candidate",
+    "status",
+    "paired_sessions",
+    "paired_questions",
+    "scheduled_requests_per_side",
+    "unfiltered_recall_at_20",
+    "filtered_recall_at_20",
+    "unfiltered_search_latency_ms_p50",
+    "filtered_search_latency_ms_p50",
+    "unfiltered_search_latency_ms_p95",
+    "filtered_search_latency_ms_p95",
+    "unfiltered_completed",
+    "filtered_completed",
+    "unfiltered_failed",
+    "filtered_failed",
+    "unfiltered_timed",
+    "filtered_timed",
 )
 
 
@@ -80,6 +101,7 @@ def parent_artifacts(directory, results, plan, *, protocol=None):
             frame.to_parquet(path, index=False)
         paths.append(path)
     retained = []
+    paired_by_candidate = {}
     for child in (directory / "candidates").iterdir():
         if not child.is_dir() or not list(child.glob("retained-*-context.json")):
             continue
@@ -87,10 +109,56 @@ def parent_artifacts(directory, results, plan, *, protocol=None):
 
         if not list(child.glob("retained-*-server.json")):
             paths.extend(child.glob("retained-*.json"))
-            continue  # Pre-execution failure is retained, never treated as a paired observation.
+            continue  # Absence alone does not establish that execution never began.
         context, stages, _ = load_retained(child, verify_inputs=False)
         retained.append((context, stages["server"]))
+        paired_by_candidate[context["candidate"]] = paired_search_from_ledger(
+            context["workloads"]["sessions"], stages["server"]["requests"]
+        )
         paths.extend(child.glob("retained-*.json"))
+
+    scheduled = plan.settings["scheduled_requests_per_side"]
+    paired_sessions = plan.settings["paired_sessions"]
+    paired_questions = plan.settings["paired_questions"]
+    paired_rows = []
+    for result in results:
+        paired_summary = paired_by_candidate.get(result.candidate)
+        if paired_summary is None:
+            if scheduled and not (
+                result.status == "failed"
+                and result.parameters.get("server_execution_started") is False
+            ):
+                raise ValueError(
+                    f"Missing retained paired search execution evidence: {result.candidate}"
+                )
+            paired_summary = paired_search_summary([], [])
+        elif (
+            paired_summary["paired_sessions"] != paired_sessions
+            or paired_summary["paired_questions"] != paired_questions
+            or paired_summary["unfiltered_scheduled"] != scheduled
+        ):
+            raise ValueError(
+                "Retained paired search schedule differs from the parent plan"
+            )
+        paired_rows.append(
+            {
+                **paired_summary,
+                "candidate": result.candidate,
+                "status": result.status,
+                "paired_sessions": paired_sessions,
+                "paired_questions": paired_questions,
+                "scheduled_requests_per_side": scheduled,
+            }
+        )
+    if paired_rows:
+        paths.extend(
+            _write_table_pair(
+                directory,
+                "paired_search_comparison",
+                paired_rows,
+                columns=PAIRED_SEARCH_COLUMNS,
+            )
+        )
     if protocol is not None:
         from itertools import combinations
 
@@ -122,19 +190,20 @@ def parent_artifacts(directory, results, plan, *, protocol=None):
                 )
             )
         if paired:
-            frame = pd.DataFrame(paired)
-            pq, csv = (
-                directory / "paired_operational.parquet",
-                directory / "paired_operational.csv",
-            )
-            frame.to_parquet(pq, index=False)
-            frame.to_csv(csv, index=False)
-            pd.testing.assert_frame_equal(
-                frame.fillna("").astype(str),
-                pd.read_csv(csv, dtype=str, keep_default_na=False),
-            )
-            paths.extend((pq, csv))
+            paths.extend(_write_table_pair(directory, "paired_operational", paired))
     return paths
+
+
+def _write_table_pair(directory, name, rows, *, columns=None):
+    frame = pd.DataFrame(rows, columns=columns)
+    pq, csv = directory / f"{name}.parquet", directory / f"{name}.csv"
+    frame.to_parquet(pq, index=False)
+    frame.to_csv(csv, index=False)
+    pd.testing.assert_frame_equal(pd.read_parquet(pq), frame)
+    pd.testing.assert_frame_equal(
+        frame.fillna("").astype(str), pd.read_csv(csv, dtype=str, keep_default_na=False)
+    )
+    return [pq, csv]
 
 
 def main(argv=None):
@@ -217,12 +286,17 @@ def main(argv=None):
         from .retrieval_run import prepare_integration
 
         integration = prepare_integration(
-            payload["integration"], Path(path).parent, args.profile, corpora
+            payload["integration"],
+            Path(path).parent,
+            args.profile,
+            corpora,
+            payload["sessions"],
         )
     elif args.profile != "smoke":
         raise ValueError(
             "Authoritative comparison requires the frozen full-stack integration inputs"
         )
+    paired_schedule = paired_search_schedule(payload["sessions"])
     plan = BenchmarkPlan(
         SUITE,
         STAGE,
@@ -237,6 +311,9 @@ def main(argv=None):
             "device": "cpu",
             "dtype": execution.dtype,
             "input_validation": report["fingerprint"],
+            "paired_sessions": len({sid for sid, _, _ in paired_schedule}),
+            "paired_questions": len({(sid, qid) for sid, qid, _ in paired_schedule}),
+            "scheduled_requests_per_side": len(paired_schedule),
             "integration_provenance": integration["integration_provenance"]
             if integration
             else {},
@@ -246,37 +323,46 @@ def main(argv=None):
     def evaluate(candidate, execution_context):
         from .recover import snapshot_writer
 
-        save, retained = snapshot_writer(
-            execution_context["artifact_directory"],
-            {
-                "candidate": candidate,
-                "profile": args.profile,
-                "source_run_id": execution_context["mlflow_run_id"],
-                "input_validation": report["fingerprint"],
-                "input_report": report,
-                "manifest": str(Path(path).resolve()),
-                "protocol": protocol.meta.artifact_payload(),
-                "corpus_checksums": {
-                    name: corpus.content_checksum for name, corpus in corpora.items()
+        retained = None
+        try:
+            save, retained = snapshot_writer(
+                execution_context["artifact_directory"],
+                {
+                    "candidate": candidate,
+                    "profile": args.profile,
+                    "source_run_id": execution_context["mlflow_run_id"],
+                    "input_validation": report["fingerprint"],
+                    "input_report": report,
+                    "manifest": str(Path(path).resolve()),
+                    "protocol": protocol.meta.artifact_payload(),
+                    "corpus_checksums": {
+                        name: corpus.content_checksum
+                        for name, corpus in corpora.items()
+                    },
+                    "integration_required": integration is not None,
+                    "integration_provenance": integration["integration_provenance"]
+                    if integration
+                    else {},
+                    "locked_reservation": locked_reservation,
+                    "workloads": {
+                        name: payload[name] for name in ("sessions", "operations")
+                    },
                 },
-                "integration_required": integration is not None,
-                "integration_provenance": integration["integration_provenance"]
-                if integration
-                else {},
-                "locked_reservation": locked_reservation,
-                "workloads": {
-                    name: payload[name] for name in ("conditions", "operations")
-                },
-            },
-        )
-        database, _ = candidate_config(
-            protocol, candidate, int(next(iter(corpora.values())).vectors.shape[1])
-        )
-        verify_image(
-            database,
-            revisions[f"image:{database}"],
-            timeout_seconds=protocol.docker_storage_timeout_seconds,
-        )
+            )
+            database, _ = candidate_config(
+                protocol, candidate, int(next(iter(corpora.values())).vectors.shape[1])
+            )
+            verify_image(
+                database,
+                revisions[f"image:{database}"],
+                timeout_seconds=protocol.docker_storage_timeout_seconds,
+            )
+        except Exception as exc:
+            raise CandidateExecutionError(
+                f"{type(exc).__name__}: {exc}",
+                parameters={"server_execution_started": False},
+                artifacts={"execution_evidence": retained} if retained else {},
+            ) from exc
         output = ([], {}, {}, {}, {}, {})
         try:
             output = evaluate_candidate(
@@ -353,28 +439,14 @@ def main(argv=None):
             _table_cells(artifacts),
         )
 
-    primary = tuple(
-        (
-            "quality.filtered_ann_recall_at_20"
-            if row["filters"]
-            else "quality.ann_recall_at_20"
-        )
-        + ".condition."
-        + row["id"]
-        for row in payload["conditions"]
-        if any(
-            all(metadata.get(key) == value for key, value in row["filters"].items())
-            for metadata in corpora[row["corpus"]].metadata
-        )
-    )
-    if not primary:
-        raise ValueError("At least one nonempty ANN condition is required")
+    primary = ("quality.ann_recall_at_20.condition." + ALL_SESSION,)
+    if plan.settings["paired_questions"]:
+        primary += ("quality.filtered_ann_recall_at_20.condition." + SELECTED_FILES,)
     result = run_benchmark(
         plan,
         evaluate,
-        dataset_checksum=stable_hash(
-            {name: corpus.content_checksum for name, corpus in corpora.items()}
-        ),
+        run_name_prefix=args.profile,
+        dataset_checksum=report["fingerprint"],
         directions={key: "max" for key in primary},
         primary_metric=primary,
         required_metrics=primary,

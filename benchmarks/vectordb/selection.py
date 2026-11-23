@@ -10,7 +10,7 @@ from edumind.common.artifacts import sha256_file, stable_hash
 
 from .adapters import Config
 
-SUITE = "vectordb-server-v5"
+SUITE = "vectordb-server-v6"
 STAGE = "database-configuration"
 
 

@@ -11,7 +11,11 @@ from benchmarks.common.contracts import (
     BenchmarkPlan,
     CandidateExecutionError,
 )
-from benchmarks.common.datasets import load_manifest
+from benchmarks.common.datasets import (
+    load_manifest,
+    manifest_content_checksum,
+    validate_evidence,
+)
 from benchmarks.common.preflight import (
     current_qualification_fingerprint,
     eligible_candidates,
@@ -85,16 +89,26 @@ def _stress(manifest):
     ]
     if not questions:
         raise ValueError("No explicitly reviewed Final preflight stress questions")
-    documents = {row["document_id"] for row in questions}
+    sources = validate_evidence(manifest)
+    documents = {
+        document for row in questions for document in sources[row["id"]].document_ids
+    }
+    documents.update(
+        interval["document_id"]
+        for row in questions
+        for block in row.get("supplied_evidence", [])
+        for interval in block["intervals"]
+    )
+    unknown_scope = any(not sources[row["id"]].document_ids for row in questions)
+    samples = tuple(
+        row
+        for row in manifest.samples
+        if row in questions
+        or row["kind"] == "document"
+        and (row["id"] in documents or unknown_scope)
+    )
     return replace(
-        manifest,
-        samples=tuple(
-            row
-            for row in manifest.samples
-            if row in questions
-            or row.get("kind") == "document"
-            and row["id"] in documents
-        ),
+        manifest, samples=samples, checksum=manifest_content_checksum(samples)
     )
 
 

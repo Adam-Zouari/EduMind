@@ -6,7 +6,14 @@ import time
 import uuid
 from collections.abc import Mapping, Sequence
 
-from .base import Config, Hit, InvalidIndexState, Record, ensure_dimension
+from .base import (
+    Config,
+    Hit,
+    InvalidIndexState,
+    Record,
+    ensure_dimension,
+    filter_values,
+)
 
 
 class Qdrant:
@@ -81,9 +88,15 @@ class Qdrant:
             query_filter = self.models.Filter(
                 must=[
                     self.models.FieldCondition(
-                        key=key, match=self.models.MatchValue(value=value)
+                        key=key,
+                        match=(
+                            self.models.MatchValue(value=values[0])
+                            if len(values) == 1
+                            else self.models.MatchAny(any=list(values))
+                        ),
                     )
                     for key, value in sorted(filters.items())
+                    for values in (filter_values(key, value),)
                 ]
             )
         result = self.client.query_points(

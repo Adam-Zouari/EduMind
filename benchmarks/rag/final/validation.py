@@ -20,7 +20,7 @@ def manifest_path(profile):
 
 def requirements(protocol, profile):
     return {
-        "reference_schema": "final-canonical-references-v1",
+        "reference_schema": "final-linked-canonical-references-v2",
         "phase": profile,
         "protocol_checksum": protocol.meta.checksum,
         "generation_validator_sha256": sha256_file(

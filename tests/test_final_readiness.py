@@ -38,8 +38,8 @@ def ready_inputs(monkeypatch, tmp_path):
     )
     protocols["retrieval"] = replace(
         protocols["retrieval"],
-        minimum_quality_ci_documents=2,
-        minimum_latency_ci_documents=2,
+        minimum_quality_ci_sources=2,
+        minimum_latency_ci_sources=2,
     )
     composition = SimpleNamespace(
         path=tmp_path / "test-only-composition.json",
@@ -136,9 +136,9 @@ def test_unfrozen_policy_blocks_before_locked_reservation(ready_inputs, missing)
         )
     else:
         field = (
-            "minimum_quality_ci_documents"
+            "minimum_quality_ci_sources"
             if missing == "retrieval_quality"
-            else "minimum_latency_ci_documents"
+            else "minimum_latency_ci_sources"
         )
         case.protocols["retrieval"] = replace(
             case.protocols["retrieval"], **{field: None}

@@ -1,5 +1,5 @@
 schema_version: 1
-protocol_version: final-rag-v4
+protocol_version: final-rag-v5
 seed: 42
 selection:
   top_k: [3, 5]

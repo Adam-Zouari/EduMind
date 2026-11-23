@@ -7,7 +7,14 @@ import uuid
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from .base import Config, Hit, InvalidIndexState, Record, ensure_dimension
+from .base import (
+    Config,
+    Hit,
+    InvalidIndexState,
+    Record,
+    ensure_dimension,
+    filter_values,
+)
 
 
 class Weaviate:
@@ -227,9 +234,12 @@ def _filter(filters: Mapping[str, object]):
         return None
     from weaviate.classes.query import Filter
 
-    clauses = [
-        Filter.by_property(key).equal(value) for key, value in sorted(filters.items())
-    ]
+    clauses = []
+    for key, value in sorted(filters.items()):
+        matches = [
+            Filter.by_property(key).equal(item) for item in filter_values(key, value)
+        ]
+        clauses.append(matches[0] if len(matches) == 1 else Filter.any_of(matches))
     result = clauses[0]
     for clause in clauses[1:]:
         result = result & clause

@@ -100,8 +100,8 @@ For the revised RAG contract, register one question ID and the canonical source
 ID on each evidence unit. Construct genuine multi-source cases by reviewing the
 distinct required contribution of each source; combining files in a workspace
 is not enough. Freeze question counts by source family and scope, and keep
-linked families in the same split. Existing single-source annotations remain
-valid. Current CLI examples below use the executable single-document schema.
+linked families in the same split. Single-source and multi-source questions use
+the same record format.
 
 QASPER supplies the paper-level split foundation. The preparation step samples
 whole papers with seed `42`, so one paper and its questions never cross splits.
@@ -313,18 +313,17 @@ the searchable document. Add a question like this to the `samples` list in
 
 ```json
 {
-  "id": "eduqg:demo:q1", "kind": "question", "document_id": "eduqg:demo:ch1",
+  "id": "eduqg:demo:q1", "kind": "question",
   "question": "Which process transfers heat by contact?",
   "answerable": true, "answer": "Conduction", "accepted_answers": ["Conduction"],
   "evidence_type": "text",
   "evidence": [
-    {"id": "eduqg:demo:q1:e1", "evidence_type": "text", "document_id": "eduqg:demo:ch1", "start": 15, "end": 52}
+    {"id": "eduqg:demo:q1:e1", "evidence_type": "text", "document_id": "eduqg:demo:ch1", "intervals": [{"start": 15, "end": 52}]}
   ]
 }
 ```
 
-The question-level `document_id` above is required by the current CLI; in the
-revised contract it does not determine ownership or restrict the evidence.
+The document ID belongs to the evidence unit, not the question.
 For example, a comparison between the textbook prediction and a lab result
 has two required units: one anchored in the textbook, one in the lab report.
 Both must belong to the same split and allowed workspace. Finding just one unit
@@ -1038,7 +1037,8 @@ evidence type, and verified evidence units with stable IDs and exact half-open
 intervals into the canonical text of each unit's named document. Table units include the headers needed to
 interpret selected cells; formula units include the complete expression; mixed
 questions contain evidence from at least two types. Unanswerable questions have
-no gold evidence units. Preserve their reviewed source-group provenance as set
+an empty `evidence` list. Record the materials reviewed in `reviewed_document_ids`;
+use an empty list if unknown. Preserve their reviewed source-group provenance as set
 out in [generation reference validation](data-validation.md#generation-references-and-model-input-compatibility).
 
 The generated `FrozenASRArtifact` is a separate checksummed JSON artifact. It

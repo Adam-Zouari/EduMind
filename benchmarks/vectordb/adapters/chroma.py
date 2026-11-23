@@ -5,7 +5,14 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from .base import Config, Hit, InvalidIndexState, Record, ensure_dimension
+from .base import (
+    Config,
+    Hit,
+    InvalidIndexState,
+    Record,
+    ensure_dimension,
+    filter_values,
+)
 
 
 class Chroma:
@@ -75,7 +82,12 @@ class Chroma:
             )
 
     def search(self, vector, limit, filters=None) -> list[Hit]:
-        clauses = [{key: value} for key, value in sorted((filters or {}).items())]
+        clauses = []
+        for key, value in sorted((filters or {}).items()):
+            values = filter_values(key, value)
+            clauses.append(
+                {key: values[0] if len(values) == 1 else {"$in": list(values)}}
+            )
         where = (
             None
             if not clauses

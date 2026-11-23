@@ -4,132 +4,147 @@ import json
 from dataclasses import replace
 from types import SimpleNamespace
 
+import pandas as pd
 import pytest
-from vectordb_fixtures import MemoryAdapter, fixture_protocol, make_server
+from vectordb_fixtures import (
+    MemoryAdapter,
+    fixture_protocol,
+    freeze_test_sessions,
+    make_server,
+)
 
 from benchmarks.vectordb.protocol import load_protocol
+from benchmarks.vectordb.workload import SCOPES
 
 
-def _load(side, durations, successes):
-    requests, windows = [], []
-    for window, (duration, count) in enumerate(zip(durations, successes, strict=True)):
-        windows.append(
+def _paired_workload():
+    from benchmarks.vectordb import validation
+
+    workloads, corpora = validation.load_inputs(validation.manifest_path("smoke"))
+    workloads["operations"] = []
+    return freeze_test_sessions(workloads, corpora, 3)
+
+
+def _search_side(name, workloads, timing):
+    return {
+        "candidate": name,
+        "requests": [
             {
-                "condition": "load",
-                "window": window,
-                "wall_seconds": duration,
-                "successful": count,
-                "submitted": 3,
-                "complete": True,
+                **row,
+                "session_id": session["id"],
+                "session_group_id": session["session_group_id"],
+                "schedule_position": position,
+                "operation": "search",
+                "paired": row["query_id"] in session["selected_sources"],
+                "quality_designated": row["attempt"] == 1,
+                "status": "success",
+                "latency_seconds": timing(session["id"], row),
+                "ids": [],
+                "session_isolation_violation": False,
+                "filter_violation": False
+                if row["condition"] == "selected-files"
+                else None,
             }
-        )
-        for attempt in range(1, 4):
-            requests.append(
-                {
-                    "condition": "load",
-                    "operation": "search",
-                    "query_id": "q",
-                    "source_group": "source",
-                    "window": window,
-                    "attempt": attempt,
-                    "status": "success" if attempt <= count else "failed",
-                    "latency_seconds": duration / 10 if attempt <= count else None,
-                    "filter_violation": None,
-                }
-            )
-    return {"candidate": side, "requests": requests, "windows": windows}
+            for session in workloads["sessions"]
+            for position, row in enumerate(session["schedule"], 1)
+        ],
+    }
 
 
-def test_paired_load_uses_ratio_of_totals_and_aligned_window_draws():
+def test_paired_serial_latency_uses_session_group_draws_and_null_timers():
     from benchmarks.vectordb.comparisons import paired_operational
 
-    protocol = replace(
-        load_protocol(),
-        ci_support={
-            "operational.qps": {
-                "minimum_groups": 2,
-                "reviewed_by": "fixture",
-                "reviewed_date": "2026-11-13",
-            }
-        },
+    workloads = _paired_workload()
+    key = "operational.database_search_latency_ms_p50"
+    protocol = replace(load_protocol(), ci_support={key: {"minimum_groups": 2}})
+    a = _search_side(
+        "a", workloads, lambda session, row: 1 if session == "fixture" else 8
     )
-    condition = {
-        "id": "load",
-        "mode": "load",
-        "filters": {},
-        "windows": 2,
-        "query_ids": ["q"],
-        "concurrency": 2,
-        "independent_window_groups": ["w1", "w2"],
-    }
-    left = _load("left", [1.0, 3.0], [3, 3])
-    right = _load("right", [2.0, 6.0], [3, 3])
-    rows = paired_operational(
-        left,
-        right,
-        {"conditions": [condition], "operations": []},
-        protocol,
-        "development",
+    b = _search_side(
+        "b", workloads, lambda session, row: 2 if session == "fixture" else 10
     )
-    qps = next(row for row in rows if row["metric"] == "operational.qps")
-    assert qps["difference"] == 0.75  # 6/4 - 6/8, not mean window QPS differences.
-    assert qps["independent_source_count"] == 2 and qps["defined_resamples"] == 10000
-    assert qps["lower"] is not None and qps["upper"] is not None
+    b["requests"][0]["latency_seconds"] = None
+    rows = paired_operational(a, b, workloads, protocol, "development")
+    point = next(
+        row
+        for row in rows
+        if row["metric"] == key and row["condition"] == "all-session"
+    )
+    assert point["difference"] == -2000
+    assert point["left_completed_count"] == point["right_completed_count"] == 15
+    assert point["left_timed_count"] == 15 and point["right_timed_count"] == 14
+    assert point["right_missing_timing_count"] == 1 and point["right_failed_count"] == 0
+    assert (
+        point["independent_source_count"] == 2 and point["defined_resamples"] == 10000
+    )
 
 
-def test_paired_load_missing_review_keeps_point_but_null_bounds():
+def test_paired_serial_schedule_rejects_duplicate_logical_operations():
     from benchmarks.vectordb.comparisons import paired_operational
 
-    condition = {
-        "id": "load",
-        "mode": "load",
-        "filters": {},
-        "windows": 2,
-        "query_ids": ["q"],
-        "concurrency": 2,
-    }
-    rows = paired_operational(
-        _load("a", [1.0, 1.0], [0, 0]),
-        _load("b", [1.0, 1.0], [3, 3]),
-        {"conditions": [condition], "operations": []},
-        load_protocol(),
-        "development",
-    )
-    qps = next(row for row in rows if row["metric"] == "operational.qps")
-    assert qps["difference"] == -3 and qps["lower"] is None
-    assert qps["reason"] in {
-        "ci_support_not_frozen",
-        "load_window_dependence_design_not_frozen",
-    }
-
-
-def test_paired_load_rejects_duplicate_or_unaligned_logical_operations():
-    from benchmarks.vectordb.comparisons import paired_operational
-
-    condition = {
-        "id": "load",
-        "mode": "load",
-        "filters": {},
-        "windows": 2,
-        "query_ids": ["q"],
-        "concurrency": 2,
-    }
-    left, right = _load("a", [1.0, 1.0], [3, 3]), _load("b", [1.0, 1.0], [3, 3])
-    right["requests"].append(right["requests"][0])
+    workloads = _paired_workload()
+    a = _search_side("a", workloads, lambda *_: 1)
+    b = _search_side("b", workloads, lambda *_: 1)
+    b["requests"].append(b["requests"][0])
     with pytest.raises(ValueError, match="duplicate"):
-        paired_operational(
-            left,
-            right,
-            {"conditions": [condition], "operations": []},
-            load_protocol(),
-            "development",
-        )
+        paired_operational(a, b, workloads, load_protocol(), "development")
 
 
-def _run_retained(tmp_path, monkeypatch, *, fail_scoring=False):
+@pytest.mark.parametrize("scope", SCOPES)
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ("missing", "Missing scheduled"),
+        ("duplicate", "Duplicate paired"),
+        ("session_id", "Unexpected paired"),
+        ("query_id", "Unexpected paired"),
+        ("attempt", "Unexpected paired"),
+    ],
+)
+def test_paired_search_ledger_validates_both_sides(scope, change, message):
+    from benchmarks.vectordb.benchmark import paired_search_from_ledger
+
+    workloads = _paired_workload()
+    requests = _search_side("candidate", workloads, lambda *_: 1)["requests"]
+    first, other, *_ = [
+        i
+        for i, row in enumerate(requests)
+        if row["paired"] and row["condition"] == scope
+    ]
+    if change == "missing":
+        del requests[first]
+    elif change == "duplicate":
+        requests[other] = dict(requests[first])
+    else:
+        requests[first][change] = 99 if change == "attempt" else "unexpected"
+    with pytest.raises(ValueError, match=message):
+        paired_search_from_ledger(workloads["sessions"], requests)
+
+
+def test_paired_search_ledger_keeps_failed_untimed_and_unexecuted_distinct():
+    from benchmarks.vectordb.benchmark import paired_search_from_ledger
+
+    workloads = _paired_workload()
+    requests = _search_side("candidate", workloads, lambda *_: 0.004)["requests"]
+    for row in requests:
+        if row["condition"] == "selected-files" and row["query_id"] == "q1":
+            row["status"] = ("failed", "success", "not_executed")[row["attempt"] - 1]
+            row["latency_seconds"] = None
+    summary = paired_search_from_ledger(workloads["sessions"], requests)
+    assert summary["unfiltered_scheduled"] == summary["filtered_scheduled"] == 6
+    assert summary["filtered_completed"] == 4 and summary["filtered_timed"] == 3
+    assert summary["filtered_failed"] == summary["filtered_not_executed"] == 1
+    assert summary["filtered_missing_timing"] == 1
+    assert summary["filtered_recall_at_20"] is None
+    assert summary["filtered_recall_status"] == "incomplete"
+    assert summary["filtered_search_latency_ms_p50"] == 4
+    assert summary["filtered_search_latency_ms_p95"] == 4
+
+
+def _run_retained(tmp_path, monkeypatch, *, failure=None, no_pairs=False):
     import yaml
 
-    from benchmarks.vectordb import benchmark, run, validation
+    from benchmarks.vectordb import benchmark, recover, run, validation
     from benchmarks.vectordb.protocol import DEFAULT_PROTOCOL_PATH
 
     root = yaml.safe_load(DEFAULT_PROTOCOL_PATH.read_text(encoding="utf-8"))
@@ -139,11 +154,22 @@ def _run_retained(tmp_path, monkeypatch, *, fail_scoring=False):
     protocol_path.write_text(yaml.safe_dump(root), encoding="utf-8")
     protocol = load_protocol(protocol_path)
     report_root = tmp_path / "reports"
-    validation.prepare_report(
-        validation.manifest_path("smoke"), "smoke", protocol, report_root=report_root
-    )
+    manifest = validation.manifest_path("smoke")
+    if no_pairs:
+        workloads, corpora = validation.load_inputs(manifest)
+        for session in workloads["sessions"]:
+            session["selected_sources"] = {}
+        freeze_test_sessions(workloads, corpora, protocol.profile("smoke").repetitions)
+        manifest = tmp_path / "no-pairs.json"
+        manifest.write_text(json.dumps(workloads), encoding="utf-8")
+    validation.prepare_report(manifest, "smoke", protocol, report_root=report_root)
     monkeypatch.setattr(run, "image_lock", lambda: {"image:chroma": "fixture"})
-    monkeypatch.setattr(run, "verify_image", lambda *args, **kwargs: None)
+
+    def verify_image(*args, **kwargs):
+        if failure == "pre-dispatch":
+            raise RuntimeError("image verification failed before dispatch")
+
+    monkeypatch.setattr(run, "verify_image", verify_image)
     monkeypatch.setattr(benchmark, "create", lambda name, config: MemoryAdapter(config))
     monkeypatch.setattr(
         benchmark,
@@ -154,16 +180,34 @@ def _run_retained(tmp_path, monkeypatch, *, fail_scoring=False):
         benchmark, "startup", lambda *args: {"status": "success", "seconds": 1.0}
     )
     scorer = benchmark.score_server_evidence
-    if fail_scoring:
+    if failure == "scoring":
 
         def fail(*args):
             raise RuntimeError("offline scorer interrupted after sealed execution")
 
         monkeypatch.setattr(benchmark, "score_server_evidence", fail)
+    if failure in {"snapshot-write", "missing-row"}:
+        write_seal = recover.write_seal
+
+        def save(path, kind, payload):
+            if kind == "server":
+                if failure == "snapshot-write":
+                    raise OSError("snapshot write failed after dispatch")
+                evidence = payload["evidence"]
+                requests = list(evidence["requests"])
+                requests.pop(
+                    next(i for i, row in enumerate(requests) if row.get("paired"))
+                )
+                payload = {**payload, "evidence": {**evidence, "requests": requests}}
+            return write_seal(path, kind, payload)
+
+        monkeypatch.setattr(recover, "write_seal", save)
     code = run.main(
         [
             "--profile",
             "smoke",
+            "--manifest",
+            str(manifest),
             "--protocol",
             str(protocol_path),
             "--report-root",
@@ -174,9 +218,97 @@ def _run_retained(tmp_path, monkeypatch, *, fail_scoring=False):
         ]
     )
     monkeypatch.setattr(benchmark, "score_server_evidence", scorer)
-    assert code == (2 if fail_scoring else 0)
+    assert code == (2 if failure else 0)
     source = next((tmp_path / "artifacts").rglob("retained-*-context.json")).parent
     return source
+
+
+def _read_paired_export(source):
+    path = source.parents[1] / "paired_search_comparison"
+    columns = [
+        "candidate",
+        "status",
+        "paired_sessions",
+        "paired_questions",
+        "scheduled_requests_per_side",
+        "unfiltered_recall_at_20",
+        "filtered_recall_at_20",
+        "unfiltered_search_latency_ms_p50",
+        "filtered_search_latency_ms_p50",
+        "unfiltered_search_latency_ms_p95",
+        "filtered_search_latency_ms_p95",
+        "unfiltered_completed",
+        "filtered_completed",
+        "unfiltered_failed",
+        "filtered_failed",
+        "unfiltered_timed",
+        "filtered_timed",
+    ]
+    frame = pd.read_parquet(path.with_suffix(".parquet"))
+    assert list(frame.columns) == columns
+    pd.testing.assert_frame_equal(
+        pd.read_csv(path.with_suffix(".csv"), dtype=str, keep_default_na=False),
+        frame.fillna("").astype(str),
+    )
+    return frame.iloc[0].to_dict()
+
+
+@pytest.mark.parametrize("no_pairs", [False, True])
+def test_paired_parent_projection_preserves_detailed_child_artifacts(
+    tmp_path, monkeypatch, no_pairs
+):
+    source = _run_retained(tmp_path, monkeypatch, no_pairs=no_pairs)
+    row = _read_paired_export(source)
+    detail = json.loads((source / "paired_search.json").read_text(encoding="utf-8"))
+    assert list(detail) == sorted(detail)
+    assert row["candidate"] == "chroma|smoke-hnsw" and row["status"] == "success"
+    scheduled = 0 if no_pairs else 2
+    assert row["paired_sessions"] == row["paired_questions"] == scheduled
+    assert row["scheduled_requests_per_side"] == scheduled
+    assert row["unfiltered_completed"] == row["filtered_completed"] == scheduled
+    assert all(value == detail[key] for key, value in row.items() if key in detail)
+    assert detail["filtered_recall_status"] == (
+        "inapplicable" if no_pairs else "scored"
+    )
+    assert detail["unfiltered_scheduled"] == detail["filtered_submitted"] == scheduled
+    assert detail["filtered_not_executed"] == detail["filtered_missing_timing"] == 0
+    requests = pd.read_parquet(source / "requests.parquet")
+    assert len(requests[requests["operation"] == "search"]) == 5 + scheduled
+
+
+def test_paired_parent_known_pre_dispatch_failure_keeps_scheduled_counts(
+    tmp_path, monkeypatch
+):
+    source = _run_retained(tmp_path, monkeypatch, failure="pre-dispatch")
+    assert not list(source.glob("retained-*-server.json"))
+    row = _read_paired_export(source)
+    assert row["status"] == "failed"
+    assert row["paired_sessions"] == row["paired_questions"] == 2
+    assert row["scheduled_requests_per_side"] == 2
+    for side in ("unfiltered", "filtered"):
+        for name in ("completed", "failed", "timed"):
+            assert row[f"{side}_{name}"] == 0
+        for name in ("recall_at_20", "search_latency_ms_p50", "search_latency_ms_p95"):
+            assert row[f"{side}_{name}"] is None
+
+
+@pytest.mark.parametrize(
+    ("failure", "message"),
+    [
+        ("snapshot-write", "Missing retained paired search execution evidence"),
+        ("missing-row", "Missing scheduled paired search ledger rows"),
+    ],
+)
+def test_paired_parent_rejects_missing_evidence(
+    tmp_path, monkeypatch, failure, message
+):
+    source = _run_retained(tmp_path, monkeypatch, failure=failure)
+    parent = source.parents[1]
+    report = json.loads((parent / "summary.json").read_text(encoding="utf-8"))
+    assert any(message in problem for problem in report["completion"]["problems"])
+    assert not list(parent.glob("paired_search_comparison.*"))
+    if failure == "missing-row":
+        assert (source / "paired_search.json").is_file()
 
 
 def test_recovery_after_offline_failure_never_dispatches_and_keeps_original_bytes(
@@ -185,7 +317,10 @@ def test_recovery_after_offline_failure_never_dispatches_and_keeps_original_byte
     from benchmarks.vectordb import benchmark, recover, retrieval_run
     from edumind.common.artifacts import sha256_file
 
-    source = _run_retained(tmp_path, monkeypatch, fail_scoring=True)
+    source = _run_retained(tmp_path, monkeypatch, failure="scoring")
+    row = _read_paired_export(source)
+    assert row["status"] == "failed" and row["scheduled_requests_per_side"] == 2
+    assert row["filtered_recall_at_20"] == 1 and row["filtered_completed"] == 2
     original = {
         str(path): sha256_file(path) for path in source.rglob("*") if path.is_file()
     }
@@ -199,7 +334,7 @@ def test_recovery_after_offline_failure_never_dispatches_and_keeps_original_byte
     monkeypatch.setattr(retrieval_run, "_execute_integration", forbidden)
     report = recover.recover(source, tmp_path / "recovered")
     assert report["complete"] and report["inference_executed"] is False
-    assert report["metrics"]["quality.ann_recall_at_20.condition.serial"] == 1
+    assert report["metrics"]["quality.ann_recall_at_20.condition.all-session"] == 1
     assert {
         str(path): sha256_file(path) for path in source.rglob("*") if path.is_file()
     } == original
@@ -289,7 +424,6 @@ def test_paired_operations_keep_repetitions_inside_reviewed_source_groups():
     def side(name, scale):
         return {
             "candidate": name,
-            "windows": [],
             "requests": [
                 {
                     "condition": "updates",
@@ -321,7 +455,7 @@ def test_paired_operations_keep_repetitions_inside_reviewed_source_groups():
     rows = paired_operational(
         side("a", 1.0),
         side("b", 2.0),
-        {"conditions": [], "operations": operations},
+        {"sessions": [], "operations": operations},
         protocol,
         "development",
     )
@@ -347,6 +481,9 @@ def test_locked_recovery_preserves_failed_first_and_consumption_marker(
     manifest = tmp_path / "locked-fixture.json"
     data = json.loads(validation.manifest_path("smoke").read_text(encoding="utf-8"))
     data["split"] = "locked-test"
+    _, corpora = validation.load_inputs(validation.manifest_path("smoke"))
+    freeze_test_sessions(data, corpora, 3)
+    context["workloads"] = {name: data[name] for name in ("sessions", "operations")}
     manifest.write_text(json.dumps(data), encoding="utf-8")
     report = context["input_report"]
     old_manifest = context["manifest"]
@@ -388,7 +525,7 @@ def test_locked_recovery_preserves_failed_first_and_consumption_marker(
         def first_failure(*args, **kwargs):
             nonlocal calls
             calls += 1
-            if calls == 2:
+            if calls == 3:
                 raise TimeoutError("designated first request failed")
             return search(*args, **kwargs)
 
@@ -432,7 +569,7 @@ def test_locked_recovery_preserves_failed_first_and_consumption_marker(
         recover.recover(tmp_path / "locked-source", tmp_path / "must-not-run")
 
 
-def test_paired_quality_uses_document_macro_not_question_mean():
+def test_paired_application_quality_uses_question_macro():
     from types import SimpleNamespace
 
     from benchmarks.common.contracts import SampleResult
@@ -449,8 +586,8 @@ def test_paired_quality_uses_document_macro_not_question_mean():
                     {key: score},
                     None,
                     {
-                        "source_group": "group" + str(i // 2),
-                        "document_id": "doc" + str(i // 2),
+                        "independent_source_id": "group" + str(i // 2),
+                        "source_document_ids": ["doc" + str(i // 2)],
                     },
                 )
                 for i, score in enumerate(scores)
@@ -463,30 +600,18 @@ def test_paired_quality_uses_document_macro_not_question_mean():
         load_protocol(),
         "development",
     )
-    assert rows[0]["left_value"] == 0.75 and rows[0]["right_value"] == 0.5
-    assert rows[0]["difference"] == 0.25 and rows[0]["lower"] is None
+    assert rows[0]["left_value"] == pytest.approx(2 / 3)
+    assert rows[0]["right_value"] == pytest.approx(1 / 3)
+    assert rows[0]["difference"] == pytest.approx(1 / 3) and rows[0]["lower"] is None
 
 
 def test_partial_paired_schedule_keeps_diagnostics_without_supported_bounds():
     from benchmarks.vectordb.comparisons import paired_operational
 
-    condition = {
-        "id": "load",
-        "mode": "load",
-        "filters": {},
-        "windows": 2,
-        "query_ids": ["q"],
-        "independent_window_groups": ["one", "two"],
-    }
-    left, right = _load("a", [1.0, 1.0], [3, 3]), _load("b", [1.0, 1.0], [3, 3])
-    right["requests"].pop()
-    rows = paired_operational(
-        left,
-        right,
-        {"conditions": [condition], "operations": []},
-        load_protocol(),
-        "development",
-    )
+    workloads = _paired_workload()
+    left, right = [_search_side(name, workloads, lambda *_: 1.0) for name in ("a", "b")]
+    right["requests"] = [row for row in right["requests"] if row["query_id"] != "q1"]
+    rows = paired_operational(left, right, workloads, load_protocol(), "development")
     assert all(row["status"] == "incomplete" and row["lower"] is None for row in rows)
     assert all(row["reason"] == "required_execution_incomplete" for row in rows)
 
@@ -496,7 +621,11 @@ def test_retained_integration_pool_can_be_scored_without_live_search(
 ):
     import copy
 
-    from benchmarks.common.datasets import manifest_content_checksum
+    from benchmarks.common.datasets import (
+        load_manifest,
+        manifest_content_checksum,
+        validate_evidence,
+    )
     from benchmarks.vectordb import (
         integration,
         recover,
@@ -514,7 +643,6 @@ def test_retained_integration_pool_can_be_scored_without_live_search(
             "kind": "question",
             "id": key,
             "question": key,
-            "document_id": "doc",
             "answerable": True,
             "evidence_type": "text",
             "evidence": [
@@ -522,14 +650,24 @@ def test_retained_integration_pool_can_be_scored_without_live_search(
                     "id": "E1",
                     "evidence_type": "text",
                     "document_id": "doc",
-                    "start": 0,
-                    "end": 1,
+                    "intervals": [{"start": 0, "end": 1}],
                 }
             ],
         }
         for key in ("q1", "q2")
     ]
-    samples = [{"kind": "document", "id": "doc", "text": "abc"}, *questions]
+    for chunk in index.chunks[1:]:
+        chunk.document_id = f"doc-{chunk.identifier}"
+        chunk.start, chunk.end = 0, 1
+    samples = [
+        {
+            "kind": "document",
+            "id": chunk.document_id,
+            "text": chunk.text,
+            "independent_source_id": chunk.document_id,
+        }
+        for chunk in index.chunks
+    ] + questions
     rag = {
         "name": "controlled-rag-fixture",
         "version": "1",
@@ -545,25 +683,42 @@ def test_retained_integration_pool_can_be_scored_without_live_search(
     }
     (tmp_path / "rag.json").write_text(json.dumps(rag), encoding="utf-8")
     data = json.loads(validation.manifest_path("smoke").read_text(encoding="utf-8"))
-    for i, record in enumerate(data["corpora"][0]["records"]):
-        record["text"] = "abc"[i]
-        record["metadata"] = {"source_id": "doc", "start": i, "end": i + 1}
-    spec = {"corpus": "fixture", "manifest": "rag.json", "filters": {}}
+    session = data["sessions"][0]
+    session["selected_sources"] = {"q1": ["doc-b", "doc-c"]}
+    for chunk, record in zip(index.chunks, session["records"], strict=True):
+        record["text"] = chunk.text
+        record["metadata"] = {
+            "source_id": chunk.document_id,
+            "start": chunk.start,
+            "end": chunk.end,
+        }
+    spec = {"session_ids": ["fixture"], "manifest": "rag.json"}
     data["integration"] = spec
     manifest = tmp_path / "vectors.json"
     manifest.write_text(json.dumps(data), encoding="utf-8")
     workloads, corpora = validation.load_inputs(manifest)
+    freeze_test_sessions(workloads, corpora, 1)
+    sources = validate_evidence(load_manifest(tmp_path / "rag.json"))
+    questions = [{**q, **sources[q["id"]].metadata()} for q in questions]
     monkeypatch.setattr(
         integration, "create", lambda name, config: MemoryAdapter(config)
     )
     prepared = {
-        "index": index,
-        "questions": questions,
+        "sessions": [
+            {
+                "index": index,
+                "questions": questions,
+                "session": workloads["sessions"][0],
+                "corpus": corpora["fixture"],
+            }
+        ],
+        "global_ids": {
+            identifier for corpus in corpora.values() for identifier in corpus.ids
+        },
         "spec": spec,
         "retrieval": "dense|none",
         "retrieval_protocol": SimpleNamespace(pool_size=20),
         "reranker_factory": lambda: None,
-        "source_groups": {"q1": "doc", "q2": "doc"},
     }
     retained = []
     result = retrieval_run.evaluate_integration(
@@ -590,8 +745,20 @@ def test_retained_integration_pool_can_be_scored_without_live_search(
         raw, fixture_protocol(), "smoke", tokenizer=index.tokenizer
     )
     assert result[2] == rescored[2]
+    selected = next(
+        row
+        for row in rescored[5]["integration_query_metrics"]
+        if row["condition"] == "selected-files"
+    )
+    assert selected["quality_status"] == "inapplicable"
+    assert selected["quality_reason"] == "selected_scope_excludes_required_evidence"
+    assert selected["metrics"] == {} and selected["latency_seconds"] is not None
+    assert (
+        result[2]["quality.evidence_unit_recall_at_3.condition.integration-all-session"]
+        == 1.0
+    )
     broken = copy.deepcopy(raw)
-    broken["rankings"][0]["evidence"]["ranking"] = [0, 0, 1]
+    broken["sessions"][0]["rankings"][0]["evidence"]["ranking"] = [0, 0, 1]
     with pytest.raises(ValueError, match="permutation"):
         recover.validate_integration_ledger(
             broken,

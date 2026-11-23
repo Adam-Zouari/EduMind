@@ -6,7 +6,14 @@ import json
 import math
 from collections.abc import Mapping, Sequence
 
-from .base import Config, Hit, InvalidIndexState, Record, ensure_dimension
+from .base import (
+    Config,
+    Hit,
+    InvalidIndexState,
+    Record,
+    ensure_dimension,
+    filter_values,
+)
 
 
 class PgVector:
@@ -81,8 +88,13 @@ class PgVector:
         clauses = []
         parameters: list[object] = [_vector(vector)]
         for key, value in sorted((filters or {}).items()):
-            clauses.append("metadata @> %s::jsonb")
-            parameters.append(json.dumps({key: value}))
+            values = filter_values(key, value)
+            if len(values) == 1:
+                clauses.append("metadata @> %s::jsonb")
+                parameters.append(json.dumps({key: values[0]}))
+            else:
+                clauses.append("(metadata->>'source_id') = ANY(%s)")
+                parameters.append(list(values))
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         parameters.extend([_vector(vector), limit])
         with self.pool.connection() as connection, connection.transaction():

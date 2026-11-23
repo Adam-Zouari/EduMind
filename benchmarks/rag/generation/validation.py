@@ -37,7 +37,7 @@ def questions_from_manifest(manifest, *, require_supplied_evidence=True):
     """Validate references and build deterministic evaluator-only coverage maps."""
     if manifest.task != "rag":
         raise ValueError("Generation requires a RAG manifest")
-    validate_evidence(manifest)
+    sources = validate_evidence(manifest)
     documents = {
         row["id"]: row for row in manifest.samples if row.get("kind") == "document"
     }
@@ -47,7 +47,6 @@ def questions_from_manifest(manifest, *, require_supplied_evidence=True):
             continue
         answerable = boolean(row.get("answerable"), "answerable")
         question = string(row.get("question"), "question")
-        document = documents[row["document_id"]]
         accepted = sequence(row.get("accepted_answers"), "accepted_answers")
         for answer in accepted:
             string(answer, "accepted answer")
@@ -82,7 +81,9 @@ def questions_from_manifest(manifest, *, require_supplied_evidence=True):
             allow_empty=not require_supplied_evidence,
         )
         units = evidence_units(row)
+        resolved_blocks = []
         for block in blocks:
+            block = dict(block)
             string(block["text"], "evidence text")
             intervals = []
             source_texts = []
@@ -91,9 +92,9 @@ def questions_from_manifest(manifest, *, require_supplied_evidence=True):
                     interval, "interval", {"document_id", "start", "end"}
                 )
                 source_id = interval["document_id"]
-                if source_id != row["document_id"]:
+                if not isinstance(source_id, str) or source_id not in documents:
                     raise ValueError(
-                        "Supplied context must come from this question's source document"
+                        "Supplied context must reference a canonical document"
                     )
                 source = documents[source_id]["text"]
                 start = integer(interval["start"], "interval.start", minimum=0)
@@ -119,6 +120,8 @@ def questions_from_manifest(manifest, *, require_supplied_evidence=True):
                     for required in unit.intervals
                 )
             ]
+            resolved_blocks.append(block)
+        blocks = resolved_blocks
         gold_ids = [unit.identifier for unit in units]
         covered = {unit for block in blocks for unit in block["gold_unit_ids"]}
         if answerable and (
@@ -137,13 +140,10 @@ def questions_from_manifest(manifest, *, require_supplied_evidence=True):
         questions.append(
             {
                 "id": row["id"],
-                "document_id": row["document_id"],
-                "source_id": document.get("independent_source_id")
-                or document.get("source_group_id")
-                or row["document_id"],
+                **sources[row["id"]].metadata(),
                 "question": question,
                 "answerable": answerable,
-                "evidence_type": row.get("evidence_type", "text"),
+                "evidence_type": row["evidence_type"] if answerable else None,
                 "blocks": blocks,
                 "accepted_answers": accepted,
                 "gold_claims": claims,
@@ -166,7 +166,7 @@ def _contains(intervals, document, start, end):
 
 def requirements(protocol, profile):
     return {
-        "reference_schema": "generation-source-verified-v1",
+        "reference_schema": "generation-linked-sources-v2",
         "required_fields": [
             "accepted_answers",
             "required_gold_claims",
@@ -212,7 +212,9 @@ def validate(path, profile, protocol):
     return {
         "question_count": len(questions),
         "document_count": len(documents),
-        "source_count": len({row["source_id"] for row in questions}),
+        "source_count": len(
+            {row["independent_source_id"] for row in questions} - {None}
+        ),
         "answerable_questions": sum(row["answerable"] for row in questions),
         "evidence_type_counts": dict(counts),
     }

@@ -340,7 +340,7 @@ def _paired_artifact(directory, results, plan):
             [f"quality.overall.{name}" for name in protocol.quality_metrics],
             resamples=plan.bootstrap_resamples,
             seed=plan.seed,
-            minimum_documents=protocol.minimum_quality_ci_documents,
+            minimum_sources=protocol.minimum_quality_ci_sources,
             confidence=protocol.confidence_level,
         ),
     )
@@ -362,7 +362,7 @@ def _plan(protocol, manifest, candidates, profile, device, dtype):
         settings={
             "device": device,
             "dtype": dtype,
-            "quality_sample_unit": "source_document_macro_value",
+            "quality_sample_unit": "question",
             "bootstrap_independent_unit": "reviewed_source_group",
             "paired_comparison_artifact": "paired_comparisons.json",
             "ci_support_policy_frozen": not protocol.unfrozen_ci_policies,

@@ -28,10 +28,9 @@ or generated answers.
 
 ### Implementation status
 
-The [revised RAG scoring contract](../../metrics.md#rag-quality-mean-across-questions)
-requires multi-source references and equal question weights. Current runs use
-the earlier single-document schema and weighting; the capabilities below do not
-establish conformance to the revised contract.
+The runner uses [question-macro scoring](../../metrics.md#rag-quality-mean-across-questions).
+Each evidence unit identifies its source document; a question contributes once,
+whether its evidence comes from one document or several.
 
 The runner implements one warmup, designated-first final-ranking quality,
 all-pairs complete-order Ranking Repeatability, separate live retrieval

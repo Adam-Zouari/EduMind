@@ -668,9 +668,9 @@ model lock, not candidate-run metrics.
 ## 9. Vector databases
 
 The [session workload](vectordb/methodology.md#data) and [metrics](vectordb/metrics.md)
-define serial all-session search and a paired selected-file diagnostic. The commands
-below execute the existing v5 workload, not the new multi-file session contract.
-Do not interpret legacy condition averages or QPS as selection results for this design.
+define serial all-session search and a paired selected-file diagnostic. Run
+the standalone validator before the driver. Authoritative profiles also need
+reviewed workloads and database configurations; the shipped fixture is for smoke.
 
 ### Prepare the database images
 
@@ -702,6 +702,7 @@ reviewed exact configurations without retuning. Follow the
 
 ```powershell
 docker compose -f benchmarks/vectordb/compose.yml up -d
+python -m benchmarks.validate vectordb --profile smoke
 python -m benchmarks.vectordb.run --profile smoke
 python -m benchmarks.vectordb.run --profile development
 python -m benchmarks.vectordb.run --profile validation

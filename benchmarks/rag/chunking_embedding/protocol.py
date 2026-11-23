@@ -59,9 +59,9 @@ class ChunkingEmbeddingProtocol:
     audit_depth: int
     alpha_ndcg_alpha: float
     repeatability_depth: int
-    minimum_latency_ci_documents: int
-    minimum_quality_ci_documents: int | None
-    minimum_repeatability_ci_documents: int | None
+    minimum_latency_ci_sources: int | None
+    minimum_quality_ci_sources: int | None
+    minimum_repeatability_ci_sources: int | None
     data_requirements: Mapping[str, object]
     confidence_level: float
     maximum_finalists: int
@@ -75,8 +75,9 @@ class ChunkingEmbeddingProtocol:
         return tuple(
             name
             for name, minimum in (
-                ("quality", self.minimum_quality_ci_documents),
-                ("ranking_repeatability", self.minimum_repeatability_ci_documents),
+                ("quality", self.minimum_quality_ci_sources),
+                ("latency", self.minimum_latency_ci_sources),
+                ("ranking_repeatability", self.minimum_repeatability_ci_sources),
             )
             if minimum is None
         )
@@ -233,21 +234,22 @@ def protocol_from_mapping(
         root["statistics"],
         "statistics",
         {
-            "minimum_latency_ci_documents",
-            "minimum_quality_ci_documents",
-            "minimum_repeatability_ci_documents",
+            "minimum_latency_ci_sources",
+            "minimum_quality_ci_sources",
+            "minimum_repeatability_ci_sources",
             "confidence_level",
         },
     )
-    minimum_documents = integer(
-        statistics["minimum_latency_ci_documents"],
-        "statistics.minimum_latency_ci_documents",
-        minimum=2,
+    latency_support = statistics["minimum_latency_ci_sources"]
+    minimum_sources = (
+        integer(latency_support, "statistics.minimum_latency_ci_sources", minimum=2)
+        if latency_support is not None
+        else None
     )
-    quality_support = statistics["minimum_quality_ci_documents"]
+    quality_support = statistics["minimum_quality_ci_sources"]
     if quality_support is not None:
         quality_support = integer(
-            quality_support, "statistics.minimum_quality_ci_documents", minimum=2
+            quality_support, "statistics.minimum_quality_ci_sources", minimum=2
         )
     repeatability = strict_object(root["repeatability"], "repeatability", {"depth"})
     repeatability_depth = integer(
@@ -255,11 +257,11 @@ def protocol_from_mapping(
     )
     if repeatability_depth > audit_depth:
         raise ValueError("repeatability.depth must not exceed quality.audit_depth")
-    repeatability_support = statistics["minimum_repeatability_ci_documents"]
+    repeatability_support = statistics["minimum_repeatability_ci_sources"]
     if repeatability_support is not None:
         repeatability_support = integer(
             repeatability_support,
-            "statistics.minimum_repeatability_ci_documents",
+            "statistics.minimum_repeatability_ci_sources",
             minimum=2,
         )
     data = strict_object(
@@ -330,7 +332,7 @@ def protocol_from_mapping(
         audit_depth,
         alpha,
         repeatability_depth,
-        minimum_documents,
+        minimum_sources,
         quality_support,
         repeatability_support,
         data,

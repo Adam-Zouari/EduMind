@@ -16,7 +16,7 @@ def require_locked_ci_readiness(manifest, generation_protocol, retrieval_protoco
         for key in required_ci_policy_keys(questions)
         if key not in generation_protocol.minimum_ci_sources
     ]
-    for field in ("minimum_quality_ci_documents", "minimum_latency_ci_documents"):
+    for field in ("minimum_quality_ci_sources", "minimum_latency_ci_sources"):
         if getattr(retrieval_protocol, field) is None:
             missing.append("retrieval.statistics." + field)
     if missing:

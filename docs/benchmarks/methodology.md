@@ -7,13 +7,10 @@ The [shared macro-averaging conventions](metrics.md#macro-averaging-what-gets-eq
 name the unit that gets equal weight. RAG quality is
 [question-macro](metrics.md#rag-quality-mean-across-questions), not document-macro.
 Database ANN recall is [session-macro](vectordb/metrics.md#aggregation-and-completeness).
-These are revised measurement contracts: the current RAG preparation, validators,
-scorers and comparisons still assume a single question document and historical
-document weighting. The current database driver reports condition-level results.
-Do not label those outputs as revised results. Version the protocols, regenerate
-input seals, and verify cross-document validation and scoring, unequal-sized session
-means, isolation, multi-file predicates, matched report cohorts and source provenance before using
-the new contracts for selection; keep earlier runs under their original versions.
+Validate each manifest against the protocol used for its run. Do not reuse a
+validation report or compare headline scores across incompatible weighting or
+workload definitions: the same underlying requests can give different answers
+when questions, documents, or sessions receive equal weight.
 
 The benchmarks evaluate components separately, then report the performance of
 their selected RAG combination. Extraction compares document, audio, and video
@@ -234,6 +231,13 @@ qualification event, so its initial allocations, offloading, peak VRAM, and OOM
 behavior must remain visible. It produces hardware evidence rather than quality
 or steady-state latency evidence. Because the worker terminates, none of its
 runtime state carries into development.
+
+Chunking–embedding and retrieval–reranking select one answerable stress question
+and keep every document its evidence requires. They rank questions by the total
+text length of their distinct required documents, then by question length and
+ID to break ties. This selects a reproducible stress case, not a guarantee that
+every future query fits. Qualification binds both the reviewed manifest and the
+exact selected rows.
 
 Preflight has one parent and one child per candidate in the benchmark's normal
 MLflow experiment. Extraction workers (document, ASR, and both video components)

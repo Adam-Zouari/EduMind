@@ -1,202 +1,236 @@
 {
-  "checksum": "677f38388d23a632a5b157bfca8668f2cd7d859d5fb05940620c8033df383203",
+  "checksum": "b0944c497af1b3e99acae4ae31101bc524fc971a6da3ff5d1ddf3ce09fd6e6af",
   "license": "CC0-1.0",
   "name": "edumind-smoke-rag",
-  "preprocessing_version": "evidence-units-v2",
+  "preprocessing_version": "canonical-unit-linked-questions-v3",
   "revision": "2",
   "samples": [
     {
       "id": "paper-01",
       "kind": "document",
       "source": "paper-01.txt",
-      "text": "Photosynthesis converts light energy into chemical energy in plant cells. Chlorophyll absorbs primarily blue and red wavelengths. Oxygen is released when water molecules are split."
+      "text": "Photosynthesis converts light energy into chemical energy in plant cells. Chlorophyll absorbs primarily blue and red wavelengths. Oxygen is released when water molecules are split.",
+      "independent_source_id": "paper-01"
     },
     {
       "id": "paper-02",
       "kind": "document",
       "source": "paper-02.txt",
-      "text": "Newton's first law describes inertia when net force is zero. The second law relates force to mass times acceleration. The third law states that interaction forces are equal and opposite."
+      "text": "Newton's first law describes inertia when net force is zero. The second law relates force to mass times acceleration. The third law states that interaction forces are equal and opposite.",
+      "independent_source_id": "paper-02"
     },
     {
       "id": "paper-03",
       "kind": "document",
       "source": "paper-03.txt",
-      "text": "A relational database stores data in tables with defined schemas. Primary keys uniquely identify table rows. Foreign keys represent relationships between tables."
+      "text": "A relational database stores data in tables with defined schemas. Primary keys uniquely identify table rows. Foreign keys represent relationships between tables.",
+      "independent_source_id": "paper-03"
     },
     {
       "id": "paper-04",
       "kind": "document",
       "source": "paper-04.txt",
-      "text": "The water cycle includes evaporation, condensation, and precipitation. Solar energy drives evaporation from oceans and lakes. Condensation forms clouds when water vapor cools."
+      "text": "The water cycle includes evaporation, condensation, and precipitation. Solar energy drives evaporation from oceans and lakes. Condensation forms clouds when water vapor cools.",
+      "independent_source_id": "paper-04"
     },
     {
       "id": "paper-05",
       "kind": "document",
       "source": "paper-05.txt",
-      "text": "Supervised learning trains models with labeled examples. Classification predicts discrete categories. Regression predicts continuous numerical values."
+      "text": "Supervised learning trains models with labeled examples. Classification predicts discrete categories. Regression predicts continuous numerical values.",
+      "independent_source_id": "paper-05"
     },
     {
       "id": "paper-06",
       "kind": "document",
       "source": "paper-06.txt",
-      "text": "Deoxyribonucleic acid carries hereditary information in living organisms. DNA contains the bases adenine, cytosine, guanine, and thymine. Complementary strands pair adenine with thymine and cytosine with guanine."
+      "text": "Deoxyribonucleic acid carries hereditary information in living organisms. DNA contains the bases adenine, cytosine, guanine, and thymine. Complementary strands pair adenine with thymine and cytosine with guanine.",
+      "independent_source_id": "paper-06"
     },
     {
       "id": "paper-07",
       "kind": "document",
       "source": "paper-07.txt",
-      "text": "A compiler translates source code into another representation before execution. Lexical analysis groups characters into tokens. Syntax analysis checks whether tokens follow the language grammar."
+      "text": "A compiler translates source code into another representation before execution. Lexical analysis groups characters into tokens. Syntax analysis checks whether tokens follow the language grammar.",
+      "independent_source_id": "paper-07"
     },
     {
       "id": "paper-08",
       "kind": "document",
       "source": "paper-08.txt",
-      "text": "Plate tectonics explains the motion of Earth's lithospheric plates. Divergent boundaries create new crust as plates separate. Convergent boundaries can produce subduction when plates collide."
+      "text": "Plate tectonics explains the motion of Earth's lithospheric plates. Divergent boundaries create new crust as plates separate. Convergent boundaries can produce subduction when plates collide.",
+      "independent_source_id": "paper-08"
     },
     {
       "id": "pool-decoy-01",
       "kind": "document",
       "source": "pool-decoy-01.txt",
-      "text": "A smoke-test decoy describes ceramic glaze colors and kiln shelves without answering any benchmark question."
+      "text": "A smoke-test decoy describes ceramic glaze colors and kiln shelves without answering any benchmark question.",
+      "independent_source_id": "pool-decoy-01"
     },
     {
       "id": "pool-decoy-02",
       "kind": "document",
       "source": "pool-decoy-02.txt",
-      "text": "A smoke-test decoy describes violin bow maintenance and rosin storage without answering any benchmark question."
+      "text": "A smoke-test decoy describes violin bow maintenance and rosin storage without answering any benchmark question.",
+      "independent_source_id": "pool-decoy-02"
     },
     {
       "id": "pool-decoy-03",
       "kind": "document",
       "source": "pool-decoy-03.txt",
-      "text": "A smoke-test decoy describes lighthouse paint schedules and coastal fog without answering any benchmark question."
+      "text": "A smoke-test decoy describes lighthouse paint schedules and coastal fog without answering any benchmark question.",
+      "independent_source_id": "pool-decoy-03"
     },
     {
       "id": "pool-decoy-04",
       "kind": "document",
       "source": "pool-decoy-04.txt",
-      "text": "A smoke-test decoy describes museum ticket printing and gallery maps without answering any benchmark question."
+      "text": "A smoke-test decoy describes museum ticket printing and gallery maps without answering any benchmark question.",
+      "independent_source_id": "pool-decoy-04"
     },
     {
       "id": "pool-decoy-05",
       "kind": "document",
       "source": "pool-decoy-05.txt",
-      "text": "A smoke-test decoy describes orchard ladders and apple crate labels without answering any benchmark question."
+      "text": "A smoke-test decoy describes orchard ladders and apple crate labels without answering any benchmark question.",
+      "independent_source_id": "pool-decoy-05"
     },
     {
       "id": "pool-decoy-06",
       "kind": "document",
       "source": "pool-decoy-06.txt",
-      "text": "A smoke-test decoy describes bicycle bell designs and reflective tape without answering any benchmark question."
+      "text": "A smoke-test decoy describes bicycle bell designs and reflective tape without answering any benchmark question.",
+      "independent_source_id": "pool-decoy-06"
     },
     {
       "id": "pool-decoy-07",
       "kind": "document",
       "source": "pool-decoy-07.txt",
-      "text": "A smoke-test decoy describes bakery display cases and bread baskets without answering any benchmark question."
+      "text": "A smoke-test decoy describes bakery display cases and bread baskets without answering any benchmark question.",
+      "independent_source_id": "pool-decoy-07"
     },
     {
       "id": "pool-decoy-08",
       "kind": "document",
       "source": "pool-decoy-08.txt",
-      "text": "A smoke-test decoy describes hiking trail markers and campsite signs without answering any benchmark question."
+      "text": "A smoke-test decoy describes hiking trail markers and campsite signs without answering any benchmark question.",
+      "independent_source_id": "pool-decoy-08"
     },
     {
       "id": "pool-decoy-09",
       "kind": "document",
       "source": "pool-decoy-09.txt",
-      "text": "A smoke-test decoy describes theater curtains and stage-light cables without answering any benchmark question."
+      "text": "A smoke-test decoy describes theater curtains and stage-light cables without answering any benchmark question.",
+      "independent_source_id": "pool-decoy-09"
     },
     {
       "id": "pool-decoy-10",
       "kind": "document",
       "source": "pool-decoy-10.txt",
-      "text": "A smoke-test decoy describes garden fountains and stone pathways without answering any benchmark question."
+      "text": "A smoke-test decoy describes garden fountains and stone pathways without answering any benchmark question.",
+      "independent_source_id": "pool-decoy-10"
     },
     {
       "id": "pool-decoy-11",
       "kind": "document",
       "source": "pool-decoy-11.txt",
-      "text": "A smoke-test decoy describes train station clocks and platform benches without answering any benchmark question."
+      "text": "A smoke-test decoy describes train station clocks and platform benches without answering any benchmark question.",
+      "independent_source_id": "pool-decoy-11"
     },
     {
       "id": "pool-decoy-12",
       "kind": "document",
       "source": "pool-decoy-12.txt",
-      "text": "A smoke-test decoy describes telescope covers and observatory doors without answering any benchmark question."
+      "text": "A smoke-test decoy describes telescope covers and observatory doors without answering any benchmark question.",
+      "independent_source_id": "pool-decoy-12"
     },
     {
       "id": "pool-decoy-13",
       "kind": "document",
       "source": "pool-decoy-13.txt",
-      "text": "A smoke-test decoy describes harbor ropes and wooden dock posts without answering any benchmark question."
+      "text": "A smoke-test decoy describes harbor ropes and wooden dock posts without answering any benchmark question.",
+      "independent_source_id": "pool-decoy-13"
     },
     {
       "id": "pool-decoy-14",
       "kind": "document",
       "source": "pool-decoy-14.txt",
-      "text": "A smoke-test decoy describes library return carts and shelf labels without answering any benchmark question."
+      "text": "A smoke-test decoy describes library return carts and shelf labels without answering any benchmark question.",
+      "independent_source_id": "pool-decoy-14"
     },
     {
       "id": "pool-decoy-15",
       "kind": "document",
       "source": "pool-decoy-15.txt",
-      "text": "A smoke-test decoy describes pottery wheels and studio aprons without answering any benchmark question."
+      "text": "A smoke-test decoy describes pottery wheels and studio aprons without answering any benchmark question.",
+      "independent_source_id": "pool-decoy-15"
     },
     {
       "id": "pool-decoy-16",
       "kind": "document",
       "source": "pool-decoy-16.txt",
-      "text": "A smoke-test decoy describes greenhouse vents and seed trays without answering any benchmark question."
+      "text": "A smoke-test decoy describes greenhouse vents and seed trays without answering any benchmark question.",
+      "independent_source_id": "pool-decoy-16"
     },
     {
       "id": "pool-decoy-17",
       "kind": "document",
       "source": "pool-decoy-17.txt",
-      "text": "A smoke-test decoy describes sailing knots and canvas covers without answering any benchmark question."
+      "text": "A smoke-test decoy describes sailing knots and canvas covers without answering any benchmark question.",
+      "independent_source_id": "pool-decoy-17"
     },
     {
       "id": "pool-decoy-18",
       "kind": "document",
       "source": "pool-decoy-18.txt",
-      "text": "A smoke-test decoy describes concert posters and entrance wristbands without answering any benchmark question."
+      "text": "A smoke-test decoy describes concert posters and entrance wristbands without answering any benchmark question.",
+      "independent_source_id": "pool-decoy-18"
     },
     {
       "id": "pool-decoy-19",
       "kind": "document",
       "source": "pool-decoy-19.txt",
-      "text": "A smoke-test decoy describes woodworking clamps and cabinet handles without answering any benchmark question."
+      "text": "A smoke-test decoy describes woodworking clamps and cabinet handles without answering any benchmark question.",
+      "independent_source_id": "pool-decoy-19"
     },
     {
       "id": "pool-decoy-20",
       "kind": "document",
       "source": "pool-decoy-20.txt",
-      "text": "A smoke-test decoy describes aquarium gravel and filter housings without answering any benchmark question."
+      "text": "A smoke-test decoy describes aquarium gravel and filter housings without answering any benchmark question.",
+      "independent_source_id": "pool-decoy-20"
     },
     {
       "id": "pool-decoy-21",
       "kind": "document",
       "source": "pool-decoy-21.txt",
-      "text": "A smoke-test decoy describes airport luggage tags and gate displays without answering any benchmark question."
+      "text": "A smoke-test decoy describes airport luggage tags and gate displays without answering any benchmark question.",
+      "independent_source_id": "pool-decoy-21"
     },
     {
       "id": "pool-decoy-22",
       "kind": "document",
       "source": "pool-decoy-22.txt",
-      "text": "A smoke-test decoy describes fountain pens and archival ink bottles without answering any benchmark question."
+      "text": "A smoke-test decoy describes fountain pens and archival ink bottles without answering any benchmark question.",
+      "independent_source_id": "pool-decoy-22"
     },
     {
       "answer": "chemical energy",
       "answer_type": "extractive",
       "answerable": true,
-      "document_id": "paper-01",
       "evidence": [
         {
-          "document_id": "paper-01",
-          "end": 73,
           "id": "q01-e1",
-          "start": 0,
-          "text": "Photosynthesis converts light energy into chemical energy in plant cells."
+          "evidence_type": "text",
+          "document_id": "paper-01",
+          "intervals": [
+            {
+              "start": 0,
+              "end": 73,
+              "text": "Photosynthesis converts light energy into chemical energy in plant cells."
+            }
+          ]
         }
       ],
       "evidence_type": "text",
@@ -208,14 +242,18 @@
       "answer": "blue and red wavelengths",
       "answer_type": "extractive",
       "answerable": true,
-      "document_id": "paper-01",
       "evidence": [
         {
-          "document_id": "paper-01",
-          "end": 129,
           "id": "q02-e1",
-          "start": 74,
-          "text": "Chlorophyll absorbs primarily blue and red wavelengths."
+          "evidence_type": "text",
+          "document_id": "paper-01",
+          "intervals": [
+            {
+              "start": 74,
+              "end": 129,
+              "text": "Chlorophyll absorbs primarily blue and red wavelengths."
+            }
+          ]
         }
       ],
       "evidence_type": "text",
@@ -227,24 +265,30 @@
       "answer": "",
       "answer_type": "unanswerable",
       "answerable": false,
-      "document_id": "paper-01",
       "evidence": [],
       "id": "q03",
       "kind": "question",
-      "question": "What temperature maximizes photosynthesis in this document?"
+      "question": "What temperature maximizes photosynthesis in this document?",
+      "reviewed_document_ids": [
+        "paper-01"
+      ]
     },
     {
       "answer": "net force is zero",
       "answer_type": "extractive",
       "answerable": true,
-      "document_id": "paper-02",
       "evidence": [
         {
-          "document_id": "paper-02",
-          "end": 60,
           "id": "q04-e1",
-          "start": 0,
-          "text": "Newton's first law describes inertia when net force is zero."
+          "evidence_type": "text",
+          "document_id": "paper-02",
+          "intervals": [
+            {
+              "start": 0,
+              "end": 60,
+              "text": "Newton's first law describes inertia when net force is zero."
+            }
+          ]
         }
       ],
       "evidence_type": "text",
@@ -256,14 +300,18 @@
       "answer": "force equals mass times acceleration",
       "answer_type": "extractive",
       "answerable": true,
-      "document_id": "paper-02",
       "evidence": [
         {
-          "document_id": "paper-02",
-          "end": 117,
           "id": "q05-e1",
-          "start": 61,
-          "text": "The second law relates force to mass times acceleration."
+          "evidence_type": "text",
+          "document_id": "paper-02",
+          "intervals": [
+            {
+              "start": 61,
+              "end": 117,
+              "text": "The second law relates force to mass times acceleration."
+            }
+          ]
         }
       ],
       "evidence_type": "text",
@@ -275,24 +323,30 @@
       "answer": "",
       "answer_type": "unanswerable",
       "answerable": false,
-      "document_id": "paper-02",
       "evidence": [],
       "id": "q06",
       "kind": "question",
-      "question": "Who first measured gravitational waves?"
+      "question": "Who first measured gravitational waves?",
+      "reviewed_document_ids": [
+        "paper-02"
+      ]
     },
     {
       "answer": "in tables with defined schemas",
       "answer_type": "extractive",
       "answerable": true,
-      "document_id": "paper-03",
       "evidence": [
         {
-          "document_id": "paper-03",
-          "end": 65,
           "id": "q07-e1",
-          "start": 0,
-          "text": "A relational database stores data in tables with defined schemas."
+          "evidence_type": "text",
+          "document_id": "paper-03",
+          "intervals": [
+            {
+              "start": 0,
+              "end": 65,
+              "text": "A relational database stores data in tables with defined schemas."
+            }
+          ]
         }
       ],
       "evidence_type": "text",
@@ -304,14 +358,18 @@
       "answer": "to uniquely identify table rows",
       "answer_type": "extractive",
       "answerable": true,
-      "document_id": "paper-03",
       "evidence": [
         {
-          "document_id": "paper-03",
-          "end": 108,
           "id": "q08-e1",
-          "start": 66,
-          "text": "Primary keys uniquely identify table rows."
+          "evidence_type": "text",
+          "document_id": "paper-03",
+          "intervals": [
+            {
+              "start": 66,
+              "end": 108,
+              "text": "Primary keys uniquely identify table rows."
+            }
+          ]
         }
       ],
       "evidence_type": "text",
@@ -323,24 +381,30 @@
       "answer": "",
       "answer_type": "unanswerable",
       "answerable": false,
-      "document_id": "paper-03",
       "evidence": [],
       "id": "q09",
       "kind": "question",
-      "question": "Which SQL engine is fastest?"
+      "question": "Which SQL engine is fastest?",
+      "reviewed_document_ids": [
+        "paper-03"
+      ]
     },
     {
       "answer": "evaporation, condensation, and precipitation",
       "answer_type": "extractive",
       "answerable": true,
-      "document_id": "paper-04",
       "evidence": [
         {
-          "document_id": "paper-04",
-          "end": 70,
           "id": "q10-e1",
-          "start": 0,
-          "text": "The water cycle includes evaporation, condensation, and precipitation."
+          "evidence_type": "text",
+          "document_id": "paper-04",
+          "intervals": [
+            {
+              "start": 0,
+              "end": 70,
+              "text": "The water cycle includes evaporation, condensation, and precipitation."
+            }
+          ]
         }
       ],
       "evidence_type": "text",
@@ -352,14 +416,18 @@
       "answer": "solar energy",
       "answer_type": "extractive",
       "answerable": true,
-      "document_id": "paper-04",
       "evidence": [
         {
-          "document_id": "paper-04",
-          "end": 125,
           "id": "q11-e1",
-          "start": 71,
-          "text": "Solar energy drives evaporation from oceans and lakes."
+          "evidence_type": "text",
+          "document_id": "paper-04",
+          "intervals": [
+            {
+              "start": 71,
+              "end": 125,
+              "text": "Solar energy drives evaporation from oceans and lakes."
+            }
+          ]
         }
       ],
       "evidence_type": "text",
@@ -371,24 +439,30 @@
       "answer": "",
       "answer_type": "unanswerable",
       "answerable": false,
-      "document_id": "paper-04",
       "evidence": [],
       "id": "q12",
       "kind": "question",
-      "question": "How salty is the referenced lake?"
+      "question": "How salty is the referenced lake?",
+      "reviewed_document_ids": [
+        "paper-04"
+      ]
     },
     {
       "answer": "labeled examples",
       "answer_type": "extractive",
       "answerable": true,
-      "document_id": "paper-05",
       "evidence": [
         {
-          "document_id": "paper-05",
-          "end": 56,
           "id": "q13-e1",
-          "start": 0,
-          "text": "Supervised learning trains models with labeled examples."
+          "evidence_type": "text",
+          "document_id": "paper-05",
+          "intervals": [
+            {
+              "start": 0,
+              "end": 56,
+              "text": "Supervised learning trains models with labeled examples."
+            }
+          ]
         }
       ],
       "evidence_type": "text",
@@ -400,14 +474,18 @@
       "answer": "continuous numerical values",
       "answer_type": "extractive",
       "answerable": true,
-      "document_id": "paper-05",
       "evidence": [
         {
-          "document_id": "paper-05",
-          "end": 150,
           "id": "q14-e1",
-          "start": 102,
-          "text": "Regression predicts continuous numerical values."
+          "evidence_type": "text",
+          "document_id": "paper-05",
+          "intervals": [
+            {
+              "start": 102,
+              "end": 150,
+              "text": "Regression predicts continuous numerical values."
+            }
+          ]
         }
       ],
       "evidence_type": "text",
@@ -419,24 +497,30 @@
       "answer": "",
       "answer_type": "unanswerable",
       "answerable": false,
-      "document_id": "paper-05",
       "evidence": [],
       "id": "q15",
       "kind": "question",
-      "question": "Which optimizer was used in the experiment?"
+      "question": "Which optimizer was used in the experiment?",
+      "reviewed_document_ids": [
+        "paper-05"
+      ]
     },
     {
       "answer": "hereditary information",
       "answer_type": "extractive",
       "answerable": true,
-      "document_id": "paper-06",
       "evidence": [
         {
-          "document_id": "paper-06",
-          "end": 73,
           "id": "q16-e1",
-          "start": 0,
-          "text": "Deoxyribonucleic acid carries hereditary information in living organisms."
+          "evidence_type": "text",
+          "document_id": "paper-06",
+          "intervals": [
+            {
+              "start": 0,
+              "end": 73,
+              "text": "Deoxyribonucleic acid carries hereditary information in living organisms."
+            }
+          ]
         }
       ],
       "evidence_type": "text",
@@ -448,14 +532,18 @@
       "answer": "adenine, cytosine, guanine, and thymine",
       "answer_type": "extractive",
       "answerable": true,
-      "document_id": "paper-06",
       "evidence": [
         {
-          "document_id": "paper-06",
-          "end": 137,
           "id": "q17-e1",
-          "start": 74,
-          "text": "DNA contains the bases adenine, cytosine, guanine, and thymine."
+          "evidence_type": "text",
+          "document_id": "paper-06",
+          "intervals": [
+            {
+              "start": 74,
+              "end": 137,
+              "text": "DNA contains the bases adenine, cytosine, guanine, and thymine."
+            }
+          ]
         }
       ],
       "evidence_type": "text",
@@ -467,24 +555,30 @@
       "answer": "",
       "answer_type": "unanswerable",
       "answerable": false,
-      "document_id": "paper-06",
       "evidence": [],
       "id": "q18",
       "kind": "question",
-      "question": "How many genes does the organism have?"
+      "question": "How many genes does the organism have?",
+      "reviewed_document_ids": [
+        "paper-06"
+      ]
     },
     {
       "answer": "translates source code into another representation",
       "answer_type": "extractive",
       "answerable": true,
-      "document_id": "paper-07",
       "evidence": [
         {
-          "document_id": "paper-07",
-          "end": 79,
           "id": "q19-e1",
-          "start": 0,
-          "text": "A compiler translates source code into another representation before execution."
+          "evidence_type": "text",
+          "document_id": "paper-07",
+          "intervals": [
+            {
+              "start": 0,
+              "end": 79,
+              "text": "A compiler translates source code into another representation before execution."
+            }
+          ]
         }
       ],
       "evidence_type": "text",
@@ -496,14 +590,18 @@
       "answer": "characters are grouped into tokens",
       "answer_type": "extractive",
       "answerable": true,
-      "document_id": "paper-07",
       "evidence": [
         {
-          "document_id": "paper-07",
-          "end": 127,
           "id": "q20-e1",
-          "start": 80,
-          "text": "Lexical analysis groups characters into tokens."
+          "evidence_type": "text",
+          "document_id": "paper-07",
+          "intervals": [
+            {
+              "start": 80,
+              "end": 127,
+              "text": "Lexical analysis groups characters into tokens."
+            }
+          ]
         }
       ],
       "evidence_type": "text",
@@ -515,24 +613,30 @@
       "answer": "",
       "answer_type": "unanswerable",
       "answerable": false,
-      "document_id": "paper-07",
       "evidence": [],
       "id": "q21",
       "kind": "question",
-      "question": "Which programming language compiles fastest?"
+      "question": "Which programming language compiles fastest?",
+      "reviewed_document_ids": [
+        "paper-07"
+      ]
     },
     {
       "answer": "the motion of Earth's lithospheric plates",
       "answer_type": "extractive",
       "answerable": true,
-      "document_id": "paper-08",
       "evidence": [
         {
-          "document_id": "paper-08",
-          "end": 67,
           "id": "q22-e1",
-          "start": 0,
-          "text": "Plate tectonics explains the motion of Earth's lithospheric plates."
+          "evidence_type": "text",
+          "document_id": "paper-08",
+          "intervals": [
+            {
+              "start": 0,
+              "end": 67,
+              "text": "Plate tectonics explains the motion of Earth's lithospheric plates."
+            }
+          ]
         }
       ],
       "evidence_type": "text",
@@ -544,14 +648,18 @@
       "answer": "new crust is created as plates separate",
       "answer_type": "extractive",
       "answerable": true,
-      "document_id": "paper-08",
       "evidence": [
         {
-          "document_id": "paper-08",
-          "end": 125,
           "id": "q23-e1",
-          "start": 68,
-          "text": "Divergent boundaries create new crust as plates separate."
+          "evidence_type": "text",
+          "document_id": "paper-08",
+          "intervals": [
+            {
+              "start": 68,
+              "end": 125,
+              "text": "Divergent boundaries create new crust as plates separate."
+            }
+          ]
         }
       ],
       "evidence_type": "text",
@@ -563,16 +671,18 @@
       "answer": "",
       "answer_type": "unanswerable",
       "answerable": false,
-      "document_id": "paper-08",
       "evidence": [],
       "id": "q24",
       "kind": "question",
-      "question": "What is the age of the oldest plate?"
+      "question": "What is the age of the oldest plate?",
+      "reviewed_document_ids": [
+        "paper-08"
+      ]
     }
   ],
   "source": "EduMind hand-verified fixtures",
   "split": "smoke",
   "split_seed": 42,
   "task": "rag",
-  "version": "2.0.0"
+  "version": "3.0.0"
 }
