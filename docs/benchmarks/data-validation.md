@@ -251,7 +251,7 @@ declared shared holdout policy.
 | Retrieval and reranking | The same reviewed RAG inputs and selected upstream data identities. Runtime pool collection, chunk-content, and dense/BM25 index checksums remain artifact-integrity gates, not data annotations. |
 | Generation | Required facts, accepted answers, supplied evidence for answerable questions, unanswerable labels, and frozen context provenance. Judge calibration/readiness and predicted-output validation are separate gates. |
 | Final RAG | Smoke fixtures, reviewed integrated-preflight stress inputs, its untouched held-out canonical corpus/questions, and the frozen composition's input requirements. Check locked-source isolation from component selection and readiness inputs. Automatic checks cannot prove that a reviewer has never examined a holdout. |
-| Vector database | Representative corpus/growth provenance, query/source allocation and split isolation, vector shape/dtype/finiteness/nonzero norms, canonical chunk/document IDs and metadata, trusted filter eligibility, exact-distance inputs/tie policy, integration evidence, and prepared insert/replace/delete expectations. Synthetic stress inputs remain labelled. Standalone validation seals these inputs; readiness, actual responses and write visibility remain runtime checks. |
+| Vector database | Representative corpus/growth provenance, query/source allocation and split isolation, vector shape/dtype/finiteness/nonzero norms, canonical chunk/document IDs and metadata, trusted filter eligibility, exact-distance inputs/tie policy, integration evidence, and prepared insert/replace/delete expectations. Session manifests must seal session membership, query vectors, selected ID unions, both exact-reference scopes and counterbalanced paired schedules. Test cross-session isolation and forbidden returns at runtime. The current validator seals v5 workload inputs, not this revised session contract. |
 
 ### Document references, including blank sources
 
@@ -367,7 +367,12 @@ human evidence annotations.
 Every answerable question has reviewed, uniquely identified gold evidence units
 with nonempty half-open intervals inside the referenced canonical text. A unit's
 intervals resolve to the same document and its evidence type is `text`, `table`,
-or `formula`. The question's slice agrees with its units: `mixed` requires at
+or `formula`. Different units in one question may identify different documents.
+Validate each source ID, split, offset and verification reference independently;
+do not require them to match a single question owner. All sources linked by a
+question must remain together for allocation and clustered resampling. In the
+current executable schema the single-document constraint still applies; use the
+revised contract only with a compatible validator and seal. The question's slice agrees with its units: `mixed` requires at
 least two types, not merely two units or distant intervals.
 Offsets are Unicode code-point positions in that exact canonical text, not
 UTF-8 bytes or model-token indices. The

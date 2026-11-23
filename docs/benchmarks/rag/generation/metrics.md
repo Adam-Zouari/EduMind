@@ -494,10 +494,10 @@ not a separate metric edge case.
 ## Response, refusal, and output validity
 
 Calculate each rate within its question, then average contributing question
-rates within each source document and macro-average documents. Response and
+rates equally. Response and
 Refusal Validity use scheduled seeds; Malformed Output Rate uses normally
 completed generations. Retain each numerator/denominator and all outcomes;
-their pooled corpus ratio is not the document-macro result. Undefined question
+their pooled corpus ratio is not necessarily the mean of question rates. Undefined question
 rates retain their reasons and support under the shared rules.
 
 ### Response Validity Rate
@@ -954,7 +954,7 @@ do not filter slow or incorrect answers from the physical decoding measurement.
 Exclude loading, warmup, interrupted streams, and offline judging. Retain
 interrupted-stream counts, times, rates when measurable, and outcomes separately.
 Apply the [shared ratio-of-totals estimator](../../metrics.md#ratio-of-totals-throughput)
-to all contributing questions/seeds, not a document-macro average of rates.
+to all contributing questions/seeds, not a mean of rates.
 
 **Example:** Four tokens arrive at `0.0`, `0.1`, `0.2`, and `0.3` seconds.
 The stream contributes `3` decoding tokens and `0.3 seconds`.
@@ -1053,8 +1053,8 @@ A peak from an interrupted window remains partial evidence; see
 
 These are per-attempt workload observations, not higher-is-better quality
 metrics. Keep question/seed identity and outcome. If an MLflow descriptive
-summary is emitted, its value is the document-macro mean of defined per-attempt
-counts: first within question, then document, then documents. Retain underlying
+summary is emitted, its value is the mean of defined per-attempt
+counts within each question, averaged across questions. Retain underlying
 counts and support; means may be fractional even though per-attempt counts are
 integers. Do not reweight quality by answer length. Token counts use the
 candidate's native tokenizer, not retrieval's fixed evidence-scoring tokenizer;
@@ -1171,7 +1171,7 @@ their real token counts do not establish successful completion.
 ## Per-response diagnostic artifacts
 
 The values below support audit and rescoring without adding MLflow summary
-metrics or changing question/document weighting. They are artifact fields and
+metrics or changing question weighting. They are artifact fields and
 inventories, not another selection-metric family.
 
 ### Citation Count
@@ -1220,7 +1220,7 @@ count unavailable, not a claim-free answer; see
 
 Retain counts for the exact recorded finish reasons and their observed/scheduled
 support. A descriptive observed share is `reason count / attempts with a recorded
-termination`. It is not a replacement for the document-macro reliability rates.
+termination`. It is not a replacement for reliability rates averaged across questions.
 
 **Example:** Recorded reasons `EOS, EOS, timeout` give counts `2, 1` and
 observed shares `2 / 3, 1 / 3`. If one required attempt never ran, keep it
@@ -1260,7 +1260,7 @@ TTFT p95                              = 0.90 seconds
 End-to-End Latency p95                = 8.40 seconds
 ```
 
-The quality/rate values are document-macro estimates, not pooled percentages of
+The quality/rate values are question-macro estimates, not pooled percentages of
 all claims or attempts; the two latency values are named percentiles. Calculate
 F1 per response before averaging, not from the displayed aggregate precision
 and recall. The answers are usually well supported
@@ -1289,9 +1289,10 @@ not an inferred blanket zero-error policy.
 
 ## Aggregation and confidence intervals
 
-Quality is evaluated on each of the three scheduled outputs. For each metric,
-average defined output scores within a question, then contributing question
-scores within a source document, then documents equally. Calculate F1 per output
+Quality is [question-macro](../../metrics.md#macro-averaging-what-gets-equal-weight).
+Evaluate each of the three scheduled outputs. For each metric,
+average defined output scores within a question, then average contributing question
+scores equally. Calculate F1 per output
 before those averages. Never select a best response or replace an unavailable
 score with a later favorable output. Every seed's execution and evaluator outcome
 remains recorded even when its score is null.
@@ -1311,16 +1312,13 @@ instead; do not disguise missing evidence as a known absence of claims.
 Response/Refusal Validity and reliability calculate question-level rates over
 their eligible scheduled seeds. Malformed Output Rate instead divides malformed
 normally completed outputs by normally completed generations within the question;
-no completed output gives a null question rate. Average each family's defined
-question rates within documents, then documents. Repeatability averages its
-three scheduled pair contributions within each question before the same
-document-macro aggregation. Do not replace these means with pooled event ratios.
+no completed output gives a null question rate. Report each family's defined
+rates question-macro. Repeatability is also question-macro: each question contributes
+one score from its three scheduled pairs. Do not replace these means with pooled event ratios.
 
 For example, document A has four question values `1, 1, 0, 0` and document B
-has one question value `1`. Their document means are `0.50` and `1.00`; the
-reported document-macro value is `0.75`. The pooled question average would be
-`3 / 5 = 0.60`, giving the longer document four times the influence. Equal
-document weight is used consistently for generation quality and rates.
+has one question value `1`. The reported mean is
+`3 / 5 = 0.60`: each question counts once, regardless of its source documents.
 
 Development, validation, and locked runs apply the
 [shared bootstrap and confidence-interval rules](../../metrics.md#confidence-intervals)
@@ -1338,14 +1336,14 @@ TTFT and successful-completion latency use per-question medians followed by
 cross-question percentiles; Decode Throughput pools eligible work/time across
 all questions/seeds; resource peaks take the maximum valid lifecycle sample.
 Token descriptors retain their declared descriptive aggregation and support.
-These are not document-macro quality scores. A missing required record or
+These are not quality scores. A missing required record or
 instrument makes affected evidence incomplete under the shared rules.
 
 ### Interval support and calculation
 
 | Value | CI applicability | Statistic recalculated on each source draw |
 |---|---|---|
-| Quality, behavioral validity, reliability, and repeatability | When defined and sufficiently supported | The metric's output/pair/question/document aggregation, with its own denominator and availability conventions. |
+| Quality, behavioral validity, reliability, and repeatability | When defined and sufficiently supported | The metric's within-question output/pair calculation and mean across eligible questions, with its own denominator and availability conventions. |
 | TTFT and completion-latency p50/p95 | Conditional on observed eligible durations and sufficient support | Percentiles of the sampled documents' per-question observations. |
 | Decode Throughput | Conditional on normally completed, instrumented streams and sufficient support | Sum eligible counted decoding tokens divided by sum corresponding decoding intervals. |
 | One cold load or observed lifecycle memory peak | No | One lifecycle observation is not an independent-sample distribution. |
@@ -1376,6 +1374,6 @@ enter the affected bounds; equal bounds retain their degeneracy flag. See
 Calculated bounds such as `[1, 1]` are not a claim of future certainty.
 
 For example, `Faithfulness = 0.90, 95% CI [0.86, 0.94]` describes uncertainty
-in the document-macro estimate, not a range of individual answers. Bootstrap
+in the mean across questions, not a range of individual answers. Bootstrap
 resampling performs arithmetic on saved labels; it launches neither extra
 generation nor extra judge calls.

@@ -28,6 +28,29 @@ The shared rules on this page apply alongside each benchmark's specific contract
 
 ## Shared conventions
 
+### Macro-averaging: what gets equal weight?
+
+In these guides, **macro** means an ordinary arithmetic mean of scores. The
+word before it names the unit that gets one vote:
+
+| Term | How to calculate it | Where it applies |
+|---|---|---|
+| **Document-macro** | Score each eligible document, then average the document scores equally. A file with 20 tables does not get 20 votes. | Document extraction quality |
+| **Question-macro** | Score each eligible question, then average the question scores equally. A question requiring two documents still gets one vote. | RAG quality, including database-backed evidence quality |
+| **Session-macro** | Average query scores within each study session, then average the contributing session means equally. | Database ANN recall and ranking repeatability, separately for each search condition |
+| **Video-macro** | Score each eligible video, then average the video scores equally, regardless of its duration. | Visual extraction quality and repeatability |
+
+For example, suppose two questions in session A average 0.90 and eight in
+session B average 0.70. The **session-macro** result is
+`(0.90 + 0.70) / 2 = 0.80`; the **question-macro** result on the same scores
+is `(2 × 0.90 + 8 × 0.70) / 10 = 0.74`. The difference is the weighting,
+not the score of any individual query.
+
+These labels describe aggregation, not eligibility, failure handling, or the
+independent unit for confidence intervals. Not every metric uses a macro
+average: corpus WER pools edit counts, and search p95 is a percentile of
+individual request durations.
+
 ### Find a shared rule
 
 Start with the metric in its benchmark reference. Its local edge-case block
@@ -50,6 +73,7 @@ For a missing or unusual value, choose the situation that actually occurred:
 For definitions and measurement procedures:
 
 - **Understand a result:** [basic terms](#basic-terms),
+  [macro-averaging units](#macro-averaging-what-gets-equal-weight),
   [availability and result status](#shared-availability-rules),
   [execution accounting](#execution-accounting-and-result-completeness),
   [dependent metrics and partial observations](#dependent-metrics-and-partial-observations).
@@ -624,9 +648,9 @@ different outputs:
 
 | Suite | Ordered IDs compared | Aggregation |
 |---|---|---|
-| Chunking–Embedding | Selected top five, or all chunks in a legitimately smaller corpus. | Question pair score, then document-macro mean. |
-| Retrieval–Reranking | Complete final ranking after any reranking, normally top 20. | Question pair score, then document-macro mean. |
-| Vector Database | Actual valid database result before reranking, requested top 20. | Question pair score, then query mean within the workload condition. |
+| Chunking–Embedding | Selected top five, or all chunks in a legitimately smaller corpus. | Question-macro: mean of the question pair scores. |
+| Retrieval–Reranking | Complete final ranking after any reranking, normally top 20. | Question-macro: mean of the question pair scores. |
+| Vector Database | Actual valid database result before reranking, requested top 20. | Session-macro: average question pair scores within each session, then average session means in the condition. |
 
 These are diagnostic measurements, not directly interchangeable scores. A valid
 short/empty ANN response can repeat even when it cannot supply a valid integration
@@ -671,7 +695,27 @@ and reused diagnostically in Final RAG, not Chunking–Embedding. Metric roles
 remain in each suite's reference; sharing
 the calculation does not make a secondary metric primary.
 
-#### Retrieval quality eligibility
+#### RAG quality: mean across questions
+
+RAG quality uses [question-macro averaging](#macro-averaging-what-gets-equal-weight).
+The question owns its evidence. Each atomic evidence unit identifies its canonical
+source; different units may come from different documents. Score the complete
+question once, not once per document. If questions recover 1/1 and 1/2 units,
+mean recall is (1 + 0.5)/2 = 0.75, not pooled unit recall of 2/3. Generation
+and Final RAG combine the prescribed output observations **within** each question
+first; retrieval uses the designated first ranking. Eligibility, incompleteness,
+attempt failures and the denominators of individual metrics do not change.
+Report single-source and genuinely multi-source answerable questions separately
+where supported. The number of files searched does not determine this label.
+
+For comparisons, align question IDs, eligible scopes and attempts. For intervals,
+keep related source families together, including families linked by a question.
+In each sampled copy of a group count each eligible question once, even if two
+member documents supplied its evidence. A question is the scoring unit, not
+necessarily an independent observation. Document extraction instead gives each
+eligible input file one vote; ANN search gives each evaluated session one vote.
+
+### Retrieval quality eligibility
 
 An answerable question has reviewed gold units with
 stable IDs and half-open source intervals. One chunk covers a unit only when
@@ -745,8 +789,8 @@ A verified first pool remains scoreable for pool recall if downstream reranking
 fails. Final-ranking quality is then unavailable, but the independent pool
 observation survives under the [completed-stage rule](#completed-stages-and-failed-requests).
 This does not make an invalid or incomplete pool scoreable, or allow a later
-attempt's pool to replace the first. All these evidence scores use question-then-
-document macro aggregation; partial required quality and confidence intervals
+attempt's pool to replace the first. These evidence scores are question-macro;
+partial required quality and confidence intervals
 follow the shared completeness rules and each suite's support requirements.
 
 ### Retrieved-context workload
@@ -760,8 +804,8 @@ smaller than K uses its available chunks without padding or rescaling.
 
 Mean Retrieved Context Tokens is the sum of these per-query totals divided by
 contributing queries. p95 Retrieved Context Tokens is their interpolated 95th
-percentile. These are query-weighted workload descriptors, not document-macro
-quality, token budgets, or native-generator compatibility checks. The mean
+percentile. These are query-weighted workload descriptors, not
+quality scores, token budgets, or native-generator compatibility checks. The mean
 describes average returned volume; p95 describes its upper tail. Neither has an
 automatic better direction or a workload-descriptor confidence interval.
 
@@ -883,8 +927,7 @@ shared percentile-bootstrap procedure, calculated offline from retained records:
 
 1. Resample complete independent units with replacement 10,000 times, using
    seed `42`. The benchmark declares its unit and eligible inventory: source
-   documents, source-grouped clips/videos, queries within a vector workload
-   condition, or independent load windows for server-load uncertainty. Retain
+   documents, source-grouped clips/videos, independent sessions or groups of related sessions for vector database search. Retain
    all dependent pages, questions, outputs, attempts, failures, and windows
    inside that unit; do not prefilter to successful records.
 2. Recalculate the metric's declared statistic on each draw: its macro-average,

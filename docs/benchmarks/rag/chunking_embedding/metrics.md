@@ -340,8 +340,7 @@ top-five chunks?
 Apply [shared pairwise repeatability](../../metrics.md#pairwise-repeatability)
 to all three unordered pairs of measured attempts for each answerable question.
 Compare ordered top-five IDs, or all available IDs in a legitimately smaller
-corpus, not bit-identical scores. Average question pair scores within documents,
-then macro-average documents. Every attempt executes retrieval; it does not
+corpus, not bit-identical scores. Average the resulting question scores equally. Every attempt executes retrieval; it does not
 return a cached earlier ranking.
 
 ```text
@@ -872,7 +871,7 @@ the [generated-inventory rules](#workload-and-storage-descriptors-1) and
 
 Count each generated chunk with `tiktoken:cl100k_base`, then divide the sum
 of those lengths by Chunk Count. Overlap counts again in each chunk. This is
-an arithmetic mean over chunks, not a document-macro score or configured target.
+an arithmetic mean over chunks, not a per-question score or configured target.
 
 **Example:** Chunk lengths `100, 200, 300, 400, 500` give
 `(100 + 200 + 300 + 400 + 500) / 5 = 300 tokens/chunk`.
@@ -923,7 +922,7 @@ Descriptors have no CI under the [interval table](#which-values-receive-an-inter
 Apply the [shared retrieved-context workload contract](../../metrics.md#retrieved-context-workload)
 to this pair's first ranking. Sum fixed-tokenizer lengths inside each prefix,
 then average those per-query totals separately at @3 and @5. This is not average
-chunk size or document-macro quality.
+chunk size or retrieval quality.
 
 ```text
 Mean Retrieved Context Tokens@K = sum of complete query-prefix token totals
@@ -1035,8 +1034,8 @@ nDCG@5                       = 0.81
 alpha-nDCG@5                 = 0.74
 ```
 
-The nDCG result summarizes how early evidence-rich chunks appear. After question
-scores are averaged within documents and then across documents, average
+The nDCG result summarizes how early evidence-rich chunks appear. After averaging
+the question scores, average
 evidence recovery is `0.82` and average evidence-token precision is `0.44`.
 These describe completeness and concentration, not pooled percentages of all
 corpus evidence units or returned tokens. Alpha-nDCG uses the same answerable
@@ -1051,8 +1050,8 @@ repetition harms answers. The same interpretation is performed separately at
 
 ### Aggregation and completeness
 
-For each quality metric, first average defined first-ranking question scores
-within a source document, then macro-average those document values. Calculate
+For each quality metric, use [question-macro averaging](../../metrics.md#macro-averaging-what-gets-equal-weight)
+of the defined first-ranking scores. Calculate
 every metric and evidence slice independently. A complete quality result covers all
 planned answerable questions; all four families share reference eligibility,
 but retain metric-specific contributing and unavailable counts if scoring fails.
@@ -1083,7 +1082,7 @@ complete valid quality, and the engineer reviews recorded failures separately.
 |---|---:|---|
 | Development, validation, and locked nDCG, Evidence-unit Recall, Evidence-token Precision, and alpha-nDCG at @3/@5 | When defined and sufficiently supported | Resample reviewed independent-source groups with all member documents and recalculate each aggregate. Partial estimates and any bounds remain diagnostic, not complete selection evidence. |
 | Text, table, formula, and mixed evidence slices | When defined and sufficiently supported | Resample reviewed source groups with every eligible member document's first-ranking and failure records; do not prefilter to successful contributors. |
-| Ranking Repeatability | When complete and sufficiently supported | Resample reviewed source groups with every member document's scheduled query pairs and recalculate the macro pair score. |
+| Ranking Repeatability | When complete and sufficiently supported | Resample reviewed source groups with every member document's scheduled query pairs and recalculate the mean question pair score. |
 | p50/p95 complete-query, query-embedding, and vector-search latency | Conditional | Resample reviewed source groups with every member document's component-specific query medians; otherwise retain defined descriptive points without bounds. |
 | Smoke metrics | No authoritative interval | Smoke validates execution and is too small for selection claims. |
 | Cold load, chunking, chunk embedding, and corpus-build time | No | Each is one completed phase/build observation, not independent repeated builds. |
@@ -1098,10 +1097,10 @@ Apply the [shared CI procedure](../../metrics.md#confidence-intervals) to the
 reference-eligible inventory, retaining whole source documents inside their
 reviewed independent source groups with all question, first-ranking, timing,
 and failure records. Each quality draw recalculates the
-question-then-document macro statistic. Repeatability draws recalculate the
-question-then-document pair statistic from all scheduled outcomes. Latency draws
+mean question score. Repeatability draws recalculate the
+mean of per-question pair scores from all scheduled outcomes. Latency draws
 collect the sampled documents' per-query successful component/request medians
-and recalculate each p50/p95 separately, not a macro-average of document latencies.
+and recalculate each p50/p95 separately, not a mean of document latencies.
 
 Insufficient or unfrozen support leaves defined points with null bounds; see
 [confidence-interval support and its freeze deadline](../../metrics.md#insufficient-confidence-interval-support).
@@ -1114,7 +1113,7 @@ tracks those decisions.
 
 The existing [parent paired-quality artifact](methodology.md#paired-comparison-artifact)
 uses the same source draws for both complete successful candidates and preserves
-document-macro weighting. It compares overall @3/@5 quality only, recording raw
+equal question weights. It compares overall @3/@5 quality only, recording raw
 `left_minus_right` differences and separate question/document/source support;
 it does not add pairwise operational or metadata metrics.
 

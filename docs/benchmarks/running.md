@@ -381,7 +381,7 @@ attempt per fixture; preflight has no warmup and does not measure repeatability.
   Attempt Failure Rate counts failed attempts. `A, A, failure` gives `1/3` for
   both rates while keeping the first `A` as the quality output. See
   [repeatability with failed or missing attempts](metrics.md#repeatability-with-failed-or-missing-attempts).
-- Quality is document-macro averaged from valid completed first outputs, including
+- Document-macro quality uses valid completed first outputs, including
   missed expected objects in those outputs. Failed first attempts have unavailable
   quality; report them and contributing counts beside every aggregate. No reference
   tables/formulas means no reconstruction task, while verified-negative detection
@@ -667,13 +667,10 @@ model lock, not candidate-run metrics.
 
 ## 9. Vector databases
 
-The [vector methodology](vectordb/methodology.md) and
-[metric contract](vectordb/metrics.md) specify one database–configuration child
-per candidate, tie-aware ANN/Filtered ANN Recall@20, evidence quality, database
-Ranking Repeatability, operation-specific error rates, p50/p95/QPS, and verified
-write/startup boundaries. The runner uses explicit frozen configurations and
-sealed prepared inputs. Real-service checks and reviewed authoritative inputs
-remain prerequisites; a mocked test is not server verification.
+The [session workload](vectordb/methodology.md#data) and [metrics](vectordb/metrics.md)
+define serial all-session search and a paired selected-file diagnostic. The commands
+below execute the existing v5 workload, not the new multi-file session contract.
+Do not interpret legacy condition averages or QPS as selection results for this design.
 
 ### Prepare the database images
 
@@ -717,7 +714,7 @@ docker compose -f benchmarks/vectordb/compose.yml down
 Run candidate services sequentially under controlled allocations. Prepare the
 representative corpus/query/operation workloads and their input-validation seal;
 verify those identities outside measurement at each profile start. Exact data
-sizes, configuration ranges, and load-window/support settings remain in
+session inventories, configuration ranges and support settings remain in
 [pending data review](pending-data-review.md#vector-databases).
 
 Development compares the declared database–configuration pairs. The engineer's

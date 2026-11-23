@@ -75,6 +75,8 @@ change the domain or what counts as evidence.
 | [QASPER](https://aclanthology.org/2021.naacl-main.365/) | Information-seeking questions, answers and supporting evidence anchored in whole scientific papers; includes unanswerable questions. | Preserve paper families and verify evidence spans. Recheck unanswerability against the permitted sources. Use answerable questions for retrieval quality; retain unanswerable questions for refusal evaluation. |
 | **EduMind-authored questions on [OHR-Bench documents](https://github.com/opendatalab/OHR-Bench)** | Tests retrieval of a table with its headers, a complete formula, or genuinely mixed evidence. Prose questions cannot establish these capabilities. | Write and verify the questions, required facts and exact source intervals. Use the source documents, not OHR's published QA as human-authored gold: its [authors describe generating questions with GPT-4o](https://arxiv.org/html/2412.02592v3). |
 
+Review genuinely cross-document questions separately: QASPER and EduQG source
+links do not by themselves establish that two documents are necessary.
 Cover table, formula and mixed evidence separately; extra prose questions
 cannot make up for a missing evidence type. Generation adds reviewed answers and required factual claims to the
 shared evidence. A separate, human-labeled **development-only calibration set**
@@ -84,12 +86,11 @@ outputs are not candidate test results.
 
 ## Vector database and Final RAG
 
-**Vector database:** use the frozen EduMind chunks, embeddings, metadata and
-queries for the real workload, alongside a seeded synthetic workload. The real
-corpus answers whether a database preserves useful evidence for this app. The
-synthetic workload isolates scale, filtering and near-duplicates. An unrelated
-public vector dump would supply neither EduMind evidence labels nor controlled
-changes to one workload condition.
+**Vector database:** group reviewed files, queries and selected-model vectors
+into realistic isolated study workspaces of different chunk counts. Evaluate
+all-session search and credible user-selected subsets. Exact neighbors are
+computed within each scope. Synthetic probes exercise integrity or stress in
+isolation; they do not stand in for these workspaces or determine the winner.
 
 **Final RAG:** reserve separate licensed educational document families and
 questions before component selection. Evaluate the selected system once on this

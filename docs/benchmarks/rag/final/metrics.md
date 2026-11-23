@@ -238,8 +238,7 @@ observed failure.
 **Example:** One retrieval failure, one generator timeout, and one structurally
 usable answer yield `2 / 3` request failures. The retrieval failure records a
 generation skip; only the timeout is a generator timeout. Average question
-rates within each document, then documents; do not substitute a pooled corpus
-failure fraction for this document-macro estimator.
+rates equally; do not substitute a pooled attempt failure fraction.
 
 **Range and direction:** `[0, 1]`; lower is better. All three executed requests
 failing gives `1`, not missing failure evidence or three generator crashes.
@@ -271,8 +270,7 @@ question Context-Limit-Reached Rate = output-context terminations / generation-e
 ```
 
 Every eligible slot must execute and have its outcome recorded for a complete
-question rate. Apply question-then-document macro aggregation to the defined
-rates, retaining eligible, executed, skipped, failed, and unavailable counts.
+question rate. Average the defined rates across questions, retaining eligible, executed, skipped, failed, and unavailable counts.
 These are conditional generator rates, not complete-system failure percentages.
 
 **Example:** The three requests in the example above have two eligible generator
@@ -322,7 +320,7 @@ comparison representation required by retrieved contexts:
    sentinel containing its literal value. It must not collide with any valid
    chunk identity, and unknown labels are not silently discarded.
 4. Calculate Jaccard over the resulting sets, then aggregate the scheduled pair
-   scores within question and source document as for generation.
+   scores within each question, then across questions as for generation.
 
 **Example:** Attempt 1 maps `E1` to chunk A and `E2` to chunk B; attempt 2 reverses
 the labels. Citing A as `[E1]` then `[E2]` gives agreement `1`, not `0`.
@@ -542,11 +540,11 @@ them as complete under [missing or partial resource measurements](../../metrics.
 ## Worked result interpretation
 
 A frozen system can retrieve evidence yet generate an incomplete answer.
-Illustrative document-macro Evidence-unit Recall `0.90` and Factual Correctness
-Recall `0.60` are averages under their distinct question/document estimators,
+Illustrative mean Evidence-unit Recall `0.90` and Factual Correctness
+Recall `0.60` are averages under their respective question-level scoring rules,
 not pooled percentages of all evidence units or facts. For example, one question
 in each of two documents has correctness recall `1 / 1 = 1.00` and
-`1 / 5 = 0.20` on every measured response. The macro recall is
+`1 / 5 = 0.20` on every measured response. The mean recall is
 `(1.00 + 0.20) / 2 = 0.60`, while pooled fact coverage would be
 `(1 + 1) / (1 + 5) = 1 / 3`, not 60%. Inspect missed evidence and the use of
 retrieved content before attributing a retrieval/answer-quality gap to generation.
@@ -562,12 +560,11 @@ These values illustrate interpretation, not measured results.
 
 ## Aggregation and confidence intervals
 
-Automated quality/rates use question-then-document macro weighting,
-first-attempt retrieval quality, generation's all-three-output/pair means,
-the local stage-eligible failure denominators, and each stage's latency observation
-unit. Keep answerable/unanswerable and evidence-type eligible/contributing counts
-plus failed, unavailable, and unexecuted records. Do not pool all questions or
-claims into an alternative overall quality percentage.
+Automated quality and rates are [question-macro](../../metrics.md#macro-averaging-what-gets-equal-weight):
+each eligible question gets equal weight. Use the
+designated first retrieval, generation's three scheduled outputs/pairs, and the
+applicable stage-specific failure denominator. Latency retains its own unit. Keep answerable/unanswerable and evidence-type eligible/contributing counts
+plus failed, unavailable, and unexecuted records. Do not pool evidence units or claims across questions to obtain an overall percentage.
 
 Request failure rates retain all scheduled request slots; generator rates retain
 only their known eligible slots, with upstream skips visible separately. The
@@ -576,7 +573,7 @@ apply: evaluated no-claim/inapplicable ratios are not missing judging, but missi
 required outputs or labels leave surviving quality diagnostic, not complete.
 Keep each source's questions, three attempts, and pair records together; three
 outputs do not create three independent questions. Citation Support uses the
-same response/question/document estimator and CI eligibility as the other
+same response-then-question estimator and CI eligibility as the other
 semantic quality ratios, not a pooled generated-claim fraction.
 
 Eligible locked automated quality/rate/repeatability aggregates receive 95%
@@ -586,12 +583,12 @@ conditional on source support. Apply the
 with reviewed independent-source groups as the resampling units, retaining all
 member documents, questions, seeds, failures, and pair records. A document is
 independent only when the reviewed grouping establishes it. Quality/rates retain
-their document-macro statistic; latency uses the per-question stage observations defined above, not
+their question-macro weighting; latency uses the per-question stage observations defined above, not
 document-average times.
 
 Generation Decode Throughput inherits its pooled work/time estimator and
 conditional interval eligibility. Recalculate that ratio on each aligned source
-draw rather than applying quality's document-macro averaging to stream rates.
+draw rather than applying quality's averaging across questions to stream rates.
 
 With [insufficient independent-source support](../../metrics.md#insufficient-confidence-interval-support),
 retain a defined point with null bounds and a reason. For

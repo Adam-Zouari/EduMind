@@ -21,12 +21,17 @@ worth its latency and resource cost?
 
 A candidate is one complete retriever/reranker stack operating on an already
 selected chunking–embedding pair. Only answerable questions enter this
-retrieval evaluation. Each question supplies a ranking observation; source
-documents and their independent-source groups govern quality aggregation
-and resampling. This benchmark does not evaluate approximate database search
+retrieval evaluation. Each question supplies a ranking observation. Quality is
+question-macro, while reviewed
+independent-source groups govern resampling. This benchmark does not evaluate approximate database search
 or generated answers.
 
 ### Implementation status
+
+The [revised RAG scoring contract](../../metrics.md#rag-quality-mean-across-questions)
+requires multi-source references and equal question weights. Current runs use
+the earlier single-document schema and weighting; the capabilities below do not
+establish conformance to the revised contract.
 
 The runner implements one warmup, designated-first final-ranking quality,
 all-pairs complete-order Ranking Repeatability, separate live retrieval
@@ -34,7 +39,7 @@ and reranker timings, owned index measurements, and retained per-attempt evidenc
 Standalone validation and sealed-report verification run before candidate loading.
 Pool/index provenance, permutation, input, placement, and numerical integrity
 remain separate from diagnostic ranking changes and measured failure counts.
-Alpha-nDCG uses the same answerable-question and source-document
+Alpha-nDCG uses the same answerable-question and evidence
 eligibility as primary retrieval quality, including single-unit questions.
 
 Pool recall uses only the designated first measured pool. A later verified pool
@@ -142,7 +147,7 @@ and mixed questions. These evidence types are reporting slices, not additional
 metric roles.
 
 The evidence-unit definitions, `tiktoken:cl100k_base` evaluation tokenizer,
-answerable-question eligibility, document-macro aggregation, confidence
+answerable-question eligibility, equal weighting of questions, confidence
 intervals, and text/table/formula/mixed slices are the same as in the
 chunking/embedding phase. Exact definitions and comparison rules are in
 [retrieval and reranking metrics](metrics.md).
@@ -311,7 +316,7 @@ an automatic zero-error gate.
 
 Quality and supported warm-latency differences apply the
 [shared paired-bootstrap procedure](../../metrics.md#confidence-intervals)
-to aligned source groups. Quality keeps document-macro weights even when an
+to aligned source groups. Quality keeps equal question weights even when an
 independent group contains several documents. Latency differences recalculate
 each candidate's percentile from its contributing query observations on the
 same source draws; they are not the mean of per-query latency differences.
@@ -528,7 +533,7 @@ The per-scope keys below use `overall`, `text`, `table`, `formula`, or
 | Scoped key suffix under `validity.quality.<scope>.` | Meaning |
 |---|---|
 | `eligible_question_count` | Eligible answerable questions for that scope. |
-| `eligible_document_count` | Distinct source documents containing eligible questions. |
+| `eligible_document_count` | Distinct source documents supporting eligible questions; not the quality denominator. |
 
 All four quality families use these same reference-eligibility counts, including
 single-unit questions. Separate `alpha_ndcg_eligible_question_count` and

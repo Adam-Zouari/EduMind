@@ -46,7 +46,9 @@ the authoritative dataset manifests and methodology, then remove the item.
   authoritative execution. Record the canonicalization version; do not adjust
   matching or fingerprint tolerances after observing held-out outputs.
 - Check the number of independent sources after grouping related pages and
-  clean/degraded captures. Confirm support for document-macro quality,
+  clean/degraded captures. Review how standalone pages, near-identical captures
+  and complete files are represented: packaging must not give one source extra
+  votes accidentally. Confirm support for document-macro quality,
   three-attempt repeatability/failure intervals, and successful-latency intervals;
   more bootstrap resamples or repeated attempts do not replace more sources.
 - Inspect degenerate bootstrap cases, including all-zero/all-one reliability
@@ -125,6 +127,9 @@ the authoritative dataset manifests and methodology, then remove the item.
 
 ## Chunking, embedding, retrieval, and generation
 
+- Review the distribution of questions per source family, verify each source's
+  necessary contribution to multi-source questions, and freeze single-/multi-source
+  support. Allocate linked families together across splits and CI draws.
 - Inspect the pinned QASPER splits and verify that the prepared 100/40/40 paper
   allocation preserves source-paper isolation and useful answerable/unanswerable
   coverage.
@@ -220,39 +225,20 @@ the authoritative dataset manifests and methodology, then remove the item.
 
 ## Vector databases
 
-- Inspect representative selected-model vectors and queries; freeze the initial
-  corpus, plausible growth sizes, source allocations and held-out validation/locked
-  workloads. Record dimensions/dtype, corpus/query checksums, related-source
-  grouping, and separately labelled synthetic stress seeds. The old synthetic
-  100k/1M grid is not automatically the reviewed real-data scale.
-- Freeze each database's bounded configuration roster and tuning budget before
-  comparative runs, including supported native planning. Record shortlist limits;
-  validation and locked reuse complete database–configuration identities without
-  retuning. Any recall target used for review must be declared, not inferred from
-  a driver's old automatic selector.
-- Review document-ID filters, exact eligible sets, restrictive/compound/empty
-  cases, and correlation between filter membership and query/vector clusters.
-  Integration evidence must be available inside each question's allowed scope.
-- Freeze exact-distance evaluator precision and identity. Keep boundary-tie
-  equality exact by default; any nonzero tolerance requires numerical evidence
-  and a protocol revision before candidate comparison. The boundary-slot credit
-  rule itself is fixed, not selected from benchmark outcomes.
-- Freeze request payloads, concurrency, schedules, representative and load warmup,
-  measured window duration/count, connection/retry/timeout policies, and drain
-  boundaries. Identify first quality and three repeatability observations before
-  execution. Keep static search and document mutations separate unless an explicit
-  mixed-load condition is needed.
-- Select representative logical document insertion/replacement/deletion sizes
-  and independent source groups. Freeze starting/restored states, visibility
-  probes and polling intervals, restart/cache procedure, server memory/cache
-  accounting, and the synchronized apparent-byte post-build storage checkpoint.
-- Set independent query/source support for ANN/evidence/repeatability intervals,
-  and independent load-window or operation-group support for p50/p95, QPS and
-  rates before authoritative comparisons, including development. Preserve
-  concurrent dependence. Record submitted, completed, failed,
-  not-executed and checkable counts; 10,000 bootstrap draws do not create new
-  independent data or load executions. Unsupported bounds remain null while
-  descriptive points retain their actual scope.
+- Pilot realistic sessions, including short and long materials. Before candidate
+  runs, freeze each session's files, chunk count, questions, paired question IDs,
+  user-intent selections, allowed ID sets and per-scope oracle checksums.
+  Review support for each session and the paired subset. A stress corpus is not
+  a representative workspace; do not split a workspace to give it extra votes.
+- Freeze candidate/configuration budgets, exact-search options, dimensions,
+  dtype, evaluator precision and tie policy. Reuse validation finalists unchanged.
+- Freeze serial schedules, counterbalanced paired order, warmups, identical
+  payloads, connection/retry/timeout policy, operation sizes, visibility probes,
+  restoration, startup and storage checkpoints. Keep mutations separate from search.
+- Freeze independent session/group support for search intervals, linked-source
+  support for integration quality and operation-group support for mutations.
+  Record failures and unavailable measurements. When support is weak report
+  per-session points and null bounds, not apparent precision from more attempts.
 
 ## Resolution rule
 

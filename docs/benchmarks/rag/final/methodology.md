@@ -19,9 +19,9 @@ reviewed canonical corpus?
 ## Purpose and scope
 
 This benchmark reports one already-selected complete RAG system. It does not
-compare new component combinations or reopen component selection. Questions
-supply retrieval and generation observations, source documents define quality
-aggregation, and reviewed independent-source groups define uncertainty support.
+compare new component combinations or reopen component selection. Each question
+supplies retrieval and generation observations and counts once in question-macro
+quality. Reviewed independent-source groups define uncertainty support.
 The calibrated LLM judge supplies automated semantic evaluation, as in the
 Generation benchmark. Measured requests begin with frozen chunks, embeddings,
 and indexes ready. Document, ASR, and video extraction are outside measured scope
@@ -30,6 +30,11 @@ application performance; no additional extraction integration benchmark is
 required by this contract.
 
 ### Implementation status
+
+The [revised RAG scoring contract](../../metrics.md#rag-quality-mean-across-questions)
+requires multi-source references and equal question weights. Current runs use
+the earlier single-document schema and weighting; the capabilities below do not
+establish conformance to the revised contract.
 
 The runner exposes CPU/CUDA smoke, integrated preflight, and one locked
 evaluation of the same reviewed system. Its live path uses the selected server

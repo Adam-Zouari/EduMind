@@ -20,12 +20,17 @@ every model receives exactly the same verified evidence?
 
 The candidate is one generator model-mode configuration. This benchmark isolates
 generation on verified evidence; it does not measure retrieval or the complete
-RAG system. A question supplies repeated response observations, while the
-source document is the quality aggregation unit. Reviewed independent-source
+RAG system. Quality is question-macro: a question supplies repeated responses
+but counts once in the mean. Reviewed independent-source
 grouping defines uncertainty support; related documents are not automatically
 independent observations.
 
 ### Implementation status
+
+The [revised RAG scoring contract](../../metrics.md#rag-quality-mean-across-questions)
+requires multi-source references and equal question weights. Current runs use
+the earlier single-document schema and weighting; the capabilities below do not
+establish conformance to the revised contract.
 
 The `generation-v5` protocol and runner implement the seven-configuration
 model-mode roster, frozen question/seed schedule validation, one warmup, three
@@ -456,8 +461,7 @@ generation, tuning, or selection.
 
 Development, validation, and locked execution use three sequential sampled
 responses per question, with aligned seeds `42`, `43`, and `44`. Score each
-evaluable output, average within its question, then within its source document,
-then macro-average documents. All three responses contribute quality evidence;
+evaluable output, average within its question, then average across questions. All three responses contribute quality evidence;
 none is selected as the best response or used to replace a failed observation.
 The repeated draws reduce dependence on a single sampled response, while
 repeatability separately measures agreement of status, citations, and meaning.

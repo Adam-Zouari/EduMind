@@ -397,8 +397,7 @@ failure, A, A, because (2,3) still agrees. A with two failures gives zero,
 and three executed failures give zero. Identical error messages are not
 successful rankings and never agree.
 
-Calculate the pair rate for each question, then average within source documents
-and macro-average documents. Retain scheduled/matching pair counts and complete
+Calculate the pair rate for each question, then average the question rates equally. Retain scheduled/matching pair counts and complete
 attempt outcomes so a high score cannot hide failed execution.
 
 This diagnostic measures output-order repeatability, not repeatability of every
@@ -910,7 +909,7 @@ downstream on average?
 
 Apply the shared context-token calculation to the valid designated first ranking
 after any enabled reranking, then average per-query totals. This descriptor is
-query-weighted, not document-macro quality or average chunk size.
+query-weighted, not a quality score or average chunk size.
 
 In plain language:
 
@@ -1189,8 +1188,7 @@ Suppose a valid stack reports:
     Reranker Warm Latency p50      = 35 ms
 
 Evidence-rich chunks are ordered well on average, but the selected context
-does not recover every required unit. Forty percent is document-macro average
-token precision, not a pooled percentage of all corpus tokens. Higher pool
+does not recover every required unit. Forty percent is mean evidence-token precision across questions, not a pooled percentage of all corpus tokens. Higher pool
 recall shows that some omitted evidence was available before top-five selection.
 Alpha-nDCG describes novelty, not a subtraction from ordinary nDCG. Component
 medians need not sum to the full-stack median: they summarize query observations
@@ -1200,14 +1198,14 @@ separately. Review the same families at @3 before freezing downstream top-K.
 
 ### Aggregation and completeness
 
-Average defined first-ranking question scores within each source document,
-then macro-average document values. Apply the same procedure to pool recall
+Quality is [question-macro](../../metrics.md#macro-averaging-what-gets-equal-weight):
+average the defined first-ranking scores across eligible questions. Apply the same procedure to pool recall
 and each evidence slice. All four @3/@5 families share reference eligibility
 but retain metric-specific scored/unavailable support.
 
 **Example:** A document with ten questions averaging 0.8 and another with two
-averaging 0.4 give document-macro (0.8 + 0.4) / 2 = 0.6, not the
-question-weighted (10 × 0.8 + 2 × 0.4) / 12, approximately 0.73.
+averaging 0.4 give (10 × 0.8 + 2 × 0.4) / 12, approximately 0.73. A question using
+evidence from both documents still counts only once.
 
 A slice with no eligible questions is [inapplicable](../../metrics.md#no-applicable-task);
 eligible questions without usable scores make its aggregate
@@ -1222,10 +1220,10 @@ the shared completeness distinction, not a blanket zero-request-failure gate.
 
 | Value | 95% confidence interval? | Rule |
 |---|---|---|
-| Development/validation/locked @3/@5 quality and pool recall | When defined and sufficiently supported | Resample reviewed independent-source groups with all member documents and recalculate the document-macro statistic. |
+| Development/validation/locked @3/@5 quality and pool recall | When defined and sufficiently supported | Resample reviewed independent-source groups with all member documents and recalculate the question-macro scores. |
 | Text, table, formula, and mixed quality slices | When defined and sufficiently supported | Preserve eligible source question/failure records. |
 | Full-stack, retrieval, and reranker warm p50/p95 | Conditional | Resample reviewed source groups with every member document's query-level successful-attempt medians; recalculate percentiles. |
-| Ranking Repeatability | When complete and sufficiently supported | Resample reviewed source groups with every member document's scheduled query pairs and recalculate question-then-document means. |
+| Ranking Repeatability | When complete and sufficiently supported | Resample reviewed source groups with every member document's scheduled query pairs and recalculate question-macro repeatability. |
 | Validity counters | No selection-uncertainty interval | Retain actual checks, support, and failure details. |
 | Smoke | No authoritative interval | Wiring evidence only. |
 | One cold initialization, index build, or observed memory peak | No | One lifecycle observation cannot estimate uncertainty. |
@@ -1237,17 +1235,17 @@ Apply the [shared CI procedure](../../metrics.md#confidence-intervals) to the
 reference-eligible source inventory: draw reviewed independent-source groups,
 retaining all member documents and their complete query/failure records. A
 document is its own independent unit only when the reviewed grouping establishes
-that. Recalculate document-macro quality and pool recall; latency draws use
+that. Recalculate mean quality and pool recall across questions; latency draws use
 the sampled documents' query-level successful-attempt medians before calculating
 each component's percentile. Repeatability draws recalculate each question's
-scheduled pair score and document-macro mean; they do not create new rankings or
+scheduled pair score and the mean across questions; they do not create new rankings or
 treat pairs as independent documents. Insufficient or unfrozen support leaves
 defined points with null bounds, including diagnostics; see
 [confidence-interval support](../../metrics.md#insufficient-confidence-interval-support).
 Undefined draws do not enter the affected bounds, and equal bounds retain their
 degeneracy flag; see [undefined bootstrap draws and equal bounds](../../metrics.md#undefined-bootstrap-draws-and-equal-bounds).
 
-**Example:** nDCG@5 0.84 with CI [0.79, 0.88] describes the observed macro
+**Example:** nDCG@5 0.84 with CI [0.79, 0.88] describes the observed mean
 score and source-sampling uncertainty, not individual-question score ranges.
 
 Paired comparisons use the same source draws for both complete valid candidates.

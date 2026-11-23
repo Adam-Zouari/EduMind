@@ -96,6 +96,13 @@ same verification rules apply to SlideSpeech, AVLectures, and owned recordings.
 | [EduQG](https://github.com/hadifar/question-generation) | Reviewed by book family | Reviewed by book family | Reviewed by book family | Standalone textbook questions and sentence evidence, remapped to the frozen source. Do not index answer keys. |
 | EduMind-authored structured supplement on OHR-Bench documents | Reviewed separately | Reviewed separately | Reviewed separately | Table, formula, and mixed-evidence questions with exact canonical-text intervals. |
 
+For the revised RAG contract, register one question ID and the canonical source
+ID on each evidence unit. Construct genuine multi-source cases by reviewing the
+distinct required contribution of each source; combining files in a workspace
+is not enough. Freeze question counts by source family and scope, and keep
+linked families in the same split. Existing single-source annotations remain
+valid. Current CLI examples below use the executable single-document schema.
+
 QASPER supplies the paper-level split foundation. The preparation step samples
 whole papers with seed `42`, so one paper and its questions never cross splits.
 The structured supplement is not a model-generated augmentation: a reviewer
@@ -154,19 +161,20 @@ configuration on their respective prepared corpora, not new component choices.
 
 ### Vector databases
 
-Reuse reviewed RAG source text/evidence and the frozen selected chunking and
-embedding outputs for representative database workloads. Every compared
-database/configuration receives identical chunk IDs, vectors, metadata and
-query inventories within a condition. RAG's paper allocation does not by itself
-establish a representative database scale: review the initial corpus, plausible
-growth, held-out queries, and related-source split isolation separately.
+Build the real vector workload from plausible study sessions of frozen RAG
+documents and selected-model embeddings. Freeze session IDs, document and chunk
+inventories, queries and vectors. Run every question over its session; for
+credible user selections also record a proper subset of file IDs before looking
+at gold or search output. Record each scope's exact eligible set. Pair the same
+query on the same index and counterbalance execution order. Review session/file/
+chunk/question/paired counts before testing; no minimum fraction must be filtered.
 
 Store trusted document-filter eligibility, prepared document insertions and
 replacements, expected deletion states, and their checksums with the workload.
 Record original/replacement chunk counts and payload sizes; no subject inference
 from filenames is required. Synthetic stress corpora are separate conditions,
 not replacements for real-data evidence. Exact counts, dimensions, configuration
-ranges and load support remain in [pending data review](pending-data-review.md#vector-databases).
+ranges and independent session support remain in [pending data review](pending-data-review.md#vector-databases).
 The [vector methodology](vectordb/methodology.md) defines the implemented
 configuration lifecycle and its separate real-service/data prerequisites.
 
@@ -313,6 +321,14 @@ the searchable document. Add a question like this to the `samples` list in
   ]
 }
 ```
+
+The question-level `document_id` above is required by the current CLI; in the
+revised contract it does not determine ownership or restrict the evidence.
+For example, a comparison between the textbook prediction and a lab result
+has two required units: one anchored in the textbook, one in the lab report.
+Both must belong to the same split and allowed workspace. Finding just one unit
+gives that question evidence recall 1/2. Do not duplicate the question under
+both document records.
 
 The offsets refer to the **document**, not to the question:
 `text[15:52]` is exactly `Conduction transfers heat by contact.`.
@@ -966,7 +982,7 @@ Document reference review must also establish the following:
 
 Development, validation, and locked document comparisons score quality only
 from the first measured attempt, use all three attempts for repeatability and
-failure rates, and average quality within documents before averaging documents.
+failure rates, and report document-macro quality.
 Smoke uses one measured attempt and supplies no repeatability evidence. These
 execution results are run artifacts, not annotations added to the dataset
 manifest. A failed first attempt leaves quality unavailable, while a later
@@ -1018,7 +1034,7 @@ tokens are not merged into a combined quality score.
 RAG document rows contain canonical text and a stable source-document family.
 Question rows contain answerability, accepted answers, one mutually exclusive
 evidence type, and verified evidence units with stable IDs and exact half-open
-intervals into that canonical text. Table units include the headers needed to
+intervals into the canonical text of each unit's named document. Table units include the headers needed to
 interpret selected cells; formula units include the complete expression; mixed
 questions contain evidence from at least two types. Unanswerable questions have
 no gold evidence units.

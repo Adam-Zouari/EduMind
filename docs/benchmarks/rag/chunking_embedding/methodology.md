@@ -38,20 +38,24 @@ filtered out before query embedding, timing, and scoring in this phase. Their
 documents remain in the frozen searchable corpus; excluding a query does not
 remove corpus distractors or alter another question's available evidence.
 
-One answerable question is one scoring sample. Because questions from the same
+Quality is question-macro: one answerable question is one scoring sample. Because questions from the same
 paper are related, resampling retains the whole source document, grouping
 related documents by their reviewed independent-source identity under the
 [shared CI rule](../../metrics.md#confidence-intervals). Repeated query executions
 improve timing measurement but do not create additional quality samples.
 
 For example, a document with two first-ranking recall values `1` and `0`
-contributes `0.5`; a second document with one value `1` contributes `1`.
-The document-macro recall is `(0.5 + 1) / 2 = 0.75`, not the pooled
-question mean `2 / 3`. The same weighting is applied separately to each
+and a second document with one value `1` give mean recall `(1 + 0 + 1) / 3 = 2 / 3`.
+Each question counts once, regardless of how many documents supply its evidence. Apply the same weighting to each
 quality metric and evidence slice. Warm-latency percentiles instead use the
-per-query observations defined below; they are not document-macro latency means.
+per-query observations defined below; they are not means of document durations.
 
 ### Implementation status
+
+The [revised RAG scoring contract](../../metrics.md#rag-quality-mean-across-questions)
+requires multi-source references and equal question weights. Current runs use
+the earlier single-document schema and weighting; the capabilities below do not
+establish conformance to the revised contract.
 
 The runner measures loading, corpus build, and queries separately. It implements
 first-ranking quality and context descriptors, retained per-attempt
@@ -262,7 +266,7 @@ qualification and selection evidence rather than reuse of an older decision.
 
 Each answerable question retains its first-ranking metric values, status/reason,
 and planned evidence support even after failure. Quality averages defined
-question scores within each source document and then macro-averages documents.
+question scores with equal weight for each question.
 Keep scheduled, eligible, scored, failed, and unavailable counts per metric/slice;
 successful-latency counts are separate because a later request may succeed when
 first-ranking quality is unavailable.
@@ -291,8 +295,7 @@ do not turn missing quality, execution, or integrity into complete evidence.
 Mean/p95 Retrieved Context Tokens at @3/@5 follow the
 [shared context-workload rule](../../metrics.md#retrieved-context-workload).
 Count each query's valid designated-first ranking prefix with the fixed tokenizer,
-then average/query-percentile the totals. This descriptor is query-weighted, not
-document-macro quality. Later rankings never replace a failed first observation;
+then average/query-percentile the totals. This descriptor is query-weighted, a workload measure, not a quality score. Later rankings never replace a failed first observation;
 partial required totals stay labelled workload diagnostics. No token budget or
 new descriptor CI is introduced. See
 [retrieved-context token availability](../../metrics.md#retrieved-context-token-availability).
@@ -382,8 +385,8 @@ Repeatability, not additional quality observations.
 
 Ranking Repeatability applies the [shared pair rule](../../metrics.md#pairwise-repeatability)
 to repeated **ordered top-five IDs**, or all available IDs in a smaller corpus.
-Average pair scores within questions, then questions within documents, then
-documents. Valid ordering differences are diagnostic, not an acceptance gate.
+Ranking Repeatability is question-macro: average the pair scores within each
+question first. Valid ordering differences are diagnostic, not an acceptance gate.
 The retrieval–reranking diagnostic instead compares its complete normally top-20
 order; neither depth is silently substituted for the other.
 
@@ -514,7 +517,7 @@ All four quality metrics share reference eligibility; log eligible,
 scored, failed, and unavailable question/document support per metric and evidence
 scope. Contributing observations use the shared `.sample_count` convention;
 record independent-source support separately in metric artifacts. Query medians,
-document-macro values, and independent sources are not interchangeable counts.
+question scores, and independent sources are not interchangeable counts.
 The run-level validation outcome is also stored as a
 `benchmark.valid` tag and a `validation.status` tag whose value is `passed` or
 `failed`. MLflow scalar values do not replace the
@@ -590,13 +593,13 @@ shrinking it to surviving overlaps.
 
 Each metric retains `left_minus_right`, identical to its difference `estimate`,
 and `direction=max`: a positive value favors the left candidate on that metric,
-not an overall winner. For example, illustrative document-macro Recall@5 values
+not an overall winner. For example, illustrative mean Recall@5 values
 of `0.82` and `0.77` give `0.05`, not a relative percentage improvement.
 `paired_samples`, `paired_documents`, and `paired_resampling_units` respectively
 count aligned questions, source documents, and reviewed independent source groups.
 
 Apply the [shared paired-source bootstrap](../../metrics.md#confidence-intervals)
-to aligned question differences, preserving document-macro weighting and every
+to aligned question differences, giving each question equal weight and retaining every
 document inside its reviewed source group. The artifact retains `lower`, `upper`,
 `confidence`, contributing/eligible support, requested/defined/undefined draw
 counts, degeneracy, and unavailable-bound reasons. Unfrozen or insufficient CI

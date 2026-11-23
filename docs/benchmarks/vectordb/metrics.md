@@ -30,11 +30,9 @@ Undefined values retain their reasons and support counts in artifacts under
 All numbers below illustrate arithmetic, not measured database results.
 
 The [implementation status](methodology.md#implementation-status) distinguishes
-the regression-tested driver and live pinned-server smoke coverage from the
-remaining reviewed-input/support requirements. Paired comparisons and sealed evaluation-only
-recovery are implemented. New driver
-artifacts use tie-aware @20 and explicit condition scopes; historical keys and
-measurements must not be renamed to imply that they used these calculations.
+the existing v5 condition-level driver and its sealed recovery from the session
+contract below. Its cross-candidate comparisons are not the within-candidate
+paired search table. Do not rename or reinterpret historical measurements.
 
 ## Metric summary
 
@@ -43,7 +41,7 @@ measurements must not be renamed to imply that they used these calculations.
 | Metric | Role | Question answered | Direction |
 |---|---|---|---|
 | ANN Recall@20 | Primary | How many exact nearest neighbours does unfiltered search preserve? | Higher |
-| Filtered ANN Recall@20 | Primary | How many exact nearest neighbours inside the allowed subset are preserved? | Higher |
+| Filtered ANN Recall@20 | Diagnostic | How many exact nearest neighbours inside the allowed subset are preserved? | Higher |
 
 ### Application retrieval quality
 
@@ -74,11 +72,12 @@ measurements must not be renamed to imply that they used these calculations.
 
 | Metric | Role | Question answered | Direction |
 |---|---|---|---|
-| Database Search Latency p50 | Operational | What is a typical completed database request's duration? | Lower |
-| Database Search Latency p95 | Operational | How slow is the completed database-request tail? | Lower |
+| [Unfiltered Search Latency p50](#unfiltered-search-latency-p50) | Operational | What is the median wait when searching all files in the session? | Lower |
+| [Unfiltered Search Latency p95](#unfiltered-search-latency-p95) | Operational | How long do slower all-session searches take? | Lower |
+| [Filtered Search Latency p50](#filtered-search-latency-p50) | Operational | What is the median wait when searching only selected files? | Lower |
+| [Filtered Search Latency p95](#filtered-search-latency-p95) | Operational | How long do slower selected-file searches take? | Lower |
 | Full-Stack Retrieval Latency p50 | Operational | What is a typical complete retrieval/reranking wait? | Lower |
 | Full-Stack Retrieval Latency p95 | Operational | How slow is the complete retrieval/reranking tail across questions? | Lower |
-| QPS | Operational | How many successful search requests finish per wall-clock second? | Higher |
 | Initial Build Time | Operational | How long until prepared data and configured indexes are query-ready? | Lower |
 | Insert Latency p50/p95 | Operational | How long until prepared documents become available? | Lower |
 | Update Latency p50/p95 | Operational | How long until document replacements are fully reflected? | Lower |
@@ -92,7 +91,7 @@ measurements must not be renamed to imply that they used these calculations.
 |---|---|---|---|
 | Persistent Storage Size | Descriptor | How much persistent state does the completed database require? | No quality direction; smaller is a footprint advantage at comparable functionality |
 
-Workload counts, dimensions, concurrency, filters, requested/actual result counts,
+Workload counts, dimensions, session scopes, filters, requested/actual result counts,
 and document operation sizes remain parameters or artifact fields. Actual
 execution-support counters use the shared `validity.*` reporting convention; they
 are not extra selection metrics. See [MLflow structure](methodology.md#results-and-mlflow-structure).
@@ -118,9 +117,9 @@ Do not bury these cases in metric-specific empty-denominator conventions.
 Each filter is evaluated against trusted source metadata. Search execution
 success means a completed response with a usable envelope, known unique IDs and
 finite required scores. Filter correctness is checked separately. Use the same
-execution-success cohort for Search Request Error Rate, database latency and QPS:
+execution-success cohort for Search Request Error Rate and search latency:
 
-| Search outcome | Execution error? | Include in successful QPS/database latency? | Filter observation |
+| Search outcome | Execution error? | Include in search latency? | Filter observation |
 |---|---|---|---|
 | Usable response, all records allowed | No | Yes | `0` when filtering applies. |
 | Usable response, known forbidden record returned | No | Yes, with correctness failure retained | `1`; retain the filtering violation separately from recall eligibility. |
@@ -227,8 +226,9 @@ A valid empty response gives `0 / 20 = 0`; five recovered neighbours give
 `5 / 20 = 0.25`. These are ordinary results under the same calculation, not
 runtime failures or additional zero-denominator conventions.
 
-Average query scores within the declared condition; do not pool recovered counts
-when effective denominators differ. Compare speed at comparable recall.
+Use [session-macro averaging](../metrics.md#macro-averaging-what-gets-equal-weight):
+first average the designated query scores within a session, then average the
+session means equally. Do not pool recovered counts across queries. Compare speed at comparable recall.
 
 **Range and direction:** `[0,1]`; higher is better.
 
@@ -251,7 +251,11 @@ Neither case receives the valid-empty zero described above.
 
 **Calculation:** Use the same calculation, after restricting the exact reference and the request
 to the same frozen predicate. The denominator is `min(20, eligible records)`,
-not the unfiltered corpus size. Report conditions separately.
+not the unfiltered corpus size. Average filtered scores within each session,
+then average the means of the predeclared sessions with scoped queries. A
+session with no paired questions is inapplicable to the diagnostic. A failed
+required filtered request is not an excuse to drop its session. In the paired
+table recalculate unfiltered recall using only the same questions.
 
 **Example:** A document filter permits 100 records. Recovering 17 of its exact
 nearest 20 gives `17/20 = 0.85`. A different filter permitting only 8 records,
@@ -436,7 +440,8 @@ scheduled pairs with two valid identical ordered database outputs
 
 **Example:** Lists A,A,B agree only in pair (1,2), giving `1/3`. Failure,A,A
 also gives `1/3`, through pair (2,3). Three executed failures give zero, not
-agreement. Average per-query pair rates within the declared condition.
+agreement. Average per-query pair rates within each session, then average the contributing
+session means for the same search scope.
 Three valid empty results, such as `[]` for an empty-match filter, give `1`:
 the lists agree, without establishing nonempty-search recall.
 
@@ -479,7 +484,7 @@ failed submitted search operations / submitted search operations
 ```
 
 **Example:** 10 timeouts among 1,000 submitted searches give `0.01`, or 1%.
-Interpret with QPS and successful-request latency; a fast surviving subset does
+Interpret with successful-request latency; a fast surviving subset does
 not describe the failed requests.
 
 **Range and direction:** `[0,1]`; lower is better.
@@ -620,7 +625,7 @@ calculation and quality scoring are excluded. Full-stack timers include the
 frozen model-backed retrieval path. Build/startup/visibility boundaries are in
 [execution methodology](methodology.md#execution-and-measurements).
 
-Server-load and document-operation percentiles use individual completed logical
+Serial search and document-operation percentiles use individual completed logical
 operations within their condition. Full-stack percentiles use each question's
 median successful measured attempt. Apply the same
 [percentile interpolation](../metrics.md#latency-percentiles) to those explicitly
@@ -630,14 +635,15 @@ Here completed database observations mean the execution-success cohort defined
 in [scoring inputs and result status](#scoring-inputs-eligibility-and-result-status), including
 separately flagged checkable filter violations, not every decoded invalid response.
 
-### Database Search Latency p50
+### Unfiltered Search Latency p50
 
-**Question:** How long does a typical completed database request take?
+**Question:** How long does a typical search across all files in the session take?
 
-**Calculation:** Take p50 over completed request durations in one declared corpus/filter/load
-condition. This is the median, not document-macro averaging.
+**Calculation:** Take the median duration of individual completed all-session requests.
+For the paired table, use only the unrestricted requests whose questions also have a
+selected-file condition. Do not average session medians.
 
-**Example:** `2,3,4,5,11 ms` gives `4 ms`. A filtered condition has its own list.
+**Example:** All-session durations of `2,3,4,5,11 ms` give `4 ms`.
 This describes request service time at the client boundary, not model inference.
 
 **Range and direction:** non-negative milliseconds/request; lower is better
@@ -650,12 +656,12 @@ latency: see [zero or one latency observation](../metrics.md#zero-or-one-latency
 Failed elapsed time is not successful-completion latency under
 [completed stages and failed requests](../metrics.md#completed-stages-and-failed-requests).
 
-### Database Search Latency p95
+### Unfiltered Search Latency p95
 
-**Question:** How slow is the completed database-request tail under this load?
+**Question:** How long do slower searches across all files in the session take?
 
-**Calculation:** Take the interpolated 95th percentile of the same condition's individual completed
-durations. It is not the mean of per-query p95 values.
+**Calculation:** Take the interpolated 95th percentile of the same all-session
+request durations used for unfiltered p50. It is not the mean of per-query p95 values.
 
 **Example:** For `2,3,4,5,11 ms`, position `4 × 0.95 = 3.8` gives
 `5 + 0.8 × (11 - 5) = 9.8 ms`. These five values illustrate arithmetic, not
@@ -669,6 +675,41 @@ No completed duration gives unavailable latency; one gives a descriptive point:
 see [zero or one latency observation](../metrics.md#zero-or-one-latency-observation).
 Weak independent support limits the confidence claim, not the descriptive point:
 see [insufficient confidence-interval support](../metrics.md#insufficient-confidence-interval-support).
+
+### Filtered Search Latency p50
+
+**Question:** How long does a typical search take when the user selects specific files?
+
+**Calculation:** Take the median duration of completed selected-file requests.
+A selection of two files is one request over their union, not two timings.
+The all-session runs of the same questions do not enter this percentile.
+
+**Example:** Selected-file durations of `3,4,6,8,13 ms` give a median of `6 ms`.
+
+**Range and direction:** Non-negative milliseconds/request; lower is better at comparable recall.
+
+**Edge cases and availability:** With no selected-file task the metric is
+[inapplicable](../metrics.md#no-applicable-task). For a scheduled task, zero
+completed timings give unavailable latency; one gives a descriptive point. See
+[zero or one latency observation](../metrics.md#zero-or-one-latency-observation).
+
+### Filtered Search Latency p95
+
+**Question:** How long do slower searches take when limited to the selected files?
+
+**Calculation:** Take the interpolated 95th percentile of the same individual
+selected-file request durations used for filtered p50.
+
+**Example:** For `3,4,6,8,13 ms`, p95 is `8 + 0.8 × (13 − 8) = 12 ms`.
+Five requests illustrate the calculation, not a reliable estimate of the tail.
+
+**Range and direction:** Non-negative milliseconds/request; lower is better at comparable recall.
+
+**Edge cases and availability:** No selected-file task is
+[inapplicable](../metrics.md#no-applicable-task). A scheduled task with no
+completed timing is unavailable; one timing is descriptive. See
+[zero or one latency observation](../metrics.md#zero-or-one-latency-observation).
+Repeated requests do not establish [independent support for an interval](../metrics.md#insufficient-confidence-interval-support).
 
 ### Full-Stack Retrieval Latency p50
 
@@ -710,43 +751,6 @@ No contributing query observation gives unavailable latency; one supplies the
 descriptive point: see [zero or one latency observation](../metrics.md#zero-or-one-latency-observation).
 Retain contributing-query counts. If independent-source support is insufficient,
 retain the point with null bounds under [insufficient confidence-interval support](../metrics.md#insufficient-confidence-interval-support).
-
-### QPS
-
-**Question:** How many successful search requests complete per wall-clock second?
-
-**Calculation:**
-
-```text
-successful measured search completions / measured load-window wall seconds
-```
-
-One request contains one query vector. The denominator includes scheduling,
-queuing, failed requests and the declared drain-to-completion/timeout period,
-not warmup or setup. Concurrent request durations are not summed.
-
-**Example:** 1,500 submitted searches, 30 failures and 10 measured seconds give
-`1,470/10 = 147 QPS`. This is successful throughput at the stated concurrency,
-not an automatically discovered server maximum.
-If all 50 submitted requests fail during a completely observed five-second
-window, QPS is `0 / 5 = 0`. No successful work completed, but the measured
-window remains real; this is ordinary arithmetic rather than unavailable speed.
-
-**Range and direction:** non-negative queries/second; higher is better at
-comparable quality, workload and resources.
-
-**Edge cases and availability:**
-
-| Edge case | Example | Value/status | Explanation |
-|---|---|---|---|
-| Zero measured load-window duration | The retained, unrounded elapsed duration is zero seconds. | `null` (`unavailable`). | The rate denominator is zero; do not fabricate an epsilon duration or report infinity. |
-
-Missing required clock evidence makes QPS unavailable: see
-[missing measurements or evaluations](../metrics.md#missing-measurements-or-evaluations).
-An interrupted window retains completed work/time as partial diagnostics, not a
-completed-window result, under the
-[partial-work rules](../metrics.md#partial-work-and-complete-measurements).
-Throughput aggregation follows the [shared ratio-of-totals rule](../metrics.md#ratio-of-totals-throughput). One window has no CI.
 
 ### Initial Build Time
 
@@ -973,7 +977,7 @@ defined post-build measurement. One checkpoint has no inferred CI.
 
 ## Worked result interpretation
 
-For one illustrative pair on aligned workloads:
+For one illustrative configuration (the two ANN and search-latency columns below use matched questions):
 
 ```text
 Unfiltered ANN Recall@20              = 0.98
@@ -983,7 +987,8 @@ nDCG@5                               = 0.86
 Evidence-unit Recall@5                = 0.80
 Evidence-token Precision@5            = 0.44
 Ranking Repeatability                = 0.90
-Database Search Latency p95           = 12 ms
+Unfiltered Search Latency p95         = 12 ms
+Filtered Search Latency p95           = 15 ms
 Full-Stack Retrieval Latency p95      = 90 ms
 Search Request Error Rate            = 0.01
 Filter Violation Rate                = 0
@@ -1001,27 +1006,28 @@ remains visible. None of these values alone selects the database winner.
 ## Aggregation and confidence intervals
 
 Use [shared uncertainty conventions](../metrics.md#confidence-intervals), preserving
-metric-specific observations rather than applying quality's macro mean everywhere.
+metric-specific observations rather than applying one averaging rule everywhere.
 
 ### Aggregation and completeness
 
 | Metric family | Aggregate |
 |---|---|
-| ANN/Filtered ANN Recall | Mean first-response per-query scores within each condition; never pool different effective neighbour denominators. |
-| nDCG, evidence-unit/token metrics, candidate-pool evidence recall | Mean eligible questions within each source document, then document-macro mean. |
-| Database Ranking Repeatability | Mean scheduled-pair score within each query, then mean query scores within the condition. |
-| Database load and document-operation latency | Named percentile of individual completed logical operations within the condition. |
+| ANN/Filtered ANN Recall | Session-macro: average first-response query scores within sessions, then average session means equally, separately by scope. |
+| nDCG, evidence-unit/token metrics, candidate-pool evidence recall | Question-macro: count each eligible question once even when several files supply gold evidence. |
+| Database Ranking Repeatability | Session-macro: calculate each query's scheduled-pair score, average queries within sessions, then average the session means. |
+| Serial database search and document-operation latency | Named percentile of individual completed logical operations within the condition. |
 | Full-stack latency | Named percentile of per-question median successful measured durations. |
 | Request Error Rate | Failed submitted logical operations / submitted operations, separately by operation and condition. |
 | Filter Violation Rate | Violating completed checkable responses / completed checkable filtered responses. |
-| QPS | Successful completions / complete corresponding load-window wall time. |
 | Build/startup/storage | Observed phase duration or checkpoint size; do not average unrelated corpus lifecycles. |
 | Server RAM | Maximum usable sample over the declared monitoring window. |
 
-**Example:** Evidence recalls `1,0` from one document and `1` from another give
-document-macro `(0.5 + 1)/2 = 0.75`. ANN recalls `1,0.8,0.6` for three queries
-give `0.8` within that workload. These answer different questions. Drawing source
-groups for a latency CI does not turn the percentile into document-macro latency.
+**Example:** Three evidence-recall scores of 1, 0 and 1 yield a mean across
+questions of 2/3. For ANN recall, suppose the session means are 0.90 (two
+queries) and 0.70 (eight). Report (0.90 + 0.70)/2 = 0.80, not the pooled query
+mean of 0.74. Report each session's scores, file/chunk counts and contributing
+questions alongside the headline. These are the evaluated workspaces, not a
+traffic-weighted estimate for production.
 
 Report planned, eligible, contributing, failed, unavailable and independent-source
 counts where applicable. Do not silently drop required missing quality from an
@@ -1033,33 +1039,27 @@ database score.
 
 | Value | 95% confidence interval? | Rule |
 |---|---|---|
-| ANN quality and database repeatability | Conditional on sufficient independent support | Resample complete queries, or source groups when queries share a source; retain attempts and first-response identities. |
-| Application evidence quality and pool recall | Conditional on sufficient independent sources | Resample complete source groups and recalculate document-macro scores. |
+| ANN quality and database repeatability | Conditional on sufficient independent support | Resample independent sessions or session groups; preserve complete schedules and recompute session-macro scores. |
+| Application evidence quality and pool recall | Conditional on sufficient independent sources | Resample complete source groups and recalculate question-macro scores. |
 | Full-stack p50/p95 | Conditional | Resample source groups with their query medians, then recalculate percentiles. |
-| Controlled-query Database Search Latency and search/filter rates | Conditional on sufficient independent queries/source groups | Retain each query's attempts and outcomes together; recalculate request-level percentiles or the declared count ratio, not per-query latency medians. |
-| Server-load latency, QPS and request/filter rates | Conditional on repeated independent load windows or a reviewed dependence-aware design | Preserve concurrent request dependence; individual requests are not independent load experiments. |
+| Controlled-query Database Search Latency and search/filter rates | Conditional on sufficient independent sessions/session groups | Keep matched requests in the same session draw; recalculate request-level percentiles or the declared count ratio, not per-query latency medians. |
 | Standalone mutation latency/error rates | Conditional on independent operation/source groups and reviewed support | Keep related documents and repeated mutations together; preserve operation boundaries. |
 | Smoke, fixed settings, inventories and check states | No authoritative interval | Wiring observations or fixed facts, not supported selection estimates. |
 | One build/startup, lifecycle peak or storage checkpoint | No | One observation cannot establish execution-to-execution uncertainty. |
 
 ### Calculation
 
-Apply the shared 10,000-resample, seed-42 percentile procedure offline. Quality
-draws use whole independent query/source groups, retaining failed and unavailable
-first observations and dependent attempts. Source grouping preserves dependence;
-it does not change the metric's declared query-mean or document-macro weights.
-Retain metadata distinguishing query-sampling uncertainty from variation between
-independently rebuilt indexes, which one index does not measure.
+Use the shared 10,000-resample, seed-42 procedure offline. For session-based
+search, draw whole independent sessions (or reviewed groups of related sessions);
+retain questions, both matched conditions, attempts and failures. Recalculate
+the declared statistic in each draw: the mean of session means for ANN and
+database repeatability, but request percentiles for search latency. Integration
+quality averages questions once per draw of their independent source groups.
+One built index cannot establish index-rebuild uncertainty.
 
-For load uncertainty, resample independent complete load windows with their
-requests, failures, work counts and wall durations. Recompute percentiles over
-the sampled completed-request observations and QPS as total completions divided
-by total sampled wall time. Do not bootstrap concurrent requests as if each were
-a new experiment, or divide by summed per-request latency. Paired comparisons
-use matched window schedules/conditions and aligned source draws across candidates.
-If a condition lacks the reviewed window/support design, retain descriptive
-points and null bounds under [insufficient confidence-interval support](../metrics.md#insufficient-confidence-interval-support),
-rather than claiming precision from 10,000 resamples.
+If the pilot has too few independent sessions, show per-session results and
+descriptive point estimates with null bounds. Additional timings improve
+measurement of a request, not independent session support.
 
 Freeze support requirements after [data review](../pending-data-review.md#vector-databases)
 and before authoritative comparisons, including development, not merely before

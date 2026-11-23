@@ -3,6 +3,18 @@
 [Benchmark program](../README.md#experiments) · [Metric definitions](metrics.md) ·
 [Run commands](running.md) · [Candidate rationale](model-selection.md)
 
+The [shared macro-averaging conventions](metrics.md#macro-averaging-what-gets-equal-weight)
+name the unit that gets equal weight. RAG quality is
+[question-macro](metrics.md#rag-quality-mean-across-questions), not document-macro.
+Database ANN recall is [session-macro](vectordb/metrics.md#aggregation-and-completeness).
+These are revised measurement contracts: the current RAG preparation, validators,
+scorers and comparisons still assume a single question document and historical
+document weighting. The current database driver reports condition-level results.
+Do not label those outputs as revised results. Version the protocols, regenerate
+input seals, and verify cross-document validation and scoring, unequal-sized session
+means, isolation, multi-file predicates, matched report cohorts and source provenance before using
+the new contracts for selection; keep earlier runs under their original versions.
+
 The benchmarks evaluate components separately, then report the performance of
 their selected RAG combination. Extraction compares document, audio, and video
 components. The RAG sequence compares chunker/embedding pairs, retrieval methods,
@@ -290,7 +302,7 @@ another observation, not an automatic replacement for a failed earlier one.
 | Document, standalone ASR, visual Video, and chunking–embedding quality | The designated first measured output; later attempts provide other evidence. |
 | Retrieval–reranking quality | The designated first measured ranking; later rankings supply diagnostic Ranking Repeatability and timing. |
 | Frozen Video ASR | One complete stitched result per video from its scheduled windows; no transcription repeatability score. |
-| Generation quality | The protocol's measured seed outputs, aggregated within each question before source-document aggregation. |
+| Generation quality | Question-macro: aggregate the protocol's measured seed outputs within each question before averaging the question scores. |
 | Warm latency | Successful completed measured operations under each suite's component/request boundaries. |
 | Repeatability | The diagnostic attempt comparisons and representation specified by that suite, not extra quality samples; artifact-integrity checks remain separate. |
 
@@ -652,8 +664,7 @@ resampling procedure, with the independent unit appropriate to its benchmark:
 | ASR | Speech or control clip; related clips remain grouped if the reviewed manifest defines their common source as the independent unit. |
 | Video | Video; related excerpts remain grouped by the reviewed original source when required. |
 | Chunking–embedding, retrieval–reranking, generation, Final RAG, and real vector-server retrieval quality | Reviewed independent-source group with every member document, eligible question, repeated output, and pair result; a single document is its own unit only when the reviewed grouping establishes independence. |
-| Vector-database ANN quality and database-ranking repeatability | Query with its aligned requests within one condition; related queries remain grouped by their reviewed source. |
-| Vector-database server load | Independent complete load windows, or a reviewed dependence-aware design; retain concurrent requests and wall time together. |
+| Vector-database ANN quality and database-ranking repeatability | Independent session or reviewed group of linked sessions, preserving all requests and both conditions of each pair. |
 | Vector-database standalone document operations | Independent operation/source groups, retaining related documents and repeated mutations. |
 
 The [shared metric reference](metrics.md#confidence-intervals) defines the bootstrap
@@ -693,8 +704,8 @@ declared unit; it is not a universal guarantee of independence. For example,
 two document capture variants can contribute two document values but belong to
 one independent source. Document additionally records
 `<metric_key>.independent_source_count`; other suites retain their independent
-source support in the applicable metric artifacts. Source-document macro
-metrics count their contributing document values rather than raw questions.
+source support in the applicable metric artifacts. Count contributing documents for document extraction quality, questions for RAG
+quality, and sessions as well as contributing queries for session search quality.
 Always identify both contributing observations and independent sources; the
 latter determines bootstrap/CI support. CI scalar presence and artifact status
 follow [the shared interval rules](metrics.md#confidence-intervals); these
