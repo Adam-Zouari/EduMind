@@ -251,7 +251,7 @@ declared shared holdout policy.
 | Retrieval and reranking | The same reviewed RAG inputs and selected upstream data identities. Runtime pool collection, chunk-content, and dense/BM25 index checksums remain artifact-integrity gates, not data annotations. |
 | Generation | Required facts, accepted answers, supplied evidence for answerable questions, unanswerable labels, and frozen context provenance. Judge calibration/readiness and predicted-output validation are separate gates. |
 | Final RAG | Smoke fixtures, reviewed integrated-preflight stress inputs, its untouched held-out canonical corpus/questions, and the frozen composition's input requirements. Check locked-source isolation from component selection and readiness inputs. Automatic checks cannot prove that a reviewer has never examined a holdout. |
-| Vector database | Representative corpus/growth provenance, query/source allocation and split isolation, vector shape/dtype/finiteness/nonzero norms, canonical chunk/document IDs and metadata, trusted filter eligibility, exact-distance inputs/tie policy, integration evidence, and prepared insert/replace/delete expectations. Session manifests must seal session membership, query vectors, selected ID unions, both exact-reference scopes and counterbalanced paired schedules. Test cross-session isolation and forbidden returns at runtime. The current validator seals v5 workload inputs, not this revised session contract. |
+| Vector database | Representative corpus/growth provenance, query/source allocation and split isolation, vector shape/dtype/finiteness/nonzero norms, canonical chunk/document IDs and metadata, trusted filter eligibility, exact-distance inputs/tie policy, integration evidence, and prepared insert/replace/delete expectations. Session manifests must seal session membership, query vectors, selected ID unions, both exact-reference scopes and counterbalanced paired schedules. Reject a primary search session with no scheduled unfiltered question; a selected-file pair is optional. Check returned IDs against the sealed session and any file selection at runtime. The current validator seals v5 workload inputs, not this revised session contract. |
 
 ### Document references, including blank sources
 
@@ -407,6 +407,13 @@ Unanswerable labels and their non-answering supplied context are reviewed
 explicitly. Missing required facts/evidence are invalid references, not an empty
 precision/recall case. Human review establishes truth and atomicity; automatic
 checks establish structure, provenance, and consistency.
+
+For unanswerable Generation and Final RAG questions, preserve which materials
+were reviewed to establish the label. Use their existing source-family or linked
+group for [CI support](metrics.md#insufficient-confidence-interval-support); no gold
+passage or single owner document is required. If that grouping cannot be
+established, record the preparation gap rather than assigning an independent
+group to each question.
 
 Final RAG uses the same reviewed answerability and required-fact labels against
 its canonical corpus. Retrieved evidence may be incomplete; that is a system

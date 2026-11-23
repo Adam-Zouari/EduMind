@@ -113,9 +113,10 @@ verified evidence for each of `table`, `formula`, and `mixed` before it can be
 combined with QASPER.
 
 Chunking–embedding executes only answerable questions with reviewed gold
-evidence. Unanswerable questions retained in the shared manifests are for later
-generation/Final-RAG evaluation, not retrieval or latency requests in this
-phase. All pairs keep the same searchable document corpus, including distractors.
+evidence. Keep unanswerable questions in component manifests for Generation,
+not as retrieval or latency requests in this phase. Final RAG uses its own
+untouched holdout. All chunking–embedding pairs keep the same searchable
+document corpus, including distractors.
 The [chunking–embedding input contract](data-validation.md#chunking-and-embedding-inputs)
 separates preparation/reference checks from runtime checks on generated chunks,
 vectors, rankings, and native-model input lengths. Its standalone validator and
@@ -1032,12 +1033,13 @@ retained for the frozen-ASR diagnostic, but spoken and visible
 tokens are not merged into a combined quality score.
 
 RAG document rows contain canonical text and a stable source-document family.
-Question rows contain answerability, accepted answers, one mutually exclusive
+For an answerable question, record accepted answers, one mutually exclusive
 evidence type, and verified evidence units with stable IDs and exact half-open
 intervals into the canonical text of each unit's named document. Table units include the headers needed to
 interpret selected cells; formula units include the complete expression; mixed
 questions contain evidence from at least two types. Unanswerable questions have
-no gold evidence units.
+no gold evidence units. Preserve their reviewed source-group provenance as set
+out in [generation reference validation](data-validation.md#generation-references-and-model-input-compatibility).
 
 The generated `FrozenASRArtifact` is a separate checksummed JSON artifact. It
 records its run ID; manifest, video-protocol, audio-protocol, and model-decision

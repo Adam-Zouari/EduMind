@@ -1081,9 +1081,9 @@ complete valid quality, and the engineer reviews recorded failures separately.
 | Value | 95% confidence interval? | Rule |
 |---|---:|---|
 | Development, validation, and locked nDCG, Evidence-unit Recall, Evidence-token Precision, and alpha-nDCG at @3/@5 | When defined and sufficiently supported | Resample reviewed independent-source groups with all member documents and recalculate each aggregate. Partial estimates and any bounds remain diagnostic, not complete selection evidence. |
-| Text, table, formula, and mixed evidence slices | When defined and sufficiently supported | Resample reviewed source groups with every eligible member document's first-ranking and failure records; do not prefilter to successful contributors. |
-| Ranking Repeatability | When complete and sufficiently supported | Resample reviewed source groups with every member document's scheduled query pairs and recalculate the mean question pair score. |
-| p50/p95 complete-query, query-embedding, and vector-search latency | Conditional | Resample reviewed source groups with every member document's component-specific query medians; otherwise retain defined descriptive points without bounds. |
+| Text, table, formula, and mixed evidence slices | When defined and sufficiently supported | Recalculate the slice mean from its eligible questions in each sampled group, retaining first-ranking and failure records. |
+| Ranking Repeatability | When complete and sufficiently supported | Retain each question's scheduled pairs and recalculate the mean of the question scores. |
+| p50/p95 complete-query, query-embedding, and vector-search latency | Conditional | Recalculate each percentile from the sampled groups' per-query medians for that component. |
 | Smoke metrics | No authoritative interval | Smoke validates execution and is too small for selection claims. |
 | Cold load, chunking, chunk embedding, and corpus-build time | No | Each is one completed phase/build observation, not independent repeated builds. |
 | Artifact-only Corpus-Build Throughput | No | Derived from one completed build and fixed parent source-token metadata; not another scalar metric or independent observation. |
@@ -1094,13 +1094,11 @@ complete valid quality, and the engineer reviews recorded failures separately.
 ### Calculation
 
 Apply the [shared CI procedure](../../metrics.md#confidence-intervals) to the
-reference-eligible inventory, retaining whole source documents inside their
-reviewed independent source groups with all question, first-ranking, timing,
-and failure records. Each quality draw recalculates the
-mean question score. Repeatability draws recalculate the
-mean of per-question pair scores from all scheduled outcomes. Latency draws
-collect the sampled documents' per-query successful component/request medians
-and recalculate each p50/p95 separately, not a mean of document latencies.
+reference-eligible inventory. Draw whole reviewed source groups. Within each
+drawn copy, count each question once, even if its evidence spans two member
+documents. Keep its first ranking, timings, pairs and failures together.
+Recalculate question means for quality and repeatability; for latency, take
+each component's p50/p95 over its per-query successful-attempt medians.
 
 Insufficient or unfrozen support leaves defined points with null bounds; see
 [confidence-interval support and its freeze deadline](../../metrics.md#insufficient-confidence-interval-support).

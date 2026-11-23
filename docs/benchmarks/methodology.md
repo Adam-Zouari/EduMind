@@ -664,7 +664,7 @@ resampling procedure, with the independent unit appropriate to its benchmark:
 | ASR | Speech or control clip; related clips remain grouped if the reviewed manifest defines their common source as the independent unit. |
 | Video | Video; related excerpts remain grouped by the reviewed original source when required. |
 | Chunking–embedding, retrieval–reranking, generation, Final RAG, and real vector-server retrieval quality | Reviewed independent-source group with every member document, eligible question, repeated output, and pair result; a single document is its own unit only when the reviewed grouping establishes independence. |
-| Vector-database ANN quality and database-ranking repeatability | Independent session or reviewed group of linked sessions, preserving all requests and both conditions of each pair. |
+| Vector-database ANN quality, ranking repeatability, search latency, search error and filter violation rates | Independent session or reviewed group of linked sessions, preserving all requests and both conditions of each pair. Search latency and rates keep their request-level percentiles and denominators. |
 | Vector-database standalone document operations | Independent operation/source groups, retaining related documents and repeated mutations. |
 
 The [shared metric reference](metrics.md#confidence-intervals) defines the bootstrap

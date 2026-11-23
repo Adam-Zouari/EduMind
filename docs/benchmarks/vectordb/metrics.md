@@ -114,23 +114,29 @@ belong to [data validation](../data-validation.md). Duplicate/unknown output IDs
 nonfinite required scores and unverified provenance belong to runtime integrity.
 Do not bury these cases in metric-specific empty-denominator conventions.
 
-Each filter is evaluated against trusted source metadata. Search execution
-success means a completed response with a usable envelope, known unique IDs and
-finite required scores. Filter correctness is checked separately. Use the same
-execution-success cohort for Search Request Error Rate and search latency:
+Check every returned ID against the sealed session inventory and, for a
+selected-file search, against the selected files within that session. Search
+execution success means a completed response with a usable envelope, globally
+known unique IDs, no more hits than requested, and finite required scores.
+Search Request Error Rate counts failures among **all submitted requests**.
+Latency uses only successful requests with a usable duration; a missing timer
+does not turn a successful search into an execution error.
 
 | Search outcome | Execution error? | Include in search latency? | Filter observation |
 |---|---|---|---|
 | Usable response, all records allowed | No | Yes | `0` when filtering applies. |
-| Usable response, known forbidden record returned | No | Yes, with correctness failure retained | `1`; retain the filtering violation separately from recall eligibility. |
-| Timeout, transport failure, unusable envelope, duplicate/unknown IDs, or nonfinite required scores | Yes | No; retain elapsed-to-failure/invalid response separately | Unavailable if filtering was required; do not infer a violation or pass. |
+| Usable response, record in the session but outside the selected files | No | Yes | `1`. |
+| Usable response, known record outside the session | No; session-isolation failure | Yes | Unfiltered: no filter observation. Selected-file search: `1`, since the record is outside the permitted set. |
+| Timeout, transport failure, unusable envelope, more hits than requested, duplicate/unknown IDs, or nonfinite required scores | Yes | No; retain elapsed-to-failure/invalid response separately | Unavailable if filtering was required; do not infer a violation or pass. |
 
-Thus successful execution is not a claim of correct filtering or accepted
-benchmark evidence. A filter-violating child's retained performance cannot be
-presented as a conformant comparison. An execution failure supplies no checkable
-filter response. Low recall and legitimate alternative tied neighbours are not
-request errors. Missing outcome/verification records remain incomplete rather
-than presumed success or failure.
+If a search in session A returns a chunk belonging only to session B, retain
+the offending ID and the session-isolation failure. ANN recall with a positive
+reference denominator and any otherwise applicable evidence quality that depends
+on the invalid ranking are `null/unavailable`. An executed invalid ranking earns
+zero in any repeatability pair containing it. A completed timing does not make
+that result conformant.
+An unfiltered request never enters Filter Violation Rate. Low recall and valid
+tied alternatives are not integrity failures; a missing check is not a pass.
 
 Filtered recall eligibility comes from the verified permitted-record set before
 examining the response. With zero permitted records, Filtered ANN Recall is
@@ -154,7 +160,11 @@ all available chunks. Its valid final ranking must still contain source tokens.
 
 Application metrics use answerable questions and the
 [shared retrieval gains and denominators](../metrics.md#retrieval-gains-and-denominators).
-Unanswerable questions are inapplicable, not empty gold comparisons. Complete-unit
+Unanswerable questions are inapplicable, not empty gold comparisons. A selected-file
+scope that excludes a required gold unit still has an ANN task if it permits
+records, but its application evidence metrics are inapplicable. Do not shrink
+the gold denominator to fit the selection. If the scope contains the required
+evidence and retrieval misses it, score the miss normally. Complete-unit
 coverage uses source intervals; token precision uses `tiktoken:cl100k_base` source
 token occurrences. The nDCG ideal uses the entire eligible frozen corpus, never
 only the retrieved pool. A reranker must permute its actual verified pool; the
@@ -210,8 +220,9 @@ two different valid tied answers need not agree.
 
 **Question:** How many of the exact nearest neighbours survive unfiltered search?
 
-**Calculation:** Apply the boundary-tie rule to the first 20 returned IDs, with no ordering credit
-inside that prefix. In plain language:
+**Calculation:** Apply the boundary-tie rule to the valid response to a request
+for 20 neighbours. Order within that response does not affect recall. A response
+with 21 hits is invalid; do not discard its last hit and score the rest.
 
 ```text
 recovered strictly closer records + credited boundary records
@@ -429,8 +440,9 @@ Unexpectedly short integration pools make dependent quality unavailable under
 database output before reranking: compare ordered IDs, not floating-point score
 bit patterns. The scope is the requested top 20, or the actual valid returned
 list when fewer records are returned; retain requested/actual counts.
-Valid here includes compliance with any requested filter, not just execution
-success; retain the separate execution and filter outcomes.
+Both search conditions require every ID to belong to the session; selected-file
+searches also require every ID to belong to a selected file. Execution success
+alone does not make a ranking valid.
 
 ```text
 scheduled pairs with two valid identical ordered database outputs
@@ -442,8 +454,9 @@ scheduled pairs with two valid identical ordered database outputs
 also gives `1/3`, through pair (2,3). Three executed failures give zero, not
 agreement. Average per-query pair rates within each session, then average the contributing
 session means for the same search scope.
-Three valid empty results, such as `[]` for an empty-match filter, give `1`:
-the lists agree, without establishing nonempty-search recall.
+Three valid empty results on a scheduled search give `1`: the lists agree even
+though, for a nonempty eligible set, ANN Recall is zero. Dedicated empty-match
+conformance probes do not enter study-session aggregates.
 
 This is diagnostic, not a perfect-agreement gate. Valid tied alternative pools
 may have perfect ANN recall but less than perfect repeatability. This does not
@@ -977,7 +990,11 @@ defined post-build measurement. One checkpoint has no inferred CI.
 
 ## Worked result interpretation
 
-For one illustrative configuration (the two ANN and search-latency columns below use matched questions):
+Suppose 100 paired questions each have three measured attempts per search scope.
+All 300 unfiltered requests complete; three selected-file requests time out on
+later attempts. With all completed durations recorded, the search percentiles use
+300 and 297 timings respectively. The two ANN recalls still cover the same 100
+designated-first questions. Application metrics below use the all-session scope.
 
 ```text
 Unfiltered ANN Recall@20              = 0.98
@@ -986,12 +1003,13 @@ Candidate-pool Evidence-unit Recall@20 = 0.95
 nDCG@5                               = 0.86
 Evidence-unit Recall@5                = 0.80
 Evidence-token Precision@5            = 0.44
-Ranking Repeatability                = 0.90
+Ranking Repeatability (all-session)  = 0.90
 Unfiltered Search Latency p95         = 12 ms
 Filtered Search Latency p95           = 15 ms
 Full-Stack Retrieval Latency p95      = 90 ms
-Search Request Error Rate            = 0.01
-Filter Violation Rate                = 0
+Search Request Error Rate (all-session)    = 0
+Search Request Error Rate (selected-files) = 0.01
+Filter Violation Rate (selected-files)     = 0
 ```
 
 The search preserves most exact neighbours, with more loss under the stated
@@ -1000,8 +1018,9 @@ the final five chunks. Token precision describes context concentration, not
 the truth of the remaining text. Repeatability exposes ordering changes without
 making them integrity failures. The latency values cover different paths and
 cannot be subtracted to calculate reranker p95. Zero observed filter violations
-is conditional on completed checkable responses; the 1% search failure rate
-remains visible. None of these values alone selects the database winner.
+is conditional on the 297 checkable selected-file responses; the error rate
+counts all 300 submitted selected-file requests. None of these values alone
+selects the database winner.
 
 ## Aggregation and confidence intervals
 
@@ -1031,9 +1050,13 @@ traffic-weighted estimate for production.
 
 Report planned, eligible, contributing, failed, unavailable and independent-source
 counts where applicable. Do not silently drop required missing quality from an
-authoritative aggregate. Conditional successful latency/filter cohorts retain
-their outcome coverage. Different workload conditions never become one pooled
-database score.
+authoritative aggregate. If every designated first search in a primary session
+fails, its recall is `null/unavailable`, not zero. Other sessions' scores can
+describe partial results but cannot produce a complete headline. This differs
+from a session with no meaningful file selection: its unfiltered scores still
+count, and it has no filtered task. Report how many requests contributed to
+conditional latency and filter results in each workload condition; do not pool
+different conditions into one database score.
 
 ### Which values receive an interval
 

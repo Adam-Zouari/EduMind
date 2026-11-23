@@ -90,8 +90,8 @@ the end-to-end Final RAG report.
   numbered evidence blocks. The evaluator separately receives accepted answers,
   required gold claims, gold evidence-unit IDs, and frozen verification material;
   gold answers are never included in the generator's prompt.
-- Unanswerable questions receive text from their document that does not answer
-  the question.
+- Unanswerable questions receive frozen context from the reviewed materials.
+  The supplied blocks, taken together, must not answer the question.
 - Retrieval is not run in this stage.
 
 Using frozen evidence prevents a good generator from being penalized by a poor

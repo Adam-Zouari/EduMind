@@ -133,17 +133,20 @@ the authoritative dataset manifests and methodology, then remove the item.
 - Inspect the pinned QASPER splits and verify that the prepared 100/40/40 paper
   allocation preserves source-paper isolation and useful answerable/unanswerable
   coverage.
-- Freeze answerable-query and independent-document counts for chunking–embedding
-  overall and per evidence slice. Unanswerable coverage belongs to generation;
-  those shared-manifest queries are not retrieval/timing requests in this phase.
+- For chunking–embedding, freeze three counts overall and per evidence slice:
+  answerable questions, distinct source documents, and independent linked source
+  groups. CI support uses the group count. If Q1 needs A+B and Q2 needs B+C,
+  that is two questions, three documents, but one group. Unanswerable questions
+  remain in the shared manifest for generation; they are not retrieval or timing
+  requests in this phase.
   Review atomic units and token/source spans so complete-unit coverage and token
   overlap describe the intended evidence without candidate-specific repairs.
   Freeze quality/slice, diagnostic top-five Ranking Repeatability, and complete-
   query/query-embedding/vector-search p50/p95 CI support requirements under the
   [confidence-interval support policy](metrics.md#insufficient-confidence-interval-support) before authoritative comparisons;
   insufficient support retains defined point estimates with null bounds/reasons.
-- Freeze corresponding source support for retrieval–reranking's complete-order
-  Ranking Repeatability. Preserve source-document grouping and every scheduled
+- Freeze corresponding independent-group support for retrieval–reranking's complete-order
+  Ranking Repeatability. Preserve linked source families and every scheduled
   pair/failure inside each draw; do not infer support from the number of queries
   or repeated outputs. Candidate-roster and index-selection changes are not
   part of this statistical-support review.
@@ -199,8 +202,8 @@ the authoritative dataset manifests and methodology, then remove the item.
   support label and that cited-subset support implies full-context support.
   Pairwise semantic equivalence remains a separate calibrated rubric; keep
   claim extraction and per-claim justifications inspectable.
-- Inspect the resulting question and document counts by evidence type before
-  deciding which slice confidence intervals are sufficiently supported.
+- Record questions, distinct documents, and independent linked groups by evidence
+  type. Use eligible and contributing group counts to assess slice CI support.
 - Review generation token-event instrumentation and independent-source support
   for [Decode Throughput](rag/generation/metrics.md#decode-throughput). Its
   completed-stream work/time estimator and interrupted-stream exclusion are

@@ -1344,17 +1344,16 @@ instrument makes affected evidence incomplete under the shared rules.
 | Value | CI applicability | Statistic recalculated on each source draw |
 |---|---|---|
 | Quality, behavioral validity, reliability, and repeatability | When defined and sufficiently supported | The metric's within-question output/pair calculation and mean across eligible questions, with its own denominator and availability conventions. |
-| TTFT and completion-latency p50/p95 | Conditional on observed eligible durations and sufficient support | Percentiles of the sampled documents' per-question observations. |
+| TTFT and completion-latency p50/p95 | Conditional on observed eligible durations and sufficient support | Percentiles of the sampled groups' per-question observations for the relevant timing. |
 | Decode Throughput | Conditional on normally completed, instrumented streams and sufficient support | Sum eligible counted decoding tokens divided by sum corresponding decoding intervals. |
 | One cold load or observed lifecycle memory peak | No | One lifecycle observation is not an independent-sample distribution. |
 | Token descriptors, citation/claim counts, and finish-reason inventories | No | Descriptive counts/inventories are not additional quality estimates. |
 
-The independent bootstrap unit is the reviewed source group, retaining each
-member reference-eligible document with its questions, all three seed outputs,
-pair labels, failures, and unavailable evaluations. A single document is its
-own unit only when the reviewed grouping establishes independence. Follow the
-shared resampling procedure rather
-than calculating and averaging three seed-specific intervals. The table's
+The independent bootstrap unit is the reviewed source group. Each drawn copy
+includes each eligible question once, with its three scheduled outcomes, pair
+labels, failures, and unavailable evaluations. This includes unanswerable questions
+for refusal and other applicable metrics; see the [one-lecture example](../../metrics.md#insufficient-confidence-interval-support).
+Do not calculate and average three seed-specific intervals. The table's
 statistic is recomputed from the retained records on every draw. This estimates
 source-sampling uncertainty under the frozen three-seed protocol, not every
 possible future generation seed.

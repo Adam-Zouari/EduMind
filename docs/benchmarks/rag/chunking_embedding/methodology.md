@@ -33,7 +33,7 @@ Each pair produces:
 - timing, resource, warning, and validity records.
 
 Only answerable questions with verified evidence are executed. Unanswerable
-questions can remain in a shared manifest for generation and Final RAG, but are
+questions can remain in a component manifest for Generation, but are
 filtered out before query embedding, timing, and scoring in this phase. Their
 documents remain in the frozen searchable corpus; excluding a query does not
 remove corpus distractors or alter another question's available evidence.

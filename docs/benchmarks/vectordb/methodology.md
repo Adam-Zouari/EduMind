@@ -167,7 +167,7 @@ and `retrieval_decision_sha256`. Final composition acceptance must compare this
 lineage against its frozen components and reject missing/mismatched identities,
 not merely accept the same database alias.
 
-Reviewed data, configuration ranges, load conditions, and independent-support
+Reviewed session workloads, configuration ranges, and independent-support
 requirements remain in [pending data review](../pending-data-review.md#vector-databases).
 Historical runs retain their original protocols; they are not relabeled with
 these metrics. A successful existing driver exit does not establish conformance
@@ -224,6 +224,8 @@ is separate from the single-user selection workload.
 | Locked | Held-out workload for one selected pair; reporting only. |
 
 Freeze sessions, queries, paired selections and order before running any candidate.
+Schedule at least one unfiltered question per primary search session; a workspace
+used only for a correctness probe is not a primary search session.
 Use unseen source allocations for validation and locked reporting. Every database
 receives identical session contents, vectors, scopes and schedules. Include exact
 search where feasible: if it meets the laptop's latency and resource needs,
@@ -284,8 +286,11 @@ settings; do not substitute each server's native hybrid algorithm. A BM25-only
 selected stack has no dense-search dependency: label that integrated path and
 do not attribute identical BM25 results to ANN performance.
 
-Compute exhaustive reference distances offline over the frozen vectors. Filtered
-references use only the allowed subset. ANN Recall@20 uses the
+Compute exhaustive reference distances offline over the session's frozen vectors.
+For selected-file requests, restrict the reference to the union of those files
+in that session. In an integrated RRF request, both dense and BM25 must return
+source pools from that same scope before fusion. This does not prescribe a
+server's internal filtering algorithm. ANN Recall@20 uses the
 [boundary-tie rule](metrics.md#exact-neighbours-and-boundary-ties): strictly closer
 records receive individual credit; boundary alternatives receive credit only
 up to the remaining slots. The common evaluator, not server-reported scores,
@@ -295,9 +300,9 @@ against candidate scores.
 
 ### Pool identity and integrity
 
-Record each executed pool with query, attempt, condition, corpus/vector/metadata
-checksums, configuration identity, ordered IDs, and scores. Its checksum verifies
-that observation and provenance; it does not require different databases or
+Record each executed pool with its session, query, attempt, condition, allowed-set
+identity, corpus/vector/metadata checksums, configuration, ordered IDs, and scores.
+Its checksum verifies that observation and provenance; it does not require different databases or
 repeated searches to return identical pools.
 
 The reranker receives the actual verified pool for that attempt and must return
@@ -307,20 +312,13 @@ not require repeated live pools to be identical. Repeatability compares only the
 database's pre-reranking output across attempts; there is no reranked-output
 repeatability metric.
 
-Duplicate/unknown IDs, nonfinite required scores, forbidden records, and malformed
-responses retain explicit integrity outcomes. Check filter eligibility against
-trusted input metadata, not merely the values echoed by the server. A completed
-usable response with known forbidden records supplies a Filter Violation Rate
-event and retains its completed-request timing observation, but cannot
-supply accepted ANN or downstream evidence quality. Reference eligibility is
-established first: zero permitted records means no filtered-recall task, so its
-status stays inapplicable regardless of the response. With permitted records,
-a filter-violating result instead leaves recall unavailable. The metric reference
-defines the [empty-subset outcomes](metrics.md#filtered-ann-recall20).
-Malformed, duplicate-ID, unknown-ID and nonfinite-score responses are execution
-errors instead. The
-[search-outcome table](metrics.md#scoring-inputs-eligibility-and-result-status) fixes these
-cohorts; operational observations do not excuse a failed correctness requirement.
+Verify session isolation for **every** search, including unfiltered requests.
+For selected-file searches also verify membership in the permitted file set.
+Use the sealed inventories, not metadata echoed by the server. Keep the
+offending IDs with the request. The [search-outcome table](metrics.md#scoring-inputs-eligibility-and-result-status)
+distinguishes known but forbidden records from unknown IDs or malformed responses,
+and defines which timings, scores, and filter events remain usable. A verified
+empty permitted set still has [no filtered-recall task](metrics.md#filtered-ann-recall20).
 
 A well-formed eligible response may contain fewer than the requested neighbours.
 Preserve its ANN score, with credit only for recovered neighbours; do not pad or
@@ -435,9 +433,9 @@ Warm each search path and operation before measurement; restore the starting
 state after a mutation warmup. Exclude warmup from quality, reliability and
 timing. Startup against a stopped server has no preceding warm query.
 
-Database Search Latency begins at the common client adapter operation and ends
-at complete response decoding, including serialization, communication and server
-work. Scheduling wait before that boundary is outside request latency and is not counted. Keep connection limits, timeout handling, retry policy,
+For both search scopes, start the latency timer at the common client adapter
+operation and stop after complete response decoding. This includes serialization,
+communication and server work, not time queued before the adapter. Keep connection limits, timeout handling, retry policy,
 and payloads explicit. Do not retry a failed measured operation and relabel its
 successor as the designated first success. Deliberately enabled internal retries
 remain inside the same logical operation and timer.
@@ -598,9 +596,18 @@ For the session contract, open the profile parent in **EduMind / Vector Database
 one row per database/configuration: paired-session and question counts, both
 recalls, and four separate timing columns (ms): Unfiltered Search Latency p50,
 Unfiltered Search Latency p95, Filtered Search Latency p50, and Filtered Search
-Latency p95. Calculate every comparison column on the same predeclared pairs,
-not on all baseline questions. Keep
-incomplete pairs and reasons visible; never drop hard requests to complete a row.
+Latency p95. Use the same predeclared paired schedule, not all baseline
+questions. Alongside the percentiles, report request counts **separately for
+each side**: scheduled, completed, timed (completed with a usable duration),
+and failed. For example, if ten requests are scheduled per side and two
+selected-file requests time out, unfiltered p95 can use ten timings and
+filtered p95 eight. These percentiles describe the same scheduled workload,
+not necessarily the same successful requests. Do not discard good timings
+from the other side or substitute elapsed-to-timeout. Retain incomplete pairs,
+unexecuted requests, missing timings and their reasons.
+If no question has a meaningful file selection, keep the configuration row with
+zero paired sessions/questions and inapplicable paired recalls and percentiles.
+The main unfiltered result still uses all scheduled unfiltered questions.
 Child request and query-metric artifacts retain the session, question, selection,
 condition and attempt IDs. Retain per-session recall, file/chunk and question
 counts. No filtered-minus-unfiltered leaderboard metric or per-session runs.

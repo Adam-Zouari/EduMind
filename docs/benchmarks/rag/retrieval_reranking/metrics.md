@@ -1222,8 +1222,8 @@ the shared completeness distinction, not a blanket zero-request-failure gate.
 |---|---|---|
 | Development/validation/locked @3/@5 quality and pool recall | When defined and sufficiently supported | Resample reviewed independent-source groups with all member documents and recalculate the question-macro scores. |
 | Text, table, formula, and mixed quality slices | When defined and sufficiently supported | Preserve eligible source question/failure records. |
-| Full-stack, retrieval, and reranker warm p50/p95 | Conditional | Resample reviewed source groups with every member document's query-level successful-attempt medians; recalculate percentiles. |
-| Ranking Repeatability | When complete and sufficiently supported | Resample reviewed source groups with every member document's scheduled query pairs and recalculate question-macro repeatability. |
+| Full-stack, retrieval, and reranker warm p50/p95 | Conditional | Recalculate each component's percentile from the sampled groups' per-query successful-attempt medians. |
+| Ranking Repeatability | When complete and sufficiently supported | Retain each question's scheduled pairs and recalculate question-macro repeatability. |
 | Validity counters | No selection-uncertainty interval | Retain actual checks, support, and failure details. |
 | Smoke | No authoritative interval | Wiring evidence only. |
 | One cold initialization, index build, or observed memory peak | No | One lifecycle observation cannot estimate uncertainty. |
@@ -1233,13 +1233,11 @@ the shared completeness distinction, not a blanket zero-request-failure gate.
 
 Apply the [shared CI procedure](../../metrics.md#confidence-intervals) to the
 reference-eligible source inventory: draw reviewed independent-source groups,
-retaining all member documents and their complete query/failure records. A
-document is its own independent unit only when the reviewed grouping establishes
-that. Recalculate mean quality and pool recall across questions; latency draws use
-the sampled documents' query-level successful-attempt medians before calculating
-each component's percentile. Repeatability draws recalculate each question's
-scheduled pair score and the mean across questions; they do not create new rankings or
-treat pairs as independent documents. Insufficient or unfrozen support leaves
+retaining each eligible question once per drawn copy of its group, with all
+its rankings and failures. Recalculate mean quality, pool recall, and per-question
+repeatability scores across questions. For latency, calculate each component's
+percentile over its per-query successful-attempt medians. Neither source documents
+linked by a question nor repeated attempts are separate draws. Insufficient or unfrozen support leaves
 defined points with null bounds, including diagnostics; see
 [confidence-interval support](../../metrics.md#insufficient-confidence-interval-support).
 Undefined draws do not enter the affected bounds, and equal bounds retain their
